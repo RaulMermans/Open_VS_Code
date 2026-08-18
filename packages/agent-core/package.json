@@ -1,0 +1,13 @@
+{
+  "name": "@open-vs-code/agent-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test --test-isolation=none \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "node ../../node_modules/oxlint/bin/oxlint -c .oxlintrc.json --deny-warnings src tests",
+    "build": "tsc --noEmit"
+  }
+}

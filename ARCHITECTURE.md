@@ -1,6 +1,6 @@
 # Architecture
 
-## Provisional component map
+## Component map
 
 ```text
 IDE / UI
@@ -14,24 +14,48 @@ Agent Core
    |-- Session State
    |-- Memory
    |-- Skills
-   |-- MCP
    |
 Model Gateway
    |
 Local Model Providers
 ```
 
-The boundaries are provisional; the dependency direction is not. `agent-core` must be runnable independently of VS Code. IDE APIs belong behind adapter interfaces, and model-specific behavior belongs behind the model gateway.
+The dependency direction is fixed. `agent-core` must be runnable independently of VS Code. IDE APIs belong behind adapter interfaces, and model-specific behavior belongs behind the model gateway.
+
+## Implemented agent-core foundation
+
+`packages/agent-core` is the first executable implementation of the editor-independent core. It is a Node/TypeScript package with no runtime dependencies and no imports from the imported Kilo packages.
+
+```text
+contracts
+   |-- model capabilities and messages
+   |-- context items and budgets
+   |-- generic tools and permissions
+   |-- agent tasks, modes, state, and events
+   `-- editor adapter boundary
+
+deterministic infrastructure
+   |-- generic OpenAI-compatible HTTP provider
+   |-- context ranking, deduplication, and fitting
+   |-- canonical Markdown discovery and targeted reads
+   |-- metadata-first Skills discovery and explicit loading
+   |-- bounded read/list/search/find repository tools
+   |-- mode-aware permission classification
+   |-- immutable lifecycle transitions
+   `-- minimal context compiler
+```
+
+The repository tool layer is read-only. Realpath-based containment is authoritative for filesystem access, generated directories are ignored during traversal by default, and explicitly requested files remain readable when they are inside the workspace. No terminal, Git, write, delete, autonomous loop, or model-runtime capability exists in this package.
 
 ## Cross-cutting constraints
 
 - Project knowledge and decisions live primarily in Markdown.
 - Repository context is progressively disclosed under an explicit token budget.
-- Provider adapters may target Ollama, llama.cpp, vLLM, LM Studio, or generic local OpenAI-compatible endpoints without changing agent-core contracts.
+- Provider adapters may target local backends without changing agent-core contracts; only a generic OpenAI-compatible HTTP adapter exists today.
 - Product code begins only after upstream reuse evidence supports the baseline choice.
 
 See `docs/adrs/` for the provisional decisions and their revisit triggers.
 
-## Sprint 1 baseline recommendation
+## Deferred imported baseline
 
-Use a controlled Kilo fork: its VS Code package already connects through a local backend boundary to an editor-independent agent runtime. Keep that architecture while isolating cloud, telemetry, remote-session, marketplace, and deferred multi-agent features. The evidence and alternatives are recorded in `docs/research/starting-strategy.md`.
+The audited Kilo baseline remains in repository history for provenance and possible future reuse, but Kilo integration is explicitly postponed. The new `packages/agent-core` implementation does not depend on or modify that runtime.

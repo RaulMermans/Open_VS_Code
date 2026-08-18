@@ -1,8 +1,8 @@
 # Scratchpad
 
-- Current task: validate the completed Sprint 1 research/control-layer checkpoint.
-- Findings: Kilo `91a337e` is the recommended controlled-fork baseline; its VS Code host already uses a separate CLI/backend. Cloud, telemetry, remote sessions, marketplace, indexing, and Agent Manager need early isolation.
-- Commands: environment/Git/version inspection; `git init -b main`; shallow upstream clones; targeted `git ls-tree`, `git show`, and `git grep` audits.
-- Blockers: ordinary shell `PATH` lacks Node, though bundled Node 24.19.0 is available; Kilo's Windows checkout hit long-path/index issues, so commit-object reads were used.
-- Relevant paths: `docs/research/kilo-audit.md`, `docs/research/secondary-audit.md`, `docs/research/starting-strategy.md`.
-- Next action: T-006, import/fork the pinned Kilo baseline with history and license/provenance intact; do not prune before an upstream smoke.
+- Current state: Sprint 1C implementation and verification are complete for the standalone `packages/agent-core` foundation.
+- Implemented: contracts, generic OpenAI-compatible provider, deterministic budgets, targeted Markdown reads, progressive Skills, bounded repository reads, permission policy, lifecycle reducer, and context compiler.
+- Verification: 41 tests pass; package typecheck, lint, build, `git diff --check`, coupling search, and artifact audit pass.
+- Tooling note: ordinary shell `PATH` still lacks Node; verification uses the bundled Node 24 runtime. The package itself uses standard Node scripts and adds no dependencies.
+- Boundary: Kilo/editor/model-runtime integration and every mutation or shell capability remain deferred.
+- Next sprint: Sprint 1D — Minimal Local Agent Loop using mocked models only; do not introduce a real local model yet.

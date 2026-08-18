@@ -1,0 +1,139 @@
+import { open, readFile, readdir, stat } from "node:fs/promises"
+import { join, relative } from "node:path"
+
+import { RepositoryPathError, resolveRepositoryPath } from "../tools/path-safety.ts"
+
+export type SkillErrorCode = "MALFORMED_FRONTMATTER" | "INVALID_METADATA" | "DUPLICATE_NAME" | "MISSING_FILE" | "SKILL_NOT_FOUND" | "TOO_LARGE"
+
+export class SkillError extends Error {
+  readonly code: SkillErrorCode
+
+  constructor(code: SkillErrorCode, message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = "SkillError"
+    this.code = code
+  }
+}
+
+export interface SkillMetadata {
+  readonly name: string
+  readonly description: string
+  readonly path: string
+}
+
+export interface LoadedSkill extends SkillMetadata {
+  readonly body: string
+}
+
+export interface SkillFileReader {
+  readFrontmatter(path: string, maxBytes: number): Promise<string>
+  readText(path: string): Promise<string>
+}
+
+export async function readSkillFrontmatter(path: string, maxBytes: number): Promise<string> {
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new TypeError("maxBytes must be a positive integer")
+  const handle = await open(path, "r")
+  const buffer = Buffer.alloc(maxBytes)
+  let bytesRead = 0
+  try {
+    while (bytesRead < maxBytes) {
+      const result = await handle.read(buffer, bytesRead, 1, bytesRead)
+      if (result.bytesRead === 0) break
+      bytesRead += result.bytesRead
+      const lfDelimiter = bytesRead >= 5 && buffer.subarray(bytesRead - 5, bytesRead).equals(Buffer.from("\n---\n"))
+      const crlfDelimiter = bytesRead >= 7 && buffer.subarray(bytesRead - 7, bytesRead).equals(Buffer.from("\r\n---\r\n"))
+      if (lfDelimiter || crlfDelimiter) break
+    }
+  } finally {
+    await handle.close()
+  }
+  return buffer.subarray(0, bytesRead).toString("utf8")
+}
+
+const nodeSkillFileReader: SkillFileReader = {
+  readFrontmatter: readSkillFrontmatter,
+  readText: (path) => readFile(path, "utf8"),
+}
+
+function parseSkillDocument(content: string, path: string): { metadata: Omit<SkillMetadata, "path">; body: string } {
+  const normalized = content.replaceAll("\r\n", "\n")
+  if (!normalized.startsWith("---\n")) throw new SkillError("MALFORMED_FRONTMATTER", `Skill frontmatter is missing: ${path}`)
+  const end = normalized.indexOf("\n---\n", 4)
+  if (end < 0) throw new SkillError("MALFORMED_FRONTMATTER", `Skill frontmatter is not terminated: ${path}`)
+  const values = new Map<string, string>()
+  for (const line of normalized.slice(4, end).split("\n")) {
+    const match = /^([A-Za-z][A-Za-z0-9_-]*):\s*(.+?)\s*$/.exec(line)
+    if (!match) throw new SkillError("MALFORMED_FRONTMATTER", `Unsupported Skill frontmatter line in ${path}`)
+    values.set(match[1]!, match[2]!.replace(/^(?:"(.*)"|'(.*)')$/, "$1$2"))
+  }
+  const name = values.get("name")?.trim()
+  const description = values.get("description")?.trim()
+  if (!name || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) throw new SkillError("INVALID_METADATA", `Skill name is invalid: ${path}`)
+  if (!description) throw new SkillError("INVALID_METADATA", `Skill description is required: ${path}`)
+  return { metadata: { name, description }, body: normalized.slice(end + 5).trim() }
+}
+
+export async function discoverSkills(
+  workspaceRoot: string,
+  options: { readonly reader?: SkillFileReader; readonly maxMetadataBytes?: number } = {},
+): Promise<SkillMetadata[]> {
+  const reader = options.reader ?? nodeSkillFileReader
+  const maxMetadataBytes = options.maxMetadataBytes ?? 8 * 1024
+  let skillsRoot: string
+  try {
+    skillsRoot = await resolveRepositoryPath(workspaceRoot, join(".agents", "skills"), "directory")
+  } catch (error) {
+    if (error instanceof RepositoryPathError && error.code === "NOT_FOUND") return []
+    throw error
+  }
+  const directories = (await readdir(skillsRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .toSorted((left, right) => left.name.localeCompare(right.name))
+  const discovered: SkillMetadata[] = []
+  const names = new Set<string>()
+  for (const directory of directories) {
+    const relativePath = join(".agents", "skills", directory.name, "SKILL.md")
+    let path: string
+    try {
+      path = await resolveRepositoryPath(workspaceRoot, relativePath, "file")
+    } catch (error) {
+      if (error instanceof RepositoryPathError && error.code === "NOT_FOUND") throw new SkillError("MISSING_FILE", `Skill file is missing: ${relativePath}`, { cause: error })
+      throw error
+    }
+    const prefix = await reader.readFrontmatter(path, maxMetadataBytes)
+    const { metadata } = parseSkillDocument(prefix, relativePath)
+    if (names.has(metadata.name)) throw new SkillError("DUPLICATE_NAME", `Duplicate Skill name: ${metadata.name}`)
+    names.add(metadata.name)
+    discovered.push({ ...metadata, path: relative(workspaceRoot, path) })
+  }
+  return discovered.toSorted((left, right) => left.name.localeCompare(right.name))
+}
+
+export function getSkillMetadata(skills: readonly SkillMetadata[], name: string): SkillMetadata {
+  const skill = skills.find((candidate) => candidate.name === name)
+  if (!skill) throw new SkillError("SKILL_NOT_FOUND", `Skill not found: ${name}`)
+  return skill
+}
+
+export async function loadSkill(
+  workspaceRoot: string,
+  metadata: SkillMetadata,
+  options: { readonly reader?: SkillFileReader; readonly maxBytes?: number } = {},
+): Promise<LoadedSkill> {
+  const reader = options.reader ?? nodeSkillFileReader
+  const maxBytes = options.maxBytes ?? 64 * 1024
+  const path = await resolveRepositoryPath(workspaceRoot, metadata.path, "file")
+  if ((await stat(path)).size > maxBytes) throw new SkillError("TOO_LARGE", `Skill exceeds ${maxBytes} bytes: ${metadata.name}`)
+  const parsed = parseSkillDocument(await reader.readText(path), metadata.path)
+  if (parsed.metadata.name !== metadata.name || parsed.metadata.description !== metadata.description) {
+    throw new SkillError("INVALID_METADATA", `Skill metadata changed before loading: ${metadata.name}`)
+  }
+  return { ...metadata, body: parsed.body }
+}
+
+export function matchSkills(skills: readonly SkillMetadata[], query: string): SkillMetadata[] {
+  const terms = query.toLocaleLowerCase().split(/\W+/).filter((term) => term.length > 2)
+  return skills
+    .filter((skill) => terms.some((term) => `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(term)))
+    .toSorted((left, right) => left.name.localeCompare(right.name))
+}

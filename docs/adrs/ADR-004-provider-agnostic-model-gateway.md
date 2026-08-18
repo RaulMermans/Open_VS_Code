@@ -1,6 +1,6 @@
 # ADR-004: Provider-agnostic model gateway
 
-**Status:** Provisional
+**Status:** Accepted
 
 ## Context
 
@@ -28,4 +28,3 @@ The gateway permits Ollama, llama.cpp, vLLM, LM Studio, and local OpenAI-compati
 ## Revisit triggers
 
 A stable external protocol fully covers required semantics, or lowest-common-denominator abstraction blocks critical local-model behavior.
-

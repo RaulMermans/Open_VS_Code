@@ -1,6 +1,6 @@
 # ADR-003: Editor-independent agent core
 
-**Status:** Provisional
+**Status:** Accepted
 
 ## Context
 
@@ -28,4 +28,3 @@ Dependency inversion improves portability, testability, and the option to reuse 
 ## Revisit triggers
 
 Evidence shows the abstraction cost outweighs credible non-VS-Code use cases, with no loss of testability.
-

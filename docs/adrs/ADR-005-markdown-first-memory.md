@@ -1,6 +1,6 @@
 # ADR-005: Markdown-first project memory
 
-**Status:** Provisional
+**Status:** Accepted
 
 ## Context
 
@@ -29,4 +29,3 @@ Markdown works with Git, humans, local tools, and models while avoiding early da
 ## Revisit triggers
 
 Repository scale or query requirements cannot be met through Markdown plus derived indexes.
-

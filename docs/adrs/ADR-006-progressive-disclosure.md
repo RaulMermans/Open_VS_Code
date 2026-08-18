@@ -1,6 +1,6 @@
 # ADR-006: Progressive disclosure and token budgeting
 
-**Status:** Provisional
+**Status:** Accepted
 
 ## Context
 
@@ -29,4 +29,3 @@ Progressive disclosure preserves room for reasoning and output while making loca
 ## Revisit triggers
 
 Measured tasks show targeted retrieval consistently omits necessary context, or new model/runtime constraints materially change the trade-off.
-
