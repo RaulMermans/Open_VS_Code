@@ -14,17 +14,24 @@ const TERMINAL_STATES = new Set<AgentStatus>(["COMPLETED", "FAILED", "CANCELLED"
 
 const TRANSITIONS: Readonly<Record<AgentEventType, ReadonlySet<AgentStatus>>> = {
   "task.started": new Set(["IDLE"]),
-  "context.compiled": new Set(["PREPARING"]),
+  "context.compiled": new Set(["PREPARING", "OBSERVING"]),
   "model.requested": new Set(["PREPARING", "PLANNING", "OBSERVING"]),
   "model.completed": new Set(["WAITING_FOR_MODEL"]),
   "model.failed": new Set(["WAITING_FOR_MODEL"]),
   "tool.requested": new Set(["OBSERVING"]),
   "tool.completed": new Set(["WAITING_FOR_TOOL"]),
   "tool.failed": new Set(["WAITING_FOR_TOOL"]),
+  "tool.rejected": new Set(["OBSERVING"]),
+  "permission.requested": new Set(["OBSERVING"]),
+  "permission.approved": new Set(["WAITING_FOR_CONFIRMATION"]),
+  "permission.rejected": new Set(["WAITING_FOR_CONFIRMATION"]),
+  "permission.denied": new Set(["OBSERVING"]),
   "verification.started": new Set(["PLANNING", "OBSERVING"]),
   "task.completed": new Set(["PLANNING", "OBSERVING", "VERIFYING"]),
-  "task.failed": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "OBSERVING", "VERIFYING"]),
-  "task.cancelled": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "OBSERVING", "VERIFYING"]),
+  "task.failed": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "task.cancelled": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "task.max_turns": new Set(["PLANNING", "OBSERVING"]),
+  "task.non_progress": new Set(["OBSERVING"]),
 }
 
 const NEXT_STATUS: Readonly<Record<AgentEventType, AgentStatus>> = {
@@ -35,11 +42,18 @@ const NEXT_STATUS: Readonly<Record<AgentEventType, AgentStatus>> = {
   "model.failed": "FAILED",
   "tool.requested": "WAITING_FOR_TOOL",
   "tool.completed": "OBSERVING",
-  "tool.failed": "FAILED",
+  "tool.failed": "OBSERVING",
+  "tool.rejected": "OBSERVING",
+  "permission.requested": "WAITING_FOR_CONFIRMATION",
+  "permission.approved": "OBSERVING",
+  "permission.rejected": "OBSERVING",
+  "permission.denied": "OBSERVING",
   "verification.started": "VERIFYING",
   "task.completed": "COMPLETED",
   "task.failed": "FAILED",
   "task.cancelled": "CANCELLED",
+  "task.max_turns": "FAILED",
+  "task.non_progress": "FAILED",
 }
 
 export function initialAgentState(): AgentState {
@@ -69,7 +83,7 @@ export function applyAgentEvent(state: AgentState, event: AgentLifecycleEvent): 
   const task = event.type === "task.started" ? startedTask(event.payload) : state.task
   if (!task) throw new AgentTransitionError(`Event ${event.type} requires an active task`)
   if (event.type === "task.started" && task.id !== event.taskId) throw new AgentTransitionError("Started task ID does not match event task ID")
-  const error = event.type === "model.failed" || event.type === "tool.failed" || event.type === "task.failed"
+  const error = event.type === "model.failed" || event.type === "task.failed" || event.type === "task.max_turns" || event.type === "task.non_progress"
     ? errorMessage(event.payload) ?? "Agent task failed"
     : undefined
   return {

@@ -1,6 +1,7 @@
 import type { CompiledContext, ContextBudget, ContextItem } from "../contracts/context.ts"
 import { estimateTokens, fitContext } from "./budget.ts"
 import type { LoadedSkill } from "./skills.ts"
+import type { ToolObservation } from "../agent/observations.ts"
 
 export interface ProjectInstruction {
   readonly id: string
@@ -13,7 +14,23 @@ export interface ContextCompilerInput {
   readonly projectInstructions: readonly ProjectInstruction[]
   readonly selectedSkill?: LoadedSkill
   readonly codeContext?: readonly ContextItem[]
+  readonly observations?: readonly ToolObservation[]
+  readonly maxObservations?: number
   readonly budget: ContextBudget
+}
+
+function recentObservations(observations: readonly ToolObservation[], limit: number): ToolObservation[] {
+  if (!Number.isInteger(limit) || limit < 0) throw new TypeError("maxObservations must be a non-negative integer")
+  const selected: ToolObservation[] = []
+  const seen = new Set<string>()
+  for (let index = observations.length - 1; index >= 0 && selected.length < limit; index -= 1) {
+    const observation = observations[index]!
+    const key = `${observation.toolName}\0${observation.ok}\0${observation.content}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    selected.push(observation)
+  }
+  return selected
 }
 
 export function compileContext(input: ContextCompilerInput): CompiledContext {
@@ -45,5 +62,21 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       metadata: { name: input.selectedSkill.name, description: input.selectedSkill.description },
     })
   }
-  return fitContext([...required, ...(input.codeContext ?? [])], input.budget)
+  const observations = recentObservations(input.observations ?? [], input.maxObservations ?? 6).map((observation, index): ContextItem => ({
+    id: `observation:${observation.callId}`,
+    source: { kind: "observation", ...(observation.provenance.paths[0] ? { path: observation.provenance.paths[0] } : {}) },
+    content: observation.content,
+    priority: 100 - index,
+    estimatedTokens: estimateTokens(observation.content),
+    required: false,
+    metadata: {
+      toolName: observation.toolName,
+      callId: observation.callId,
+      ok: observation.ok,
+      truncated: observation.truncated,
+      paths: observation.provenance.paths,
+      ...(observation.errorCategory ? { errorCategory: observation.errorCategory } : {}),
+    },
+  }))
+  return fitContext([...required, ...(input.codeContext ?? []), ...observations], input.budget)
 }

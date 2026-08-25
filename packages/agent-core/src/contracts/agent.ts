@@ -1,7 +1,9 @@
 export const AGENT_MODES = ["ASK", "PLAN", "BUILD", "DEBUG", "REVIEW"] as const
 export type AgentMode = (typeof AGENT_MODES)[number]
 
-export type AgentStatus = "IDLE" | "PREPARING" | "PLANNING" | "WAITING_FOR_MODEL" | "WAITING_FOR_TOOL" | "OBSERVING" | "VERIFYING" | "COMPLETED" | "FAILED" | "CANCELLED"
+import type { ToolAction } from "./tools.ts"
+
+export type AgentStatus = "IDLE" | "PREPARING" | "PLANNING" | "WAITING_FOR_MODEL" | "WAITING_FOR_TOOL" | "WAITING_FOR_CONFIRMATION" | "OBSERVING" | "VERIFYING" | "COMPLETED" | "FAILED" | "CANCELLED"
 
 export interface AgentTask {
   readonly id: string
@@ -23,4 +25,47 @@ export interface AgentState {
   readonly task?: AgentTask
   readonly events: readonly AgentEvent[]
   readonly error?: string
+}
+
+export type AgentResultStatus = "COMPLETED" | "FAILED" | "CANCELLED" | "PAUSED"
+export type AgentFailureReason =
+  | "MODEL_ERROR"
+  | "CONTEXT_OVERFLOW"
+  | "MAX_TURNS_EXCEEDED"
+  | "NON_PROGRESS"
+  | "CANCELLED"
+  | "INTERNAL_ERROR"
+
+export interface AgentContextDiagnostic {
+  readonly turn: number
+  readonly totalEstimatedTokens: number
+  readonly omittedItemIds: readonly string[]
+}
+
+export type AgentToolCallOutcome = "COMPLETED" | "FAILED" | "REJECTED" | "DENIED"
+
+export interface AgentToolCallRecord {
+  readonly id: string
+  readonly name: string
+  readonly outcome: AgentToolCallOutcome
+  readonly truncated?: boolean
+}
+
+export interface AgentConfirmationRequest {
+  readonly callId: string
+  readonly toolName: string
+  readonly arguments: Readonly<Record<string, unknown>>
+  readonly action: ToolAction
+}
+
+export interface AgentResult {
+  readonly status: AgentResultStatus
+  readonly finalAnswer?: string
+  readonly failureReason?: AgentFailureReason
+  readonly turns: number
+  readonly finalState: AgentState
+  readonly events: readonly AgentEvent[]
+  readonly contextDiagnostics: readonly AgentContextDiagnostic[]
+  readonly toolCalls: readonly AgentToolCallRecord[]
+  readonly confirmation?: AgentConfirmationRequest
 }

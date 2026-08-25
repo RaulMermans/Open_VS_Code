@@ -35,7 +35,7 @@ test("runs a normal model, tool, and verification lifecycle immutably", () => {
   assert.equal(state.events[0]!.timestamp, "2026-08-18T12:00:00.000Z")
 })
 
-test("model and tool failures terminate the task", () => {
+test("model failures terminate while tool failures remain recoverable observations", () => {
   let modelState = applyAgentEvent(initialAgentState(), event("task.started", { task }))
   modelState = applyAgentEvent(modelState, event("model.requested"))
   modelState = applyAgentEvent(modelState, event("model.failed", { message: "model offline" }))
@@ -47,7 +47,7 @@ test("model and tool failures terminate the task", () => {
   toolState = applyAgentEvent(toolState, event("model.completed"))
   toolState = applyAgentEvent(toolState, event("tool.requested"))
   toolState = applyAgentEvent(toolState, event("tool.failed", { message: "read failed" }))
-  assert.equal(toolState.status, "FAILED")
+  assert.equal(toolState.status, "OBSERVING")
 })
 
 test("cancellation terminates an active task", () => {

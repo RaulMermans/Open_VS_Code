@@ -4,6 +4,7 @@ import test from "node:test"
 import { calculateBudget } from "../../src/context/budget.ts"
 import { compileContext } from "../../src/context/compiler.ts"
 import type { LoadedSkill } from "../../src/context/skills.ts"
+import type { ToolObservation } from "../../src/agent/observations.ts"
 
 const skill: LoadedSkill = {
   name: "safe-read",
@@ -59,4 +60,23 @@ test("fails instead of truncating required project context", () => {
     projectInstructions: [{ id: "rules", path: "AGENTS.md", content: "x".repeat(100) }],
     budget: calculateBudget({ contextWindow: 5, reservedOutput: 0, reservedToolHistory: 0 }),
   }), { code: "REQUIRED_CONTEXT_OVERFLOW" })
+})
+
+test("keeps recent unique observations and deterministically drops stale duplicates", () => {
+  const observations: ToolObservation[] = [
+    { toolName: "read_file", callId: "old", ok: true, content: "old", truncated: false, provenance: { kind: "tool", paths: ["old.ts"] } },
+    { toolName: "read_file", callId: "duplicate", ok: true, content: "same", truncated: false, provenance: { kind: "tool", paths: ["same.ts"] } },
+    { toolName: "read_file", callId: "duplicate-new", ok: true, content: "same", truncated: false, provenance: { kind: "tool", paths: ["same.ts"] } },
+    { toolName: "search_text", callId: "new", ok: true, content: "new", truncated: false, provenance: { kind: "tool", paths: ["new.ts"] } },
+  ]
+  const result = compileContext({
+    task: "Answer",
+    projectInstructions: [],
+    observations,
+    maxObservations: 2,
+    budget: calculateBudget({ contextWindow: 30, reservedOutput: 0, reservedToolHistory: 0 }),
+  })
+
+  assert.deepEqual(result.items.map((item) => item.id), ["current-task", "observation:new", "observation:duplicate-new"])
+  assert.equal(result.items[1]!.source.path, "new.ts")
 })

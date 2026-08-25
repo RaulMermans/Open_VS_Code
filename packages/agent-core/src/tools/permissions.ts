@@ -1,21 +1,7 @@
 import type { AgentMode } from "../contracts/agent.ts"
-import type { ToolPermission } from "../contracts/tools.ts"
+import type { ToolAction, ToolPermission } from "../contracts/tools.ts"
 
-export type ActionCategory =
-  | "read_repository"
-  | "search_repository"
-  | "read_markdown"
-  | "write_file"
-  | "delete_file"
-  | "run_known_test"
-  | "terminal_command"
-  | "git_commit"
-  | "git_push"
-  | "deploy"
-  | "repository_escape"
-  | "system_configuration"
-  | "destructive_disk"
-  | "unknown"
+export type ActionCategory = ToolAction
 
 const HARD_DENIES = new Set<ActionCategory>(["repository_escape", "system_configuration", "destructive_disk", "unknown"])
 

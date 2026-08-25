@@ -9,10 +9,17 @@ export const AGENT_EVENT_TYPES = [
   "tool.requested",
   "tool.completed",
   "tool.failed",
+  "tool.rejected",
+  "permission.requested",
+  "permission.approved",
+  "permission.rejected",
+  "permission.denied",
   "verification.started",
   "task.completed",
   "task.failed",
   "task.cancelled",
+  "task.max_turns",
+  "task.non_progress",
 ] as const
 
 export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number]

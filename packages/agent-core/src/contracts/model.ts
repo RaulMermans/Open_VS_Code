@@ -1,3 +1,5 @@
+import type { ToolCall } from "./tools.ts"
+
 export type ModelCapability = "chat" | "reasoning" | "tools" | "fim" | "embeddings" | "streaming"
 
 export type ModelRole = "system" | "user" | "assistant" | "tool"
@@ -26,6 +28,7 @@ export interface ModelResponse {
     readonly outputTokens?: number
   }
   readonly metadata?: Readonly<Record<string, unknown>>
+  readonly toolCalls?: readonly ToolCall[]
 }
 
 export interface ModelProvider {

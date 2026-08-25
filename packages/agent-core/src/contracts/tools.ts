@@ -1,16 +1,32 @@
 export type ToolPermission = "ALLOW" | "CONFIRM" | "DENY"
 
+export type ToolAction =
+  | "read_repository"
+  | "search_repository"
+  | "read_markdown"
+  | "write_file"
+  | "delete_file"
+  | "run_known_test"
+  | "terminal_command"
+  | "git_commit"
+  | "git_push"
+  | "deploy"
+  | "repository_escape"
+  | "system_configuration"
+  | "destructive_disk"
+  | "unknown"
+
 export interface ToolDefinition {
   readonly name: string
   readonly description: string
   readonly inputSchema: Readonly<Record<string, unknown>>
-  readonly permission: ToolPermission
+  readonly action: ToolAction
 }
 
 export interface ToolCall {
   readonly id: string
   readonly name: string
-  readonly arguments: Readonly<Record<string, unknown>>
+  readonly arguments: unknown
 }
 
 export interface ToolResult {

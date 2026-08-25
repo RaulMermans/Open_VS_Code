@@ -5,7 +5,7 @@ import { AGENT_MODES, type AgentTask } from "../../src/contracts/agent.ts"
 import type { ContextItem } from "../../src/contracts/context.ts"
 import type { EditorAdapter } from "../../src/contracts/editor.ts"
 import type { ModelCapability, ModelProvider } from "../../src/contracts/model.ts"
-import type { ToolDefinition, ToolPermission } from "../../src/contracts/tools.ts"
+import type { ToolDefinition } from "../../src/contracts/tools.ts"
 
 test("agent modes expose the five initial workflows", () => {
   assert.deepEqual(AGENT_MODES, ["ASK", "PLAN", "BUILD", "DEBUG", "REVIEW"])
@@ -30,13 +30,13 @@ test("contracts represent capabilities without vendor or editor coupling", () =>
     name: "read_file",
     description: "Read one repository file",
     inputSchema: { type: "object" },
-    permission: "ALLOW" satisfies ToolPermission,
+    action: "read_repository",
   }
   const task: AgentTask = { id: "t-011", mode: "BUILD", instruction: item.content }
   const editor: EditorAdapter = { getActiveFile: async () => undefined }
 
   assert.equal(provider.capabilities.has("fim"), true)
-  assert.equal(tool.permission, "ALLOW")
+  assert.equal(tool.action, "read_repository")
   assert.equal(task.mode, "BUILD")
   assert.equal(typeof editor.getActiveFile, "function")
 })

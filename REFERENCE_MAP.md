@@ -15,3 +15,9 @@ Revisions and paths below reflect the 2026-08-18 Sprint 1 audit. Reinspect befor
 | [awesome-vibe-coding](https://github.com/filipecalegario/awesome-vibe-coding) | Standing ecosystem discovery source | CC0-1.0 | Active snapshot `59d5028` (2026-04-15) | `README.md` | REFERENCE_ONLY | Consult during every major reuse investigation; entries still require independent audit. |
 
 Detailed evidence: `docs/research/kilo-audit.md` and `docs/research/secondary-audit.md`.
+
+## Sprint 1D component decision
+
+| Component | Classification | Evidence | Rationale | License impact |
+| --- | --- | --- | --- | --- |
+| Kilo/OpenCode tool definition, registry, validation, and truncation boundaries | REFERENCE_ONLY | Imported revision `91a337e`; `packages/opencode/src/tool/tool.ts`, `packages/opencode/src/tool/registry.ts` | The boundary pattern is useful, but the implementation is coupled to Effect, agents, plugins, MCP, network tools, shell/write tools, instance state, and host flags. A dependency-free registry over the existing four safe tools is smaller and preserves `agent-core` invariants. | No code copied; no additional attribution or dependency obligation. |
