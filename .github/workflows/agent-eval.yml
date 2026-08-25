@@ -41,10 +41,9 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Install Tooling Dependencies
+      - name: Install Agent Core Tooling
         shell: bash
-        run: |
-          npm install -g oxlint typescript @types/node
+        run: npm install --prefix packages/agent-core --no-package-lock @types/node@^24 oxlint@^1.60.0 typescript@^5.8.2
 
       - name: Install Ollama
         shell: bash

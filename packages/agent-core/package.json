@@ -10,5 +10,10 @@
     "typecheck": "node ../../node_modules/.bun/typescript@5.8.2/node_modules/typescript/bin/tsc --noEmit 2>/dev/null || tsc --noEmit",
     "lint": "npx oxlint -c .oxlintrc.json --deny-warnings src tests 2>/dev/null || oxlint -c .oxlintrc.json --deny-warnings src tests",
     "build": "node ../../node_modules/.bun/typescript@5.8.2/node_modules/typescript/bin/tsc --noEmit 2>/dev/null || tsc --noEmit"
+  },
+  "dependencies": {
+    "@types/node": "^26.3.0",
+    "oxlint": "^1.80.0",
+    "typescript": "^7.0.2"
   }
 }
