@@ -40,19 +40,21 @@ jobs:
 
       - name: Install Agent Core Tooling
         shell: bash
-        run: npm install --prefix packages/agent-core --no-package-lock @types/node@^24 oxlint@^1.60.0 typescript@^5.8.2
+        run: |
+          npm install --prefix packages/agent-core --no-package-lock @types/node@^24 oxlint@^1.60.0 typescript@^5.8.2
+          echo "${GITHUB_WORKSPACE}/packages/agent-core/node_modules/.bin" >> $GITHUB_PATH
 
       - name: Typecheck Agent Core
         shell: bash
         run: |
           cd packages/agent-core
-          npx tsc --noEmit
+          tsc --noEmit
 
       - name: Lint Agent Core
         shell: bash
         run: |
           cd packages/agent-core
-          npx oxlint -c .oxlintrc.json --deny-warnings src tests
+          oxlint -c .oxlintrc.json --deny-warnings src tests
 
       - name: Run Deterministic Unit Tests (90 Tests)
         shell: bash

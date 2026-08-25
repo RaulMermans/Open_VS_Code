@@ -43,7 +43,9 @@ jobs:
 
       - name: Install Agent Core Tooling
         shell: bash
-        run: npm install --prefix packages/agent-core --no-package-lock @types/node@^24 oxlint@^1.60.0 typescript@^5.8.2
+        run: |
+          npm install --prefix packages/agent-core --no-package-lock @types/node@^24 oxlint@^1.60.0 typescript@^5.8.2
+          echo "${GITHUB_WORKSPACE}/packages/agent-core/node_modules/.bin" >> $GITHUB_PATH
 
       - name: Install Ollama
         shell: bash
@@ -104,7 +106,7 @@ jobs:
       - name: Upload Evaluation Result Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: model-eval-results-${{ inputs.model || 'qwen2.5-coder-7b' }}
+          name: model-eval-results-${{ inputs.model || 'qwen2.5-coder:7b' }}
           path: |
             packages/agent-core/evals/results/*.json
             packages/agent-core/evals/results/*.md
