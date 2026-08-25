@@ -41,8 +41,10 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Setup Bun & Install Dependencies
-        uses: ./.github/actions/setup-bun
+      - name: Install Tooling Dependencies
+        shell: bash
+        run: |
+          npm install -g oxlint typescript @types/node
 
       - name: Install Ollama
         shell: bash
@@ -76,12 +78,14 @@ jobs:
       - name: Run Real Model Smoke Tests
         shell: bash
         run: |
-          bun --cwd packages/agent-core run tests/evals/real-model-smoke.ts
+          cd packages/agent-core
+          node tests/evals/real-model-smoke.ts
 
       - name: Run Full 24-Task Read-Only Benchmark & Context Evaluation
         shell: bash
         run: |
-          bun --cwd packages/agent-core run tests/evals/run-benchmark-cli.ts
+          cd packages/agent-core
+          node tests/evals/run-benchmark-cli.ts
 
       - name: Publish Evaluation Summary to GitHub Step Summary
         shell: bash

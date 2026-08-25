@@ -7,18 +7,12 @@ on:
     paths:
       - 'packages/agent-core/**'
       - '.github/workflows/agent-core-ci.yml'
-      - '.github/actions/setup-bun/**'
-      - 'bun.lock'
-      - 'package.json'
   pull_request:
     branches:
       - main
     paths:
       - 'packages/agent-core/**'
       - '.github/workflows/agent-core-ci.yml'
-      - '.github/actions/setup-bun/**'
-      - 'bun.lock'
-      - 'package.json'
   workflow_dispatch:
 
 concurrency:
@@ -44,20 +38,28 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Setup Bun & Install Dependencies
-        uses: ./.github/actions/setup-bun
+      - name: Install Tooling Dependencies
+        shell: bash
+        run: |
+          npm install -g oxlint typescript @types/node
 
       - name: Typecheck Agent Core
         shell: bash
-        run: bun --cwd packages/agent-core run typecheck
+        run: |
+          cd packages/agent-core
+          tsc --noEmit
 
       - name: Lint Agent Core
         shell: bash
-        run: bun --cwd packages/agent-core run lint
+        run: |
+          cd packages/agent-core
+          oxlint -c .oxlintrc.json --deny-warnings src tests
 
       - name: Run Deterministic Unit Tests (90 Tests)
         shell: bash
-        run: bun --cwd packages/agent-core run test
+        run: |
+          cd packages/agent-core
+          node --test --test-isolation=none "tests/**/*.test.ts"
 
       - name: Verify Git Diff & Clean Tree
         shell: bash
