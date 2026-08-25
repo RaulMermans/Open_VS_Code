@@ -1,0 +1,66 @@
+import test from "node:test"
+import assert from "node:assert/strict"
+import fs from "node:fs/promises"
+import path from "node:path"
+
+const FORBIDDEN_IMPORT_PATTERNS = [
+  /@kilocode\//,
+  /^['"]vscode['"]$/,
+  /@anthropic-ai\//,
+  /@google\/genai/,
+  /@aws-sdk\//,
+  /@azure\//,
+  /['"]openai['"]/, // Match npm package "openai", not local "./openai-compatible.ts"
+  /['"]node:child_process['"]|['"]child_process['"]/,
+]
+
+async function getFilesRecursively(dir: string): Promise<string[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true })
+  const files: string[] = []
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git") continue
+      files.push(...(await getFilesRecursively(fullPath)))
+    } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".js"))) {
+      files.push(fullPath)
+    }
+  }
+  return files
+}
+
+test("agent-core codebase maintains strict zero-baggage architectural boundary", async () => {
+  const srcDir = path.resolve(process.cwd(), "src")
+  const srcFiles = await getFilesRecursively(srcDir)
+
+  for (const filePath of srcFiles) {
+    const content = await fs.readFile(filePath, "utf-8")
+    const lines = content.split("\n")
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!
+      if (!line.includes("import") && !line.includes("require")) continue
+
+      for (const pattern of FORBIDDEN_IMPORT_PATTERNS) {
+        assert.equal(
+          pattern.test(line),
+          false,
+          `Forbidden import matching ${pattern} found in ${path.relative(process.cwd(), filePath)}:${i + 1} -> ${line}`,
+        )
+      }
+    }
+  }
+})
+
+test("agent-core exports only public contracts and decoupled modules", async () => {
+  const index = await import("../src/index.ts")
+
+  assert.ok(index.AgentRunner)
+  assert.ok(index.ScriptedModelProvider)
+  assert.ok(index.OpenAICompatibleProvider)
+  assert.ok(index.normalizeWireResponse)
+  assert.ok(index.probeBackend)
+  assert.ok(index.createReadOnlyToolRegistry)
+  assert.ok(index.compileContext)
+  assert.ok(index.calculateBudget)
+})

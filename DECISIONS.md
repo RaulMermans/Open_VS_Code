@@ -9,6 +9,7 @@
 | [ADR-005](docs/adrs/ADR-005-markdown-first-memory.md) | Markdown-first project memory | Accepted |
 | [ADR-006](docs/adrs/ADR-006-progressive-disclosure.md) | Progressive disclosure and token budgeting | Accepted |
 | [ADR-007](docs/adrs/ADR-007-local-model-normalization.md) | Local open-weight model normalization and gateway | Accepted |
+| [ADR-008](docs/adrs/ADR-008-ci-and-evaluation-strategy.md) | Two-tiered CI and open-weight model evaluation strategy | Accepted |
 
 Decision status changes belong in the ADR and this index.
 
