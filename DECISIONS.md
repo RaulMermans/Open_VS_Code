@@ -8,6 +8,7 @@
 | [ADR-004](docs/adrs/ADR-004-provider-agnostic-model-gateway.md) | Provider-agnostic model gateway | Accepted |
 | [ADR-005](docs/adrs/ADR-005-markdown-first-memory.md) | Markdown-first project memory | Accepted |
 | [ADR-006](docs/adrs/ADR-006-progressive-disclosure.md) | Progressive disclosure and token budgeting | Accepted |
+| [ADR-007](docs/adrs/ADR-007-local-model-normalization.md) | Local open-weight model normalization and gateway | Accepted |
 
 Decision status changes belong in the ADR and this index.
 

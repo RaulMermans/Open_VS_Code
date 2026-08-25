@@ -6,8 +6,9 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test --test-isolation=none \"tests/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit",
-    "lint": "node ../../node_modules/oxlint/bin/oxlint -c .oxlintrc.json --deny-warnings src tests",
-    "build": "tsc --noEmit"
+    "eval:model": "node tests/evals/run-benchmark-cli.ts",
+    "typecheck": "node ../../node_modules/.bun/typescript@5.8.2/node_modules/typescript/bin/tsc --noEmit",
+    "lint": "npx oxlint -c .oxlintrc.json --deny-warnings src tests",
+    "build": "node ../../node_modules/.bun/typescript@5.8.2/node_modules/typescript/bin/tsc --noEmit"
   }
 }

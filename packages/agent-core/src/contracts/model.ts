@@ -1,6 +1,15 @@
-import type { ToolCall } from "./tools.ts"
+import type { ToolCall, ToolDefinition } from "./tools.ts"
 
-export type ModelCapability = "chat" | "reasoning" | "tools" | "fim" | "embeddings" | "streaming"
+export type ModelCapability =
+  | "chat"
+  | "reasoning"
+  | "tools"
+  | "fim"
+  | "embeddings"
+  | "streaming"
+  | "parallel_tool_calls"
+  | "context_window"
+  | "usage_reporting"
 
 export type ModelRole = "system" | "user" | "assistant" | "tool"
 
@@ -16,6 +25,7 @@ export interface ModelRequest {
   readonly temperature?: number
   readonly maxOutputTokens?: number
   readonly signal?: AbortSignal
+  readonly tools?: readonly ToolDefinition[]
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 
@@ -29,6 +39,7 @@ export interface ModelResponse {
   }
   readonly metadata?: Readonly<Record<string, unknown>>
   readonly toolCalls?: readonly ToolCall[]
+  readonly contextWindow?: number | undefined
 }
 
 export interface ModelProvider {

@@ -201,6 +201,7 @@ export class AgentRunner {
       const request: ModelRequest = {
         messages: [{ role: "user", content: renderContext(compiled) }],
         ...(session.input.signal ? { signal: session.input.signal } : {}),
+        tools,
         metadata: { turn, tools },
       }
       this.#emit("model.requested", { turn })

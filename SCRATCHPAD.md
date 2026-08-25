@@ -1,10 +1,31 @@
 # Scratchpad
 
-- Current state: Sprint 1D implementation and verification are complete for the deterministic, read-only `AgentRunner`.
-- Implemented: scripted provider, strict registry for the four existing read-only tools, bounded observations, recent-observation context recompilation, integrated permissions with resumable confirmation, turn/non-progress guards, cancellation, deterministic events, compact results, and three grounded fixture scenarios.
-- Verification: 69 tests pass; package typecheck, lint, build, `git diff --check`, postponed-coupling search, and generated-artifact audit pass.
-- Tooling note: ordinary shell `PATH` still lacks Node; verification uses the bundled Node 24 runtime. The package itself uses standard Node scripts and adds no dependencies.
-- Reuse note: Kilo's registry pattern was `REFERENCE_ONLY`; no host/framework code or dependency was copied.
-- Boundary: Kilo/editor/real-model integration and every mutation, terminal, Git, MCP, cloud, or multi-agent capability remain deferred.
-- Documented limitations: one active task per runner instance; confirmations and traces are in-memory only; approximate token estimation remains; the generic OpenAI-compatible adapter does not yet normalize a real backend's tool-call wire format; no streaming, persistence, replay engine, or interactive confirmation UI exists.
-- Next sprint: Sprint 1E — Real Local Model Connection; do not start it during Sprint 1D.
+- Current state: Sprint 1E implementation, protocol hardening, real local open-weight model integration (`qwen2.5-coder:7b` via Ollama on Apple Silicon M3 Pro), and quantitative benchmark evaluation are complete.
+- Implemented:
+  - Protocol normalization layer (`normalizeWireResponse`, `formatWireTools`, `formatWireMessages`) supporting single/multi tool calls, structured/string arguments, content-embedded JSON tool calls (`<tool_call>`, markdown code fences, raw JSON), synthetic call IDs, and legacy function calls.
+  - Backend capability discovery and diagnostic probe (`probeBackend`) for health, model availability, tool calling, and usage reporting.
+  - 18 protocol fixtures and unit test suite.
+  - 4 real-model smoke tests (chat, tool comprehension, argument validity, multi-turn observation continuation).
+  - 24-task read-only evaluation dataset across 10 categories with dev/held-out splits and automated repository grounding validation.
+  - Benchmark evaluation harness and context window scaling evaluation (2k vs 8k vs 32k).
+  - Local model card `docs/models/qwen2.5-coder-7b.md` and ADR-007 (`docs/adrs/ADR-007-local-model-normalization.md`).
+- Verification:
+  - 88 unit tests pass deterministically in ~300ms.
+  - Typecheck (`tsc --noEmit`) passes with zero errors under `exactOptionalPropertyTypes`.
+  - Lint (`oxlint --deny-warnings`) passes with zero warnings.
+  - Build passes cleanly.
+  - `git diff --check` clean.
+- Quantitative Benchmark Summary:
+  - Model: `qwen2.5-coder:7b` (Q4_K_M, 4.7GB, Apache 2.0)
+  - Tasks Passed: 9/24 (37.5% full suite; 35% dev split, 50% held-out split)
+  - Tool Syntax Validity: 90.9% (40/44 calls)
+  - Correct Tool Selection: 79.2% (19/24 tasks)
+  - Argument Payload Validity: 90.9% (40/44 calls)
+  - Grounded Answer Rate: 37.5% (9/24 tasks)
+  - Non-Progress Failure Rate: 4.2% (1/24 tasks)
+  - Average Latency: ~6.1s per full task (~1.8s per turn)
+- Boundaries preserved:
+  - Zero editor or Kilo coupling.
+  - Zero write tools, terminal execution, or git mutation.
+  - Zero cloud dependency, zero paid APIs, zero proprietary model dependencies.
+- Next milestone: Sprint 1F — Controlled Workspace Mutation (safe file writing, diff verification, backups, reversible edits).
