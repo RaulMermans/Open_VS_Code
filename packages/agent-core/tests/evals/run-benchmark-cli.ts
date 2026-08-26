@@ -3,10 +3,18 @@ import fs from "node:fs/promises"
 import { runFullBenchmark, formatBenchmarkMarkdownReport, type BenchmarkSummary } from "./benchmark-runner.ts"
 import { EVAL_CASES } from "./cases.ts"
 
+import { fileURLToPath } from "node:url"
+
 export interface ContextEvalComparison {
   readonly smallBudget2048: BenchmarkSummary
   readonly mediumBudget8192: BenchmarkSummary
   readonly largeBudget32768: BenchmarkSummary
+}
+
+export function getCanonicalEvalsDir(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url))
+  const repoRoot = path.resolve(currentDir, "../../../..")
+  return path.resolve(repoRoot, "evals/results")
 }
 
 async function ensureDir(dirPath: string): Promise<void> {
@@ -20,7 +28,7 @@ export async function main() {
   console.log(`Total Cases: ${EVAL_CASES.length}`);
   console.log("================================================");
 
-  const evalsDir = path.resolve(process.cwd(), "evals/results")
+  const evalsDir = getCanonicalEvalsDir()
   await ensureDir(evalsDir)
 
   // 1. Run full 24-task benchmark (baseline medium context 8192)

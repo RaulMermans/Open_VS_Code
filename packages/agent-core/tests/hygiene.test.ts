@@ -64,3 +64,19 @@ test("agent-core exports only public contracts and decoupled modules", async () 
   assert.ok(index.compileContext)
   assert.ok(index.calculateBudget)
 })
+
+test("benchmark results use single canonical root-level directory regardless of working directory", async () => {
+  const { getCanonicalEvalsDir } = await import("./evals/run-benchmark-cli.ts")
+  const canonicalDir = getCanonicalEvalsDir()
+
+  assert.ok(canonicalDir.endsWith(path.join("evals", "results")))
+  assert.ok(!canonicalDir.includes(path.join("packages", "agent-core", "evals")))
+
+  // Check that duplicate nested evals directory in packages/agent-core does not exist
+  const nestedEvals = path.resolve(process.cwd(), "evals")
+  const exists = await fs.stat(nestedEvals).then(() => true).catch(() => false)
+  // If cwd is packages/agent-core, nestedEvals is packages/agent-core/evals
+  if (process.cwd().endsWith("agent-core")) {
+    assert.equal(exists, false, "Nested packages/agent-core/evals directory must not exist")
+  }
+})
