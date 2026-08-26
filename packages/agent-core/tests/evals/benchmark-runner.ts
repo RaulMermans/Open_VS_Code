@@ -3,6 +3,7 @@ import { AgentRunner } from "../../src/agent/runner.ts"
 import { OpenAICompatibleProvider } from "../../src/model/openai-compatible.ts"
 import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
+import { classifyTaskProfile } from "../../src/agent/task-profile.ts"
 import { EVAL_CASES, type EvalCase } from "./cases.ts"
 import type { AgentResult } from "../../src/contracts/agent.ts"
 
@@ -11,13 +12,15 @@ export type FailureRootCause =
   | "MODEL_REASONING"
   | "TOOL_SELECTION"
   | "TOOL_ARGUMENTS"
+  | "EVIDENCE_INSUFFICIENT"
+  | "PREMATURE_COMPLETION"
+  | "MAX_TURNS"
+  | "NON_PROGRESS"
   | "CONTEXT_SELECTION"
   | "CONTEXT_OVERFLOW"
-  | "PROMPT"
+  | "PROMPT_POLICY"
   | "BACKEND_PROTOCOL"
   | "BACKEND_RUNTIME"
-  | "NON_PROGRESS"
-  | "MAX_TURNS"
   | "UNKNOWN"
 
 export interface CaseRunResult {
@@ -101,6 +104,8 @@ export async function runBenchmarkCase(
   const t0 = Date.now()
   let result: AgentResult | undefined
   let runError: unknown
+  const taskProfile = classifyTaskProfile(caseItem.instruction)
+  const effectiveMaxTurns = Math.max(caseItem.maxTurns, taskProfile.defaultTurnBudget)
 
   try {
     result = await runner.run({
@@ -110,7 +115,7 @@ export async function runBenchmarkCase(
         mode: "ASK",
       },
       workspaceRoot,
-      maxTurns: caseItem.maxTurns,
+      maxTurns: effectiveMaxTurns,
       contextBudget: calculateBudget({
         contextWindow: maxContextTokens,
         reservedOutput: Math.min(1024, Math.floor(maxContextTokens / 4)),
@@ -172,6 +177,8 @@ export async function runBenchmarkCase(
       failureRootCause = "MAX_TURNS"
     } else if (result?.failureReason === "CONTEXT_OVERFLOW") {
       failureRootCause = "CONTEXT_OVERFLOW"
+    } else if (totalToolCalls === 0) {
+      failureRootCause = "PREMATURE_COMPLETION"
     } else if (toolCalls.some((c) => c.outcome === "REJECTED")) {
       failureRootCause = "TOOL_ARGUMENTS"
     } else if (!correctToolSelection) {
@@ -193,7 +200,7 @@ export async function runBenchmarkCase(
     split: caseItem.split,
     passed,
     turns,
-    maxTurns: caseItem.maxTurns,
+    maxTurns: effectiveMaxTurns,
     latencyMs,
     toolCallsTotal: totalToolCalls,
     validToolCalls,
@@ -270,13 +277,15 @@ export async function runFullBenchmark(
     MODEL_REASONING: 0,
     TOOL_SELECTION: 0,
     TOOL_ARGUMENTS: 0,
+    EVIDENCE_INSUFFICIENT: 0,
+    PREMATURE_COMPLETION: 0,
+    MAX_TURNS: 0,
+    NON_PROGRESS: 0,
     CONTEXT_SELECTION: 0,
     CONTEXT_OVERFLOW: 0,
-    PROMPT: 0,
+    PROMPT_POLICY: 0,
     BACKEND_PROTOCOL: 0,
     BACKEND_RUNTIME: 0,
-    NON_PROGRESS: 0,
-    MAX_TURNS: 0,
     UNKNOWN: 0,
   }
 

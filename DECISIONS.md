@@ -11,6 +11,7 @@
 | [ADR-007](docs/adrs/ADR-007-local-model-normalization.md) | Local open-weight model normalization and gateway | Accepted |
 | [ADR-008](docs/adrs/ADR-008-ci-and-evaluation-strategy.md) | Two-tiered CI and open-weight model evaluation strategy | Accepted |
 | [ADR-009](docs/adrs/ADR-009-canonical-repository-independence.md) | Canonical repository independence from Kilo | Accepted |
+| [ADR-010](docs/adrs/ADR-010-evidence-driven-agent-orchestration.md) | Evidence-driven agent orchestration for open-weight models | Accepted |
 
 Decision status changes belong in the ADR and this index.
 

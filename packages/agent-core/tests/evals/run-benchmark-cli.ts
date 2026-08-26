@@ -22,32 +22,45 @@ async function ensureDir(dirPath: string): Promise<void> {
 }
 
 export async function main() {
+  const args = process.argv.slice(2)
+  const isDevOnly = args.includes("--dev")
+  const isHeldOutOnly = args.includes("--held-out")
+
+  const targetCases = isDevOnly
+    ? EVAL_CASES.filter((c) => c.split === "dev")
+    : isHeldOutOnly
+      ? EVAL_CASES.filter((c) => c.split === "held_out")
+      : EVAL_CASES
+
   console.log("=== Open VS Code / Local AI Agent Evaluation ===");
   console.log("Model: qwen2.5-coder:7b (Ollama local inference)");
   console.log("Hardware: Apple M3 Pro 18GB RAM");
-  console.log(`Total Cases: ${EVAL_CASES.length}`);
+  console.log(`Target Split: ${isDevOnly ? "dev (20 tasks)" : isHeldOutOnly ? "held_out (4 tasks)" : `full (${EVAL_CASES.length} tasks)`}`);
+  console.log(`Total Cases: ${targetCases.length}`);
   console.log("================================================");
 
   const evalsDir = getCanonicalEvalsDir()
   await ensureDir(evalsDir)
 
-  // 1. Run full 24-task benchmark (baseline medium context 8192)
-  console.log("\n[1/4] Running Full 24-Task Read-Only Benchmark (Context: 8192)...")
-  const fullSummary = await runFullBenchmark(EVAL_CASES, {
+  // 1. Run target benchmark (medium context 8192)
+  console.log(`\n[1/4] Running Benchmark (Context: 8192, Tasks: ${targetCases.length})...`)
+  const fullSummary = await runFullBenchmark(targetCases, {
     maxContextTokens: 8192,
     onProgress: (done, total, latest) => {
       const status = latest.passed ? "PASS" : "FAIL"
       const turns = `${latest.turns}/${latest.maxTurns}`
-      console.log(`  [${String(done).padStart(2)}/${total}] ${latest.caseId.padEnd(8)} ${latest.name.padEnd(30)} ${status.padEnd(5)} (${latest.latencyMs}ms, turns: ${turns})`);
+      console.log(`  [${String(done).padStart(2)}/${total}] ${latest.caseId.padEnd(8)} ${latest.name.padEnd(30)} ${status.padEnd(5)} (${latest.latencyMs}ms, turns: ${turns}, cause: ${latest.failureRootCause})`);
     },
   })
 
-  console.log(`\nFull Benchmark Results: ${fullSummary.tasksPassed}/${fullSummary.tasksAttempted} (${fullSummary.passRate.toFixed(1)}%)`);
-  console.log(`Dev Split: ${fullSummary.devPassRate.toFixed(1)}% | Held-Out Split: ${fullSummary.heldOutPassRate.toFixed(1)}%`);
+  console.log(`\nBenchmark Results: ${fullSummary.tasksPassed}/${fullSummary.tasksAttempted} (${fullSummary.passRate.toFixed(1)}%)`);
+  if (!isHeldOutOnly) console.log(`Dev Split: ${fullSummary.devPassRate.toFixed(1)}%`);
+  if (!isDevOnly) console.log(`Held-Out Split: ${fullSummary.heldOutPassRate.toFixed(1)}%`);
   console.log(`Tool Syntax Validity: ${fullSummary.toolSyntaxValidityRate.toFixed(1)}%`);
   console.log(`Correct Tool Selection: ${fullSummary.correctToolSelectionRate.toFixed(1)}%`);
   console.log(`Argument Payload Validity: ${fullSummary.argumentValidityRate.toFixed(1)}%`);
   console.log(`Grounded Answer Rate: ${fullSummary.groundedAnswerRate.toFixed(1)}%`);
+  console.log("Failure Breakdown:", fullSummary.failureBreakdown);
 
   // Write JSON and Markdown outputs
   const jsonPath = path.join(evalsDir, "qwen2.5-coder-7b-benchmark.json")

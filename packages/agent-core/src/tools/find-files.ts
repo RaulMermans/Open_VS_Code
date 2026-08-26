@@ -6,7 +6,7 @@ import { resolveRepositoryPath } from "./path-safety.ts"
 
 function globExpression(pattern: string): RegExp {
   const normalized = pattern.replaceAll("\\", "/")
-  let expression = "^"
+  let expression = ""
   for (let index = 0; index < normalized.length; index += 1) {
     const character = normalized[index]!
     if (character === "*" && normalized[index + 1] === "*") {
@@ -25,7 +25,10 @@ function globExpression(pattern: string): RegExp {
       expression += character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
     }
   }
-  return new RegExp(`${expression}$`)
+  if (!normalized.includes("/")) {
+    return new RegExp(`^(?:.*/)?${expression}$`)
+  }
+  return new RegExp(`^${expression}$`)
 }
 
 export async function findFiles(

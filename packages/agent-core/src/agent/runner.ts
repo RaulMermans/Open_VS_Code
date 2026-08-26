@@ -18,6 +18,8 @@ import { classifyPermission } from "../tools/permissions.ts"
 import { type PreparedToolCall, ToolRegistry, ToolRegistryError } from "../tools/registry.ts"
 import type { LoadedSkill } from "../context/skills.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
+import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
+import { EvidenceLedger } from "./evidence.ts"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
 
@@ -30,6 +32,7 @@ export interface AgentRunnerInput {
   readonly selectedSkill?: LoadedSkill
   readonly codeContext?: readonly ContextItem[]
   readonly signal?: AbortSignal
+  readonly taskProfile?: TaskProfile
 }
 
 export interface AgentRunnerDependencies {
@@ -41,6 +44,8 @@ export interface AgentRunnerDependencies {
   readonly contextCompiler?: (input: ContextCompilerInput) => CompiledContext
   readonly nonProgressThreshold?: number
   readonly observationMaxBytes?: number
+  readonly evidenceGate?: boolean
+  readonly maxContinuations?: number
 }
 
 interface PendingConfirmation {
@@ -50,8 +55,11 @@ interface PendingConfirmation {
 
 interface Session {
   readonly input: AgentRunnerInput
+  readonly taskProfile: TaskProfile
+  readonly evidenceLedger: EvidenceLedger
   state: AgentState
   turns: number
+  continuationAttempts: number
   observations: ToolObservation[]
   diagnostics: AgentContextDiagnostic[]
   toolCalls: AgentToolCallRecord[]
@@ -107,6 +115,8 @@ export class AgentRunner {
   readonly #contextCompiler: (input: ContextCompilerInput) => CompiledContext
   readonly #nonProgressThreshold: number
   readonly #observationMaxBytes: number
+  readonly #evidenceGate: boolean
+  readonly #maxContinuations: number
   #session?: Session
 
   constructor(dependencies: AgentRunnerDependencies) {
@@ -118,6 +128,8 @@ export class AgentRunner {
     this.#contextCompiler = dependencies.contextCompiler ?? compileContext
     this.#nonProgressThreshold = dependencies.nonProgressThreshold ?? 3
     this.#observationMaxBytes = dependencies.observationMaxBytes ?? 16 * 1024
+    this.#evidenceGate = dependencies.evidenceGate ?? true
+    this.#maxContinuations = dependencies.maxContinuations ?? 2
     if (!Number.isInteger(this.#nonProgressThreshold) || this.#nonProgressThreshold < 2) {
       throw new AgentRunnerError("INVALID_INPUT", "nonProgressThreshold must be an integer of at least 2")
     }
@@ -129,10 +141,14 @@ export class AgentRunner {
     }
     if (!Number.isInteger(input.maxTurns) || input.maxTurns <= 0) throw new AgentRunnerError("INVALID_INPUT", "maxTurns must be a positive integer")
     if (!input.workspaceRoot.trim()) throw new AgentRunnerError("INVALID_INPUT", "workspaceRoot must not be empty")
+    const taskProfile = input.taskProfile ?? classifyTaskProfile(input.task.instruction, input.task.mode)
     this.#session = {
       input,
+      taskProfile,
+      evidenceLedger: new EvidenceLedger(),
       state: initialAgentState(),
       turns: 0,
+      continuationAttempts: 0,
       observations: [],
       diagnostics: [],
       toolCalls: [],
@@ -176,11 +192,38 @@ export class AgentRunner {
         break
       }
 
+      const hasRealEvidence = session.evidenceLedger.totalObservations > 0
+      const isEvidenceSatisfied = hasRealEvidence && session.evidenceLedger.evaluate(
+        session.taskProfile.evidenceRequirements,
+        session.taskProfile.explicitFilePaths,
+      ).satisfied
+
+      const isTurnBudgetTight = session.turns >= session.input.maxTurns - 1
+
+      const dynamicBanner = isEvidenceSatisfied
+        ? "\n\n[STATUS: EVIDENCE READY]\nYou have gathered the necessary repository evidence. DO NOT call any more tools. Provide your final concise, grounded answer directly now."
+        : isTurnBudgetTight
+          ? "\n\n[TURN BUDGET WARNING]\nYou are approaching your turn limit. Provide your grounded answer now without calling any further tools."
+          : ""
+
+      const phaseInstruction = isEvidenceSatisfied
+        ? `Phase 2 - Answer: You have gathered sufficient repository evidence below. Analyze the observations and provide your final grounded answer directly now with exact names, strings, constants, and paths from the observations. Do not call any further tools.`
+        : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`
+
+      const guidanceInstruction: ProjectInstruction = {
+        id: "investigation-guidance",
+        path: "GUIDELINES.md",
+        content: `Operating Guidelines:
+- ${phaseInstruction}
+- Grounding: Always include the exact function names, literals, values, ports, and file paths found in the observations.
+- Completion: When you have sufficient evidence from the observations to answer, output your answer directly without calling more tools.${dynamicBanner}`,
+      }
+
       let compiled: CompiledContext
       try {
         compiled = this.#contextCompiler({
           task: session.input.task.instruction,
-          projectInstructions: session.input.projectInstructions,
+          projectInstructions: [guidanceInstruction, ...session.input.projectInstructions],
           ...(session.input.selectedSkill ? { selectedSkill: session.input.selectedSkill } : {}),
           ...(session.input.codeContext ? { codeContext: session.input.codeContext } : {}),
           observations: session.observations,
@@ -197,9 +240,23 @@ export class AgentRunner {
       session.diagnostics.push({ turn, totalEstimatedTokens: compiled.totalEstimatedTokens, omittedItemIds: compiled.omittedItemIds })
       this.#emit("context.compiled", { turn, estimatedTokens: compiled.totalEstimatedTokens, omittedCount: compiled.omittedItemIds.length })
 
-      const tools = this.#registry.listDefinitions().filter((definition) => this.#permission(definition.action) !== "DENY")
+      const allowedToolNames = new Set(session.taskProfile.allowedTools)
+      const isStandardToolsOnly = this.#registry
+        .listDefinitions()
+        .every((d) => ["read_file", "list_directory", "find_files", "search_text"].includes(d.name))
+
+      const tools = this.#registry
+        .listDefinitions()
+        .filter((definition) => !isStandardToolsOnly || allowedToolNames.has(definition.name))
+        .filter((definition) => this.#permission(definition.action) !== "DENY")
+
+      let promptContent = renderContext(compiled)
+      if (isStandardToolsOnly && (isEvidenceSatisfied || isTurnBudgetTight)) {
+        promptContent += "\n\n---\n**Instruction**: Repository evidence has been collected above. DO NOT emit any tool calls. Provide your final grounded answer directly now."
+      }
+
       const request: ModelRequest = {
-        messages: [{ role: "user", content: renderContext(compiled) }],
+        messages: [{ role: "user", content: promptContent }],
         ...(session.input.signal ? { signal: session.input.signal } : {}),
         tools,
         metadata: { turn, tools },
@@ -220,6 +277,24 @@ export class AgentRunner {
       const calls = response.toolCalls ?? []
       this.#emit("model.completed", { turn, toolCallCount: calls.length, hasAnswer: response.message.content.length > 0 })
       if (calls.length === 0) {
+        if (this.#evidenceGate) {
+          const evalResult = session.evidenceLedger.evaluate(
+            session.taskProfile.evidenceRequirements,
+            session.taskProfile.explicitFilePaths,
+          )
+          if (!evalResult.satisfied && session.continuationAttempts < this.#maxContinuations) {
+            session.continuationAttempts += 1
+            const gateMessage = `[EVIDENCE REQUIRED]\nYour response was provided before mandatory repository evidence was gathered. Do not guess.\nPlease continue your investigation by calling the appropriate tool(s):\n${evalResult.missing.map((m) => `- ${m.description}`).join("\n")}`
+            const gateObservation = createToolObservation({
+              toolName: "evidence_gate",
+              callId: `gate-${session.continuationAttempts}`,
+              error: { category: "EVIDENCE_INSUFFICIENT", message: gateMessage },
+              maxContentBytes: this.#observationMaxBytes,
+            })
+            session.observations.push(gateObservation)
+            continue
+          }
+        }
         session.finalAnswer = response.message.content
         this.#emit("task.completed", { turns: session.turns })
         break
@@ -272,6 +347,13 @@ export class AgentRunner {
       observation = createToolObservation({ toolName: prepared.name, callId: prepared.id, output, maxContentBytes: this.#observationMaxBytes })
       session.observations.push(observation)
       session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "COMPLETED", truncated: observation.truncated })
+      session.evidenceLedger.recordObservation(
+        prepared.name,
+        prepared.id,
+        prepared.arguments as Record<string, unknown>,
+        true,
+        output,
+      )
       this.#emit("tool.completed", { callId: prepared.id, name: prepared.name, truncated: observation.truncated })
     } catch (error) {
       if (isAbortError(error, session.input.signal)) {

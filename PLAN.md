@@ -1,32 +1,41 @@
-# Sprint 1F Plan — Canonical Repository Independence & Clean Toolchain
+# Sprint 1G Plan — Open-Weight Agent Reliability & Grounded Execution
 
 ## Current milestone
 
-Sprint 1F — Establish an independently buildable, clearly owned canonical repository containing exclusively our product and intentionally retained attribution/reference material, while preserving Kilo history and provenance safely in Git.
+Sprint 1G — Improve the read-only open-weight coding agent from the initial 37.5% grounded-completion baseline to $\ge 65\%$ (achieved **75.0%** overall, **100%** on held-out split) using Qwen2.5-Coder-7B via local Ollama without write tools, terminal execution, larger models, or proprietary fallbacks.
 
 ## Objective
 
-Separate the canonical working tree from imported Kilo monorepo baggage, transition from Bun/Turbo to a minimal reproducible Node 24 / npm toolchain, update root identity and documentation, eliminate upstream coupling, and prove standalone clean-install reproducibility.
+Make investigation disciplined, tool selection targeted, turn allocation smarter, and premature answers impossible—improving local open-weight model performance through evidence-driven orchestration while maintaining strict scope boundaries and repository hygiene.
 
 ## Task graph
 
 | ID | Task | Depends on | Acceptance criteria | Status |
 | --- | --- | --- | --- | --- |
-| T-058 | Pre-separation Checkpoint | Sprint 1E | Tag `baseline/pre-kilo-separation` created at commit `b1e3802bfb` preserving complete upstream history. | Complete |
-| T-059 | Ownership Inventory Audit | T-058 | `docs/research/repository-ownership-audit.md` classifies all 9,476 tracked files across 6 explicit ownership categories. | Complete |
-| T-060 | Independent Agent Toolchain | T-059 | Minimal Node 24 / npm workspace; removed `.bun` path coupling and Kilo package catalogs. | Complete |
-| T-061 | Root Project Identity | T-060 | Root `package.json` reflects `@open-vs-code` identity with standard test/typecheck/lint/build scripts. | Complete |
-| T-062 | Authoritative Project README | T-061 | Truthful `README.md` documenting architecture, current status, empirical benchmark baseline, and philosophy. | Complete |
-| T-063 | Upstream Attribution & Notices | T-059 | `THIRD_PARTY_NOTICES.md` and updated `REFERENCE_MAP.md` preserve legal attribution for Kilo, Cline, Continue. | Complete |
-| T-064 | Remove Upstream Kilo Packages | T-060, T-063 | All 35 unneeded upstream Kilo packages removed from `packages/*`, leaving only `packages/agent-core`. | Complete |
-| T-065 | Clean Upstream Configuration | T-064 | Removed obsolete `.kilo`, `.opencode`, `.changeset`, `.husky`, `script/`, `translations/`, `patches/`, `nix/`. | Complete |
-| T-066 | Minimal Multi-OS CI | T-060, T-065 | Clean `.github/workflows/ci.yml` matrix (Ubuntu, macOS, Windows on Node 22 & 24) running full verification. | Complete |
-| T-067 | Preserve Evaluation Evidence | T-064 | `evals/results/` benchmark data, model card, and harness preserved intact. | Complete |
-| T-068 | Stale Reference Audit | T-064..T-067 | `git grep -i "kilo"` verified: 0 production/runtime imports, matches only in attribution/ADRs/research. | Complete |
-| T-069 | Architecture Decision (ADR-009) | T-059..T-068 | `ADR-009-canonical-repository-independence.md` created and recorded in `DECISIONS.md`. | Complete |
-| T-070 | Clean-Install & Build Verification | T-060..T-069 | 90 deterministic unit tests pass, typecheck clean, lint clean, build clean, `package-lock.json` validated. | Complete |
-| T-071 | Final Sprint 1F Checkpoint | T-058..T-070 | Clean working tree checkpoint committed; tracked files reduced from 9,476 to ~144. | Complete |
+| T-070A | Duplicate Evals Cleanup | Sprint 1F | Single canonical `/evals/results` location; `run-benchmark-cli.ts` resolved via import.meta.url; regression test in hygiene suite. | Complete |
+| T-070B | CI Cloud Weights Prevention | T-070A | Deleted `.github/workflows/agent-eval.yml` to prevent unneeded heavy model downloads on CI compute while preserving deterministic CI. | Complete |
+| T-070C | Clean Preflight Checkpoint | T-070B | 91 deterministic tests passing, clean typecheck, lint, build. | Complete |
+| T-072 | Benchmark Freeze & Split Integrity | T-070C | Fixed 24-case corpus frozen into 20 Development / 4 Held-Out cases; evaluation runner supports split filtering (`--dev`, `--held-out`, `--all`). | Complete |
+| T-073 | Task Investigation Profiles | T-072 | Deterministic `TaskProfile` classifier (`task-profile.ts`) matching 10 task categories with tailored strategies and turn budgets. | Complete |
+| T-074 | Deterministic Tool-Selection Guidance | T-073 | Profile-specific tool narrowing (`allowedTools`) reducing schema confusion on 7B models. Correct Tool Selection: **95.8%**. | Complete |
+| T-075 | Evidence Requirements | T-073 | Explicit `EvidenceRequirement` models per task category. | Complete |
+| T-076 | Evidence Ledger | T-075 | Immutably tracks tool calls, observations, file reads, searches, directory listings, and requirement satisfaction (`evidence.ts`). | Complete |
+| T-077 | Premature-Answer Gate | T-076 | Rejects 0-tool completion when mandatory evidence is unsatisfied, injecting structured `[EVIDENCE REQUIRED]` feedback. Premature Completions: **0.0%**. | Complete |
+| T-078 | Evidence-Sufficient Completion Guidance | T-076 | Prompt suffix injected when evidence is satisfied, commanding immediate grounded completion without burning excess turns. | Complete |
+| T-079 | Adaptive Turn Budgets | T-073 | Profile-driven turn budgets (4–6 turns) preventing premature `MAX_TURNS` failures on complex multi-file tasks. | Complete |
+| T-080 | Tool Narrowing | T-074 | Open-weight model schema limited to top 3 relevant tools per task profile. | Complete |
+| T-081 | Context Ordering for OSS Models | T-078 | Recency-optimized prompt structure placing critical completion instructions at the prompt end. | Complete |
+| T-082 | Observation Compression | T-076 | Markdown-formatted observation content without JSON serialization overhead (`observations.ts`). | Complete |
+| T-083 | Bounded Recovery Policy | T-077 | Non-progress tracking with basename matching preventing repetitive tool loops. | Complete |
+| T-084 | Run Dev Benchmark Iterations | T-073..T-083 | Measured progressive improvement from 20.0% -> 45.0% -> 50.0% -> 55.0% -> 70.0% across 20 dev cases. | Complete |
+| T-085 | Dev Evaluation & Verification | T-084 | Dev split grounded pass rate achieved: **70.0%** (14/20 tasks). | Complete |
+| T-086 | Held-Out Benchmark Run | T-085 | Evaluated 4 held-out cases with zero prompt tuning/contamination: **100.0%** (4/4 tasks passed). | Complete |
+| T-087 | Failure Taxonomy v2 | T-086 | Documented 11 explicit failure categories in `FailureRootCause` and evaluated in benchmark runner. | Complete |
+| T-088 | Model Ceiling Determination | T-086 | Documented in model card: 7B limits for deep call graph tracking across 4+ files without scratchpad. | Complete |
+| T-089 | Update Model Card | T-088 | Updated `docs/models/qwen2.5-coder-7b.md` with complete Sprint 1G benchmark results and guidance. | Complete |
+| T-090 | Deterministic Unit Tests | T-073..T-083 | Added `task-profile.test.ts` and `evidence.test.ts`; 103 deterministic tests passing cleanly (100%). | Complete |
+| T-091 | Final Sprint 1G Verification | T-090 | Full build, lint, typecheck, unit test suite, and benchmark reports verified. | Complete |
 
 ## Next sprint
 
-Sprint 1G — OSS Agent Reliability: improve the real open-weight read-only agent from the 37.5% grounded-completion baseline through evidence-first investigation, targeted tool selection, adaptive turn budgeting, and benchmark-driven orchestration improvements before granting file-write capability.
+Sprint 2A — Bounded Workspace Editing & Safe Mutation: Introduce strictly scoped file-patching and verification loops while maintaining immutable session history, permission boundaries, and open-weight model reliability.
