@@ -1,6 +1,7 @@
 # Dependencies
-node_modules/
+/node_modules/
 .pnpm-store/
+!packages/agent-core/tests/fixtures/**/node_modules
 
 # Build and distribution outputs
 dist/
