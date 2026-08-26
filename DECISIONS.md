@@ -10,6 +10,7 @@
 | [ADR-006](docs/adrs/ADR-006-progressive-disclosure.md) | Progressive disclosure and token budgeting | Accepted |
 | [ADR-007](docs/adrs/ADR-007-local-model-normalization.md) | Local open-weight model normalization and gateway | Accepted |
 | [ADR-008](docs/adrs/ADR-008-ci-and-evaluation-strategy.md) | Two-tiered CI and open-weight model evaluation strategy | Accepted |
+| [ADR-009](docs/adrs/ADR-009-canonical-repository-independence.md) | Canonical repository independence from Kilo | Accepted |
 
 Decision status changes belong in the ADR and this index.
 

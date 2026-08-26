@@ -41,11 +41,9 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Install Agent Core Tooling
+      - name: Install dependencies
         shell: bash
-        run: |
-          npm install --prefix packages/agent-core --no-package-lock @types/node@^24 oxlint@^1.60.0 typescript@^5.8.2
-          echo "${GITHUB_WORKSPACE}/packages/agent-core/node_modules/.bin" >> $GITHUB_PATH
+        run: npm ci
 
       - name: Install Ollama
         shell: bash
@@ -84,15 +82,13 @@ jobs:
 
       - name: Run Full 24-Task Read-Only Benchmark & Context Evaluation
         shell: bash
-        run: |
-          cd packages/agent-core
-          node tests/evals/run-benchmark-cli.ts
+        run: npm run eval:model
 
       - name: Publish Evaluation Summary to GitHub Step Summary
         shell: bash
         run: |
-          REPORT_PATH="packages/agent-core/evals/results/qwen2.5-coder-7b-report.md"
-          CONTEXT_PATH="packages/agent-core/evals/results/qwen2.5-coder-7b-context-eval.md"
+          REPORT_PATH="evals/results/qwen2.5-coder-7b-report.md"
+          CONTEXT_PATH="evals/results/qwen2.5-coder-7b-context-eval.md"
           
           if [ -f "$REPORT_PATH" ]; then
             cat "$REPORT_PATH" >> "$GITHUB_STEP_SUMMARY"
@@ -108,6 +104,6 @@ jobs:
         with:
           name: model-eval-results-${{ inputs.model || 'qwen2.5-coder:7b' }}
           path: |
-            packages/agent-core/evals/results/*.json
-            packages/agent-core/evals/results/*.md
+            evals/results/*.json
+            evals/results/*.md
             /tmp/ollama.log

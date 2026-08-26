@@ -1,31 +1,32 @@
 # Scratchpad
 
-- Current state: Sprint 1E implementation, protocol hardening, real local open-weight model integration (`qwen2.5-coder:7b` via Ollama on Apple Silicon M3 Pro), and quantitative benchmark evaluation are complete.
-- Implemented:
-  - Protocol normalization layer (`normalizeWireResponse`, `formatWireTools`, `formatWireMessages`) supporting single/multi tool calls, structured/string arguments, content-embedded JSON tool calls (`<tool_call>`, markdown code fences, raw JSON), synthetic call IDs, and legacy function calls.
-  - Backend capability discovery and diagnostic probe (`probeBackend`) for health, model availability, tool calling, and usage reporting.
-  - 18 protocol fixtures and unit test suite.
-  - 4 real-model smoke tests (chat, tool comprehension, argument validity, multi-turn observation continuation).
-  - 24-task read-only evaluation dataset across 10 categories with dev/held-out splits and automated repository grounding validation.
-  - Benchmark evaluation harness and context window scaling evaluation (2k vs 8k vs 32k).
-  - Local model card `docs/models/qwen2.5-coder-7b.md` and ADR-007 (`docs/adrs/ADR-007-local-model-normalization.md`).
+- Current state: Sprint 1F Canonical Repository Independence & Clean Toolchain is complete.
+- Accomplishments:
+  - Preserved full upstream Kilo baseline and provenance safely in Git via annotated tag `baseline/pre-kilo-separation` at commit `b1e3802bfb`.
+  - Conducted complete ownership audit (`docs/research/repository-ownership-audit.md`) across all 9,476 imported files.
+  - Eliminated Bun/Turbo and `.bun` path coupling; established clean Node 24 / npm workspace (`packages/*`).
+  - Replaced root package metadata, README, LICENSE, and `.gitignore` with our authoritative product identity.
+  - Formalized legal upstream attributions in `THIRD_PARTY_NOTICES.md` and updated `REFERENCE_MAP.md`.
+  - Removed 35 unneeded Kilo packages and legacy configs (`script/`, `translations/`, `patches/`, `nix/`, `.kilo`, `.opencode`, etc.).
+  - Reduced canonical working tree tracked files by 98.5% (from 9,476 to 144 files).
+  - Configured clean multi-OS CI workflow (`.github/workflows/ci.yml`) on Node 22 & 24.
+  - Authored `docs/adrs/ADR-009-canonical-repository-independence.md` and updated `DECISIONS.md`.
+  - Preserved all empirical evaluation artifacts, benchmarks, and model cards intact in `evals/results/` and `docs/models/`.
+  - Audited codebase with `git grep -i "kilo"`: confirmed 0 production/runtime references (only attribution, ADRs, research).
 - Verification:
-  - 88 unit tests pass deterministically in ~300ms.
-  - Typecheck (`tsc --noEmit`) passes with zero errors under `exactOptionalPropertyTypes`.
+  - 90 unit tests pass deterministically in < 1s.
+  - TypeScript typecheck (`tsc --noEmit`) passes with zero errors under `exactOptionalPropertyTypes`.
   - Lint (`oxlint --deny-warnings`) passes with zero warnings.
   - Build passes cleanly.
-  - `git diff --check` clean.
-- Quantitative Benchmark Summary:
-  - Model: `qwen2.5-coder:7b` (Q4_K_M, 4.7GB, Apache 2.0)
-  - Tasks Passed: 9/24 (37.5% full suite; 35% dev split, 50% held-out split)
-  - Tool Syntax Validity: 90.9% (40/44 calls)
-  - Correct Tool Selection: 79.2% (19/24 tasks)
-  - Argument Payload Validity: 90.9% (40/44 calls)
-  - Grounded Answer Rate: 37.5% (9/24 tasks)
-  - Non-Progress Failure Rate: 4.2% (1/24 tasks)
-  - Average Latency: ~6.1s per full task (~1.8s per turn)
-- Boundaries preserved:
-  - Zero editor or Kilo coupling.
-  - Zero write tools, terminal execution, or git mutation.
-  - Zero cloud dependency, zero paid APIs, zero proprietary model dependencies.
-- Next milestone: Sprint 1F — Controlled Workspace Mutation (safe file writing, diff verification, backups, reversible edits).
+  - `package-lock.json` and `npm install` verified cleanly.
+  - `git diff --check` passes with zero issues.
+- Architectural Boundaries Preserved:
+  - Zero Kilo production dependencies.
+  - Zero cloud, telemetry, or proprietary model dependencies.
+  - Open-weight model support: Yes (`qwen2.5-coder:7b` via local Ollama).
+  - Write tools: No (deferred to subsequent milestone).
+  - Terminal execution: No (deferred).
+  - Git mutation: No (deferred).
+  - VS Code / Code-OSS dependency: No (clean standalone core).
+  - MCP dependency: No (deferred).
+- Next milestone: Sprint 1G — OSS Agent Reliability (benchmark-driven orchestration, prompt optimization, tool selection, and adaptive turn budgeting for the 24-task local open-weight benchmark).
