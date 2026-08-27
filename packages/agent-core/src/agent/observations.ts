@@ -74,6 +74,15 @@ function formatObservationContent(output: unknown, toolName: string): string {
       if (entries.length === 0) return "Directory is empty."
       return `Directory entries:\n${entries.map((e) => `- [${e.type}] ${e.path}`).join("\n")}`
     }
+    if (toolName === "run_verification" || toolName === "run_known_test") {
+      const status = record.status as string
+      let formatted = `Verification Status: ${status}`
+      if (record.exitCode !== undefined && record.exitCode !== null) formatted += `\nExit Code: ${record.exitCode}`
+      if (record.durationMs !== undefined) formatted += `\nDuration: ${record.durationMs}ms`
+      if (record.stdout && typeof record.stdout === "string") formatted += `\n\n### Output\n\`\`\`\n${record.stdout}\n\`\`\``
+      if (record.stderr && typeof record.stderr === "string") formatted += `\n\n### Errors\n\`\`\`\n${record.stderr}\n\`\`\``
+      return formatted
+    }
   }
 
   return JSON.stringify(output)
