@@ -25,7 +25,6 @@ const BASELINE: Readonly<Record<ActionCategory, ToolPermission>> = {
 const PLAN_DENIES: readonly ActionCategory[] = [
   "write_file",
   "delete_file",
-  "run_known_test",
   "terminal_command",
   "git_commit",
   "git_push",
@@ -45,5 +44,6 @@ export function classifyPermission(input: {
   const override = input.modeOverrides?.[input.mode]?.[input.action]
   if (override) return override
   if (READ_ONLY_MODES.includes(input.mode) && PLAN_DENIES.includes(input.action)) return "DENY"
+  if (input.action === "run_known_test" && (input.mode === "ASK" || input.mode === "PLAN")) return "DENY"
   return BASELINE[input.action]
 }

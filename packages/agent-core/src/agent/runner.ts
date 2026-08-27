@@ -172,25 +172,32 @@ export class AgentRunner {
     delete session.pending
     if (decision === "REJECT") {
       if (pending.reviewable) {
-        this.#emit("mutation.rejected", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+        const isVerification = pending.prepared.definition.action === "run_known_test"
+        this.#emit(isVerification ? "verification.rejected" : "mutation.rejected", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
       } else {
         this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
       }
       this.#addErrorObservation(pending.prepared, "PERMISSION_REJECTED", "Caller rejected this tool request", "REJECTED")
     } else {
       if (pending.reviewable) {
-        this.#emit("mutation.approved", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+        const isVerification = pending.prepared.definition.action === "run_known_test"
+        this.#emit(isVerification ? "verification.approved" : "mutation.approved", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
         let observation: ToolObservation
         try {
+          if (isVerification) this.#emit("verification.started", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
           const result = await pending.reviewable.apply({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal }) as any
-          if (result.status === "APPLIED") {
-            this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+          if (isVerification) {
+            this.#emit("verification.completed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
           } else {
-            this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, error: result.error })
+            if (result.status === "APPLIED") {
+              this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+            } else {
+              this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, error: result.error })
+            }
           }
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
-          session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: result.status === "APPLIED" ? "COMPLETED" : "FAILED", truncated: observation.truncated })
+          session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: (!isVerification && result.status === "APPLIED") || isVerification ? "COMPLETED" : "FAILED", truncated: observation.truncated })
           session.evidenceLedger.recordObservation(
             pending.prepared.name,
             pending.prepared.id,
@@ -200,10 +207,10 @@ export class AgentRunner {
           )
         } catch (error) {
           const message = error instanceof Error ? error.message : "Mutation apply failed"
-          observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, error: { category: "MUTATION_ERROR", message }, maxContentBytes: this.#observationMaxBytes })
+          observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, error: { category: isVerification ? "VERIFICATION_ERROR" : "MUTATION_ERROR", message }, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
           session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: "FAILED", truncated: observation.truncated })
-          this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, message })
+          this.#emit(isVerification ? "verification.failed" : "mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, message })
         }
 
         const progressKey = `${pending.signature}\0${observation.ok}\0${observation.content}`
@@ -378,12 +385,13 @@ export class AgentRunner {
       if (prepared.prepareForReview) {
         try {
           reviewable = await prepared.prepareForReview({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
-          this.#emit("mutation.prepared", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
+          const isVerification = prepared.definition.action === "run_known_test"
+          this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
           if (reviewable.reviewPayload.truncated === true) {
             throw new Error("Diff is truncated and cannot be reviewed safely")
           }
           session.pending = { prepared, signature, reviewable }
-          this.#emit("mutation.confirmation_requested", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
+          this.#emit(isVerification ? "verification.confirmation_requested" : "mutation.confirmation_requested", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
           return true
         } catch (error) {
           const message = error instanceof Error ? error.message : "Tool preparation failed"
