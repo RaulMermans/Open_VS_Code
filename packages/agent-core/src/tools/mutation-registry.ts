@@ -1,0 +1,123 @@
+import { MutationEngine, type MutationEngineOptions } from "./mutation-engine.ts"
+import { type MutationRequest, MutationFailure } from "./mutation-contracts.ts"
+import { ToolRegistry, type ToolRegistration } from "./registry.ts"
+
+function objectArguments(input: unknown, allowed: readonly string[]): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("arguments must be an object")
+  const record = input as Record<string, unknown>
+  const unexpected = Object.keys(record).find((key) => !allowed.includes(key))
+  if (unexpected) throw new TypeError(`unexpected argument: ${unexpected}`)
+  return record
+}
+
+function requiredString(record: Record<string, unknown>, name: string): string {
+  const value = record[name]
+  if (typeof value !== "string" || !value.trim()) throw new TypeError(`${name} must be a non-empty string`)
+  return value
+}
+
+export interface MutationToolDependencies {
+  readonly engine: MutationEngine
+}
+
+export function createMutationToolRegistrations(deps: MutationToolDependencies): readonly ToolRegistration[] {
+  const { engine } = deps
+
+  return [
+    {
+      definition: {
+        name: "apply_patch",
+        description: "Modify an existing text file by replacing a specific text occurrence. Provide the exact text to find (search) and its replacement (replace). The search text must appear exactly once in the file.",
+        action: "write_file",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Workspace-relative path to the file to modify" },
+            search: { type: "string", description: "Exact text to find in the file (must appear exactly once)" },
+            replace: { type: "string", description: "Text to replace the search text with" },
+          },
+          required: ["path", "search", "replace"],
+          additionalProperties: false,
+        },
+      },
+      validate: (input) => {
+        const record = objectArguments(input, ["path", "search", "replace"])
+        const path = requiredString(record, "path")
+        const search = requiredString(record, "search")
+        const replace = record.replace
+        if (typeof replace !== "string") throw new TypeError("replace must be a string")
+        return { path, search, replace }
+      },
+      execute: async (input, _context) => {
+        const request: MutationRequest = {
+          operation: "patch",
+          path: input.path as string,
+          patch: {
+            search: input.search as string,
+            replace: input.replace as string,
+          },
+        }
+
+        try {
+          const prepared = await engine.preparePatchFull(request)
+          const result = await engine.applyPreparedMutation(prepared)
+          return result
+        } catch (error) {
+          if (error instanceof MutationFailure) {
+            return { status: "FAILED", error: { code: error.code, message: error.message }, path: request.path }
+          }
+          throw error
+        }
+      },
+    },
+    {
+      definition: {
+        name: "create_file",
+        description: "Create a new text file. The file must not already exist. Provide the workspace-relative path and the complete file content.",
+        action: "write_file",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Workspace-relative path for the new file" },
+            content: { type: "string", description: "Complete content for the new file" },
+          },
+          required: ["path", "content"],
+          additionalProperties: false,
+        },
+      },
+      validate: (input) => {
+        const record = objectArguments(input, ["path", "content"])
+        const path = requiredString(record, "path")
+        const content = record.content
+        if (typeof content !== "string") throw new TypeError("content must be a string")
+        return { path, content }
+      },
+      execute: async (input, _context) => {
+        const request: MutationRequest = {
+          operation: "create",
+          path: input.path as string,
+          content: input.content as string,
+        }
+
+        try {
+          const prepared = await engine.prepareCreateFull(request)
+          const result = await engine.applyPreparedMutation(prepared)
+          return result
+        } catch (error) {
+          if (error instanceof MutationFailure) {
+            return { status: "FAILED", error: { code: error.code, message: error.message }, path: request.path }
+          }
+          throw error
+        }
+      },
+    },
+  ]
+}
+
+export function createMutationToolRegistry(options?: MutationEngineOptions & { workspaceRoot: string }): { registry: ToolRegistry; engine: MutationEngine } {
+  const workspaceRoot = options?.workspaceRoot ?? process.cwd()
+  const engine = new MutationEngine(workspaceRoot, options)
+  const registrations = createMutationToolRegistrations({ engine })
+  const registry = new ToolRegistry(registrations)
+  return { registry, engine }
+}

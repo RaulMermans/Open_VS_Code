@@ -23,30 +23,38 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Editor-Independent Core** | ✅ Complete | Pure TypeScript `@open-vs-code/agent-core` with zero IDE or framework coupling. |
 | **Deterministic Tool Loop** | ✅ Complete | Turn-budgeted, loop-detecting deterministic runner with event streams. |
 | **Local Model Gateway** | ✅ Complete | OpenAI-compatible provider with wire protocol normalization (supports markdown fences, `<tool_call>`, synthetic IDs). |
-| **Empirical Evaluation** | ✅ Complete | 24-task open-weight benchmark harness + 90 deterministic unit tests. |
+| **Empirical Evaluation** | ✅ Complete | 24-task open-weight benchmark harness + deterministic unit tests. |
 | **Repository Intelligence** | ✅ Complete | Read-only tools (`read_file`, `list_directory`, `grep_search`, `find_by_name`) with bounds and ignore hygiene. |
 | **Context Compiler & Memory**| ✅ Complete | Progressive disclosure, dynamic token budgeting, and Markdown project memory (`PROJECT.md`, `PLAN.md`, `ARCHITECTURE.md`). |
 | **Permission Engine** | ✅ Complete | Action table validation, read-only enforcement, mode switching. |
-| **Agent Reasoning Reliability**| 🚧 In Progress | Targeted prompt engineering and turn budgeting to improve local model task completion. |
-| **Safe Workspace Mutation** | ⏳ Next Milestone | Reversible edits, backups, and single-change mutation loops. |
+| **Agent Reasoning Reliability**| ✅ Complete | Evidence-driven orchestration: task profiling, tool narrowing, evidence ledger, premature-answer gate. |
+| **Safe Workspace Mutation** | 🚧 In Progress | Reversible edits, diff review, permission gates, rollback. |
 | **Interactive CLI** | ⏳ Planned | Standalone terminal interface. |
 | **IDE Integration** | ⏳ Planned | VS Code / Code-OSS extension integration. |
 
 ---
 
-## 3. Empirical Open-Weight Benchmark Baseline
+## 3. Empirical Open-Weight Benchmark
 
 We evaluate our agent directly against local open-weight models without proprietary fallbacks.
 
 ### Qwen 2.5 Coder 7B Instruct (Q4_K_M, 4.7 GB) via Ollama
 
+#### Sprint 1E — Baseline
+
 * **Full Suite Grounded Success**: `9 / 24` (37.5%)
 * **Dev Split Success**: `7 / 20` (35.0%)
 * **Held-out Split Success**: `2 / 4` (50.0%)
+
+#### Sprint 1G — Evidence-Driven Orchestration
+
+* **Full Suite Grounded Success**: `18 / 24` (75.0%)
+* **Dev Split Success**: `14 / 20` (70.0%)
+* **Held-out Split Success**: `4 / 4` (100.0%)
+* **Premature Completion Rate**: `0 / 24` (0.0%)
 * **Tool Syntax Validity**: `90.9%` (40 / 44 calls valid)
 * **Correct Tool Selection**: `79.2%` (19 / 24 tasks)
 * **Non-Progress Failures**: `4.2%` (1 / 24 tasks)
-* **Average Task Latency**: `~6.1s` per completed task (`~1.8s` per turn)
 
 Detailed model card and analysis: [`docs/models/qwen2.5-coder-7b.md`](docs/models/qwen2.5-coder-7b.md).
 
@@ -123,7 +131,7 @@ npm ci
 ### Verification & Testing
 
 ```bash
-# Run deterministic unit tests (90 tests)
+# Run deterministic tests
 npm test
 
 # Run strict TypeScript typecheck

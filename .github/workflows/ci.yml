@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: npm run lint
 
-      - name: Run Deterministic Unit Tests (90 Tests)
+      - name: Run Deterministic Tests
         shell: bash
         run: npm test
 

@@ -63,6 +63,10 @@ test("agent-core exports only public contracts and decoupled modules", async () 
   assert.ok(index.createReadOnlyToolRegistry)
   assert.ok(index.compileContext)
   assert.ok(index.calculateBudget)
+  assert.ok(index.MutationEngine)
+  assert.ok(index.MutationFailure)
+  assert.ok(index.createMutationToolRegistrations)
+  assert.ok(index.sha256)
 })
 
 test("benchmark results use single canonical root-level directory regardless of working directory", async () => {
@@ -80,3 +84,36 @@ test("benchmark results use single canonical root-level directory regardless of 
     assert.equal(exists, false, "Nested packages/agent-core/evals directory must not exist")
   }
 })
+
+test("repository does not contain model weight files", async () => {
+  const repoRoot = path.resolve(process.cwd(), "../..")
+  const MODEL_WEIGHT_EXTENSIONS = [".gguf", ".safetensors", ".ckpt"]
+
+  async function findModelWeights(dir: string, maxDepth = 5): Promise<string[]> {
+    if (maxDepth <= 0) return []
+    const found: string[] = []
+    let entries
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name === ".git") continue
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        found.push(...(await findModelWeights(fullPath, maxDepth - 1)))
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase()
+        if (MODEL_WEIGHT_EXTENSIONS.includes(ext)) {
+          found.push(path.relative(repoRoot, fullPath))
+        }
+      }
+    }
+    return found
+  }
+
+  const weights = await findModelWeights(repoRoot)
+  assert.equal(weights.length, 0, `Model weight files found in repository: ${weights.join(", ")}`)
+})
+

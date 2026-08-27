@@ -27,3 +27,13 @@
 - Cloud accounts, billing, or enterprise collaboration.
 - Custom vector-database infrastructure.
 - Rebuilding standard IDE infrastructure.
+
+## Current sprint
+
+Sprint 1H — Safe Mutation Layer. Status: **complete**.
+
+- 161 deterministic tests passing.
+- Safe `apply_patch` and `create_file` tools behind CONFIRM permission gates.
+- Atomic writes, rollback, stale-base detection, symlink-escape prevention.
+- ASK/PLAN/REVIEW modes deny all mutations; BUILD/DEBUG require confirmation.
+- No model weights on development machine; inference deferred to target machine.

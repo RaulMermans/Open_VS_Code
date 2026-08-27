@@ -45,10 +45,23 @@ deterministic infrastructure
    |-- minimal context compiler
    |-- strict tool registry and bounded observations
    |-- scripted provider for deterministic regression tests
-   `-- resumable, read-only AgentRunner
+   |-- safe mutation layer (apply_patch, create_file)
+   `-- resumable AgentRunner with confirmation flow
+
+mutation lifecycle
+   |-- contracts (MutationRequest, PreparedMutation, MutationResult, MutationSnapshot)
+   |-- write-path safety with symlink-escape detection
+   |-- sensitive-path policy (.git, node_modules, .env, keys)
+   |-- search/replace patch with ambiguity rejection
+   |-- expected-base hash verification (stale-state detection)
+   |-- deterministic unified diff generation
+   |-- per-step mutation budgets (files, lines, bytes)
+   |-- atomic writes (temp file + rename)
+   |-- pre-mutation snapshots with rollback
+   `-- bounded model-facing observations
 ```
 
-The repository tool layer is read-only. Realpath-based containment is authoritative for filesystem access, generated directories are ignored during traversal by default, and explicitly requested files remain readable when they are inside the workspace. No terminal, Git, write, delete, or real model-runtime capability exists in this package.
+The repository tool layer is read-only. The mutation layer provides `apply_patch` and `create_file` operations behind strict validation, permission gates (CONFIRM in BUILD/DEBUG, DENY in ASK/PLAN/REVIEW), and atomic write boundaries. Both layers use realpath-based containment as authoritative for filesystem access. No terminal, Git, delete, or real model-runtime capability exists in this package.
 
 ## Deterministic agent loop
 
@@ -57,13 +70,26 @@ The repository tool layer is read-only. Realpath-based containment is authoritat
 ```text
 task -> compile bounded context -> model
      -> validate tool call -> permission policy
-     -> execute registered read-only tool -> bound observation
+     -> execute registered tool -> bound observation
      -> recompile context -> model -> final answer
+
+mutation flow (apply_patch / create_file):
+     -> validate path safety + policy + budget
+     -> read current state + verify expected base hash
+     -> prepare mutation + generate diff
+     -> permission gate (CONFIRM) -> PAUSE FOR APPROVAL
+     -> apply atomically (temp + rename)
+     -> verify result hash -> record snapshot -> return bounded observation
+     -> rollback available if file unchanged since mutation
 ```
 
 The registry separates model-visible definitions from executors and strictly validates untrusted arguments before permission evaluation or execution. `ALLOW` executes, `DENY` produces a structured observation without execution, and `CONFIRM` returns a paused result that can resume with explicit approval or rejection. Tool failures are recoverable observations; model failures, required-context overflow, cancellation, maximum turns, and deterministic non-progress guards are distinct terminal outcomes.
 
 Every lifecycle transition passes through the authoritative state reducer and event stream. Results expose compact status, turn, context, tool-call, confirmation, and event diagnostics rather than an unbounded internal transcript. Recent observations are deduplicated and capped before the context compiler fits them as optional context; project instructions, the task, and an explicitly selected Skill remain required.
+
+## Development machine policy
+
+This repository is developed on a machine that is **not the final inference target**. Model weights (GGUF, Safetensors, CKPT) must never be committed or downloaded to this machine. The `ollama` runtime may remain installed for tooling, but no models should be pulled. Historical benchmark results and model cards remain as small evidence artifacts. Real-model validation is deferred to the target inference machine.
 
 ## Cross-cutting constraints
 

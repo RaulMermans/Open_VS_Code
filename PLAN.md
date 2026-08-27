@@ -38,4 +38,4 @@ Make investigation disciplined, tool selection targeted, turn allocation smarter
 
 ## Next sprint
 
-Sprint 2A — Bounded Workspace Editing & Safe Mutation: Introduce strictly scoped file-patching and verification loops while maintaining immutable session history, permission boundaries, and open-weight model reliability.
+Sprint 1H — Safe Mutation Layer: Add deterministic, reviewable, reversible workspace-local file mutation capabilities behind strict permission, validation, diff, and rollback boundaries.
