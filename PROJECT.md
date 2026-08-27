@@ -30,10 +30,11 @@
 
 ## Current sprint
 
-Sprint 1H — Safe Mutation Layer. Status: **complete**.
+Sprint 1I — Controlled Verification Runtime. Status: **complete**.
 
-- 161 deterministic tests passing.
-- Safe `apply_patch` and `create_file` tools behind CONFIRM permission gates.
-- Atomic writes, rollback, stale-base detection, symlink-escape prevention.
-- ASK/PLAN/REVIEW modes deny all mutations; BUILD/DEBUG require confirmation.
-- No model weights on development machine; inference deferred to target machine.
+- 174 deterministic tests passing.
+- Phase A (Sprint 1H.1): Prepared-Diff Approval Safety Fix applied to mutations.
+- Phase B (Sprint 1I): Safe verification engine (TEST, TYPECHECK, LINT, BUILD) with workspace containment, output bounding (16KB), and strict timeouts.
+- Zero arbitrary shell command tools. Verification strictly reads `package.json` presets.
+- ASK/PLAN/REVIEW modes deny mutations; ASK/PLAN deny verification.
+- No model weights on development machine.

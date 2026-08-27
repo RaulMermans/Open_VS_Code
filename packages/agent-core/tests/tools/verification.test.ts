@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict"
 import * as path from "node:path"
 import * as fs from "node:fs/promises"
 import * as os from "node:os"
+import * as crypto from "node:crypto"
 import { VerificationEngine } from "../../src/tools/verification-engine.ts"
 import { discoverVerificationCommand } from "../../src/tools/verification-discovery.ts"
 import { createVerificationToolRegistry } from "../../src/tools/verification-registry.ts"
@@ -39,8 +40,13 @@ test("Verification Discovery - missing action", async () => {
 })
 
 test("Verification Engine - CWD escape", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
   try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
       action: "TEST",
@@ -49,17 +55,26 @@ test("Verification Engine - CWD escape", async () => {
       cwd: path.resolve(tmpDir, ".."), // outside workspace
       timeoutMs: 1000,
       commandPreview: "echo hello",
-    })
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "echo hello",
+    }, "v1")
     assert.equal(result.status, "EXECUTION_ERROR")
-    assert.ok(result.stderr.includes("CWD must be within workspace root"))
+    assert.ok(result.stderr.includes("CWD validation failed"))
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true })
   }
 })
 
 test("Verification Engine - Success execution", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
   try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    // require crypto dynamically because we need to compute hash sync here
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
       action: "TEST",
@@ -68,7 +83,11 @@ test("Verification Engine - Success execution", async () => {
       cwd: tmpDir,
       timeoutMs: 1000,
       commandPreview: "node -e ...",
-    })
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node -e console.log('hello')",
+    }, "v2")
     assert.equal(result.status, "PASS")
     assert.equal(result.stdout.trim(), "hello")
   } finally {
@@ -77,8 +96,12 @@ test("Verification Engine - Success execution", async () => {
 })
 
 test("Verification Engine - Output bounding limit", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
   try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
       action: "TEST",
@@ -88,7 +111,11 @@ test("Verification Engine - Output bounding limit", async () => {
       cwd: tmpDir,
       timeoutMs: 5000,
       commandPreview: "node ...",
-    })
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    }, "v3")
     assert.equal(result.status, "PASS")
     assert.ok(result.stdout.includes("[STDOUT TRUNCATED]"))
     assert.ok(result.stdout.length < 20000) // truncated
@@ -97,9 +124,82 @@ test("Verification Engine - Output bounding limit", async () => {
   }
 })
 
-test("Verification Engine - Timeout", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+test("Verification Engine - Stale verification", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
   try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const originalContent = JSON.stringify({ scripts: { test: "echo old" } })
+    await fs.writeFile(pkgPath, originalContent)
+
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+
+    // Mutate package.json AFTER preparation but BEFORE execution
+    const newContent = JSON.stringify({ scripts: { test: "echo new" } })
+    await fs.writeFile(pkgPath, newContent)
+
+    const result = await engine.execute({
+      action: "TEST",
+      executable: "echo",
+      args: ["old"],
+      cwd: tmpDir,
+      timeoutMs: 1000,
+      commandPreview: "echo old",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(originalContent).digest("hex"), // hash of original
+      scriptName: "test",
+      scriptBody: "echo old",
+    }, "v-stale")
+
+    assert.equal(result.status, "STALE_VERIFICATION")
+    assert.ok(result.stderr.includes("changed since preparation"))
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Verification Engine - Single use enforcement", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const prepared = {
+      action: "TEST",
+      executable: "node",
+      args: ["-e", "console.log('hello')"],
+      cwd: tmpDir,
+      timeoutMs: 1000,
+      commandPreview: "node -e ...",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node -e console.log('hello')",
+    } as const
+
+    // First execution should pass
+    const result1 = await engine.execute(prepared, "v-single-use")
+    assert.equal(result1.status, "PASS")
+
+    // Second execution with same ID should fail immediately
+    const result2 = await engine.execute(prepared, "v-single-use")
+    assert.equal(result2.status, "EXECUTION_ERROR")
+    assert.ok(result2.stderr.includes("already been executed"))
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Verification Engine - Timeout", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
       action: "TEST",
@@ -108,7 +208,11 @@ test("Verification Engine - Timeout", async () => {
       cwd: tmpDir,
       timeoutMs: 100, // aggressive timeout
       commandPreview: "node ...",
-    })
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    }, "v4")
     assert.equal(result.status, "TIMEOUT")
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true })
@@ -116,15 +220,19 @@ test("Verification Engine - Timeout", async () => {
 })
 
 test("Verification Engine - Cancellation", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
   try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const controller = new AbortController()
-    
+
     setTimeout(() => {
       controller.abort()
     }, 50)
-    
+
     const result = await engine.execute({
       action: "TEST",
       executable: "node",
@@ -132,8 +240,12 @@ test("Verification Engine - Cancellation", async () => {
       cwd: tmpDir,
       timeoutMs: 5000,
       commandPreview: "node ...",
-    }, controller.signal)
-    
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    }, "v5", controller.signal)
+
     assert.equal(result.status, "CANCELLED")
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true })

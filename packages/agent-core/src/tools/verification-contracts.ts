@@ -1,6 +1,6 @@
 export type VerificationAction = "TEST" | "TYPECHECK" | "LINT" | "BUILD"
 
-export type VerificationStatus = "PASS" | "FAIL" | "TIMEOUT" | "CANCELLED" | "EXECUTION_ERROR"
+export type VerificationStatus = "PASS" | "FAIL" | "TIMEOUT" | "CANCELLED" | "EXECUTION_ERROR" | "STALE_VERIFICATION"
 
 export interface PreparedVerification {
   readonly action: VerificationAction
@@ -9,6 +9,10 @@ export interface PreparedVerification {
   readonly cwd: string
   readonly timeoutMs: number
   readonly commandPreview: string
+  readonly packageJsonPath: string
+  readonly packageJsonHash: string
+  readonly scriptName: string
+  readonly scriptBody: string
 }
 
 export interface VerificationResult {

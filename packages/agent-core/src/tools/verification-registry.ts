@@ -49,18 +49,27 @@ export function createVerificationToolRegistry(workspaceRoot: string): ToolRegis
         cwd: context.workspaceRoot,
         timeoutMs: ACTION_TIMEOUTS[action],
         commandPreview: `${command.executable} ${command.args.join(" ")}`,
+        packageJsonPath: command.packageJsonPath,
+        packageJsonHash: command.packageJsonHash,
+        scriptName: command.scriptName,
+        scriptBody: command.scriptBody,
       }
 
+      const verificationId = `verification-${Date.now()}-${Math.random().toString(36).slice(2)}`
       return {
-        id: `verification-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        id: verificationId,
         reviewPayload: {
           action: prepared.action,
-          commandPreview: prepared.commandPreview,
+          executable: prepared.executable,
+          args: prepared.args,
           cwd: prepared.cwd,
           timeoutMs: prepared.timeoutMs,
+          packageJsonHash: prepared.packageJsonHash,
+          scriptName: prepared.scriptName,
+          scriptBody: prepared.scriptBody,
         },
         apply: async (applyContext: ToolExecutionContext): Promise<VerificationResult> => {
-          return engine.execute(prepared, applyContext.signal)
+          return engine.execute(prepared, verificationId, applyContext.signal)
         },
       }
     },

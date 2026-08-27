@@ -1,10 +1,15 @@
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
+import * as crypto from "node:crypto"
 import { VerificationAction } from "./verification-contracts.ts"
 
 export interface DiscoveredCommand {
   readonly executable: string
   readonly args: readonly string[]
+  readonly packageJsonPath: string
+  readonly packageJsonHash: string
+  readonly scriptName: string
+  readonly scriptBody: string
 }
 
 const ACTION_TO_SCRIPT: Record<VerificationAction, string> = {
@@ -27,6 +32,8 @@ export async function discoverVerificationCommand(
     throw new Error(`Failed to read package.json in workspace root: ${(error as Error).message}`, { cause: error })
   }
 
+  const packageJsonHash = crypto.createHash("sha256").update(content).digest("hex")
+
   let pkg: any
   try {
     pkg = JSON.parse(content)
@@ -42,5 +49,9 @@ export async function discoverVerificationCommand(
   return {
     executable: "npm",
     args: ["run", scriptName],
+    packageJsonPath,
+    packageJsonHash,
+    scriptName,
+    scriptBody: pkg.scripts[scriptName]
   }
 }

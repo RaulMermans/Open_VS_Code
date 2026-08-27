@@ -113,7 +113,7 @@ User / Task Input
 
 ### Prerequisites
 
-* Node.js `>= 22.0.0` (Node 24 recommended)
+* Node.js `>= 22.0.0`
 * npm `>= 10.0.0`
 * Optional for live model evaluation: [Ollama](https://ollama.ai) with `ollama run qwen2.5-coder:7b`
 

@@ -24,7 +24,7 @@ The dependency direction is fixed. `agent-core` must be runnable independently o
 
 ## Implemented agent core
 
-`packages/agent-core` is the first executable implementation of the editor-independent core. It is a Node/TypeScript package with no runtime dependencies and no imports from the imported Kilo packages.
+`packages/agent-core` is the first executable implementation of the editor-independent core. It is a Node 22+ TypeScript package with no runtime dependencies and no imports from the imported Kilo packages.
 
 ```text
 contracts
