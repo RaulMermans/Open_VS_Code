@@ -469,14 +469,24 @@ export class MutationEngine {
   // --- Apply ---
 
   async applyPreparedMutation(prepared: PreparedMutation): Promise<MutationResult> {
+    if (this.#consumed.has(prepared.id)) {
+      return this.#failureResult(prepared, "INVALID_PATCH", "already consumed")
+    }
     if (!prepared.valid) {
       return this.#failureResult(prepared, "INVALID_PATCH", "Prepared mutation is not valid")
     }
 
+    let result: MutationResult
     if (prepared.operation === "patch") {
-      return this.#applyPatch(prepared)
+      result = await this.#applyPatch(prepared)
+    } else {
+      result = await this.#applyCreate(prepared)
     }
-    return this.#applyCreate(prepared)
+
+    if (result.status === "APPLIED") {
+      this.#consumed.add(prepared.id)
+    }
+    return result
   }
 
   async #applyPatch(prepared: PreparedMutation): Promise<MutationResult> {
@@ -628,6 +638,16 @@ export class MutationEngine {
 
   // --- Result content cache ---
   readonly #preparedResults = new Map<string, string>()
+  readonly #consumed = new Set<string>()
+
+  isConsumed(id: string): boolean {
+    return this.#consumed.has(id)
+  }
+
+  rejectMutation(id: string): void {
+    this.#consumed.add(id)
+    this.#preparedResults.delete(id)
+  }
 
   async preparePatchFull(request: MutationRequest): Promise<PreparedMutation> {
     const prepared = await this.preparePatch(request)

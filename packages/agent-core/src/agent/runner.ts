@@ -51,6 +51,7 @@ export interface AgentRunnerDependencies {
 interface PendingConfirmation {
   readonly prepared: PreparedToolCall
   readonly signature: string
+  readonly reviewable?: import("../tools/registry.ts").ReviewableExecution
 }
 
 interface Session {
@@ -170,11 +171,53 @@ export class AgentRunner {
     const pending = session.pending
     delete session.pending
     if (decision === "REJECT") {
-      this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
+      if (pending.reviewable) {
+        this.#emit("mutation.rejected", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+      } else {
+        this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
+      }
       this.#addErrorObservation(pending.prepared, "PERMISSION_REJECTED", "Caller rejected this tool request", "REJECTED")
     } else {
-      this.#emit("permission.approved", { callId: pending.prepared.id, name: pending.prepared.name })
-      if (await this.#execute(pending.prepared, pending.signature)) return this.#result()
+      if (pending.reviewable) {
+        this.#emit("mutation.approved", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+        let observation: ToolObservation
+        try {
+          const result = await pending.reviewable.apply({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal }) as any
+          if (result.status === "APPLIED") {
+            this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+          } else {
+            this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, error: result.error })
+          }
+          observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })
+          session.observations.push(observation)
+          session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: result.status === "APPLIED" ? "COMPLETED" : "FAILED", truncated: observation.truncated })
+          session.evidenceLedger.recordObservation(
+            pending.prepared.name,
+            pending.prepared.id,
+            pending.prepared.arguments as Record<string, unknown>,
+            true,
+            result,
+          )
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Mutation apply failed"
+          observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, error: { category: "MUTATION_ERROR", message }, maxContentBytes: this.#observationMaxBytes })
+          session.observations.push(observation)
+          session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: "FAILED", truncated: observation.truncated })
+          this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, message })
+        }
+
+        const progressKey = `${pending.signature}\0${observation.ok}\0${observation.content}`
+        session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
+        session.lastProgressKey = progressKey
+        if (session.repeatedProgress >= this.#nonProgressThreshold) {
+          session.failureReason = "NON_PROGRESS"
+          this.#emit("task.non_progress", { message: `Repeated ${pending.prepared.name} call made no progress`, threshold: this.#nonProgressThreshold })
+          return this.#result()
+        }
+      } else {
+        this.#emit("permission.approved", { callId: pending.prepared.id, name: pending.prepared.name })
+        if (await this.#execute(pending.prepared, pending.signature)) return this.#result()
+      }
     }
     return this.#continue()
   }
@@ -331,6 +374,24 @@ export class AgentRunner {
       return false
     }
     if (permission === "CONFIRM") {
+      let reviewable: import("../tools/registry.ts").ReviewableExecution | undefined
+      if (prepared.prepareForReview) {
+        try {
+          reviewable = await prepared.prepareForReview({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
+          this.#emit("mutation.prepared", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
+          if (reviewable.reviewPayload.truncated === true) {
+            throw new Error("Diff is truncated and cannot be reviewed safely")
+          }
+          session.pending = { prepared, signature, reviewable }
+          this.#emit("mutation.confirmation_requested", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
+          return true
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Tool preparation failed"
+          this.#addErrorObservation(prepared, "TOOL_PREPARATION_ERROR", message, "FAILED")
+          this.#emit("tool.failed", { callId: prepared.id, name: prepared.name, message })
+          return false
+        }
+      }
       session.pending = { prepared, signature }
       this.#emit("permission.requested", { callId: prepared.id, name: prepared.name, action: prepared.definition.action })
       return true
@@ -427,6 +488,7 @@ export class AgentRunner {
           toolName: session.pending.prepared.name,
           arguments: session.pending.prepared.arguments,
           action: session.pending.prepared.definition.action,
+          ...(session.pending.reviewable ? { preparedMutation: session.pending.reviewable.reviewPayload as any } : {})
         },
       } : {}),
     }

@@ -51,11 +51,24 @@ export interface AgentToolCallRecord {
   readonly truncated?: boolean
 }
 
+export interface MutationReviewPayload {
+  readonly id: string
+  readonly operation: string
+  readonly path: string
+  readonly beforeHash: string
+  readonly afterHash: string
+  readonly linesAdded: number
+  readonly linesRemoved: number
+  readonly bytesChanged: number
+  readonly diff: string
+}
+
 export interface AgentConfirmationRequest {
   readonly callId: string
   readonly toolName: string
   readonly arguments: Readonly<Record<string, unknown>>
   readonly action: ToolAction
+  readonly preparedMutation?: MutationReviewPayload
 }
 
 export interface AgentResult {

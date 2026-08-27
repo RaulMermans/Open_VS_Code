@@ -18,6 +18,8 @@ export interface PatchContent {
 }
 
 // --- Prepared Mutation ---
+export type PreparedMutationStatus = "PREPARED" | "APPROVED" | "APPLIED" | "REJECTED" | "INVALIDATED"
+
 export interface PreparedMutation {
   readonly id: string
   readonly operation: MutationOperation

@@ -79,9 +79,9 @@ test("scripted model mutation flow: read → patch → approve → complete", as
 
     // Check events include permission flow
     const eventTypes = events.map((e) => e.type)
-    assert.ok(eventTypes.includes("permission.requested"))
-    assert.ok(eventTypes.includes("permission.approved"))
-    assert.ok(eventTypes.includes("tool.completed"))
+    assert.ok(eventTypes.includes("mutation.confirmation_requested"))
+    assert.ok(eventTypes.includes("mutation.approved"))
+    assert.ok(eventTypes.includes("mutation.applied"))
   } finally {
     await rm(ws, { recursive: true })
   }

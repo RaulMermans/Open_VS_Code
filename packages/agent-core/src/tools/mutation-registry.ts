@@ -48,7 +48,10 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
         if (typeof replace !== "string") throw new TypeError("replace must be a string")
         return { path, search, replace }
       },
-      execute: async (input, _context) => {
+      execute: async (_input, _context) => {
+        throw new MutationFailure("INVALID_PATCH", "Mutation tools require two-phase preparation and review")
+      },
+      prepareForReview: async (input, _context) => {
         const request: MutationRequest = {
           operation: "patch",
           path: input.path as string,
@@ -58,15 +61,28 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
           },
         }
 
-        try {
-          const prepared = await engine.preparePatchFull(request)
-          const result = await engine.applyPreparedMutation(prepared)
-          return result
-        } catch (error) {
-          if (error instanceof MutationFailure) {
-            return { status: "FAILED", error: { code: error.code, message: error.message }, path: request.path }
+        const prepared = await engine.preparePatchFull(request)
+        let consumed = false
+
+        return {
+          id: prepared.id,
+          reviewPayload: {
+            id: prepared.id,
+            operation: prepared.operation,
+            path: prepared.path,
+            beforeHash: prepared.baseHash,
+            afterHash: prepared.resultHash,
+            linesAdded: prepared.diff.linesAdded,
+            linesRemoved: prepared.diff.linesRemoved,
+            bytesChanged: prepared.diff.bytesChanged,
+            diff: prepared.diff.unified,
+            truncated: prepared.diff.truncated,
+          },
+          apply: async () => {
+            if (consumed) throw new MutationFailure("INVALID_PATCH", "already consumed")
+            consumed = true
+            return engine.applyPreparedMutation(prepared)
           }
-          throw error
         }
       },
     },
@@ -92,22 +108,38 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
         if (typeof content !== "string") throw new TypeError("content must be a string")
         return { path, content }
       },
-      execute: async (input, _context) => {
+      execute: async (_input, _context) => {
+        throw new MutationFailure("INVALID_PATCH", "Mutation tools require two-phase preparation and review")
+      },
+      prepareForReview: async (input, _context) => {
         const request: MutationRequest = {
           operation: "create",
           path: input.path as string,
           content: input.content as string,
         }
 
-        try {
-          const prepared = await engine.prepareCreateFull(request)
-          const result = await engine.applyPreparedMutation(prepared)
-          return result
-        } catch (error) {
-          if (error instanceof MutationFailure) {
-            return { status: "FAILED", error: { code: error.code, message: error.message }, path: request.path }
+        const prepared = await engine.prepareCreateFull(request)
+        let consumed = false
+
+        return {
+          id: prepared.id,
+          reviewPayload: {
+            id: prepared.id,
+            operation: prepared.operation,
+            path: prepared.path,
+            beforeHash: prepared.baseHash,
+            afterHash: prepared.resultHash,
+            linesAdded: prepared.diff.linesAdded,
+            linesRemoved: prepared.diff.linesRemoved,
+            bytesChanged: prepared.diff.bytesChanged,
+            diff: prepared.diff.unified,
+            truncated: prepared.diff.truncated,
+          },
+          apply: async () => {
+            if (consumed) throw new MutationFailure("INVALID_PATCH", "already consumed")
+            consumed = true
+            return engine.applyPreparedMutation(prepared)
           }
-          throw error
         }
       },
     },

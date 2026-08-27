@@ -5,9 +5,16 @@ export interface ToolExecutionContext {
   readonly signal: AbortSignal
 }
 
+export interface ReviewableExecution {
+  readonly id: string
+  readonly reviewPayload: Readonly<Record<string, unknown>>
+  apply(context: ToolExecutionContext): Promise<unknown>
+}
+
 export interface ToolRegistration {
   readonly definition: ToolDefinition
   readonly validate: (input: unknown) => Readonly<Record<string, unknown>>
+  readonly prepareForReview?: (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext) => Promise<ReviewableExecution>
   readonly execute: (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext) => Promise<unknown>
 }
 
@@ -16,6 +23,7 @@ export interface PreparedToolCall {
   readonly name: string
   readonly arguments: Readonly<Record<string, unknown>>
   readonly definition: ToolDefinition
+  readonly prepareForReview?: (context: ToolExecutionContext) => Promise<ReviewableExecution>
   invoke(context: ToolExecutionContext): Promise<unknown>
 }
 
@@ -90,6 +98,14 @@ export class ToolRegistry {
         throwIfAborted(context.signal)
         return result
       },
+      ...(registration.prepareForReview ? {
+        prepareForReview: async (context) => {
+          throwIfAborted(context.signal)
+          const reviewable = await registration.prepareForReview!(validated, context)
+          throwIfAborted(context.signal)
+          return reviewable
+        }
+      } : {}),
     }
   }
 }
