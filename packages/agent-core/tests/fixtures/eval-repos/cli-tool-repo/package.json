@@ -2,6 +2,7 @@
   "name": "rocket-cli",
   "version": "2.0.1",
   "type": "module",
+  "scripts": { "test": "echo pass", "typecheck": "tsc --noEmit" },
   "bin": {
     "rocket": "./bin/run.ts"
   },

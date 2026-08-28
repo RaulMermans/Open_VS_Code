@@ -1,7 +1,7 @@
 import { AgentRunner, AgentRunnerInput } from "./runner.ts"
 import { FailureClassification, classifyFailure } from "./failure-classification.ts"
 import { mapFailureToInvestigation } from "./repair-mapping.ts"
-import { RepairBudget, BoundedRepairLifecycle, RepairDecision, RepairAttemptRecord, RepairResult, RepairStatus } from "./repair-contracts.ts"
+import { RepairBudget, BoundedRepairLifecycle, RepairDecision, RepairResult } from "./repair-contracts.ts"
 import type { PreparedVerification, VerificationResult } from "../tools/verification-contracts.ts"
 import type { AgentResult } from "../contracts/agent.ts"
 import { VerificationEngine } from "../tools/verification-engine.ts"
@@ -28,7 +28,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
   #totalTurnsBeforeCurrentRunner = 0
   #changedFiles = new Set<string>()
   #events: any[] = []
-  #history: RepairAttemptRecord[] = []
+
   #fingerprints = new Set<string>()
 
   constructor(

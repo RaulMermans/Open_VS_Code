@@ -25,4 +25,5 @@
   - Open-weight model support: Yes.
   - Terminal execution: No arbitrary shells (bounded prepared verification only).
   - Auto-approval: NO. Every mutation and verification is fully gated by human approval.
-- Next milestone: Sprint 1K — Terminal/Command Capabilities and Sandboxing.
+- Current state: Sprint 1K is complete, evaluation framework achieved 100% success on deterministic tasks.
+- Next milestone: Sprint 1L — Open-Weight Model Integration.

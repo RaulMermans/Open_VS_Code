@@ -24,12 +24,13 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Deterministic Tool Loop** | ✅ Complete | Turn-budgeted, loop-detecting deterministic runner with event streams. |
 | **Local Model Gateway** | ✅ Complete | OpenAI-compatible provider with wire protocol normalization (supports markdown fences, `<tool_call>`, synthetic IDs). |
 | **Empirical Evaluation** | ✅ Complete | 24-task open-weight benchmark harness + deterministic unit tests. |
-| **Repository Intelligence** | ✅ Complete | Read-only tools (`read_file`, `list_directory`, `grep_search`, `find_by_name`) with bounds and ignore hygiene. |
+| **Repository Intelligence** | ✅ Complete | Read-only tools (`read_file`, `list_directory`, `search_text`, `find_files`) with bounds and ignore hygiene. |
 | **Context Compiler & Memory**| ✅ Complete | Progressive disclosure, dynamic token budgeting, and Markdown project memory (`PROJECT.md`, `PLAN.md`, `ARCHITECTURE.md`). |
 | **Permission Engine** | ✅ Complete | Action table validation, read-only enforcement, mode switching. |
 | **Agent Reasoning Reliability**| ✅ Complete | Evidence-driven orchestration: task profiling, tool narrowing, evidence ledger, premature-answer gate. |
-| **Safe Workspace Mutation** | ✅ Complete | Reversible edits, deterministic patches, exact base-hash verification, and atomic writes. |
-| **Autonomous Repair Loops** | ✅ Complete | Gated loop orchestration, exact verification discovery (TEST, TYPECHECK, LINT), and stale-base guards. |
+| **Safe Workspace Mutation** | ✅ Complete | Autonomous reasoning with human-gated side effects. Reversible edits, deterministic patches, exact base-hash verification, and atomic writes. |
+| **Controlled Verification** | ✅ Complete | Autonomous reasoning with human-gated side effects. Exact verification discovery (TEST, TYPECHECK, LINT), and stale-base guards. |
+| **Bounded Repair** | ✅ Complete | Gated loop orchestration, exact package-script review, human-gated verification approval, timeouts, and multi-attempt repair limits. |
 | **Interactive CLI** | ⏳ Planned | Standalone terminal interface. |
 | **IDE Integration** | ⏳ Planned | VS Code / Code-OSS extension integration. |
 
@@ -112,11 +113,11 @@ User / Task Input
 
 ## 5. Getting Started
 
-### Prerequisites
+### TARGET INFERENCE MACHINE / OPTIONAL LIVE EVALUATION
 
 * Node.js `>= 22.0.0`
 * npm `>= 10.0.0`
-* Optional for live model evaluation: [Ollama](https://ollama.ai) with `ollama run qwen2.5-coder:7b`
+* [Ollama](https://ollama.ai) with `ollama run qwen2.5-coder:7b`
 
 ### Installation
 
@@ -145,7 +146,7 @@ npm run lint
 npm run build
 ```
 
-### Live Model Benchmark (Requires Ollama + Qwen)
+### TARGET INFERENCE MACHINE / OPTIONAL LIVE EVALUATION
 
 ```bash
 npm run eval:model

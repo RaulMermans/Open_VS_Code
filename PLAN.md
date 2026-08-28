@@ -29,4 +29,18 @@ Deliver a closed-loop repair orchestrator that investigates verification failure
 
 ## Next sprint
 
-Sprint 1K — Terminal/Command Capabilities and Sandboxing.
+Sprint 1K — Coding-Agent Evaluation Suite.
+
+## Sprint 1K: Canonical Deterministic Agent Evaluation [COMPLETED]
+
+**Objective:** Build the canonical coding-agent evaluation system for the complete deterministic workflow so we can measure correctness, multi-file editing, test-driven repair, failure recovery, and safety boundaries prior to connecting open-weight models.
+
+**Key Deliverables:**
+- [x] Evaluation Schema: Define `CodingEvalCase` with tasks, budgets, test actions, and expected verification behaviors.
+- [x] Evaluation Runner: Implement isolated `tmp` workspace creation, `AgentRunner` mocking, and automated assertion of `expectedBehavior`.
+- [x] Test Fixtures: Curate 5 distinct cases (Single-file, Multi-file, Repair, Recovery, Safety) against `cli-tool-repo` and `mini-express-app`.
+- [x] Full Verification: Run E2E suite natively validating 100% success on task and safety boundaries.
+
+## Sprint 1L: Open-Weight Model Integration (Next)
+
+**Objective:** Wire up the fully-tested orchestration engine to a live open-weight model (`Llama3Provider` / `DeepSeekProvider`) and validate baseline performance on standard tasks without compromising safety or state invariants.

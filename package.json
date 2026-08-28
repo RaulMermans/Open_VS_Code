@@ -12,7 +12,8 @@
     "typecheck": "npm --workspace=@open-vs-code/agent-core run typecheck",
     "lint": "npm --workspace=@open-vs-code/agent-core run lint",
     "build": "npm --workspace=@open-vs-code/agent-core run build",
-    "eval:model": "npm --workspace=@open-vs-code/agent-core run eval:model"
+    "eval:model": "npm --workspace=@open-vs-code/agent-core run eval:model",
+    "eval:coding": "npm --workspace=@open-vs-code/agent-core run eval:coding"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

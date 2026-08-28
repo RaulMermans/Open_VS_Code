@@ -30,7 +30,7 @@ class MockVerificationEngine extends VerificationEngine {
     super({ workspaceRoot: "/test" })
   }
 
-  async execute(prepared: any, signal?: any) {
+  async execute(prepared: any, _signal?: any) {
     this.executeCalls.push(prepared)
     if (typeof this.executeResult === "function") {
       return this.executeResult(prepared)
@@ -282,7 +282,7 @@ test("T-213 — Verification budget exhaustion", async () => {
   const input: AgentRunnerInput = { task: { id: "t-1", mode: "PLAN", instruction: "fix" }, workspaceRoot: "/test", maxTurns: 10, contextBudget, projectInstructions: [] }
   const preparedVerif = { verificationId: "v-1", action: "TEST", executable: "node", args: [], cwd: "/test", timeoutMs: 1000, commandPreview: "node", packageJsonPath: "/test/package.json", packageJsonHash: "hash", scriptName: "test", scriptBody: "exit 1" } as PreparedVerification
 
-  engine.executeResult = (p: any) => ({ status: "FAIL", exitCode: 1, stdout: `fail-${engine.executeCalls.length}`, stderr: "", durationMs: 10 })
+  engine.executeResult = (_p: any) => ({ status: "FAIL", exitCode: 1, stdout: `fail-${engine.executeCalls.length}`, stderr: "", durationMs: 10 })
   
   let res = await orchestrator.run(input, preparedVerif)
   res = await orchestrator.resume("APPROVE") // runs v-1 (1st verif) -> fails -> attempt 1 proposes verif

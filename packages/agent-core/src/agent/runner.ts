@@ -396,7 +396,7 @@ export class AgentRunner {
         } catch (error) {
           const message = error instanceof Error ? error.message : "Tool preparation failed"
           this.#addErrorObservation(prepared, "TOOL_PREPARATION_ERROR", message, "FAILED")
-          this.#emit("tool.failed", { callId: prepared.id, name: prepared.name, message })
+          this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
           return false
         }
       }
