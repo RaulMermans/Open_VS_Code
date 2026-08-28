@@ -18,10 +18,9 @@ export class VerificationEngine {
 
   async execute(
     prepared: PreparedVerification,
-    verificationId: string,
     abortSignal?: AbortSignal
   ): Promise<VerificationResult> {
-    if (this.#consumed.has(verificationId)) {
+    if (this.#consumed.has(prepared.verificationId)) {
       return {
         status: "EXECUTION_ERROR",
         exitCode: null,
@@ -30,7 +29,7 @@ export class VerificationEngine {
         durationMs: 0,
       }
     }
-    this.#consumed.add(verificationId)
+    this.#consumed.add(prepared.verificationId)
 
     const startTime = Date.now()
 

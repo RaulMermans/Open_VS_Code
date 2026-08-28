@@ -1,34 +1,27 @@
 # Scratchpad
 
-- Current state: Sprint 1I.1 Verification Runtime Safety Closure is complete.
+- Current state: Sprint 1J Deterministic Autonomous Repair Loop is complete.
 - Accomplishments:
-  - Preserved full upstream Kilo baseline and provenance safely in Git via annotated tag `baseline/pre-kilo-separation` at commit `b1e3802bfb`.
-  - Conducted complete ownership audit (`docs/research/repository-ownership-audit.md`) across all 9,476 imported files.
-  - Eliminated Bun/Turbo and `.bun` path coupling; established clean Node 22+ / npm workspace (`packages/*`).
-  - Replaced root package metadata, README, LICENSE, and `.gitignore` with our authoritative product identity.
-  - Formalized legal upstream attributions in `THIRD_PARTY_NOTICES.md` and updated `REFERENCE_MAP.md`.
-  - Removed 35 unneeded Kilo packages and legacy configs (`script/`, `translations/`, `patches/`, `nix/`, `.kilo`, `.opencode`, etc.).
+  - Preserved full upstream Kilo baseline and provenance safely in Git via annotated tag `baseline/pre-kilo-separation`.
+  - Conducted complete ownership audit across all imported files.
   - Reduced canonical working tree tracked files by 98.5% (from 9,476 to 144 files).
-  - Configured clean multi-OS CI workflow (`.github/workflows/ci.yml`) on Node 22.
-  - Authored `docs/adrs/ADR-009-canonical-repository-independence.md` and updated `DECISIONS.md`.
-  - Preserved all empirical evaluation artifacts, benchmarks, and model cards intact in `evals/results/` and `docs/models/`.
-  - Audited codebase with `git grep -i "kilo"`: confirmed 0 production/runtime references (only attribution, ADRs, research).
   - Hardened VerificationEngine with exact package.json hash validation to prevent script-change execution.
-  - Reused path-safety.ts canonical helper to validate execution directories and symlinks.
   - Implemented detached process groups and taskkill for cross-platform process tree termination on timeout.
+  - Removed internal auto-approval behaviors in `RepairOrchestrator`, making it a pure state machine (`run`/`resume`).
+  - Bubbled `PreparedVerification` and `PreparedMutation` objects strictly via `ReviewableExecution` up to the user caller.
+  - Added strict tracking of budgets (`maxRepairAttempts`, `maxMutations`, `maxTotalAgentTurns`).
+  - Added exact verification identity ownership inside `PreparedVerification`.
+  - Authored a fully deterministic end-to-end `repair-workflow.test.ts` suite exercising timeout, budget exhaustion, and rejections safely without blocking tests.
 - Verification:
-  - 176 unit tests pass deterministically.
+  - 196 unit tests pass deterministically.
   - TypeScript typecheck (`tsc --noEmit`) passes with zero errors.
   - Lint (`oxlint --deny-warnings`) passes with zero warnings.
   - Build passes cleanly.
-  - `package-lock.json` and `npm install` verified cleanly.
   - `git diff --check` passes with zero issues.
 - Architectural Boundaries Preserved:
   - Zero Kilo production dependencies.
   - Zero cloud, telemetry, or proprietary model dependencies.
-  - Open-weight model support: Yes (`qwen2.5-coder:7b` via local Ollama).
+  - Open-weight model support: Yes.
   - Terminal execution: No arbitrary shells (bounded prepared verification only).
-  - Git mutation: No (deferred).
-  - VS Code / Code-OSS dependency: No (clean standalone core).
-  - MCP dependency: No (deferred).
-- Next milestone: Sprint 1J — Deterministic Autonomous Repair Loop.
+  - Auto-approval: NO. Every mutation and verification is fully gated by human approval.
+- Next milestone: Sprint 1K — Terminal/Command Capabilities and Sandboxing.

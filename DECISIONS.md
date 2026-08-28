@@ -16,3 +16,4 @@
 Decision status changes belong in the ADR and this index.
 
 Sprint 1's implementation recommendation is documented separately at `docs/research/starting-strategy.md`; it does not make the provisional ADRs permanent.
+- **ADR-012**: Bounded Autonomous Repair Loops

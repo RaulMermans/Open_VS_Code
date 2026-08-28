@@ -3,6 +3,7 @@ export type VerificationAction = "TEST" | "TYPECHECK" | "LINT" | "BUILD"
 export type VerificationStatus = "PASS" | "FAIL" | "TIMEOUT" | "CANCELLED" | "EXECUTION_ERROR" | "STALE_VERIFICATION"
 
 export interface PreparedVerification {
+  readonly verificationId: string
   readonly action: VerificationAction
   readonly executable: string
   readonly args: readonly string[]

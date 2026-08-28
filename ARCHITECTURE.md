@@ -46,7 +46,9 @@ deterministic infrastructure
    |-- strict tool registry and bounded observations
    |-- scripted provider for deterministic regression tests
    |-- safe mutation layer (apply_patch, create_file)
-   `-- resumable AgentRunner with confirmation flow
+   |-- bounded verification layer (TEST, TYPECHECK, LINT, BUILD)
+   |-- resumable AgentRunner with confirmation flow
+   `-- resumable RepairOrchestrator with human-gated loops
 
 mutation lifecycle
    |-- contracts (MutationRequest, PreparedMutation, MutationResult, MutationSnapshot)
@@ -80,7 +82,23 @@ mutation flow (apply_patch / create_file):
      -> permission gate (CONFIRM) -> PAUSE FOR APPROVAL
      -> apply atomically (temp + rename)
      -> verify result hash -> record snapshot -> return bounded observation
+     -> verify result hash -> record snapshot -> return bounded observation
      -> rollback available if file unchanged since mutation
+
+verification flow (run_verification):
+     -> narrow discovery of scripts (TEST, TYPECHECK, LINT, BUILD)
+     -> prepare verification -> hash package.json to prevent arbitrary execution
+     -> permission gate (CONFIRM) -> PAUSE FOR APPROVAL
+     -> execute securely with CWD containment, timeout, single-use identity
+     -> bound STDOUT/STDERR output -> return bounded observation
+
+repair flow:
+     -> evaluate verification result -> classify failure
+     -> map failure to targeted prompt
+     -> create repair runner with turn/mutation budgets
+     -> propose mutation -> PAUSE FOR MUTATION APPROVAL
+     -> propose verification -> PAUSE FOR VERIFICATION APPROVAL
+     -> evaluate repair state -> terminate if budgets exceeded or loop detected
 ```
 
 The registry separates model-visible definitions from executors and strictly validates untrusted arguments before permission evaluation or execution. `ALLOW` executes, `DENY` produces a structured observation without execution, and `CONFIRM` returns a paused result that can resume with explicit approval or rejection. Tool failures are recoverable observations; model failures, required-context overflow, cancellation, maximum turns, and deterministic non-progress guards are distinct terminal outcomes.

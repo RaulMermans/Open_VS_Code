@@ -1,26 +1,26 @@
-# Sprint 1I Plan — Controlled Verification Runtime
+# Sprint 1J Plan — Deterministic Autonomous Repair Loop
 
 ## Current milestone
 
-Sprint 1I — Implement a safe, bounded verification engine (Phase B) and resolve the prepared-diff approval mutation loop (Phase A).
+Sprint 1J — Connect investigation, mutation, and verification into a bounded repair lifecycle with human approval gates.
 
 ## Objective
 
-Make investigation disciplined, tool selection targeted, turn allocation smarter, and premature answers impossible—improving local open-weight model performance through evidence-driven orchestration while maintaining strict scope boundaries and repository hygiene.
+Deliver a closed-loop repair orchestrator that investigates verification failures, synthesizes repairs, prepares them for exact approval, applies them, and re-verifies them—strictly constrained by mutation budgets, agent turn budgets, and user approval workflows.
 
 ## Task graph
 
 | ID | Task | Depends on | Acceptance criteria | Status |
 | --- | --- | --- | --- | --- |
-| T-154 | Exact verification script freeze | Sprint 1H | Store packageJsonPath, packageJsonHash, scriptName, scriptBody in PreparedVerification. | Complete |
-| T-155 | Stale verification protection | T-154 | Re-read package.json hash in engine. Halts with STALE_VERIFICATION if modified. | Complete |
-| T-156 | Exact approval binding | T-154 | Bind execution approval structurally to unique verification ID tracking. | Complete |
-| T-157 | Correct workspace containment | Sprint 1H | Use canonical path-containment helper for execution cwd validation. | Complete |
-| T-158 | Process-tree termination | Sprint 1H | Implement cross-platform process tree termination (SIGKILL group / taskkill) on timeout/cancel. | Complete |
-| T-159 | Environment policy review | Sprint 1H | Ensure only essential env (PATH, NODE_ENV, npm_config_*) are preserved during spawn. | Complete |
-| T-160 | Phase A Verification Tests | T-154..159 | Add deterministic test coverage for all new verification constraints. | Complete |
-| T-161 | Documentation truth cleanup | T-160 | Update PLAN.md, SCRATCHPAD.md, ARCHITECTURE.md, README.md and canonical Node 22+ policy. | Complete |
+| T-190 | Repair workflow contract | Sprint 1I | Define RepairResult and RepairStatus interfaces tracking loops, turns, and failures. | Complete |
+| T-191 | Deterministic verification output | Sprint 1I | Map raw execute results -> unified FailureClassification type. | Complete |
+| T-192 | Failure -> Investigation prompts | T-191 | Compile categorized verification failures into investigation contexts. | Complete |
+| T-193 | `RepairOrchestrator` state machine | T-190..192 | Implement `BoundedRepairLifecycle` (run/resume) preventing infinite loops. | Complete |
+| T-194 | Verify repair bounded loop | T-193 | Verify the single workflow boundary. Reject any internal auto-approval behaviors. | Complete |
+| T-195 | Exact mutation integration | T-194 | Require `ReviewableExecution` (prepared diff/verification) to be bubbled to caller. | Complete |
+| T-196 | Scripted repair infrastructure | Sprint 1I | End-to-end `repair-workflow.test.ts` testing timeouts, bounds, and rejections. | Complete |
+| T-197 | Documentation truth cleanup | T-196 | Update PLAN.md, SCRATCHPAD.md, ARCHITECTURE.md with repair loop constraints. | Complete |
 
 ## Next sprint
 
-Sprint 1J — Deterministic Autonomous Repair Loop: Connect investigation, mutation, and verification into a bounded repair lifecycle with human approval gates. Includes building the repair workflow contract, budgets, failure classification, failure->investigation mapping, and running scripted deterministic benchmarks.
+Sprint 1K — Terminal/Command Capabilities and Sandboxing.

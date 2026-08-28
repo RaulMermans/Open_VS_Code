@@ -49,7 +49,7 @@ test("Verification Engine - CWD escape", async () => {
 
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
-      action: "TEST",
+      verificationId: "test-id", action: "TEST",
       executable: "echo",
       args: ["hello"],
       cwd: path.resolve(tmpDir, ".."), // outside workspace
@@ -59,7 +59,7 @@ test("Verification Engine - CWD escape", async () => {
       packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
       scriptName: "test",
       scriptBody: "echo hello",
-    }, "v1")
+    })
     assert.equal(result.status, "EXECUTION_ERROR")
     assert.ok(result.stderr.includes("CWD validation failed"))
   } finally {
@@ -77,7 +77,7 @@ test("Verification Engine - Success execution", async () => {
     // require crypto dynamically because we need to compute hash sync here
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
-      action: "TEST",
+      verificationId: "test-id", action: "TEST",
       executable: "node",
       args: ["-e", "console.log('hello')"],
       cwd: tmpDir,
@@ -87,7 +87,7 @@ test("Verification Engine - Success execution", async () => {
       packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
       scriptName: "test",
       scriptBody: "node -e console.log('hello')",
-    }, "v2")
+    })
     assert.equal(result.status, "PASS")
     assert.equal(result.stdout.trim(), "hello")
   } finally {
@@ -104,7 +104,7 @@ test("Verification Engine - Output bounding limit", async () => {
     await fs.writeFile(pkgPath, pkgContent)
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
-      action: "TEST",
+      verificationId: "test-id", action: "TEST",
       executable: "node",
       // Output more than 16KB
       args: ["-e", "console.log('a'.repeat(20000))"],
@@ -115,7 +115,7 @@ test("Verification Engine - Output bounding limit", async () => {
       packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
       scriptName: "test",
       scriptBody: "node ...",
-    }, "v3")
+    })
     assert.equal(result.status, "PASS")
     assert.ok(result.stdout.includes("[STDOUT TRUNCATED]"))
     assert.ok(result.stdout.length < 20000) // truncated
@@ -139,7 +139,7 @@ test("Verification Engine - Stale verification", async () => {
     await fs.writeFile(pkgPath, newContent)
 
     const result = await engine.execute({
-      action: "TEST",
+      verificationId: "test-id", action: "TEST",
       executable: "echo",
       args: ["old"],
       cwd: tmpDir,
@@ -149,7 +149,7 @@ test("Verification Engine - Stale verification", async () => {
       packageJsonHash: crypto.createHash("sha256").update(originalContent).digest("hex"), // hash of original
       scriptName: "test",
       scriptBody: "echo old",
-    }, "v-stale")
+    })
 
     assert.equal(result.status, "STALE_VERIFICATION")
     assert.ok(result.stderr.includes("changed since preparation"))
@@ -168,6 +168,7 @@ test("Verification Engine - Single use enforcement", async () => {
 
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const prepared = {
+      verificationId: "v-single-use",
       action: "TEST",
       executable: "node",
       args: ["-e", "console.log('hello')"],
@@ -181,11 +182,11 @@ test("Verification Engine - Single use enforcement", async () => {
     } as const
 
     // First execution should pass
-    const result1 = await engine.execute(prepared, "v-single-use")
+    const result1 = await engine.execute(prepared)
     assert.equal(result1.status, "PASS")
 
     // Second execution with same ID should fail immediately
-    const result2 = await engine.execute(prepared, "v-single-use")
+    const result2 = await engine.execute(prepared)
     assert.equal(result2.status, "EXECUTION_ERROR")
     assert.ok(result2.stderr.includes("already been executed"))
   } finally {
@@ -202,7 +203,7 @@ test("Verification Engine - Timeout", async () => {
     await fs.writeFile(pkgPath, pkgContent)
     const engine = new VerificationEngine({ workspaceRoot: tmpDir })
     const result = await engine.execute({
-      action: "TEST",
+      verificationId: "test-id", action: "TEST",
       executable: "node",
       args: ["-e", "setTimeout(() => {}, 5000)"],
       cwd: tmpDir,
@@ -212,7 +213,7 @@ test("Verification Engine - Timeout", async () => {
       packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
       scriptName: "test",
       scriptBody: "node ...",
-    }, "v4")
+    })
     assert.equal(result.status, "TIMEOUT")
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true })
@@ -234,7 +235,7 @@ test("Verification Engine - Cancellation", async () => {
     }, 50)
 
     const result = await engine.execute({
-      action: "TEST",
+      verificationId: "test-id", action: "TEST",
       executable: "node",
       args: ["-e", "setTimeout(() => {}, 5000)"],
       cwd: tmpDir,
@@ -244,7 +245,7 @@ test("Verification Engine - Cancellation", async () => {
       packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
       scriptName: "test",
       scriptBody: "node ...",
-    }, "v5", controller.signal)
+    }, controller.signal)
 
     assert.equal(result.status, "CANCELLED")
   } finally {

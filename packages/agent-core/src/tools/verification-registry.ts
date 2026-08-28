@@ -10,7 +10,7 @@ const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
   BUILD: 120_000,
 }
 
-export function createVerificationToolRegistry(workspaceRoot: string): ToolRegistry {
+export function createVerificationToolRegistrations(workspaceRoot: string): ToolRegistration[] {
   const engine = new VerificationEngine({ workspaceRoot })
 
   const runVerificationRegistration: ToolRegistration = {
@@ -41,8 +41,10 @@ export function createVerificationToolRegistry(workspaceRoot: string): ToolRegis
     prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
       const action = input.action as VerificationAction
       const command = await discoverVerificationCommand(context.workspaceRoot, action)
+      const verificationId = `verification-${Date.now()}-${Math.random().toString(36).slice(2)}`
       
       const prepared: PreparedVerification = {
+        verificationId,
         action,
         executable: command.executable,
         args: command.args,
@@ -55,21 +57,11 @@ export function createVerificationToolRegistry(workspaceRoot: string): ToolRegis
         scriptBody: command.scriptBody,
       }
 
-      const verificationId = `verification-${Date.now()}-${Math.random().toString(36).slice(2)}`
       return {
         id: verificationId,
-        reviewPayload: {
-          action: prepared.action,
-          executable: prepared.executable,
-          args: prepared.args,
-          cwd: prepared.cwd,
-          timeoutMs: prepared.timeoutMs,
-          packageJsonHash: prepared.packageJsonHash,
-          scriptName: prepared.scriptName,
-          scriptBody: prepared.scriptBody,
-        },
+        reviewPayload: prepared as any,
         apply: async (applyContext: ToolExecutionContext): Promise<VerificationResult> => {
-          return engine.execute(prepared, verificationId, applyContext.signal)
+          return engine.execute(prepared, applyContext.signal)
         },
       }
     },
@@ -78,5 +70,9 @@ export function createVerificationToolRegistry(workspaceRoot: string): ToolRegis
     },
   }
 
-  return new ToolRegistry([runVerificationRegistration])
+  return [runVerificationRegistration]
+}
+
+export function createVerificationToolRegistry(workspaceRoot: string): ToolRegistry {
+  return new ToolRegistry(createVerificationToolRegistrations(workspaceRoot))
 }
