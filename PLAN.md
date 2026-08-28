@@ -41,6 +41,29 @@ Sprint 1K — Coding-Agent Evaluation Suite.
 - [x] Test Fixtures: Curate 5 distinct cases (Single-file, Multi-file, Repair, Recovery, Safety) against `cli-tool-repo` and `mini-express-app`.
 - [x] Full Verification: Run E2E suite natively validating 100% success on task and safety boundaries.
 
-## Sprint 1L: Open-Weight Model Integration (Next)
+## Sprint 1K.1: Evaluation Corpus Expansion & Metric Integrity [COMPLETED]
 
-**Objective:** Wire up the fully-tested orchestration engine to a live open-weight model (`Llama3Provider` / `DeepSeekProvider`) and validate baseline performance on standard tasks without compromising safety or state invariants.
+**Objective:** Expand evaluation corpus to ~30 cases covering diverse scenarios and properly wire scoreboard metrics to authoritative runtime events.
+
+**Key Deliverables:**
+- [x] Extract usage metrics directly from `AgentResult.events`.
+- [x] Expand `CODING_EVAL_CASES` to 30 deterministic scenarios covering bugs, type repair, features, safety.
+- [x] Prove repeatability of 30 cases (100% success rate on task/safety).
+- [x] Produce canonical baseline artifact.
+
+
+## Sprint 1L: First Usable CLI Product [COMPLETED]
+
+**Objective:** Turn the proven agent core into the first usable product interface with interactive headless approval loops.
+
+**Key Deliverables:**
+- [x] Create `@open-vs-code/cli` package layer.
+- [x] Implement ASK, PLAN, BUILD, DEBUG, REVIEW commands.
+- [x] Map event loop to simple rendering (no rich UI yet).
+- [x] Support terminal prompt verification (y/N).
+- [x] E2E automated test proving CLI behavior.
+
+
+## Sprint 1M: Real Model Integration (Next)
+
+**Objective:** On the target inference machine, connect the `AgentRunner` to a live open-weight model Endpoint (e.g. vLLM/Ollama running Qwen/Llama) and validate baseline performance against the 30-case evaluation suite.
