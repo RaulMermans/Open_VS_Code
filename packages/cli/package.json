@@ -1,0 +1,24 @@
+{
+  "name": "@open-vs-code/cli",
+  "version": "0.1.0",
+  "description": "First Usable CLI Product for Open VS Code Agent",
+  "main": "src/cli.ts",
+  "type": "module",
+  "bin": {
+    "open-vscode-agent": "./bin/open-vscode-agent.js"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx/esm --test tests/cli.test.ts",
+    "lint": "oxlint -c ../../.oxlintrc.json --deny-warnings src tests"
+  },
+  "dependencies": {
+    "@open-vs-code/agent-core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsx": "^4.9.3",
+    "@types/node": "^20.12.7"
+  }
+}

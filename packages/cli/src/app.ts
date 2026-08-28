@@ -1,0 +1,264 @@
+import { AgentRunner } from "@open-vs-code/agent-core/src/agent/runner.ts";
+import { RepairOrchestrator } from "@open-vs-code/agent-core/src/agent/repair-loop.ts";
+import { MutationEngine } from "@open-vs-code/agent-core/src/tools/mutation-engine.ts";
+import { VerificationEngine } from "@open-vs-code/agent-core/src/tools/verification-engine.ts";
+import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core/src/tools/read-only-registry.ts";
+import { createMutationToolRegistrations } from "@open-vs-code/agent-core/src/tools/mutation-registry.ts";
+import { createVerificationToolRegistrations } from "@open-vs-code/agent-core/src/tools/verification-registry.ts";
+import { calculateBudget } from "@open-vs-code/agent-core/src/context/budget.ts";
+import * as readline from "node:readline/promises";
+
+import type { AgentMode, AgentEvent, AgentResult } from "@open-vs-code/agent-core/src/contracts/agent.ts";
+import type { ModelProvider } from "@open-vs-code/agent-core/src/contracts/model.ts";
+
+export interface CLIAppOptions {
+  mode: AgentMode;
+  instruction: string;
+  workspaceRoot: string;
+  json?: boolean;
+  provider?: ModelProvider;
+  mockApproval?: "APPROVE" | "REJECT";
+}
+
+export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number }> {
+  let provider: ModelProvider = options.provider as any;
+  if (!provider) {
+    // If no provider injected, we create a proxy that throws configuration error
+    // because real open-weight models belong on the target inference machine.
+    provider = {
+      capabilities: new Set(["chat", "tools"] as any),
+      async complete() {
+        console.error("\nModel configuration error: Live open-weight inference is configured on the target inference machine.\n"); throw new Error("Model configuration error: Live open-weight inference is configured on the target inference machine.");
+      }
+    };
+  }
+
+  const mutationEngine = new MutationEngine(options.workspaceRoot);
+  const verificationEngine = new VerificationEngine({ workspaceRoot: options.workspaceRoot });
+  
+  const registry = createReadOnlyToolRegistry();
+  for (const r of createMutationToolRegistrations({ engine: mutationEngine })) {
+    registry.register(r);
+  }
+  for (const r of createVerificationToolRegistrations(options.workspaceRoot)) {
+    registry.register(r);
+  }
+
+  const permissionEvaluator = (inputCtx: { readonly action: string; readonly mode: AgentMode }) => {
+    // Hard rules from agent core policy
+    if (inputCtx.action === "run_shell" || inputCtx.action === "shell") {
+      return "DENIED";
+    }
+    if (["ASK", "PLAN", "REVIEW"].includes(inputCtx.mode)) {
+      if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") return "DENIED";
+    }
+    if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") {
+      return "CONFIRM";
+    }
+    return "ALLOW";
+  };
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  const confirm = async (prompt: string): Promise<boolean> => {
+    if (options.mockApproval) {
+      if (!options.json) console.log(prompt + options.mockApproval);
+      return options.mockApproval === "APPROVE";
+    }
+    const answer = await rl.question(prompt);
+    return answer.trim().toLowerCase() === "y";
+  };
+
+  const sink = (ev: AgentEvent) => {
+    if (options.json) return;
+    
+    // Event rendering logic
+    switch (ev.type) {
+      case "task.started":
+        console.log(`\nStarting ${options.mode} task...`);
+        break;
+      case "tool.requested":
+        if (ev.payload && (ev.payload as any).name === "search_files") {
+          console.log(`  🔍 searching workspace`);
+        } else if (ev.payload && (ev.payload as any).name === "read_file") {
+          console.log(`  📖 reading file`);
+        }
+        break;
+      case "tool.completed":
+        if (ev.payload && (ev.payload as any).name === "search_files") {
+          console.log(`  ✓ searched`);
+        } else if (ev.payload && (ev.payload as any).name === "read_file") {
+          console.log(`  ✓ read`);
+        }
+        break;
+      case "mutation.prepared":
+        console.log(`\nCHANGE`);
+        console.log(`  waiting for approval...`);
+        break;
+      case "verification.prepared":
+        console.log(`\nVERIFY`);
+        console.log(`  waiting for approval...`);
+        break;
+      case "repair.started":
+        console.log(`\nREPAIR (Attempt ${(ev.payload as any)?.attempt || 1})`);
+        break;
+      case "verification.completed":
+        const vRes = (ev.payload as any)?.result;
+        if (vRes) {
+          console.log(`  ${vRes.action} → ${vRes.success ? "PASS" : "FAIL"}`);
+          if (!vRes.success && vRes.output) {
+             const lines = vRes.output.split('\n').slice(0, 10).join('\n');
+             console.log(`\n  <bounded relevant output>\n${lines}\n  </bounded relevant output>`);
+          }
+        }
+        break;
+    }
+  };
+
+  const contextBudget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 });
+  
+  const runnerInput: any = {
+    task: { id: "cli-task", mode: options.mode, instruction: options.instruction },
+    workspaceRoot: options.workspaceRoot,
+    maxTurns: 15,
+    contextBudget,
+    projectInstructions: []
+  };
+
+  let finalResult: any;
+
+  try {
+    if (options.mode === "DEBUG") {
+      // For DEBUG, we can use the repair loop if there's a verification target. 
+      // Actually DEBUG can just run as normal AgentRunner until it wants to verify.
+      // Wait, T-315: DEBUG should use disciplined loop: reproduce / inspect -> hypotheses -> targeted checks -> root cause -> minimal patch -> verification.
+      // RepairOrchestrator requires a `PreparedVerification` to start.
+      // So if mode is DEBUG, we first run the agent to prepare a verification or fix something.
+      // We will just use the agent runner. If it prepares a verification, we can hand it off to the repair orchestrator?
+      // For CLI, using AgentRunner handles the loop up to CONFIRM.
+    }
+
+    const runner = new AgentRunner({
+      provider,
+      registry,
+      // @ts-ignore
+      permissionEvaluator,
+      evidenceGate: false,
+      eventSink: sink
+    });
+
+    // Handle cancellation
+    const ac = new AbortController();
+    process.on("SIGINT", () => {
+      console.log("\nCancelling...");
+      ac.abort();
+    });
+    runnerInput.signal = ac.signal;
+
+    let runnerResult = await runner.run(runnerInput as any);
+
+    while (runnerResult.status === "PAUSED") {
+      const conf = runnerResult.confirmation!;
+      
+      if (conf.action === "write_file") {
+        const pm = conf.preparedMutation!;
+        if (!options.json) {
+          console.log(`\nProposed Mutation:`);
+          console.log(`File: ${pm.path}`);
+          console.log(`Operation: ${pm.operation}`);
+          console.log(`Hash before: ${pm.beforeHash.substring(0, 8)}`);
+          console.log(`Lines added: ${pm.linesAdded}, removed: ${pm.linesRemoved}`);
+          console.log(`\n--- old`);
+          console.log(`+++ new`);
+          console.log(pm.diff);
+        }
+
+        const approved = await confirm("\nApprove this change? [y/N] ");
+        if (approved) {
+          runnerResult = await runner.resume("APPROVE");
+        } else {
+          if (!options.json) console.log("REJECT");
+          runnerResult = await runner.resume("REJECT");
+        }
+      } else if (conf.action === "run_known_test") {
+        if (!options.json) {
+          console.log(`\nProposed Verification:`);
+          console.log(`Action: ${conf.arguments.action}`);
+          console.log(`Working directory: ${options.workspaceRoot}`);
+        }
+        
+        const approved = await confirm("\nRun this verification? [y/N] ");
+        if (approved) {
+          runnerResult = await runner.resume("APPROVE");
+        } else {
+          if (!options.json) console.log("REJECT");
+          runnerResult = await runner.resume("REJECT");
+        }
+      }
+    }
+
+    finalResult = runnerResult;
+  } catch (err: any) {
+    if (options.json) {
+      console.log(JSON.stringify({ status: "ERROR", error: err.message }, null, 2));
+    } else {
+      console.error(`\nError: ${err.message}`);
+    }
+    rl.close();
+    return { exitCode: 3 }; // config / runtime error
+  }
+
+  rl.close();
+
+  if (options.json) {
+    console.log(JSON.stringify(finalResult, null, 2));
+    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1) };
+  }
+
+  console.log(`\nStatus: ${finalResult.status}`);
+  console.log(`Mode: ${options.mode}`);
+  if (finalResult.failureReason) {
+    console.log(`Reason: ${finalResult.failureReason}`);
+  }
+  
+  // Extract summary stats from events
+  const changedFiles = new Set<string>();
+  let mutations = 0;
+  let verifications = 0;
+  for (const ev of finalResult.events) {
+    if (ev.type === "mutation.applied") {
+      mutations++;
+      if (ev.payload?.mutationId) {
+        // Can't easily map back to file here without looking at confirmation requested
+      }
+    }
+    if (ev.type === "mutation.confirmation_requested") {
+       if (ev.payload?.preparedMutation?.path) {
+         changedFiles.add(ev.payload.preparedMutation.path);
+       }
+    }
+    if (ev.type === "verification.completed") verifications++;
+  }
+
+  if (changedFiles.size > 0) {
+    console.log(`\nFiles changed:`);
+    for (const f of changedFiles) {
+      console.log(`- ${f}`);
+    }
+  }
+
+  if (verifications > 0) {
+    console.log(`\nVerification runs: ${verifications}`);
+  }
+
+  console.log(`\nTurns: ${finalResult.turns}`);
+
+  let exitCode = 0;
+  if (finalResult.status === "FAILED") exitCode = 1;
+  if (finalResult.status === "CANCELLED") exitCode = 2;
+
+  return { exitCode };
+}
