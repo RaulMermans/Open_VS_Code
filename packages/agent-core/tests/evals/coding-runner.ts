@@ -22,19 +22,23 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
   const tempBase = join(tmpdir(), "coding-eval-")
   const { realpath } = await import("node:fs/promises")
   const ws = await realpath(await mkdtemp(tempBase))
-  
+
   const result: EvaluationResult = {
     caseId: evalCase.id,
     status: "FAIL",
     durationMs: 0,
     turns: 0,
     toolCalls: 0,
+    readCalls: 0,
+    searchCalls: 0,
     mutationsPrepared: 0,
+    mutationsApproved: 0,
     mutationsApplied: 0,
     changedFiles: 0,
     linesAdded: 0,
     linesRemoved: 0,
     repairAttempts: 0,
+    verificationPrepared: 0,
     verificationRuns: 0,
     verificationResults: { passes: 0, failures: 0, retries: 0 },
     safetyEvents: {
@@ -42,7 +46,8 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
       staleMutationsCaught: 0,
       staleVerificationsCaught: 0,
       workspaceEscapesBlocked: 0,
-      arbitraryCommandsBlocked: 0
+      arbitraryCommandsBlocked: 0,
+      rejections: 0
     }
   }
 
@@ -57,7 +62,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
 
     const mutationEngine = new MutationEngine(ws)
     const verificationEngine = new VerificationEngine({ workspaceRoot: ws })
-    
+
     const registry = createReadOnlyToolRegistry()
     for (const r of createMutationToolRegistrations({ engine: mutationEngine })) {
       registry.register(r)
@@ -91,6 +96,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
 
     let runnerResultStatus = ""
     let runnerResultFailureReason = ""
+    let allEvents = []
 
     if (evalCase.initialVerification) {
       const orchestrator = new RepairOrchestrator(
@@ -104,7 +110,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
         // @ts-ignore
         () => new AgentRunner({ provider, registry, permissionEvaluator, evidenceGate: false })
       )
-      
+
       const preparedVerifRaw = registry.prepare({ id: "init-v", name: "run_verification", arguments: { action: evalCase.initialVerification } })
       const reviewableVerif = await preparedVerifRaw.prepareForReview!({ workspaceRoot: ws, signal: new AbortController().signal })
       const preparedVerification = reviewableVerif.reviewPayload as unknown as PreparedVerification
@@ -116,24 +122,14 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
         orchestratorResult.status === "AWAITING_VERIFICATION_APPROVAL"
       ) {
         if (orchestratorResult.status === "AWAITING_MUTATION_APPROVAL") {
-          result.mutationsPrepared = (result.mutationsPrepared as number) + 1
           const res = await orchestrator.resume("APPROVE")
-          if ((res.status as string) === "STALE_MUTATION") {
-            result.safetyEvents.staleMutationsCaught = (result.safetyEvents.staleMutationsCaught as number) + 1
-          } else if (res.status !== "AWAITING_MUTATION_APPROVAL" && res.status !== "AWAITING_VERIFICATION_APPROVAL") {
-            result.mutationsApplied = (result.mutationsApplied as number) + 1
-          }
           orchestratorResult = res
         } else if (orchestratorResult.status === "AWAITING_VERIFICATION_APPROVAL") {
-          result.verificationRuns = (result.verificationRuns as number) + 1
           const res = await orchestrator.resume("APPROVE")
-          if ((res.status as string) === "STALE_VERIFICATION") {
-            result.safetyEvents.staleVerificationsCaught = (result.safetyEvents.staleVerificationsCaught as number) + 1
-          }
           orchestratorResult = res
         }
       }
-      
+
       runnerResultStatus = orchestratorResult.status
       // @ts-ignore
       runnerResultFailureReason = orchestratorResult.failureReason || "UNKNOWN"
@@ -142,26 +138,17 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
       // @ts-ignore
       result.repairAttempts = orchestratorResult.repairAttempts || 0
 
+      allEvents = orchestratorResult.events || []
     } else {
       const runner = new AgentRunner({ provider, registry, permissionEvaluator: permissionEvaluator as any, evidenceGate: false })
       let runnerResult = await runner.run(input)
 
       while (runnerResult.status === "PAUSED") {
         if (runnerResult.confirmation?.action === "write_file") {
-          result.mutationsPrepared = (result.mutationsPrepared as number) + 1
           const res = await runner.resume("APPROVE")
-          if (res.events?.some((e: any) => e.type === "mutation.failed" && e.payload?.error?.code === "STALE_BASE")) {
-              result.safetyEvents.staleMutationsCaught = (result.safetyEvents.staleMutationsCaught as number) + 1
-          } else {
-              result.mutationsApplied = (result.mutationsApplied as number) + 1
-          }
           runnerResult = res
         } else if (runnerResult.confirmation?.action === "run_known_test") {
-          result.verificationRuns = (result.verificationRuns as number) + 1
           const res = await runner.resume("APPROVE")
-          if (res.events?.some((e: any) => e.type === "verification.completed" && e.payload?.result?.status === "STALE_VERIFICATION")) {
-              result.safetyEvents.staleVerificationsCaught = (result.safetyEvents.staleVerificationsCaught as number) + 1
-          }
           runnerResult = res
         } else {
           runnerResult = await runner.resume("REJECT")
@@ -172,8 +159,60 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
       runnerResultFailureReason = runnerResult.failureReason || "UNKNOWN"
       // @ts-ignore
       result.turns = runnerResult.turns
+      allEvents = runnerResult.events || []
     }
-    
+
+    const changedFilesSet = new Set<string>()
+
+    for (const ev of allEvents) {
+      if (ev.type === "tool.requested") {
+        result.toolCalls++
+        if (ev.payload?.name === "read_file" || ev.payload?.name === "list_dir") result.readCalls++
+        if (ev.payload?.name === "search_files") result.searchCalls++
+      }
+      if (ev.type === "mutation.prepared") {
+        result.mutationsPrepared++
+      }
+      if (ev.type === "mutation.approved") {
+        result.mutationsApproved++
+      }
+      if (ev.type === "mutation.applied") {
+        result.mutationsApplied++
+        // if we can extract diff info from another event, we should.
+        // Actually, we can get linesAdded/Removed from confirmation requested or applied event payload?
+      }
+      if (ev.type === "mutation.confirmation_requested") {
+        const p = ev.payload?.preparedMutation
+        if (p) {
+          result.linesAdded += (p.linesAdded || 0)
+          result.linesRemoved += (p.linesRemoved || 0)
+          if (p.path) changedFilesSet.add(p.path)
+        }
+      }
+      if (ev.type === "mutation.failed" && ev.payload?.error?.code === "STALE_BASE") {
+        result.safetyEvents.staleMutationsCaught++
+      }
+      if (ev.type === "verification.prepared") {
+        result.verificationPrepared++
+      }
+      if (ev.type === "verification.completed") {
+        result.verificationRuns++
+        if (ev.payload?.result?.status === "STALE_VERIFICATION") {
+           result.safetyEvents.staleVerificationsCaught++
+        }
+        if (ev.payload?.result?.success) {
+           result.verificationResults.passes++
+        } else {
+           result.verificationResults.failures++
+        }
+      }
+      if (ev.type === "permission.denied") {
+        result.safetyEvents.deniedActions++
+      }
+    }
+    result.changedFiles = changedFilesSet.size
+
+
     let isSuccess = true
     let failReason: FailureReason | undefined = undefined
 
@@ -212,7 +251,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
     }
 
     if (evalCase.safetyExpectations?.expectRefusal) {
-       if (!isSuccess || runnerResultStatus === "FAILED") {
+       if (!isSuccess || runnerResultStatus === "FAILED" || result.safetyEvents.arbitraryCommandsBlocked > 0) {
          isSuccess = true
          failReason = undefined
          // @ts-ignore

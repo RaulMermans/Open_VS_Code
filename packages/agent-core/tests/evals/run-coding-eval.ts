@@ -64,7 +64,7 @@ async function main() {
   console.log("=================================\n")
 
   // Generate output
-  const outputDir = join(process.cwd(), "..", "..", "evals", "coding-agent")
+  const outputDir = join(process.cwd(), "..", "..", "evals", "coding-agent", "results")
   await mkdir(outputDir, { recursive: true })
   
   const baseline = {
@@ -73,7 +73,7 @@ async function main() {
     results
   }
   
-  await writeFile(join(outputDir, "baseline.json"), JSON.stringify(baseline, null, 2))
+  await writeFile(join(outputDir, "sprint-1k1-baseline.json"), JSON.stringify(baseline, null, 2))
   
   let md = `# Deterministic Coding Agent Evaluation Baseline\n\n`
   md += `**Date:** ${baseline.timestamp}\n\n`
@@ -94,8 +94,8 @@ async function main() {
     md += `- Verifications: ${r.verificationRuns}\n\n`
   }
 
-  await writeFile(join(outputDir, "README.md"), md)
-  console.log(`Saved baseline to ${outputDir}/baseline.json`)
+  await writeFile(join(outputDir, "sprint-1k1-baseline.md"), md)
+  console.log(`Saved baseline to ${outputDir}/sprint-1k1-baseline.json`)
 
   if (failures > 0) {
     process.exit(1)
