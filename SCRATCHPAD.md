@@ -1,6 +1,6 @@
 # Scratchpad
 
-- Current state: Sprint 1J Deterministic Autonomous Repair Loop is complete.
+- Current state: Sprint 1J Deterministic Autonomous Repair Loop is complete with real-component E2E tests.
 - Accomplishments:
   - Preserved full upstream Kilo baseline and provenance safely in Git via annotated tag `baseline/pre-kilo-separation`.
   - Conducted complete ownership audit across all imported files.
@@ -9,11 +9,12 @@
   - Implemented detached process groups and taskkill for cross-platform process tree termination on timeout.
   - Removed internal auto-approval behaviors in `RepairOrchestrator`, making it a pure state machine (`run`/`resume`).
   - Bubbled `PreparedVerification` and `PreparedMutation` objects strictly via `ReviewableExecution` up to the user caller.
-  - Added strict tracking of budgets (`maxRepairAttempts`, `maxMutations`, `maxTotalAgentTurns`).
-  - Added exact verification identity ownership inside `PreparedVerification`.
-  - Authored a fully deterministic end-to-end `repair-workflow.test.ts` suite exercising timeout, budget exhaustion, and rejections safely without blocking tests.
+  - Added strict tracking of budgets (`maxRepairAttempts`, `maxMutations`, `maxVerificationRuns`, `maxTotalAgentTurns`) and accurate real-turn accounting across sessions.
+  - Corrected `mutationsApplied` accounting and added provenance tracking upon successful mutation application.
+  - Authored a fully deterministic end-to-end `repair-workflow.test.ts` suite exercising timeout, budget exhaustion, and rejections safely.
+  - Created `repair-e2e.test.ts` suite executing repair loop tests against real `ToolRegistry`, `MutationEngine`, and `VerificationEngine`.
 - Verification:
-  - 196 unit tests pass deterministically.
+  - 202 unit and E2E tests pass deterministically.
   - TypeScript typecheck (`tsc --noEmit`) passes with zero errors.
   - Lint (`oxlint --deny-warnings`) passes with zero warnings.
   - Build passes cleanly.

@@ -25,6 +25,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
   #mutationsApplied = 0
   #verificationRuns = 0
   #totalTurns = 0
+  #totalTurnsBeforeCurrentRunner = 0
   #changedFiles = new Set<string>()
   #events: any[] = []
   #history: RepairAttemptRecord[] = []
@@ -77,10 +78,15 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
       this.#emitEvent("repair.budget_exhausted", { reason: "VERIFICATION_BUDGET_EXCEEDED" })
       return this.#terminate("VERIFICATION_BUDGET_EXCEEDED")
     }
-    this.#verificationRuns++
+    
     this.#emitEvent("repair.verification_started", { verificationId: prepared.verificationId })
     
     const result = await this.engine.execute(prepared, this.#input.signal)
+    
+    if (result.status !== "STALE_VERIFICATION" && result.status !== "EXECUTION_ERROR" && result.status !== "CANCELLED") {
+      this.#verificationRuns++
+    }
+    
     this.#emitEvent("repair.verification_completed", result)
     
     if (result.status === "PASS") {
@@ -97,7 +103,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
     
     const failure = classifyFailure(prepared.action, result)
     
-    const fingerprint = `${failure.category}:${result.stdout.slice(0, 200)}`
+    const fingerprint = `${failure.category}:${failure.details}`
     if (this.#fingerprints.has(fingerprint)) {
       this.#emitEvent("repair.non_progress", { fingerprint })
       return this.#terminate("REPAIR_NON_PROGRESS", "Repeated failure signature", result)
@@ -120,6 +126,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
     }
 
     this.#attempts++
+    this.#totalTurnsBeforeCurrentRunner = this.#totalTurns
     this.#emitEvent("repair.investigation_started", { attempt: this.#attempts })
     
     const prompt = mapFailureToInvestigation(failure)
@@ -149,13 +156,23 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
 
   async #resumeRunner(decision: RepairDecision): Promise<RepairResult> {
     if (!this.#runner) throw new Error("No active runner")
+    
+    const pendingMut = this.#lastAgentResult?.confirmation?.preparedMutation
+    const callId = this.#lastAgentResult?.confirmation?.callId
+    
     const result = await this.#runner.resume(decision)
     
-    if (decision === "APPROVE" && this.#lastAgentResult?.confirmation?.action === "write_file") {
-       this.#mutationsApplied++
-       this.#emitEvent("repair.mutation_applied", {})
-       if (this.#lastAgentResult.confirmation.preparedMutation?.path) {
-         this.#changedFiles.add(this.#lastAgentResult.confirmation.preparedMutation.path)
+    if (decision === "APPROVE" && this.#lastAgentResult?.confirmation?.action === "write_file" && pendingMut && callId) {
+       const callRecord = result.toolCalls.find(c => c.id === callId)
+       if (callRecord && callRecord.outcome === "COMPLETED") {
+         this.#mutationsApplied++
+         this.#emitEvent("repair.mutation_applied", {
+           preparedMutationId: pendingMut.id,
+           path: pendingMut.path,
+           operation: pendingMut.operation,
+           resultingHash: pendingMut.afterHash
+         })
+         this.#changedFiles.add(pendingMut.path)
        }
     }
     
@@ -163,6 +180,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
   }
 
   async #handleRunnerResult(result: AgentResult): Promise<RepairResult> {
+    this.#totalTurns = this.#totalTurnsBeforeCurrentRunner + result.turns
     this.#lastAgentResult = result
     
     if (result.status === "PAUSED") {
@@ -187,8 +205,13 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
     }
     
     if (result.status === "FAILED") {
-       // if result.events contains STALE_BASE error we could return STALE_BASE
-       const stale = result.events.some(e => e.type === "tool.failed" && (e.payload as any)?.message?.includes("STALE_BASE"))
+       if (result.failureReason === "MAX_TURNS_EXCEEDED") {
+         return this.#terminate("AGENT_TURN_BUDGET_EXCEEDED", "Agent turn budget exceeded")
+       }
+       const stale = result.events.some(e => 
+          e.type === "mutation.failed" && 
+          ((e.payload as any)?.error?.code === "STALE_BASE" || (e.payload as any)?.message?.includes("STALE_BASE"))
+       )
        if (stale) return this.#terminate("STALE_BASE", "Stale mutation base")
        return this.#terminate("FAILED", result.failureReason)
     }

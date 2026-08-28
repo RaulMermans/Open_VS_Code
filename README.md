@@ -28,7 +28,8 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Context Compiler & Memory**| ✅ Complete | Progressive disclosure, dynamic token budgeting, and Markdown project memory (`PROJECT.md`, `PLAN.md`, `ARCHITECTURE.md`). |
 | **Permission Engine** | ✅ Complete | Action table validation, read-only enforcement, mode switching. |
 | **Agent Reasoning Reliability**| ✅ Complete | Evidence-driven orchestration: task profiling, tool narrowing, evidence ledger, premature-answer gate. |
-| **Safe Workspace Mutation** | 🚧 In Progress | Reversible edits, diff review, permission gates, rollback. |
+| **Safe Workspace Mutation** | ✅ Complete | Reversible edits, deterministic patches, exact base-hash verification, and atomic writes. |
+| **Autonomous Repair Loops** | ✅ Complete | Gated loop orchestration, exact verification discovery (TEST, TYPECHECK, LINT), and stale-base guards. |
 | **Interactive CLI** | ⏳ Planned | Standalone terminal interface. |
 | **IDE Integration** | ⏳ Planned | VS Code / Code-OSS extension integration. |
 
