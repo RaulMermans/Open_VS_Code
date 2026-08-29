@@ -30,11 +30,11 @@
 
 ## Current sprint
 
-Sprint 1I — Controlled Verification Runtime. Status: **complete**.
+Sprint 1L.1 — CLI Product Closure. Status: **complete**.
 
 - 174 deterministic tests passing.
-- Phase A (Sprint 1H.1): Prepared-Diff Approval Safety Fix applied to mutations.
-- Phase B (Sprint 1I): Safe verification engine (TEST, TYPECHECK, LINT, BUILD) with workspace containment, output bounding (16KB), and strict timeouts.
+- Phase A (Sprint 1K.2): Benchmark Truth & Oracle Integrity (100% deterministic evaluation).
+- Phase B (Sprint 1L.1): CLI Product Closure (exposing ASK, PLAN, BUILD, DEBUG, REVIEW with strictly bound RepairOrchestrator).
 - Zero arbitrary shell command tools. Verification strictly reads `package.json` presets.
 - ASK/PLAN/REVIEW modes deny mutations; ASK/PLAN deny verification.
 - No model weights on development machine.
