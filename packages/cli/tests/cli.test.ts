@@ -1,102 +1,164 @@
-import { runCLI } from "../src/app.ts";
-import { ScriptedModelProvider } from "@open-vs-code/agent-core/src/testing/scripted-model.ts";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { mkdtemp, cp, rm } from "node:fs/promises";
-import assert from "node:assert";
+import test from "node:test"
+import assert from "node:assert/strict"
+import path from "node:path"
+import fs from "node:fs/promises"
+import { runCLI } from "../src/app.ts"
+import { ScriptedModelProvider } from "@open-vs-code/agent-core"
 
-async function runTests() {
-  const tempBase = join(tmpdir(), "cli-eval-");
-  const ws = await mkdtemp(tempBase);
+const FIXTURES_DIR = path.resolve(process.cwd(), "tests/fixtures")
 
-  try {
-    const fixturePath = join(process.cwd(), "..", "agent-core", "tests", "fixtures", "eval-repos", "mini-express-app");
-    await cp(fixturePath, ws, { recursive: true, force: true });
-
-    // 1. ASK
-    let provider = new ScriptedModelProvider([
-      { model: "scripted", message: { role: "assistant", content: "The config is in src/config.ts" } }
-    ]);
-    
-    let res = await runCLI({
-      mode: "ASK",
-      instruction: "Where is the config?",
-      workspaceRoot: ws,
-      provider,
-      json: true
-    });
-    assert.strictEqual(res.exitCode, 0);
-
-    // 2. PLAN
-    provider = new ScriptedModelProvider([
-      { model: "scripted", message: { role: "assistant", content: "Plan: add feature flag." } }
-    ]);
-    res = await runCLI({
-      mode: "PLAN",
-      instruction: "Plan a feature",
-      workspaceRoot: ws,
-      provider,
-      json: true
-    });
-    assert.strictEqual(res.exitCode, 0);
-
-    // 3. BUILD successful
-    provider = new ScriptedModelProvider([
-      { 
-        model: "scripted", 
-        message: { role: "assistant", content: "" }, 
-        toolCalls: [
-          { id: "c1", name: "apply_patch", arguments: { path: "src/config.ts", search: "development", replace: "prod" } }
-        ] 
-      },
-      { 
-        model: "scripted", 
-        message: { role: "assistant", content: "" }, 
-        toolCalls: [
-          { id: "c2", name: "run_verification", arguments: { action: "TEST" } }
-        ] 
-      },
-      { model: "scripted", message: { role: "assistant", content: "Done" } }
-    ]);
-    res = await runCLI({
-      mode: "BUILD",
-      instruction: "Change to prod",
-      workspaceRoot: ws,
-      provider,
-      json: true,
-      mockApproval: "APPROVE"
-    });
-    assert.strictEqual(res.exitCode, 0);
-
-    // 4. BUILD rejected
-    provider = new ScriptedModelProvider([
-      { 
-        model: "scripted", 
-        message: { role: "assistant", content: "" }, 
-        toolCalls: [
-          { id: "c1", name: "apply_patch", arguments: { path: "src/config.ts", search: "prod", replace: "development" } }
-        ] 
-      },
-      { model: "scripted", message: { role: "assistant", content: "Okay" } }
-    ]);
-    res = await runCLI({
-      mode: "BUILD",
-      instruction: "Change back",
-      workspaceRoot: ws,
-      provider,
-      json: true,
-      mockApproval: "REJECT"
-    });
-    // It should complete the turn, but with rejected outcome.
-    assert.strictEqual(res.exitCode, 0); 
-    
-    console.log("All CLI E2E tests passed.");
-  } finally {
-    await rm(ws, { recursive: true, force: true });
-  }
+async function setupWorkspace(name: string) {
+  const ws = path.join(FIXTURES_DIR, name)
+  await fs.mkdir(ws, { recursive: true })
+  return ws
 }
 
-runTests().catch(e => {
-  console.error(e);
-  process.exit(1);
-});
+test("ASK mode completes successfully without tools", async () => {
+  const ws = await setupWorkspace("ask-test")
+  const provider = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "Hello from ASK mode!" } }
+  ])
+  
+  const result = await runCLI({
+    mode: "ASK",
+    instruction: "Say hello",
+    workspaceRoot: ws,
+    json: true,
+    provider
+  })
+  assert.equal(result.exitCode, 0)
+})
+
+test("PLAN mode completes successfully", async () => {
+  const ws = await setupWorkspace("plan-test")
+  const provider = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "Here is the plan." } }
+  ])
+  
+  const result = await runCLI({
+    mode: "PLAN",
+    instruction: "Make a plan",
+    workspaceRoot: ws,
+    json: true,
+    provider
+  })
+  assert.equal(result.exitCode, 0)
+})
+
+test("BUILD mode with approved mutation", async () => {
+  const ws = await setupWorkspace("build-test")
+  await fs.writeFile(path.join(ws, "file.txt"), "hello\n")
+  
+  const provider = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{
+         id: "call_1",
+         name: "apply_patch",
+           arguments: {
+             path: "file.txt",
+             search: "hello\n",
+             replace: "world\n"
+           } }]
+    },
+    { model: "scripted", message: { role: "assistant", content: "Done." } }
+  ])
+  
+  const result = await runCLI({
+    mode: "BUILD",
+    instruction: "Change hello to world",
+    workspaceRoot: ws,
+    json: true,
+    provider,
+    mockApproval: "APPROVE"
+  })
+  assert.equal(result.exitCode, 0)
+  const content = await fs.readFile(path.join(ws, "file.txt"), "utf8")
+  assert.equal(content, "world\n")
+})
+
+test("DEBUG mode hands off to RepairOrchestrator and succeeds", async () => {
+  const ws = await setupWorkspace("debug-test")
+  await fs.writeFile(path.join(ws, "package.json"), JSON.stringify({ scripts: { test: "exit 1" } }))
+  await fs.writeFile(path.join(ws, "test.sh"), "exit 1")
+  
+  const provider = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{
+         id: "call_1",
+         name: "run_verification",
+           arguments: {
+             action: "TEST"
+           } }]
+    },
+    // Repair loop turn 1 (after test fails)
+    { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{
+         id: "call_2",
+         name: "apply_patch",
+           arguments: {
+             path: "package.json",
+             search: "\"exit 1\"",
+             replace: "\"exit 0\""
+           } }]
+    },
+    // Repair loop turn 2 (after mutation success, it runs test again, test passes)
+    { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "call_3", name: "run_verification", arguments: { action: "TEST" } }] },
+    // Turn 3: completed
+    { model: "scripted", message: { role: "assistant", content: "Fixed!" } }
+  ])
+  
+  const result = await runCLI({
+    mode: "DEBUG",
+    instruction: "Fix the test",
+    workspaceRoot: ws,
+    json: true,
+    provider,
+    mockApproval: "APPROVE"
+  })
+  assert.equal(result.exitCode, 0)
+  const content = await fs.readFile(path.join(ws, "package.json"), "utf8")
+  assert.equal(content.includes("exit 0"), true)
+})
+
+test("REVIEW mode completes successfully", async () => {
+  const ws = await setupWorkspace("review-test")
+  const provider = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "Looks good." } }
+  ])
+  
+  const result = await runCLI({
+    mode: "REVIEW",
+    instruction: "Review the code",
+    workspaceRoot: ws,
+    json: true,
+    provider
+  })
+  assert.equal(result.exitCode, 0)
+})
+
+test("BUILD mode with rejected mutation fails", async () => {
+  const ws = await setupWorkspace("build-reject-test")
+  await fs.writeFile(path.join(ws, "file.txt"), "hello\n")
+  
+  const provider = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{
+         id: "call_1",
+         name: "apply_patch",
+           arguments: {
+             path: "file.txt",
+             search: "hello\n",
+             replace: "world\n"
+           } }]
+    },
+    { model: "scripted", message: { role: "assistant", content: "Ah, rejected." } }
+  ])
+  
+  const result = await runCLI({
+    mode: "BUILD",
+    instruction: "Change hello to world",
+    workspaceRoot: ws,
+    json: true,
+    provider,
+    mockApproval: "REJECT"
+  })
+  assert.equal(result.exitCode, 0) // runner still completes because it handled the rejection
+  const content = await fs.readFile(path.join(ws, "file.txt"), "utf8")
+  assert.equal(content, "hello\n")
+})

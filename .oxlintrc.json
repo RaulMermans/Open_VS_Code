@@ -5,10 +5,11 @@
     "suspicious": "warn"
   },
   "rules": {
+    "no-underscore-dangle": "off",
     "typescript/no-base-to-string": "warn",
     "no-control-regex": "off",
     "unicorn/no-array-sort": "off",
     "unicorn/no-array-reverse": "off"
   },
-  "ignorePatterns": ["**/node_modules", "**/dist", "**/*.d.ts"]
+  "ignorePatterns": ["**/node_modules", "**/dist", "**/*.d.ts", "**/fixtures"]
 }

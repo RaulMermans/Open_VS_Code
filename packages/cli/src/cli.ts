@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { resolve, join } from "node:path";
+import { resolve } from "node:path";
 import { realpath, access } from "node:fs/promises";
 import { runCLI } from "./app.ts";
 

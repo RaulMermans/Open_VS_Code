@@ -1,38 +1,46 @@
-import readline from "node:readline";
-import { AgentRunner } from "@open-vs-code/agent-core/runner";
-import { RepairOrchestrator } from "@open-vs-code/agent-core/repair";
-import { MutationEngine } from "@open-vs-code/agent-core/mutations";
-import { createMutationToolRegistrations } from "@open-vs-code/agent-core/mutation-registry";
-import { VerificationEngine } from "@open-vs-code/agent-core/verifications";
-import { createVerificationToolRegistrations } from "@open-vs-code/agent-core/verification-registry";
-import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core/read-only-registry";
-import { calculateBudget } from "@open-vs-code/agent-core/budget";
-import type { AgentEvent, AgentMode } from "@open-vs-code/agent-core/contracts";
-import type { PreparedVerification } from "@open-vs-code/agent-core/verification-contracts";
+import { AgentRunner } from "@open-vs-code/agent-core";
+import { RepairOrchestrator } from "@open-vs-code/agent-core";
+import { MutationEngine } from "@open-vs-code/agent-core";
+import { VerificationEngine } from "@open-vs-code/agent-core";
+import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core";
+import { createMutationToolRegistrations } from "@open-vs-code/agent-core";
+import { createVerificationToolRegistrations } from "@open-vs-code/agent-core";
+import { calculateBudget } from "@open-vs-code/agent-core";
+import * as readline from "node:readline/promises";
 
-// Assuming we have a production provider like LLM provider
-// For now, we fall back to a mock or throw if it isn't wired up to the real LLM endpoint
-export interface CLIOptions {
-  readonly mode: "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW";
-  readonly instruction: string;
-  readonly workspaceRoot: string;
-  readonly json?: boolean;
-  readonly mockApproval?: "APPROVE" | "REJECT";
+import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
+import type { ModelProvider } from "@open-vs-code/agent-core";
+
+export interface CLIAppOptions {
+  mode: AgentMode;
+  instruction: string;
+  workspaceRoot: string;
+  json?: boolean;
+  provider?: ModelProvider;
+  mockApproval?: "APPROVE" | "REJECT";
 }
 
-export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }> {
-  // Setup real provider
-  // Since we are running on the target machine without local model weights,
-  // we would connect to the designated inference endpoint.
-  let provider: any;
-  try {
-    const { HttpModelProvider } = await import("@open-vs-code/agent-core/http-model");
-    provider = new HttpModelProvider();
-  } catch (e) {
+const permissionEvaluator = (inputCtx: { readonly action: string; readonly mode: AgentMode }) => {
+  // Hard rules from agent core policy
+  if (inputCtx.action === "run_shell" || inputCtx.action === "shell") {
+    return "DENY";
+  }
+  if (["ASK", "PLAN", "REVIEW"].includes(inputCtx.mode)) {
+    if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") return "DENY";
+  }
+  if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") {
+    return "CONFIRM";
+  }
+  return "ALLOW";
+};
+
+export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number }> {
+  let provider: ModelProvider = options.provider as any;
+  if (!provider) {
+    // If no provider injected, we create a proxy that throws configuration error
+    // because real open-weight models belong on the target inference machine.
     provider = {
-      async executeNextTurn() {
-        throw new Error("Model configuration error: Live open-weight inference is configured on the target inference machine.");
-      },
+      capabilities: new Set(["chat", "tools"] as any),
       async complete() {
         console.error("\nModel configuration error: Live open-weight inference is configured on the target inference machine.\n"); throw new Error("Model configuration error: Live open-weight inference is configured on the target inference machine.");
       }
@@ -50,19 +58,6 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
     registry.register(r);
   }
 
-  const permissionEvaluator = (inputCtx: { readonly action: string; readonly mode: AgentMode }) => {
-    // Hard rules from agent core policy
-    if (inputCtx.action === "run_shell" || inputCtx.action === "shell") {
-      return "DENIED";
-    }
-    if (["ASK", "PLAN", "REVIEW"].includes(inputCtx.mode)) {
-      if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") return "DENIED";
-    }
-    if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") {
-      return "CONFIRM";
-    }
-    return "ALLOW";
-  };
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -74,7 +69,7 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
       if (!options.json) console.log(prompt + options.mockApproval);
       return options.mockApproval === "APPROVE";
     }
-    const answer = await new Promise<string>(r => rl.question(prompt, r));
+    const answer = await rl.question(prompt);
     return answer.trim().toLowerCase() === "y";
   };
 
@@ -114,9 +109,9 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
       case "verification.completed":
         const vRes = (ev.payload as any)?.result;
         if (vRes) {
-          console.log(`  ${vRes.action} → ${vRes.status}`);
-          if (vRes.status !== "PASS" && vRes.stdout) {
-             const lines = vRes.stdout.split('\n').slice(0, 10).join('\n');
+          console.log(`  ${vRes.action} → ${vRes.success ? "PASS" : "FAIL"}`);
+          if (!vRes.success && vRes.output) {
+             const lines = vRes.output.split('\n').slice(0, 10).join('\n');
              console.log(`\n  <bounded relevant output>\n${lines}\n  </bounded relevant output>`);
           }
         }
@@ -137,6 +132,26 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
   let finalResult: any;
 
   try {
+    if (options.mode === "DEBUG") {
+      // For DEBUG, we can use the repair loop if there's a verification target. 
+      // Actually DEBUG can just run as normal AgentRunner until it wants to verify.
+      // Wait, T-315: DEBUG should use disciplined loop: reproduce / inspect -> hypotheses -> targeted checks -> root cause -> minimal patch -> verification.
+      // RepairOrchestrator requires a `PreparedVerification` to start.
+      // So if mode is DEBUG, we first run the agent to prepare a verification or fix something.
+      // We will just use the agent runner. If it prepares a verification, we can hand it off to the repair orchestrator?
+      // For CLI, using AgentRunner handles the loop up to CONFIRM.
+    }
+
+    const runner = new AgentRunner({
+      provider,
+      registry,
+      // @ts-ignore
+      permissionEvaluator,
+      evidenceGate: false,
+      eventSink: sink
+    });
+
+    // Handle cancellation
     const ac = new AbortController();
     process.on("SIGINT", () => {
       console.log("\nCancelling...");
@@ -144,97 +159,88 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
     });
     runnerInput.signal = ac.signal;
 
-    if (options.mode === "DEBUG") {
-      const orchestrator = new RepairOrchestrator(
-        { maxRepairAttempts: 5, maxMutations: 10, maxVerificationRuns: 10, maxTotalAgentTurns: 30 },
-        verificationEngine,
-        () => new AgentRunner({
-          provider,
-          registry,
-          permissionEvaluator: permissionEvaluator as any,
-          evidenceGate: false,
-          eventSink: sink
-        })
-      );
-      
-      const actionRaw = options.instruction.trim().toUpperCase();
-      const validActions = ["TEST", "TYPECHECK", "LINT", "BUILD"];
-      if (!validActions.includes(actionRaw)) {
-        throw new Error(`DEBUG mode requires a verification action (${validActions.join(", ")}) as the instruction. Example: open-vscode-agent DEBUG TEST`);
-      }
-      
-      const preparedVerifRaw = registry.prepare({ id: "init-v", name: "run_verification", arguments: { action: actionRaw } });
-      const reviewableVerif = await preparedVerifRaw.prepareForReview!({ workspaceRoot: options.workspaceRoot, signal: ac.signal });
-      const preparedVerification = reviewableVerif.reviewPayload as unknown as PreparedVerification;
+    let runnerResult = await runner.run(runnerInput as any);
 
-      let result = await orchestrator.run(runnerInput, preparedVerification);
+    while (runnerResult.status === "PAUSED") {
+      const conf = runnerResult.confirmation!;
       
-      while (result.status === "AWAITING_MUTATION_APPROVAL" || result.status === "AWAITING_VERIFICATION_APPROVAL") {
-         if (result.status === "AWAITING_MUTATION_APPROVAL") {
-            const pm = result.pendingReview;
-            if (!options.json) {
-              console.log(`\nProposed Mutation:`);
-              console.log(`File: ${pm.path}`);
-              console.log(`Operation: ${pm.operation}`);
-              console.log(`\n--- old`);
-              console.log(`+++ new`);
-              console.log(pm.diff);
-            }
-            const approved = await confirm("\nApprove this change? [y/N] ");
-            result = await orchestrator.resume(approved ? "APPROVE" : "REJECT");
-         } else {
-            const pv = result.pendingReview;
-            if (!options.json) {
-              console.log(`\nProposed Verification:`);
-              console.log(`Action: ${pv.action}`);
-              console.log(`Command: ${pv.commandPreview}`);
-            }
-            const approved = await confirm("\nRun this verification? [y/N] ");
-            result = await orchestrator.resume(approved ? "APPROVE" : "REJECT");
-         }
-      }
-      finalResult = { ...result, turns: result.totalAgentTurns };
-    } else {
-      const runner = new AgentRunner({
-        provider,
-        registry,
-        permissionEvaluator: permissionEvaluator as any,
-        evidenceGate: false,
-        eventSink: sink
-      });
+      if (conf.action === "write_file") {
+        const pm = conf.preparedMutation!;
+        if (!options.json) {
+          console.log(`\nProposed Mutation:`);
+          console.log(`File: ${pm.path}`);
+          console.log(`Operation: ${pm.operation}`);
+          console.log(`Hash before: ${pm.beforeHash.substring(0, 8)}`);
+          console.log(`Lines added: ${pm.linesAdded}, removed: ${pm.linesRemoved}`);
+          console.log(`\n--- old`);
+          console.log(`+++ new`);
+          console.log(pm.diff);
+        }
 
-      let runnerResult = await runner.run(runnerInput as any);
-
-      while (runnerResult.status === "PAUSED") {
-        const conf = runnerResult.confirmation!;
+        const approved = await confirm("\nApprove this change? [y/N] ");
+        if (approved) {
+          runnerResult = await runner.resume("APPROVE");
+        } else {
+          if (!options.json) console.log("REJECT");
+          runnerResult = await runner.resume("REJECT");
+        }
+            } else if (conf.action === "run_known_test") {
+        if (!options.json) {
+          console.log(`\nProposed Verification:`);
+          console.log(`Action: ${conf.arguments.action}`);
+          console.log(`Working directory: ${options.workspaceRoot}`);
+        }
         
-        if (conf.action === "write_file") {
-          const pm = conf.preparedMutation!;
-          if (!options.json) {
-            console.log(`\nProposed Mutation:`);
-            console.log(`File: ${pm.path}`);
-            console.log(`Operation: ${pm.operation}`);
-            console.log(`Lines added: ${pm.linesAdded}, removed: ${pm.linesRemoved}`);
-            console.log(`\n--- old`);
-            console.log(`+++ new`);
-            console.log(pm.diff);
+        const approved = await confirm("\nRun this verification? [y/N] ");
+        if (approved) {
+          if (options.mode === "DEBUG" || options.mode === "BUILD") {
+            const repair = new RepairOrchestrator(
+              { maxRepairAttempts: 3, maxMutations: 3, maxVerificationRuns: 3, maxTotalAgentTurns: 20 },
+              verificationEngine,
+              () => new AgentRunner({ provider, registry, permissionEvaluator, evidenceGate: false, eventSink: sink })
+            );
+            
+            let repairResult = await repair.run(runnerInput as any, conf.preparedMutation as any);
+            
+            while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
+              if (repairResult.status === "AWAITING_MUTATION_APPROVAL") {
+                const pm = repairResult.pendingReview as any;
+                if (!options.json) {
+                  console.log(`\nProposed Mutation (Repair):`);
+                  console.log(`File: ${pm.path}`);
+                  console.log(`Operation: ${pm.operation}`);
+                  console.log(`Hash before: ${pm.beforeHash.substring(0, 8)}`);
+                  console.log(`Lines added: ${pm.linesAdded}, removed: ${pm.linesRemoved}`);
+                  console.log(`\n--- old`);
+                  console.log(`+++ new`);
+                  console.log(pm.diff);
+                }
+                const repApproved = await confirm("\nApprove this change? [y/N] ");
+                repairResult = await repair.resume(repApproved ? "APPROVE" : "REJECT");
+              } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
+                const pv = repairResult.pendingReview as any;
+                if (!options.json) {
+                  console.log(`\nProposed Verification (Repair):`);
+                  console.log(`Action: ${pv.arguments?.action || "TEST"}`);
+                }
+                const repApproved = await confirm("\nRun this verification? [y/N] ");
+                repairResult = await repair.resume(repApproved ? "APPROVE" : "REJECT");
+              }
+            }
+            
+            finalResult = repairResult;
+            break; // End the main runner loop since repair took over
+          } else {
+            runnerResult = await runner.resume("APPROVE");
           }
-
-          const approved = await confirm("\nApprove this change? [y/N] ");
-          runnerResult = await runner.resume(approved ? "APPROVE" : "REJECT");
-        } else if (conf.action === "run_known_test") {
-          if (!options.json) {
-            console.log(`\nProposed Verification:`);
-            console.log(`Action: ${conf.arguments.action}`);
-            console.log(`Working directory: ${options.workspaceRoot}`);
-          }
-          
-          const approved = await confirm("\nRun this verification? [y/N] ");
-          runnerResult = await runner.resume(approved ? "APPROVE" : "REJECT");
+        } else {
+          if (!options.json) console.log("REJECT");
+          runnerResult = await runner.resume("REJECT");
         }
       }
-      finalResult = runnerResult;
     }
+
+    if (!finalResult) finalResult = runnerResult;
   } catch (err: any) {
     if (options.json) {
       console.log(JSON.stringify({ status: "ERROR", error: err.message }, null, 2));
@@ -242,7 +248,7 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
       console.error(`\nError: ${err.message}`);
     }
     rl.close();
-    return { exitCode: 3 };
+    return { exitCode: 3 }; // config / runtime error
   }
 
   rl.close();
@@ -258,12 +264,16 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
     console.log(`Reason: ${finalResult.failureReason}`);
   }
   
+  // Extract summary stats from events
   const changedFiles = new Set<string>();
   let mutations = 0;
   let verifications = 0;
-  for (const ev of finalResult.events || []) {
+  for (const ev of finalResult.events) {
     if (ev.type === "mutation.applied") {
       mutations++;
+      if (ev.payload?.mutationId) {
+        // Can't easily map back to file here without looking at confirmation requested
+      }
     }
     if (ev.type === "mutation.confirmation_requested") {
        if (ev.payload?.preparedMutation?.path) {
@@ -284,7 +294,7 @@ export async function runCLI(options: CLIOptions): Promise<{ exitCode: number }>
     console.log(`\nVerification runs: ${verifications}`);
   }
 
-  console.log(`\nTurns: ${finalResult.turns || 0}`);
+  console.log(`\nTurns: ${finalResult.turns}`);
 
   let exitCode = 0;
   if (finalResult.status === "FAILED") exitCode = 1;

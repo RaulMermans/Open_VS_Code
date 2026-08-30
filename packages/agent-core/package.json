@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node --import tsx/esm --test tests/agent/*.test.ts tests/context/*.test.ts tests/contracts/*.test.ts tests/model/*.test.ts tests/tools/*.test.ts tests/hygiene.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests",
+    "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests/agent tests/context tests/contracts tests/evals tests/model tests/tools tests/hygiene.test.ts",
     "build": "tsc --noEmit",
     "eval:model": "node tests/evals/run-benchmark-cli.ts",
     "eval:coding": "node --import tsx/esm tests/evals/run-coding-eval.ts"
@@ -17,5 +17,12 @@
     "oxlint": "^1.80.0",
     "tsx": "^4.23.12",
     "typescript": "^5.8.2"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
   }
 }
