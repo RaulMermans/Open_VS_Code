@@ -172,3 +172,18 @@ This project is an independent clean-room implementation inspired by and referen
 * **[awesome-vibe-coding](https://github.com/filipecalegario/awesome-vibe-coding)**: Standing open-source discovery radar.
 
 See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`REFERENCE_MAP.md`](REFERENCE_MAP.md) for full attribution.
+
+## Features
+
+Interactive CLI ✅
+ASK ✅
+PLAN ✅
+BUILD ✅
+DEBUG ✅
+REVIEW ✅
+Human-gated mutation ✅
+Human-gated verification ✅
+Bounded repair ✅
+30-case deterministic evaluation ✅
+
+Canonical tools: read_file, list_directory, search_text, find_files.

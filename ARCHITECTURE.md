@@ -122,3 +122,25 @@ See `docs/adrs/` for the provisional decisions and their revisit triggers.
 ## Deferred imported baseline
 
 The audited Kilo baseline remains in repository history for provenance and possible future reuse, but Kilo integration is explicitly postponed. Its registry boundaries informed Sprint 1D at a `REFERENCE_ONLY` level; no Kilo, Effect, plugin, MCP, shell, network, or host code was copied into `agent-core`.
+
+## CLI Architecture
+
+```text
+                    CLI
+                     │
+      ┌──────────────┼──────────────┐
+      │              │              │
+ ASK / PLAN       BUILD          DEBUG
+ / REVIEW           │              │
+      │              │              │
+ AgentRunner     AgentRunner   RepairOrchestrator
+      │              │              │
+      └──────────────┴──────┬───────┘
+                            │
+                   ReviewableExecution
+                    ├──────────────┐
+                    │              │
+              MutationEngine  VerificationEngine
+                    │              │
+              HUMAN APPROVAL  HUMAN APPROVAL
+```

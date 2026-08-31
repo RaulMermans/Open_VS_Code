@@ -5,7 +5,7 @@ import { VerificationEngine } from "@open-vs-code/agent-core";
 import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core";
 import { createMutationToolRegistrations } from "@open-vs-code/agent-core";
 import { createVerificationToolRegistrations } from "@open-vs-code/agent-core";
-import { calculateBudget } from "@open-vs-code/agent-core";
+import { calculateBudget, classifyPermission } from "@open-vs-code/agent-core";
 import * as readline from "node:readline/promises";
 
 import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
@@ -17,22 +17,10 @@ export interface CLIAppOptions {
   workspaceRoot: string;
   json?: boolean;
   provider?: ModelProvider;
-  mockApproval?: "APPROVE" | "REJECT";
+  mockApproval?: "APPROVE" | "REJECT" | (() => Promise<"APPROVE" | "REJECT">);
 }
 
-const permissionEvaluator = (inputCtx: { readonly action: string; readonly mode: AgentMode }) => {
-  // Hard rules from agent core policy
-  if (inputCtx.action === "run_shell" || inputCtx.action === "shell") {
-    return "DENY";
-  }
-  if (["ASK", "PLAN", "REVIEW"].includes(inputCtx.mode)) {
-    if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") return "DENY";
-  }
-  if (inputCtx.action === "write_file" || inputCtx.action === "run_known_test") {
-    return "CONFIRM";
-  }
-  return "ALLOW";
-};
+
 
 export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number }> {
   let provider: ModelProvider = options.provider as any;
@@ -66,6 +54,11 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
 
   const confirm = async (prompt: string): Promise<boolean> => {
     if (options.mockApproval) {
+      if (typeof options.mockApproval === "function") {
+        const result = await options.mockApproval();
+        if (!options.json) console.log(prompt + result);
+        return result === "APPROVE";
+      }
       if (!options.json) console.log(prompt + options.mockApproval);
       return options.mockApproval === "APPROVE";
     }
@@ -130,6 +123,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   };
 
   let finalResult: any;
+  let sigintHandler: any;
 
   try {
     if (options.mode === "DEBUG") {
@@ -145,18 +139,18 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     const runner = new AgentRunner({
       provider,
       registry,
-      // @ts-ignore
-      permissionEvaluator,
+      permissionEvaluator: classifyPermission,
       evidenceGate: false,
       eventSink: sink
     });
 
     // Handle cancellation
     const ac = new AbortController();
-    process.on("SIGINT", () => {
+    sigintHandler = () => {
       console.log("\nCancelling...");
       ac.abort();
-    });
+    };
+    process.on("SIGINT", sigintHandler);
     runnerInput.signal = ac.signal;
 
     let runnerResult = await runner.run(runnerInput as any);
@@ -197,7 +191,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
             const repair = new RepairOrchestrator(
               { maxRepairAttempts: 3, maxMutations: 3, maxVerificationRuns: 3, maxTotalAgentTurns: 20 },
               verificationEngine,
-              () => new AgentRunner({ provider, registry, permissionEvaluator, evidenceGate: false, eventSink: sink })
+              () => new AgentRunner({ provider, registry, permissionEvaluator: classifyPermission, evidenceGate: false, eventSink: sink })
             );
             
             let repairResult = await repair.run(runnerInput as any, conf.preparedMutation as any);
@@ -248,6 +242,10 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
       console.error(`\nError: ${err.message}`);
     }
     rl.close();
+  // Remove listener
+  if (typeof sigintHandler !== "undefined") {
+    process.removeListener("SIGINT", sigintHandler);
+  }
     return { exitCode: 3 }; // config / runtime error
   }
 
@@ -255,7 +253,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
 
   if (options.json) {
     console.log(JSON.stringify(finalResult, null, 2));
-    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1) };
+    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), ...finalResult };
   }
 
   console.log(`\nStatus: ${finalResult.status}`);
@@ -266,19 +264,24 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   
   // Extract summary stats from events
   const changedFiles = new Set<string>();
+  const mutationPaths = new Map<string, string>();
   let mutations = 0;
   let verifications = 0;
   for (const ev of finalResult.events) {
+    if (ev.type === "mutation.prepared") {
+       if (ev.payload?.mutationId && ev.payload?.path) {
+         mutationPaths.set(ev.payload.mutationId, ev.payload.path);
+       }
+    }
+    if (ev.type === "mutation.confirmation_requested") {
+       // do not add here, wait for applied
+    }
     if (ev.type === "mutation.applied") {
       mutations++;
       if (ev.payload?.mutationId) {
-        // Can't easily map back to file here without looking at confirmation requested
+         const path = mutationPaths.get(ev.payload.mutationId);
+         if (path) changedFiles.add(path);
       }
-    }
-    if (ev.type === "mutation.confirmation_requested") {
-       if (ev.payload?.preparedMutation?.path) {
-         changedFiles.add(ev.payload.preparedMutation.path);
-       }
     }
     if (ev.type === "verification.completed") verifications++;
   }
@@ -300,5 +303,5 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   if (finalResult.status === "FAILED") exitCode = 1;
   if (finalResult.status === "CANCELLED") exitCode = 2;
 
-  return { exitCode };
+  return { exitCode, ...finalResult };
 }

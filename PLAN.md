@@ -29,7 +29,7 @@ Deliver a closed-loop repair orchestrator that investigates verification failure
 
 ## Next sprint
 
-Sprint 1K — Coding-Agent Evaluation Suite.
+Sprint 1K — Coding-Agent Evaluation        COMPLETE
 
 ## Sprint 1K: Canonical Deterministic Agent Evaluation [COMPLETED]
 

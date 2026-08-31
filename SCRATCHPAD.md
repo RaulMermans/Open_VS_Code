@@ -1,29 +1,23 @@
 # Scratchpad
 
-- Current state: Sprint 1J Deterministic Autonomous Repair Loop is complete with real-component E2E tests.
+- Current state: Sprint 1K and 1L are COMPLETE.
 - Accomplishments:
-  - Preserved full upstream Kilo baseline and provenance safely in Git via annotated tag `baseline/pre-kilo-separation`.
-  - Conducted complete ownership audit across all imported files.
-  - Reduced canonical working tree tracked files by 98.5% (from 9,476 to 144 files).
-  - Hardened VerificationEngine with exact package.json hash validation to prevent script-change execution.
-  - Implemented detached process groups and taskkill for cross-platform process tree termination on timeout.
-  - Removed internal auto-approval behaviors in `RepairOrchestrator`, making it a pure state machine (`run`/`resume`).
-  - Bubbled `PreparedVerification` and `PreparedMutation` objects strictly via `ReviewableExecution` up to the user caller.
-  - Added strict tracking of budgets (`maxRepairAttempts`, `maxMutations`, `maxVerificationRuns`, `maxTotalAgentTurns`) and accurate real-turn accounting across sessions.
-  - Corrected `mutationsApplied` accounting and added provenance tracking upon successful mutation application.
-  - Authored a fully deterministic end-to-end `repair-workflow.test.ts` suite exercising timeout, budget exhaustion, and rejections safely.
-  - Created `repair-e2e.test.ts` suite executing repair loop tests against real `ToolRegistry`, `MutationEngine`, and `VerificationEngine`.
-- Verification:
-  - 202 unit and E2E tests pass deterministically.
-  - TypeScript typecheck (`tsc --noEmit`) passes with zero errors.
-  - Lint (`oxlint --deny-warnings`) passes with zero warnings.
-  - Build passes cleanly.
-  - `git diff --check` passes with zero issues.
-- Architectural Boundaries Preserved:
-  - Zero Kilo production dependencies.
-  - Zero cloud, telemetry, or proprietary model dependencies.
-  - Open-weight model support: Yes.
-  - Terminal execution: No arbitrary shells (bounded prepared verification only).
-  - Auto-approval: NO. Every mutation and verification is fully gated by human approval.
-- Current state: Sprint 1K is complete, evaluation framework achieved 100% success on deterministic tasks.
-- Next milestone: Sprint 1L — Open-Weight Model Integration.
+  - deterministic coding cases: 30
+  - coding eval expected outcomes: 30/30
+  - required CLI E2E: 12/12
+  - required CLI skips: 0
+  - ASK: yes
+  - PLAN: yes
+  - BUILD: yes
+  - DEBUG via RepairOrchestrator: yes
+  - REVIEW: yes
+  - controlled writes: yes
+  - controlled verification: yes
+  - bounded repair: yes
+  - arbitrary shell: no
+  - package install: no
+  - Git mutation: no
+  - MCP: no
+  - IDE: no
+  - model weights on dev machine: no
+  - real model required: no
