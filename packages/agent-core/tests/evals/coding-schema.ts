@@ -18,10 +18,15 @@ export interface SuccessCriteria {
   readonly expectedFilesExist?: string[]
   readonly expectedFilesUnchanged?: string[]
   readonly expectedBehavior?: {
-    readonly command: string
+    readonly command?: string
     readonly exitCode?: number
     readonly stdoutIncludes?: string[]
     readonly stderrIncludes?: string[]
+    readonly fileContains?: { path: string; text: string }[]
+    readonly fileDoesNotContain?: { path: string; text: string }[]
+    readonly fileExists?: string[]
+    readonly fileAbsent?: string[]
+    readonly jsonPropertyEquality?: { path: string; property: string; expectedValue: any }[]
   }
 }
 
@@ -56,6 +61,7 @@ export interface CodingEvalCase {
   readonly fixture: {
     readonly templateRelPath: string
     readonly setupScript?: string
+    readonly setup?: { operation: string; path: string; search?: string; replace?: string; content?: string }[]
   }
 
   // If provided, the case starts in the RepairOrchestrator loop verifying this action
