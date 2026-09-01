@@ -5,7 +5,7 @@ import { VerificationEngine } from "@open-vs-code/agent-core";
 import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core";
 import { createMutationToolRegistrations } from "@open-vs-code/agent-core";
 import { createVerificationToolRegistrations } from "@open-vs-code/agent-core";
-import { calculateBudget, classifyPermission } from "@open-vs-code/agent-core";
+import { calculateBudget, classifyPermission, ProjectMemoryLoader, SessionSummaryStorage, MemoryRetriever } from "@open-vs-code/agent-core";
 import * as readline from "node:readline/promises";
 
 import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
@@ -23,6 +23,7 @@ export interface CLIAppOptions {
 
 
 export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number }> {
+  const startedAt = new Date().toISOString();
   let provider: ModelProvider = options.provider as any;
   if (!provider) {
     // If no provider injected, we create a proxy that throws configuration error
@@ -114,12 +115,35 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
 
   const contextBudget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 });
   
+
+  const memoryLoader = new ProjectMemoryLoader(options.workspaceRoot);
+  const memorySnapshot = await memoryLoader.load();
+  const sessionStorage = new SessionSummaryStorage({ workspaceRoot: options.workspaceRoot });
+  const sessions = await sessionStorage.load();
+  const retriever = new MemoryRetriever(memorySnapshot, sessions);
+  const memory = retriever.select({
+    task: options.instruction,
+    mode: options.mode,
+    tokenBudget: 1500
+  });
+
+  if (!options.json) {
+    let memSummary = [];
+    if (memory.projectFacts.length) memSummary.push(`${memory.projectFacts.length} facts`);
+    if (memory.decisions.length) memSummary.push(`${memory.decisions.length} decisions`);
+    if (memory.activeTasks.length) memSummary.push(`${memory.activeTasks.length} active tasks`);
+    if (memory.sessionSummaries.length) memSummary.push(`${memory.sessionSummaries.length} prior sessions`);
+    if (memSummary.length > 0) {
+      console.log(`Project context restored:\n- ${memSummary.join('\n- ')}`);
+    }
+  }
+
   const runnerInput: any = {
     task: { id: "cli-task", mode: options.mode, instruction: options.instruction },
     workspaceRoot: options.workspaceRoot,
     maxTurns: 15,
     contextBudget,
-    projectInstructions: []
+    projectInstructions: [], memory
   };
 
   let finalResult: any;
@@ -285,6 +309,20 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     }
     if (ev.type === "verification.completed") verifications++;
   }
+
+
+  const summary = {
+    sessionId: `session-${Date.now()}`,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    mode: options.mode,
+    task: options.instruction,
+    outcome: finalResult.status,
+    changedFiles: Array.from(changedFiles),
+    decisions: [],
+    unresolvedIssues: finalResult.failureReason ? [finalResult.failureReason] : [],
+  };
+  await sessionStorage.append(summary);
 
   if (changedFiles.size > 0) {
     console.log(`\nFiles changed:`);

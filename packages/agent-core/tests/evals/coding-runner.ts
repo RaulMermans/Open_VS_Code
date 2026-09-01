@@ -150,7 +150,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
       let runnerResult = await runner.run(input)
 
       while (runnerResult.status === "PAUSED") {
-        if (runnerResult.confirmation?.action === "write_file") {
+        if (runnerResult.confirmation?.action === "write_file" || runnerResult.confirmation?.action === "apply_patch") {
           const res = await runner.resume("APPROVE")
           runnerResult = res
         } else if (runnerResult.confirmation?.action === "run_known_test") {
@@ -219,7 +219,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
     result.changedFiles = changedFilesSet.size
 
 
-    let isSuccess = true
+    console.log("runnerResultStatus:", runnerResultStatus); let isSuccess = true
     let failReason: FailureReason | undefined = undefined
 
     if (runnerResultStatus === "FAILED" || runnerResultStatus === "AGENT_TURN_BUDGET_EXCEEDED") {

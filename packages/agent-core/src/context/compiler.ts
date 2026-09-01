@@ -1,6 +1,7 @@
 import type { CompiledContext, ContextBudget, ContextItem } from "../contracts/context.ts"
 import { estimateTokens, fitContext } from "./budget.ts"
 import type { LoadedSkill } from "./skills.ts"
+import type { MemorySelection } from "./memory.ts"
 import type { ToolObservation } from "../agent/observations.ts"
 
 export interface ProjectInstruction {
@@ -12,6 +13,7 @@ export interface ProjectInstruction {
 export interface ContextCompilerInput {
   readonly task: string
   readonly projectInstructions: readonly ProjectInstruction[]
+  readonly memory?: MemorySelection
   readonly selectedSkill?: LoadedSkill
   readonly codeContext?: readonly ContextItem[]
   readonly observations?: readonly ToolObservation[]
@@ -51,6 +53,51 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     estimatedTokens: estimateTokens(input.task),
     required: true,
   })
+  
+  if (input.memory) {
+    for (const fact of input.memory.projectFacts) {
+      required.push({
+        id: `memory:fact:${fact.source}`,
+        source: { kind: "project-instruction", path: fact.source.split("#")[0] },
+        content: fact.content,
+        priority: 900,
+        estimatedTokens: estimateTokens(fact.content),
+        required: true,
+      })
+    }
+    for (const task of input.memory.activeTasks) {
+      required.push({
+        id: `memory:task:${task.source}`,
+        source: { kind: "project-instruction", path: task.source.split("#")[0] },
+        content: `Active Task:\n${task.summary}\nStatus: ${task.status}`,
+        priority: 850,
+        estimatedTokens: estimateTokens(task.summary),
+        required: true,
+      })
+    }
+    for (const decision of input.memory.decisions) {
+      required.push({
+        id: `memory:decision:${decision.id}`,
+        source: { kind: "project-instruction", path: decision.source.split("#")[0] },
+        content: `Decision [${decision.id}]: ${decision.summary}`,
+        priority: 800,
+        estimatedTokens: estimateTokens(decision.summary),
+        required: true,
+      })
+    }
+    for (const s of input.memory.sessionSummaries) {
+      const content = `Previous Session (Task: ${s.task}):\nOutcome: ${s.outcome}\nMode: ${s.mode}\nChanged Files: ${s.changedFiles.join(', ')}\nUnresolved: ${s.unresolvedIssues.join(', ')}`;
+      required.push({
+        id: `memory:session:${s.sessionId}`,
+        source: { kind: "background" },
+        content,
+        priority: 700,
+        estimatedTokens: estimateTokens(content),
+        required: true,
+      })
+    }
+  }
+
   if (input.selectedSkill) {
     required.push({
       id: `skill:${input.selectedSkill.name}`,
