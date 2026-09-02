@@ -55,7 +55,6 @@ export class SessionSummaryStorage {
 console.log("CORRUPT LINE")
          }
       }
-      console.log("LOADED:", valid.length);
       return valid
     } catch (e: any) {
       if (e.code === "ENOENT") { console.log("ENOENT LOAD"); return [] } else { console.log("LOAD ERR", e.message) }

@@ -128,7 +128,6 @@ export class MemoryRetriever {
         return sc
     }
     
-    console.log("THIS SESSIONS:", this.sessions);
 const relevantSessions = this.sessions
       .filter(s => s.outcome !== "CANCELLED") 
       .map(s => ({ session: s, score: score(s) }))
@@ -139,7 +138,6 @@ const relevantSessions = this.sessions
       })
       .map(x => x.session)
       .slice(0, 5);
-console.log("RELEVANT:", relevantSessions);
 
     for (const s of relevantSessions) {
       const content = JSON.stringify(s)
