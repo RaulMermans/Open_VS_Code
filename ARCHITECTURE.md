@@ -38,6 +38,8 @@ deterministic infrastructure
    |-- generic OpenAI-compatible HTTP provider
    |-- context ranking, deduplication, and fitting
    |-- canonical Markdown discovery and targeted reads
+   |-- bounded project memory extraction (ProjectMemorySnapshot)
+   |-- bounded cross-session memory (SessionSummaryStorage)
    |-- metadata-first Skills discovery and explicit loading
    |-- bounded read/list/search/find repository tools
    |-- mode-aware permission classification

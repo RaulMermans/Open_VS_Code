@@ -275,10 +275,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
 
   rl.close();
 
-  if (options.json) {
-    console.log(JSON.stringify(finalResult, null, 2));
-    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), ...finalResult };
-  }
+
 
   console.log(`\nStatus: ${finalResult.status}`);
   console.log(`Mode: ${options.mode}`);
@@ -324,6 +321,11 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   };
   await sessionStorage.append(summary);
 
+  if (options.json) {
+    console.log(JSON.stringify(finalResult, null, 2));
+    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, ...finalResult };
+  }
+
   if (changedFiles.size > 0) {
     console.log(`\nFiles changed:`);
     for (const f of changedFiles) {
@@ -341,5 +343,5 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   if (finalResult.status === "FAILED") exitCode = 1;
   if (finalResult.status === "CANCELLED") exitCode = 2;
 
-  return { exitCode, ...finalResult };
+  return { exitCode, memorySelection: memory, ...finalResult };
 }

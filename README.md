@@ -31,7 +31,8 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Safe Workspace Mutation** | ✅ Complete | Autonomous reasoning with human-gated side effects. Reversible edits, deterministic patches, exact base-hash verification, and atomic writes. |
 | **Controlled Verification** | ✅ Complete | Autonomous reasoning with human-gated side effects. Exact verification discovery (TEST, TYPECHECK, LINT), and stale-base guards. |
 | **Bounded Repair** | ✅ Complete | Gated loop orchestration, exact package-script review, human-gated verification approval, timeouts, and multi-attempt repair limits. |
-| **Interactive CLI** | ⏳ Planned | Standalone terminal interface. |
+| **Interactive CLI** | ✅ Complete | Standalone terminal interface. |
+| **Project Memory** | ✅ Complete | Bounded Markdown-first context injection and cross-session persistence. |
 | **IDE Integration** | ⏳ Planned | VS Code / Code-OSS extension integration. |
 
 ---

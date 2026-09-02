@@ -1,6 +1,6 @@
 import type { AgentLifecycleEvent } from "../../src/agent/events.ts"
 import { cp, mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+
 import { join } from "node:path"
 
 import { AgentRunner, type AgentRunnerInput } from "../../src/agent/runner.ts"
@@ -19,8 +19,9 @@ import type { PreparedVerification } from "../../src/tools/verification-contract
 
 export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<EvaluationResult> {
   const startTime = Date.now()
-  const tempBase = join(tmpdir(), "coding-eval-")
-  const { realpath } = await import("node:fs/promises")
+  const tempBase = join(process.cwd(), ".eval-tmp", "coding-eval-")
+  const { realpath, mkdir } = await import("node:fs/promises")
+  await mkdir(join(process.cwd(), ".eval-tmp"), { recursive: true })
   const ws = await realpath(await mkdtemp(tempBase))
 
   const result: any = {
@@ -53,6 +54,11 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
   try {
     const fixturePath = join(process.cwd(), evalCase.fixture.templateRelPath)
     await cp(fixturePath, ws, { recursive: true, force: true })
+
+    if (evalCase.fixture.setupScript) {
+      const { execSync } = await import("node:child_process")
+      execSync(evalCase.fixture.setupScript, { cwd: ws })
+    }
 
     if (evalCase.fixture.setup) {
       const { readFile, writeFile, rm: rmFile } = await import("node:fs/promises")
@@ -150,7 +156,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
       let runnerResult = await runner.run(input)
 
       while (runnerResult.status === "PAUSED") {
-        if (runnerResult.confirmation?.action === "write_file" || runnerResult.confirmation?.action === "apply_patch") {
+        if (runnerResult.confirmation?.action === "write_file" || (runnerResult.confirmation?.action as string) === "apply_patch") {
           const res = await runner.resume("APPROVE")
           runnerResult = res
         } else if (runnerResult.confirmation?.action === "run_known_test") {

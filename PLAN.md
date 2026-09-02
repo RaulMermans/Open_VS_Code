@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-Sprint 1J — Connect investigation, mutation, and verification into a bounded repair lifecycle with human approval gates.
+Sprint 2A — Project Memory & Session Continuity architecture.
 
 ## Objective
 
@@ -64,6 +64,19 @@ Sprint 1K — Coding-Agent Evaluation        COMPLETE
 - [x] E2E automated test proving CLI behavior.
 
 
-## Sprint 1M: Real Model Integration (Next)
+## Sprint 2A: Project Memory & Session Continuity [COMPLETED]
 
-**Objective:** On the target inference machine, connect the `AgentRunner` to a live open-weight model Endpoint (e.g. vLLM/Ollama running Qwen/Llama) and validate baseline performance against the 30-case evaluation suite.
+**Objective:** Prove that project/session memory remains authoritative, bounded, fresh, relevant, corruption-safe, truthful, path-safe, and token-efficient across separate CLI sessions—without loading the whole Markdown corpus or session history.
+
+**Key Deliverables:**
+- [x] ProjectMemorySnapshot: targeted markdown loading.
+- [x] SessionSummary: bounded session tracking across executions.
+- [x] MemorySelection & Retriever: Token-budgeted, deduplicated fact selection.
+- [x] SessionStorage: Atomic writes and secret redaction.
+- [x] ContextCompiler: Integrating memory bounds.
+- [x] CLI session persistence and cross-session continuity.
+- [x] Deterministic validation: E2E and 30/30 deterministic coding evaluation.
+
+## Sprint 2B: Skills & Prompt Primitives (Next)
+
+**Objective:** Formalize skill acquisition, capability discovery, and typed prompt templates for the agent.

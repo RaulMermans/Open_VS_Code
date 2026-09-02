@@ -58,7 +58,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     for (const fact of input.memory.projectFacts) {
       required.push({
         id: `memory:fact:${fact.source}`,
-        source: { kind: "project-instruction", path: fact.source.split("#")[0] },
+        source: { kind: "project-instruction", path: fact.source.split("#")[0] as string },
         content: fact.content,
         priority: 900,
         estimatedTokens: estimateTokens(fact.content),
@@ -68,7 +68,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     for (const task of input.memory.activeTasks) {
       required.push({
         id: `memory:task:${task.source}`,
-        source: { kind: "project-instruction", path: task.source.split("#")[0] },
+        source: { kind: "project-instruction", path: task.source.split("#")[0] as string },
         content: `Active Task:\n${task.summary}\nStatus: ${task.status}`,
         priority: 850,
         estimatedTokens: estimateTokens(task.summary),
@@ -78,7 +78,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     for (const decision of input.memory.decisions) {
       required.push({
         id: `memory:decision:${decision.id}`,
-        source: { kind: "project-instruction", path: decision.source.split("#")[0] },
+        source: { kind: "project-instruction", path: decision.source.split("#")[0] as string },
         content: `Decision [${decision.id}]: ${decision.summary}`,
         priority: 800,
         estimatedTokens: estimateTokens(decision.summary),
