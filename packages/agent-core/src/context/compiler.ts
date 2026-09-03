@@ -85,6 +85,16 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
         required: true,
       })
     }
+    for (const issue of (input.memory.knownIssues || [])) {
+      required.push({
+        id: `memory:known-issue:${issue.source}`,
+        source: { kind: "project-instruction", path: issue.source.split("#")[0] as string },
+        content: `Known Issue:\n${issue.summary}`,
+        priority: 825,
+        estimatedTokens: estimateTokens(issue.summary),
+        required: true,
+      })
+    }
     for (const s of input.memory.sessionSummaries) {
       const content = `Historical session context (Task: ${s.task}):\nOutcome: ${s.outcome}\nMode: ${s.mode}\nChanged Files: ${s.changedFiles.join(', ')}\nUnresolved: ${s.unresolvedIssues.join(', ')}`;
       required.push({

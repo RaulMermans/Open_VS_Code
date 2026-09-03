@@ -82,6 +82,9 @@ export class MemoryRetriever {
     if (this.projectSnapshot.environmentNotes) {
       addFact(this.projectSnapshot.environmentNotes.content, this.projectSnapshot.environmentNotes.source, "Tier 0")
     }
+    if (this.projectSnapshot.stack) {
+      addFact(this.projectSnapshot.stack.content, this.projectSnapshot.stack.source, "Tier 0")
+    }
 
     for (const task of this.projectSnapshot.activeTasks) {
        const content = `Task: ${task.summary}\nStatus: ${task.status}`
@@ -117,6 +120,23 @@ export class MemoryRetriever {
        }
     }
 
+    for (const issue of this.projectSnapshot.knownIssues) {
+       const content = `Known Issue: ${issue.summary}`
+       const fingerprint = content.toLowerCase().replace(/[\s\W]+/g, "")
+       if (normalized.has(fingerprint)) {
+         selection.duplicatesDropped++
+         continue
+       }
+       const tokens = estimateTokens(content)
+       if (selection.estimatedTokens + tokens <= query.tokenBudget) {
+         selection.knownIssues.push(issue)
+         selection.estimatedTokens += tokens
+         normalized.add(fingerprint)
+         if (issue.source) markSource(issue.source)
+         if (!selection.tiersUsed.includes("Tier 1")) selection.tiersUsed.push("Tier 1")
+       }
+    }
+
     if (this.projectSnapshot.repoNotes) {
       addFact(this.projectSnapshot.repoNotes.content, this.projectSnapshot.repoNotes.source, "Tier 2")
     }
@@ -146,26 +166,16 @@ export class MemoryRetriever {
       .slice(0, this.maxRestoredSessions);
 
     for (const s of relevantSessions) {
-      // Create a fingerprint of the session summary.
-      // If its task or nextAction is already covered by a project fact, we might skip or trim it.
-      // For simplicity, we stringify and check duplicate of main task/nextAction against normalized.
       let isDuplicate = false
 
       const sTask = s.task.toLowerCase().replace(/[\s\W]+/g, "")
-      const sAction = s.nextAction ? s.nextAction.toLowerCase().replace(/[\s\W]+/g, "") : ""
+
+      // Historical nextAction is ALWAYS superseded by current authoritative Markdown
+      // so we don't even try to include it or compare it. It's skipped.
 
       if (sTask) {
         for (const existing of normalized) {
            if (existing.includes(sTask) || sTask.includes(existing)) {
-              isDuplicate = true
-              break
-           }
-        }
-      }
-
-      if (sAction && !isDuplicate) {
-        for (const existing of normalized) {
-           if (existing.includes(sAction) || sAction.includes(existing)) {
               isDuplicate = true
               break
            }
@@ -177,7 +187,15 @@ export class MemoryRetriever {
         continue
       }
 
-      const content = JSON.stringify(s)
+      const content = JSON.stringify({
+        sessionId: s.sessionId,
+        mode: s.mode,
+        outcome: s.outcome,
+        task: s.task,
+        changedFiles: s.changedFiles,
+        unresolvedIssues: s.unresolvedIssues,
+        // intentionally omitting nextAction to avoid conflicts with PLAN.md
+      })
       const tokens = estimateTokens(content)
       if (selection.estimatedTokens + tokens <= query.tokenBudget) {
          selection.sessionSummaries.push(s)
