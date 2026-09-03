@@ -89,8 +89,8 @@ User / Task Input
 │   │  Permission Engine  │       │  Read-Only Tools      │   │
 │   │   (Action Matrix)   │──────►│  - read_file          │   │
 │   └─────────────────────┘       │  - list_directory     │   │
-│                                 │  - grep_search        │   │
-│                                 │  - find_by_name       │   │
+│                                 │  - search_text        │   │
+│                                 │  - find_files       │   │
 │                                 └───────────────────────┘   │
 └──────────────────────┬──────────────────────────────────────┘
                        │ Normalized Wire Request

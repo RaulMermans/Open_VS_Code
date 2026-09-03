@@ -119,7 +119,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   const memoryLoader = new ProjectMemoryLoader(options.workspaceRoot);
   const memorySnapshot = await memoryLoader.load();
   const sessionStorage = new SessionSummaryStorage({ workspaceRoot: options.workspaceRoot });
-  const sessions = await sessionStorage.load();
+  const { sessions } = await sessionStorage.load();
   const retriever = new MemoryRetriever(memorySnapshot, sessions);
   const memory = retriever.select({
     task: options.instruction,

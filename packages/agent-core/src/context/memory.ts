@@ -6,6 +6,7 @@ export interface Decision extends Provenance {
   readonly id: string
   readonly summary: string
   readonly reason?: string
+  readonly status?: string
   readonly updatedAt?: string
 }
 

@@ -1,11 +1,20 @@
 import type { MemoryQuery, MemorySelection, ProjectMemorySnapshot, SessionSummary } from "./memory.ts"
 import { estimateTokens } from "./budget.ts"
 
+export interface MemoryRetrieverOptions {
+  readonly maxRestoredSessions?: number
+}
+
 export class MemoryRetriever {
+  private readonly maxRestoredSessions: number
+
   constructor(
     private readonly projectSnapshot: ProjectMemorySnapshot,
-    private readonly sessions: SessionSummary[]
-  ) {}
+    private readonly sessions: SessionSummary[],
+    options?: MemoryRetrieverOptions
+  ) {
+    this.maxRestoredSessions = options?.maxRestoredSessions ?? 5
+  }
 
   select(query: MemoryQuery): MemorySelection {
     const selection: any = {
@@ -23,7 +32,7 @@ export class MemoryRetriever {
       duplicatesDropped: 0,
       tiersUsed: []
     }
-    
+
     const seenSources = new Set<string>()
     const markSource = (source: string) => {
       const doc = source.split('#')[0]!
@@ -37,12 +46,11 @@ export class MemoryRetriever {
     const normalized = new Set<string>()
     const addFact = (content: string, source: string, tier: string) => {
       const lines = content.split("\n")
-      // If it looks like a markdown heading on the first line, skip it for fingerprinting
       const body = (lines.length > 1 && lines[0]!.startsWith("#")) ? lines.slice(1).join("\n") : content
       const fingerprint = body.toLowerCase().replace(/[\s\W]+/g, "")
-      
-      if (!fingerprint) return // ignore empty content
-      
+
+      if (!fingerprint) return
+
       let isDuplicate = false
       for (const existing of normalized) {
         if (existing.includes(fingerprint) || fingerprint.includes(existing)) {
@@ -65,19 +73,16 @@ export class MemoryRetriever {
       }
     }
 
-    // Tier 0: project goal, hard constraints
     if (this.projectSnapshot.projectGoal) {
       addFact(this.projectSnapshot.projectGoal.content, this.projectSnapshot.projectGoal.source, "Tier 0")
     }
     if (this.projectSnapshot.constraints) {
       addFact(this.projectSnapshot.constraints.content, this.projectSnapshot.constraints.source, "Tier 0")
     }
-    // New Tier 0: agents
     if (this.projectSnapshot.environmentNotes) {
       addFact(this.projectSnapshot.environmentNotes.content, this.projectSnapshot.environmentNotes.source, "Tier 0")
     }
 
-    // Tier 1: relevant PLAN entries (we include all active tasks as facts)
     for (const task of this.projectSnapshot.activeTasks) {
        const content = `Task: ${task.summary}\nStatus: ${task.status}`
        const fingerprint = content.toLowerCase().replace(/[\s\W]+/g, "")
@@ -94,20 +99,24 @@ export class MemoryRetriever {
          if (!selection.tiersUsed.includes("Tier 1")) selection.tiersUsed.push("Tier 1")
        }
     }
-    
-    // Tier 1: relevant decisions. We can just take the first few or relevant ones.
+
     for (const decision of this.projectSnapshot.decisions) {
        const content = `Decision [${decision.id}]: ${decision.summary}`
+       const fingerprint = content.toLowerCase().replace(/[\s\W]+/g, "")
+       if (normalized.has(fingerprint)) {
+         selection.duplicatesDropped++
+         continue
+       }
        const tokens = estimateTokens(content)
        if (selection.estimatedTokens + tokens <= query.tokenBudget) {
          selection.decisions.push(decision)
          selection.estimatedTokens += tokens
+         normalized.add(fingerprint)
          if (decision.source) markSource(decision.source)
          if (!selection.tiersUsed.includes("Tier 1")) selection.tiersUsed.push("Tier 1")
        }
     }
 
-    // Tier 2: architecture, scratchpad
     if (this.projectSnapshot.repoNotes) {
       addFact(this.projectSnapshot.repoNotes.content, this.projectSnapshot.repoNotes.source, "Tier 2")
     }
@@ -115,31 +124,59 @@ export class MemoryRetriever {
       addFact(this.projectSnapshot.recentChanges.content, this.projectSnapshot.recentChanges.source, "Tier 2")
     }
 
-    // Tier 3: relevant session summaries. We prioritize the most recent ones that fit.
     const score = (s: SessionSummary) => {
         let sc = 0;
         if (s.mode === query.mode) sc += 1;
-        
-        // simple overlap
+
         const queryTokens = new Set(query.task.toLowerCase().split(/\W+/).filter(x => x.length > 2))
         const taskTokens = s.task.toLowerCase().split(/\W+/)
         for (const t of taskTokens) if (queryTokens.has(t)) sc += 2;
-        
+
         return sc
     }
-    
-const relevantSessions = this.sessions
-      .filter(s => s.outcome !== "CANCELLED") 
+
+    const relevantSessions = this.sessions
       .map(s => ({ session: s, score: score(s) }))
-      .filter(s => s.score > 0) // exclude completely irrelevant
+      .filter(s => s.score > 0)
       .toSorted((a, b) => {
          if (a.score !== b.score) return b.score - a.score;
          return (b.session.completedAt || "").localeCompare(a.session.completedAt || "")
       })
       .map(x => x.session)
-      .slice(0, 5);
+      .slice(0, this.maxRestoredSessions);
 
     for (const s of relevantSessions) {
+      // Create a fingerprint of the session summary.
+      // If its task or nextAction is already covered by a project fact, we might skip or trim it.
+      // For simplicity, we stringify and check duplicate of main task/nextAction against normalized.
+      let isDuplicate = false
+
+      const sTask = s.task.toLowerCase().replace(/[\s\W]+/g, "")
+      const sAction = s.nextAction ? s.nextAction.toLowerCase().replace(/[\s\W]+/g, "") : ""
+
+      if (sTask) {
+        for (const existing of normalized) {
+           if (existing.includes(sTask) || sTask.includes(existing)) {
+              isDuplicate = true
+              break
+           }
+        }
+      }
+
+      if (sAction && !isDuplicate) {
+        for (const existing of normalized) {
+           if (existing.includes(sAction) || sAction.includes(existing)) {
+              isDuplicate = true
+              break
+           }
+        }
+      }
+
+      if (isDuplicate) {
+        selection.duplicatesDropped++
+        continue
+      }
+
       const content = JSON.stringify(s)
       const tokens = estimateTokens(content)
       if (selection.estimatedTokens + tokens <= query.tokenBudget) {

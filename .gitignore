@@ -31,3 +31,6 @@ temp/
 logs/
 .worktrees/
 packages/agent-core/.eval-tmp/
+
+# Local Memory
+.open-vs-code/
