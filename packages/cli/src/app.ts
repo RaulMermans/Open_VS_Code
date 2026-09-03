@@ -319,7 +319,14 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     decisions: [],
     unresolvedIssues: finalResult.failureReason ? [finalResult.failureReason] : [],
   };
-  await sessionStorage.append(summary);
+  const appendResult = await sessionStorage.append(summary);
+  if (appendResult === "SKIPPED_CORRUPT_STATE" && !options.json) {
+    console.warn("\nWarning: Session continuity: not saved — existing memory state is corrupt");
+  } else if (appendResult === "REJECTED_OVERSIZED" && !options.json) {
+    console.warn("\nWarning: Session continuity: not saved — session summary exceeds hard size limit");
+  } else if (appendResult === "FAILED" && !options.json) {
+    console.warn("\nWarning: Session continuity: not saved — storage write failed");
+  }
 
   if (options.json) {
     console.log(JSON.stringify(finalResult, null, 2));

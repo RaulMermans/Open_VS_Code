@@ -124,12 +124,13 @@ test("corrupt session memory ignores bad lines", async () => {
   const dir = await setupFixture("corrupt", {})
   const storagePath = join(dir, ".open-vs-code", "sessions.jsonl")
   await mkdir(join(dir, ".open-vs-code"), { recursive: true })
-  await writeFile(storagePath, `{"sessionId": "1", "task": "a"}\n{bad json}\n{"sessionId": "2", "task": "b"}`, "utf8")
+  await writeFile(storagePath, `{"sessionId": "1", "mode": "ASK", "task": "a", "outcome": "COMPLETED", "changedFiles": []}\n{bad json}\n{"sessionId": "2", "mode": "ASK", "task": "b", "outcome": "COMPLETED", "changedFiles": []}`, "utf8")
   const storage = new SessionSummaryStorage({ workspaceRoot: dir })
-  const { sessions } = await storage.load()
+  const { sessions, corruptEntries } = await storage.load()
   assert.equal(sessions.length, 2)
   assert.equal(sessions[0]!.sessionId, "1")
   assert.equal(sessions[1]!.sessionId, "2")
+  assert.equal(corruptEntries, 1)
 })
 
 test("session relevance favors overlap", async () => {
@@ -158,19 +159,19 @@ test("SessionSummaryStorage atomic write failure leaves existing intact (T-584)"
   const storage = new SessionSummaryStorage({ workspaceRoot: ws })
   await storage.append({ sessionId: "1", task: "initial", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
 
-  // mock rename to fail
-  const originalRename = fs.rename
-  let failed = false
+  // Make the directory read-only to force a failure
+  const dirPath = path.join(ws, ".open-vs-code")
+  await fs.chmod(dirPath, 0o555)
+
+  let appendRes = "UNKNOWN"
   try {
-    fs.rename = async () => { throw new Error("Disk full") }
-    await storage.append({ sessionId: "2", task: "should fail", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
-  } catch {
-    failed = true
+    appendRes = await storage.append({ sessionId: "2", task: "should fail", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
   } finally {
-    fs.rename = originalRename
+    // Restore permissions
+    await fs.chmod(dirPath, 0o777)
   }
 
-  assert.equal(failed, true)
+  assert.equal(appendRes, "FAILED")
   const { sessions } = await storage.load()
   assert.equal(sessions.length, 1)
   assert.equal(sessions[0]!.task, "initial")
@@ -178,10 +179,11 @@ test("SessionSummaryStorage atomic write failure leaves existing intact (T-584)"
 
 test("SessionSummaryStorage enforces per-session limit (T-587)", async () => {
   const ws = path.join(os.tmpdir(), "test-limit-" + Date.now())
+  await fs.mkdir(ws, { recursive: true })
   const storage = new SessionSummaryStorage({ workspaceRoot: ws, maxSessionBytes: 500 })
 
   const hugeText = "A".repeat(1000)
-  await storage.append({
+  const appendRes = await storage.append({
     sessionId: "1",
     task: "do " + hugeText,
     nextAction: "action " + hugeText,
@@ -189,11 +191,9 @@ test("SessionSummaryStorage enforces per-session limit (T-587)", async () => {
     mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: []
   })
 
+  assert.equal(appendRes, "REJECTED_OVERSIZED")
   const { sessions } = await storage.load()
-  assert.equal(sessions.length, 1)
-  const s = sessions[0]!
-  assert.ok(s.task.length < 500)
-  assert.ok(s.task.endsWith("..."))
+  assert.equal(sessions.length, 0)
 })
 
 test("SessionSummaryStorage fails closed on corruption (T-573)", async () => {
@@ -204,22 +204,16 @@ test("SessionSummaryStorage fails closed on corruption (T-573)", async () => {
   const storage = new SessionSummaryStorage({ workspaceRoot: ws })
   const loadRes = await storage.load()
   assert.equal(loadRes.hasCorruption, true)
-  assert.equal(loadRes.corruptEntries, 1)
-  assert.equal(loadRes.sessions.length, 2)
+  assert.equal(loadRes.corruptEntries, 3)
+  assert.equal(loadRes.sessions.length, 0) // because we check valid schema now
 
-  let appendFailed = false
-  try {
-    await storage.append({ sessionId: "1", task: "x", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
-  } catch(e: any) {
-    if (e.message.includes("MEMORY_CORRUPT")) {
-       appendFailed = true
-    }
-  }
-  assert.equal(appendFailed, true)
+  const appendRes = await storage.append({ sessionId: "1", task: "x", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
+  assert.equal(appendRes, "SKIPPED_CORRUPT_STATE")
 })
 
 test("SessionSummaryStorage enforces total storage limit (T-571)", async () => {
   const ws = path.join(os.tmpdir(), "test-total-" + Date.now())
+  await fs.mkdir(ws, { recursive: true })
   const storage = new SessionSummaryStorage({ workspaceRoot: ws, maxTotalStorageBytes: 1000 })
 
   for (let i = 0; i < 20; i++) {
@@ -233,3 +227,84 @@ test("SessionSummaryStorage enforces total storage limit (T-571)", async () => {
   assert.equal(sessions[0]!.sessionId, String(19 - sessions.length + 1))
 })
 
+
+test("SessionSummaryStorage blocks path traversal outside workspace (T-621)", async () => {
+  const ws = path.join(os.tmpdir(), "test-path-" + Date.now())
+  await fs.mkdir(ws, { recursive: true })
+
+  // Create a storage that tries to point outside workspace via symlink or sibling
+  // But wait, SessionSummaryStorage constructor takes `workspaceRoot` and forces path inside.
+  // It forces `this.path = join(options.workspaceRoot, ".open-vs-code", "sessions.jsonl")`
+  // We can't actually pass a bad path directly to the constructor since it doesn't take one.
+  // BUT what if the workspaceRoot contains something tricky, or .open-vs-code is a symlink pointing outside?
+
+  const extPath = path.join(os.tmpdir(), "test-path-ext-" + Date.now())
+  await fs.mkdir(extPath, { recursive: true })
+  await fs.symlink(extPath, path.join(ws, ".open-vs-code"))
+
+  const storage = new SessionSummaryStorage({ workspaceRoot: ws })
+  const res = await storage.append({ sessionId: "1", task: "x", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
+  assert.equal(res, "FAILED")
+})
+
+test("SessionSummaryStorage rejects schema-invalid JSON (T-607)", async () => {
+  const ws = path.join(os.tmpdir(), "test-schema-" + Date.now())
+  await fs.mkdir(path.join(ws, ".open-vs-code"), { recursive: true })
+
+  // Write some valid JSON but invalid schema
+  await fs.writeFile(
+    path.join(ws, ".open-vs-code", "sessions.jsonl"),
+    `{"valid":true}
+{}
+[]
+null
+{"task":"x"}
+{"sessionId":"12", "mode":"ASK", "task":"x", "outcome":"COMPLETED", "changedFiles":"not-array"}
+{"sessionId":"12", "mode":"ASK", "task":"x", "outcome":"COMPLETED", "changedFiles":[]}
+`, "utf8")
+
+  const storage = new SessionSummaryStorage({ workspaceRoot: ws })
+  const loadRes = await storage.load()
+
+  // Only the last one is valid
+  assert.equal(loadRes.sessions.length, 1)
+  assert.equal(loadRes.sessions[0]!.sessionId, "12")
+  assert.equal(loadRes.corruptEntries, 6)
+  assert.equal(loadRes.hasCorruption, true)
+})
+
+test("Large corpus bounds selected memory (T-622)", async () => {
+  const ws = path.join(os.tmpdir(), "test-large-" + Date.now())
+
+  const content = "A".repeat(1000)
+  const hugeMd = `# North star\n${content}\n# Component map\n${content}\n# Tech stack\n${content}\n`
+  const files: Record<string, string> = {
+    "PROJECT.md": hugeMd,
+    "ARCHITECTURE.md": hugeMd,
+    "DECISIONS.md": hugeMd,
+    "PLAN.md": hugeMd,
+    "SCRATCHPAD.md": hugeMd,
+    "AGENTS.md": hugeMd
+  }
+
+  await fs.mkdir(ws, { recursive: true })
+  for (const [k, v] of Object.entries(files)) {
+    await fs.writeFile(path.join(ws, k), v, "utf8")
+  }
+
+  const loader = new ProjectMemoryLoader(ws)
+  const snap = await loader.load()
+
+  const storage = new SessionSummaryStorage({ workspaceRoot: ws })
+  for(let i=0; i<50; i++) {
+    await storage.append({ sessionId: String(i), mode: "BUILD", task: "huge " + i, outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
+  }
+  const { sessions } = await storage.load()
+
+  const retriever = new MemoryRetriever(snap, sessions)
+  const selection = retriever.select({ task: "do it", mode: "BUILD", tokenBudget: 2000 })
+
+  assert.ok(selection.estimatedTokens <= 2000)
+  assert.ok(selection.documentsSelected <= 6)
+  assert.ok(selection.sessionSummariesSelected <= 5)
+})
