@@ -246,7 +246,7 @@ test("CLI E2E: BUILD -> ASK continuity (T-557)", async () => {
     }]},
     { model: "scripted", message: { role: "assistant", content: "Done" } }
   ])
-  const res1 = await runCLI({ mode: "BUILD", instruction: "Change config to 2", workspaceRoot: ws, json: true, provider: provider1, mockApproval: "APPROVE" }); console.log(res1)
+  const res1 = await runCLI({ mode: "BUILD", instruction: "Change config to 2", workspaceRoot: ws, json: true, provider: provider1, mockApproval: "APPROVE" });
   
   // Session 2: ASK
   const provider2 = new ScriptedModelProvider([
@@ -254,7 +254,7 @@ test("CLI E2E: BUILD -> ASK continuity (T-557)", async () => {
   ])
   const res2 = await runCLI({ mode: "ASK", instruction: "How does the config behavior work now?", workspaceRoot: ws, json: true, provider: provider2 }) as any
   
-  console.log("RES2:", JSON.stringify(res2.memorySelection, null, 2))
+  
   assert.equal(res2.exitCode, 0)
   assert.equal(res2.memorySelection.sessionSummaries.length, 1)
   assert.equal(res2.memorySelection.sessionSummaries[0].task, "Change config to 2")
