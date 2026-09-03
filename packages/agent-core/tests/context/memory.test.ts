@@ -65,7 +65,7 @@ test("recent prior session", async () => {
   await storage.append({
     sessionId: "123", mode: "ASK", task: "Say hi", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: []
   })
-  const sessions = await storage.load()
+  const { sessions } = await storage.load()
   assert.equal(sessions.length, 1)
   assert.equal(sessions[0]!.task, "Say hi")
 })
@@ -77,7 +77,7 @@ test("secret-like data not persisted", async () => {
     sessionId: "123", mode: "ASK", task: "Use token: secret123", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [],
     verification: "test with password='abc'"
   })
-  const sessions = await storage.load()
+  const { sessions } = await storage.load()
   assert.equal(sessions[0]!.task, "Use token: ***REDACTED***")
   assert.equal(sessions[0]!.verification, "test with password='***REDACTED***'")
 })
@@ -89,18 +89,18 @@ test("memory retrieval selects tier 0 and recent sessions", async () => {
   })
   const loader = new ProjectMemoryLoader(dir)
   const snap = await loader.load()
-  
+
   const storage = new SessionSummaryStorage({ workspaceRoot: dir })
   for(let i=0; i<10; i++) {
     await storage.append({
       sessionId: `s${i}`, mode: "BUILD", task: `t${i}`, completedAt: "2026-08-31T00:00:0" + i, outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: []
     })
   }
-  const sessions = await storage.load()
-  
+  const { sessions } = await storage.load()
+
   const retriever = new MemoryRetriever(snap, sessions)
   const selection = retriever.select({ task: "do it", mode: "BUILD", tokenBudget: 500 }) // mode overlaps so score > 0
-  
+
   assert.equal(selection.projectFacts.length, 2)
   assert.equal(selection.activeTasks.length, 1)
   assert.ok(selection.sessionSummaries.length <= 5, "Should bound session summaries")
@@ -126,7 +126,7 @@ test("corrupt session memory ignores bad lines", async () => {
   await mkdir(join(dir, ".open-vs-code"), { recursive: true })
   await writeFile(storagePath, `{"sessionId": "1", "task": "a"}\n{bad json}\n{"sessionId": "2", "task": "b"}`, "utf8")
   const storage = new SessionSummaryStorage({ workspaceRoot: dir })
-  const sessions = await storage.load()
+  const { sessions } = await storage.load()
   assert.equal(sessions.length, 2)
   assert.equal(sessions[0]!.sessionId, "1")
   assert.equal(sessions[1]!.sessionId, "2")
@@ -137,11 +137,99 @@ test("session relevance favors overlap", async () => {
   const storage = new SessionSummaryStorage({ workspaceRoot: dir })
   await storage.append({ sessionId: "1", mode: "BUILD", task: "fix UI button", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
   await storage.append({ sessionId: "2", mode: "DEBUG", task: "debug parser config", outcome: "FAILED", changedFiles: [], decisions: [], unresolvedIssues: [] })
-  const sessions = await storage.load()
-  
+  const { sessions } = await storage.load()
+
   const retriever = new MemoryRetriever({ decisions: [], activeTasks: [], knownIssues: [] }, sessions)
   const selection = retriever.select({ task: "fix parser config values", mode: "BUILD", tokenBudget: 500 })
   assert.equal(selection.sessionSummaries.length, 2)
   assert.equal(selection.sessionSummaries[0]!.sessionId, "2")
+})
+
+
+
+import path from "node:path"
+import os from "node:os"
+import fs from "node:fs/promises"
+
+test("SessionSummaryStorage atomic write failure leaves existing intact (T-584)", async () => {
+  const ws = path.join(os.tmpdir(), "test-atomic-" + Date.now())
+  await fs.mkdir(ws, { recursive: true })
+
+  const storage = new SessionSummaryStorage({ workspaceRoot: ws })
+  await storage.append({ sessionId: "1", task: "initial", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
+
+  // mock rename to fail
+  const originalRename = fs.rename
+  let failed = false
+  try {
+    fs.rename = async () => { throw new Error("Disk full") }
+    await storage.append({ sessionId: "2", task: "should fail", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
+  } catch {
+    failed = true
+  } finally {
+    fs.rename = originalRename
+  }
+
+  assert.equal(failed, true)
+  const { sessions } = await storage.load()
+  assert.equal(sessions.length, 1)
+  assert.equal(sessions[0]!.task, "initial")
+})
+
+test("SessionSummaryStorage enforces per-session limit (T-587)", async () => {
+  const ws = path.join(os.tmpdir(), "test-limit-" + Date.now())
+  const storage = new SessionSummaryStorage({ workspaceRoot: ws, maxSessionBytes: 500 })
+
+  const hugeText = "A".repeat(1000)
+  await storage.append({
+    sessionId: "1",
+    task: "do " + hugeText,
+    nextAction: "action " + hugeText,
+    verification: "verify " + hugeText,
+    mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: []
+  })
+
+  const { sessions } = await storage.load()
+  assert.equal(sessions.length, 1)
+  const s = sessions[0]!
+  assert.ok(s.task.length < 500)
+  assert.ok(s.task.endsWith("..."))
+})
+
+test("SessionSummaryStorage fails closed on corruption (T-573)", async () => {
+  const ws = path.join(os.tmpdir(), "test-corrupt-" + Date.now())
+  await fs.mkdir(path.join(ws, ".open-vs-code"), { recursive: true })
+  await fs.writeFile(path.join(ws, ".open-vs-code", "sessions.jsonl"), '{"valid":true}\nCORRUPT\n{"valid2":true}\n')
+
+  const storage = new SessionSummaryStorage({ workspaceRoot: ws })
+  const loadRes = await storage.load()
+  assert.equal(loadRes.hasCorruption, true)
+  assert.equal(loadRes.corruptEntries, 1)
+  assert.equal(loadRes.sessions.length, 2)
+
+  let appendFailed = false
+  try {
+    await storage.append({ sessionId: "1", task: "x", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
+  } catch(e: any) {
+    if (e.message.includes("MEMORY_CORRUPT")) {
+       appendFailed = true
+    }
+  }
+  assert.equal(appendFailed, true)
+})
+
+test("SessionSummaryStorage enforces total storage limit (T-571)", async () => {
+  const ws = path.join(os.tmpdir(), "test-total-" + Date.now())
+  const storage = new SessionSummaryStorage({ workspaceRoot: ws, maxTotalStorageBytes: 1000 })
+
+  for (let i = 0; i < 20; i++) {
+    await storage.append({ sessionId: String(i), task: "Task " + "B".repeat(100), mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [] })
+  }
+
+  const { sessions } = await storage.load()
+  assert.ok(sessions.length > 0)
+  assert.ok(sessions.length < 20)
+  // verify oldest are gone
+  assert.equal(sessions[0]!.sessionId, String(19 - sessions.length + 1))
 })
 

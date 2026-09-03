@@ -30,7 +30,7 @@ async function getFilesRecursively(dir: string): Promise<string[]> {
 }
 
 test("agent-core codebase maintains strict zero-baggage architectural boundary", async () => {
-  const srcDir = path.resolve(process.cwd(), "src")
+  const srcDir = path.resolve(new URL(".", import.meta.url).pathname, "../src")
   const srcFiles = await getFilesRecursively(srcDir)
 
   for (const filePath of srcFiles) {

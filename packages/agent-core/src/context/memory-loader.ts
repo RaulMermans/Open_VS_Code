@@ -43,7 +43,7 @@ export class ProjectMemoryLoader {
           decisions.push({
             id,
             summary: parts[1]!,
-            reason: parts[2]!, // actually status
+            status: parts[2]!,
             source: "DECISIONS.md#Decision Index"
           })
         }

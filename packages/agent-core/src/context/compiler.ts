@@ -86,10 +86,10 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       })
     }
     for (const s of input.memory.sessionSummaries) {
-      const content = `Previous Session (Task: ${s.task}):\nOutcome: ${s.outcome}\nMode: ${s.mode}\nChanged Files: ${s.changedFiles.join(', ')}\nUnresolved: ${s.unresolvedIssues.join(', ')}`;
+      const content = `Historical session context (Task: ${s.task}):\nOutcome: ${s.outcome}\nMode: ${s.mode}\nChanged Files: ${s.changedFiles.join(', ')}\nUnresolved: ${s.unresolvedIssues.join(', ')}`;
       required.push({
         id: `memory:session:${s.sessionId}`,
-        source: { kind: "background" },
+        source: { kind: "historical-session" },
         content,
         priority: 700,
         estimatedTokens: estimateTokens(content),
