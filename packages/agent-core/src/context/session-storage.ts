@@ -19,24 +19,24 @@ export interface SessionLoadResult {
 
 export type AppendResult = "SAVED" | "SKIPPED_CORRUPT_STATE" | "FAILED" | "REJECTED_OVERSIZED";
 
-const REDACTED_KEYS = ["password", "secret", "token", "key", "authorization", "bearer", "api_key", "aws_access_key", "credential"]
+const REDACTED_KEYS = ["password", "secret", "token", "key", "authorization", "bearer", "api_key", "aws_access_key", "aws_access_key_id", "credential"]
 
 export function redactSecrets(summary: SessionSummary): SessionSummary {
   const redact = (text: string) => {
     let result = text
-    for (const key of REDACTED_KEYS) {
-      // General key-value matching
-      const regex = new RegExp(`(${key}['"]?\\s*[:=]\\s*['"]?)[^\\s'"]+`, "gi")
-      result = result.replace(regex, "$1***REDACTED***")
-    }
-
-    // Explicitly handle "Authorization: Bearer <secret>" or "Bearer <secret>"
-    // Make sure we catch "Authorization: Bearer <secret>" as a single block or standalone "Bearer"
-    const authRegex = new RegExp(`(Authorization:\\s*Bearer\\s+)[^\\s'"]+`, "gi")
+    
+    // Explicitly handle "Authorization: Bearer <secret>" or "Authorization: Basic <secret>" first
+    const authRegex = /((?:Authorization|authorization)['"]?\s*[:=]\s*['"]?)(?:Bearer|Basic|bearer|basic)\s+[^\s'"]+/gi;
     result = result.replace(authRegex, "$1***REDACTED***")
 
-    const bearerRegex = new RegExp(`(Bearer\\s+)[^\\s'"]+`, "gi")
+    const bearerRegex = /(Bearer\s+)[^\s'"]+/gi
     result = result.replace(bearerRegex, "$1***REDACTED***")
+    
+    for (const key of REDACTED_KEYS) {
+      // General key-value matching
+      const regex = new RegExp(`(${key}['"]?\\s*[:=]\\s*['"]?)(?!\\*\\*\\*REDACTED\\*\\*\\*)([^\\s'"]+)`, "gi")
+      result = result.replace(regex, "$1***REDACTED***")
+    }
 
     return result
   }
@@ -86,14 +86,22 @@ function truncateToLimit(summary: SessionSummary, limitBytes: number): SessionSu
   return s
 }
 
-function validateSchema(obj: any): obj is SessionSummary {
-  if (!obj || typeof obj !== "object") return false
-  if (typeof obj.sessionId !== "string") return false
-  if (typeof obj.mode !== "string") return false
-  if (typeof obj.task !== "string") return false
-  if (typeof obj.outcome !== "string") return false
-  if (!Array.isArray(obj.changedFiles)) return false
-  return true
+function normalizeSchema(obj: any): SessionSummary | null {
+  if (!obj || typeof obj !== "object") return null
+  if (typeof obj.sessionId !== "string") return null
+  if (typeof obj.mode !== "string") return null
+  if (typeof obj.task !== "string") return null
+  if (typeof obj.outcome !== "string") return null
+  if (!Array.isArray(obj.changedFiles)) return null
+
+  if (obj.decisions !== undefined && !Array.isArray(obj.decisions)) return null;
+  if (obj.unresolvedIssues !== undefined && !Array.isArray(obj.unresolvedIssues)) return null;
+
+  return {
+    ...obj,
+    decisions: obj.decisions || [],
+    unresolvedIssues: obj.unresolvedIssues || []
+  } as SessionSummary
 }
 
 export class SessionSummaryStorage {
@@ -120,8 +128,9 @@ export class SessionSummaryStorage {
       for (const line of lines) {
          try {
              const parsed = JSON.parse(line)
-             if (validateSchema(parsed)) {
-                 valid.push(parsed)
+             const normalized = normalizeSchema(parsed)
+             if (normalized) {
+                 valid.push(normalized)
              } else {
                  corruptEntries++
              }

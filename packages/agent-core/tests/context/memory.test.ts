@@ -1,7 +1,10 @@
+import { calculateBudget } from "../../src/context/budget.ts";
+
 import assert from "node:assert/strict"
 import test from "node:test"
 import { mkdir, writeFile, rm } from "node:fs/promises"
 import { join } from "node:path"
+import { compileContext } from "../../src/context/compiler.ts"
 import { ProjectMemoryLoader } from "../../src/context/memory-loader.ts"
 import { MemoryRetriever } from "../../src/context/memory-retriever.ts"
 import { SessionSummaryStorage } from "../../src/context/session-storage.ts"
@@ -70,16 +73,32 @@ test("recent prior session", async () => {
   assert.equal(sessions[0]!.task, "Say hi")
 })
 
-test("secret-like data not persisted", async () => {
-  const dir = await setupFixture("secret", {})
+test("T-629: full redaction regression matrix", async () => {
+  const dir = await setupFixture("secret-matrix", {})
   const storage = new SessionSummaryStorage({ workspaceRoot: dir })
   await storage.append({
-    sessionId: "123", mode: "ASK", task: "Use token: secret123", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: [],
-    verification: "test with password='abc'"
+    sessionId: "123", mode: "ASK", 
+    task: "Use token: secret123 and Authorization: Bearer BIG_SECRET", 
+    outcome: "COMPLETED", changedFiles: [], 
+    decisions: ["chose AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE", "authorization: basic abc123def"], 
+    unresolvedIssues: ["password=xyz", "Bearer anothersecret"],
+    nextAction: "Try api_key='sk-123'",
+    verification: "test with secret = 'abc'"
   })
   const { sessions } = await storage.load()
-  assert.equal(sessions[0]!.task, "Use token: ***REDACTED***")
-  assert.equal(sessions[0]!.verification, "test with password='***REDACTED***'")
+  const s = sessions[0]!
+  
+  // T-628: Verify 'Authorization: Bearer' doesn't leak tail
+  assert.equal(s.task, "Use token: ***REDACTED*** and Authorization: ***REDACTED***")
+  
+  assert.equal(s.decisions[0], "chose AWS_ACCESS_KEY_ID=***REDACTED***")
+  assert.equal(s.decisions[1], "authorization: ***REDACTED***")
+  
+  assert.equal(s.unresolvedIssues[0], "password=***REDACTED***")
+  assert.equal(s.unresolvedIssues[1], "Bearer ***REDACTED***")
+  
+  assert.equal(s.nextAction, "Try api_key='***REDACTED***'")
+  assert.equal(s.verification, "test with secret = '***REDACTED***'")
 })
 
 test("memory retrieval selects tier 0 and recent sessions", async () => {
@@ -247,11 +266,11 @@ test("SessionSummaryStorage blocks path traversal outside workspace (T-621)", as
   assert.equal(res, "FAILED")
 })
 
-test("SessionSummaryStorage rejects schema-invalid JSON (T-607)", async () => {
-  const ws = path.join(os.tmpdir(), "test-schema-" + Date.now())
+test("T-632: schema-invalid JSON matrix and compileContext safety", async () => {
+  const ws = path.join(os.tmpdir(), "test-schema-matrix-" + Date.now())
   await fs.mkdir(path.join(ws, ".open-vs-code"), { recursive: true })
 
-  // Write some valid JSON but invalid schema
+  // Write all test cases for T-632 and T-634
   await fs.writeFile(
     path.join(ws, ".open-vs-code", "sessions.jsonl"),
     `{"valid":true}
@@ -259,18 +278,53 @@ test("SessionSummaryStorage rejects schema-invalid JSON (T-607)", async () => {
 []
 null
 {"task":"x"}
-{"sessionId":"12", "mode":"ASK", "task":"x", "outcome":"COMPLETED", "changedFiles":"not-array"}
-{"sessionId":"12", "mode":"ASK", "task":"x", "outcome":"COMPLETED", "changedFiles":[]}
+{"sessionId":12}
+{"sessionId":"x","mode":"ASK","task":"x","outcome":"COMPLETED","changedFiles":"not-array"}
+{"sessionId":"x","mode":"ASK","task":"x","outcome":"COMPLETED","changedFiles":[]}
+{"sessionId":"y","mode":"ASK","task":"y","outcome":"COMPLETED","changedFiles":[],"decisions":"not-array"}
+{"sessionId":"z","mode":"ASK","task":"z","outcome":"COMPLETED","changedFiles":[],"unresolvedIssues":"not-array"}
+{"sessionId":"legacy","mode":"ASK","task":"l","outcome":"COMPLETED","changedFiles":[]}
+{"sessionId":"complete","mode":"ASK","task":"c","outcome":"COMPLETED","changedFiles":[],"decisions":["d1"],"unresolvedIssues":["u1"]}
 `, "utf8")
 
   const storage = new SessionSummaryStorage({ workspaceRoot: ws })
   const loadRes = await storage.load()
+  
+  // We expect:
+  // 3 valid/normalized sessions: "x" (gets normalized), "legacy" (gets normalized), "complete" (is complete)
+  // 9 invalid/corrupt entries
+  assert.equal(loadRes.corruptEntries, 9)
+  assert.equal(loadRes.sessions.length, 3)
 
-  // Only the last one is valid
-  assert.equal(loadRes.sessions.length, 1)
-  assert.equal(loadRes.sessions[0]!.sessionId, "12")
-  assert.equal(loadRes.corruptEntries, 6)
-  assert.equal(loadRes.hasCorruption, true)
+  assert.equal(loadRes.sessions[0]!.sessionId, "x")
+  assert.deepEqual(loadRes.sessions[0]!.decisions, [])
+  assert.deepEqual(loadRes.sessions[0]!.unresolvedIssues, [])
+
+  assert.equal(loadRes.sessions[1]!.sessionId, "legacy")
+  assert.deepEqual(loadRes.sessions[1]!.decisions, [])
+  assert.deepEqual(loadRes.sessions[1]!.unresolvedIssues, [])
+
+  assert.equal(loadRes.sessions[2]!.sessionId, "complete")
+  assert.deepEqual(loadRes.sessions[2]!.decisions, ["d1"])
+  assert.deepEqual(loadRes.sessions[2]!.unresolvedIssues, ["u1"])
+
+  // T-634: compileContext safety
+  // If we pass these to compileContext, it should not crash
+  const snap = {
+    decisions: [], activeTasks: [], knownIssues: []
+  }
+  const retriever = new MemoryRetriever(snap, loadRes.sessions)
+  const memory = retriever.select({ task: "do it", mode: "ASK", tokenBudget: 5000 })
+  
+  const required = compileContext({
+    task: "do it",
+    projectInstructions: [],
+    memory,
+    budget: calculateBudget({ contextWindow: 10000, reservedOutput: 1000, reservedToolHistory: 1000 })
+  }).items
+
+  const hist = required.filter((r: any) => r.source.kind === "historical-session")
+  assert.equal(hist.length, 3)
 })
 
 test("Large corpus bounds selected memory (T-622)", async () => {

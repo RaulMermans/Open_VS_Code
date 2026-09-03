@@ -136,10 +136,10 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
         orchestratorResult.status === "AWAITING_MUTATION_APPROVAL" ||
         orchestratorResult.status === "AWAITING_VERIFICATION_APPROVAL"
       ) {
-        if (orchestratorResult.status === "AWAITING_MUTATION_APPROVAL") { console.log("AWAITING_MUTATION_APPROVAL");
+        if (orchestratorResult.status === "AWAITING_MUTATION_APPROVAL") {
           const res = await orchestrator.resume("APPROVE")
           orchestratorResult = res
-        } else if (orchestratorResult.status === "AWAITING_VERIFICATION_APPROVAL") { console.log("AWAITING_VERIFICATION_APPROVAL");
+        } else if (orchestratorResult.status === "AWAITING_VERIFICATION_APPROVAL") {
           const res = await orchestrator.resume("APPROVE")
           orchestratorResult = res
         }
@@ -180,7 +180,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
       if (evRecord.type === "tool.requested") {
         result.toolCalls++
         if (evRecord.payload?.name === "read_file" || evRecord.payload?.name === "list_dir") result.readCalls++
-        if (evRecord.payload?.name === "search_files") result.searchCalls++
+        if (evRecord.payload?.name === "find_files" || evRecord.payload?.name === "search_text") result.searchCalls++
       }
       if (evRecord.type === "mutation.prepared") {
         result.mutationsPrepared++
@@ -225,7 +225,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
     result.changedFiles = changedFilesSet.size
 
 
-    console.log("runnerResultStatus:", runnerResultStatus); let isSuccess = true
+    let isSuccess = true
     let failReason: FailureReason | undefined = undefined
 
     if (runnerResultStatus === "FAILED" || runnerResultStatus === "AGENT_TURN_BUDGET_EXCEEDED") {

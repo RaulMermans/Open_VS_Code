@@ -76,14 +76,14 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
         console.log(`\nStarting ${options.mode} task...`);
         break;
       case "tool.requested":
-        if (ev.payload && (ev.payload as any).name === "search_files") {
+        if (ev.payload && ((ev.payload as any).name === "find_files" || (ev.payload as any).name === "search_text")) {
           console.log(`  🔍 searching workspace`);
         } else if (ev.payload && (ev.payload as any).name === "read_file") {
           console.log(`  📖 reading file`);
         }
         break;
       case "tool.completed":
-        if (ev.payload && (ev.payload as any).name === "search_files") {
+        if (ev.payload && ((ev.payload as any).name === "find_files" || (ev.payload as any).name === "search_text")) {
           console.log(`  ✓ searched`);
         } else if (ev.payload && (ev.payload as any).name === "read_file") {
           console.log(`  ✓ read`);
