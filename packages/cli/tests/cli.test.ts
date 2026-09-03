@@ -9,6 +9,7 @@ const FIXTURES_DIR = path.resolve(process.cwd(), "tests/fixtures")
 
 async function setupWorkspace(name: string) {
   const ws = path.join(FIXTURES_DIR, name)
+  await fs.rm(ws, { recursive: true, force: true })
   await fs.mkdir(ws, { recursive: true })
   return ws
 }
@@ -233,3 +234,79 @@ test("BUILD mode cancellation", async () => {
   assert.equal(result.exitCode, 2)
   assert.equal(result.status, "CANCELLED")
 })
+
+test("CLI E2E: BUILD -> ASK continuity (T-557)", async () => {
+  const ws = await setupWorkspace("e2e-build-ask")
+  await fs.writeFile(path.join(ws, "file.ts"), "const config = 1;")
+  
+  // Session 1: BUILD
+  const provider1 = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{
+         id: "c1", name: "apply_patch", arguments: { path: "file.ts", search: "1;", replace: "2;" }
+    }]},
+    { model: "scripted", message: { role: "assistant", content: "Done" } }
+  ])
+  const res1 = await runCLI({ mode: "BUILD", instruction: "Change config to 2", workspaceRoot: ws, json: true, provider: provider1, mockApproval: "APPROVE" }); console.log(res1)
+  
+  // Session 2: ASK
+  const provider2 = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "It is 2 now." } }
+  ])
+  const res2 = await runCLI({ mode: "ASK", instruction: "How does the config behavior work now?", workspaceRoot: ws, json: true, provider: provider2 }) as any
+  
+  console.log("RES2:", JSON.stringify(res2.memorySelection, null, 2))
+  assert.equal(res2.exitCode, 0)
+  assert.equal(res2.memorySelection.sessionSummaries.length, 1)
+  assert.equal(res2.memorySelection.sessionSummaries[0].task, "Change config to 2")
+  assert.deepEqual(res2.memorySelection.sessionSummaries[0].changedFiles, ["file.ts"])
+})
+
+test("CLI E2E: FAILED DEBUG -> DEBUG continuity (T-558)", async () => {
+  const ws = await setupWorkspace("e2e-fail-debug")
+  
+  await fs.mkdir(path.join(ws, ".open-vs-code"), { recursive: true })
+  await fs.writeFile(path.join(ws, ".open-vs-code", "sessions.jsonl"), JSON.stringify({
+    sessionId: "old", task: "Fix the bug", mode: "DEBUG", outcome: "FAILED", changedFiles: [], decisions: [], unresolvedIssues: ["repair budget exhausted"]
+  }) + "\n")
+  
+  // Session 2: DEBUG again
+  const provider2 = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "Let me try again" } }
+  ])
+  const res2 = await runCLI({ mode: "DEBUG", instruction: "Fix the bug again", workspaceRoot: ws, json: true, provider: provider2 }) as any
+  
+  assert.equal(res2.exitCode, 0)
+  assert.equal(res2.memorySelection.sessionSummaries.length, 1)
+  assert.equal(res2.memorySelection.sessionSummaries[0].outcome, "FAILED")
+})
+
+test("CLI E2E: PLAN overrides stale session (T-559)", async () => {
+  const ws = await setupWorkspace("e2e-plan-override")
+  await fs.mkdir(path.join(ws, ".open-vs-code"), { recursive: true })
+  await fs.writeFile(path.join(ws, ".open-vs-code", "sessions.jsonl"), JSON.stringify({
+    sessionId: "old", task: "Next action: old task", mode: "BUILD", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: []
+  }) + "\n")
+  await fs.writeFile(path.join(ws, "PLAN.md"), "## Current milestone\nDo new task")
+  
+  const provider = new ScriptedModelProvider([ { model: "scripted", message: { role: "assistant", content: "Ok" } } ])
+  const res = await runCLI({ mode: "BUILD", instruction: "Do new task", workspaceRoot: ws, json: true, provider }) as any
+  
+  assert.equal(res.memorySelection.activeTasks.length, 1)
+  assert.equal(res.memorySelection.activeTasks[0].summary, "## Current milestone\nDo new task")
+  // The stale session is also loaded because it's recent and overlaps (same mode), but activeTasks has precedence (Tier 1 vs Tier 3).
+  assert.ok(res.memorySelection.tiersUsed.includes("Tier 1"))
+})
+
+test("CLI E2E: Irrelevant history excluded (T-560)", async () => {
+  const ws = await setupWorkspace("e2e-irrelevant")
+  await fs.mkdir(path.join(ws, ".open-vs-code"), { recursive: true })
+  await fs.writeFile(path.join(ws, ".open-vs-code", "sessions.jsonl"), JSON.stringify({
+    sessionId: "irrelevant", task: "completely unrelated UI work", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: []
+  }) + "\n")
+  
+  const provider = new ScriptedModelProvider([ { model: "scripted", message: { role: "assistant", content: "Ok" } } ])
+  const res = await runCLI({ mode: "BUILD", instruction: "Fix backend database", workspaceRoot: ws, json: true, provider }) as any
+  
+  assert.equal(res.memorySelection.sessionSummaries.length, 0)
+})
+

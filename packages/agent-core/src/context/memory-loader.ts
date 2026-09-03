@@ -10,16 +10,23 @@ export class ProjectMemoryLoader {
 
     const projectGoal = await this.readSectionSafely("PROJECT.md", "North star", fileNames)
     const constraints = await this.readSectionSafely("PROJECT.md", "Primary constraints", fileNames)
+    const stack = await this.readSectionSafely("PROJECT.md", "Tech stack", fileNames)
+    const knownIssuesList = await this.readSectionSafely("PROJECT.md", "Known issues", fileNames)
+
     const taskGraph = await this.readSectionSafely("PLAN.md", "Task graph", fileNames)
     const currentMilestone = await this.readSectionSafely("PLAN.md", "Current milestone", fileNames)
     const decisionsTable = await this.readSectionSafely("DECISIONS.md", "Decision Index", fileNames)
+    
+    const environmentNotes = await this.readSectionSafely("AGENTS.md", "Environment", fileNames) || await this.readSectionSafely("AGENTS.md", "Workflow", fileNames)
+    const repoNotes = await this.readSectionSafely("ARCHITECTURE.md", "Component map", fileNames) || await this.readSectionSafely("ARCHITECTURE.md", "Architecture", fileNames)
+    const recentChanges = await this.readSectionSafely("SCRATCHPAD.md", "Recent changes", fileNames) || await this.readSectionSafely("SCRATCHPAD.md", "Current state", fileNames)
 
     const activeTasks: Task[] = []
     if (currentMilestone) {
-      activeTasks.push({ summary: currentMilestone.content, status: "active", source: "PLAN.md:Current milestone" })
+      activeTasks.push({ summary: currentMilestone.content, status: "active", source: "PLAN.md#Current milestone" })
     }
     if (taskGraph) {
-      activeTasks.push({ summary: taskGraph.content, status: "planned", source: "PLAN.md:Task graph" })
+      activeTasks.push({ summary: taskGraph.content, status: "planned", source: "PLAN.md#Task graph" })
     }
 
     const decisions: Decision[] = []
@@ -37,16 +44,26 @@ export class ProjectMemoryLoader {
             id,
             summary: parts[1]!,
             reason: parts[2]!, // actually status
-            source: "DECISIONS.md"
+            source: "DECISIONS.md#Decision Index"
           })
         }
       }
     }
-
     
-    const result: any = { decisions, activeTasks, knownIssues: [] }
+    const knownIssues: KnownIssue[] = []
+    if (knownIssuesList) {
+       knownIssues.push({ summary: knownIssuesList.content, source: knownIssuesList.source })
+    }
+
+    const result: any = { decisions, activeTasks, knownIssues }
     if (projectGoal) result.projectGoal = projectGoal
     if (constraints) result.constraints = constraints
+    if (stack) result.stack = stack
+    if (environmentNotes) result.environmentNotes = environmentNotes
+    if (repoNotes) result.repoNotes = repoNotes
+    if (recentChanges) result.recentChanges = recentChanges
+    
+    result.discoveredCount = discovered.length
     return result
 
   }
@@ -63,3 +80,4 @@ export class ProjectMemoryLoader {
     return undefined
   }
 }
+

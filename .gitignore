@@ -30,3 +30,4 @@ tmp/
 temp/
 logs/
 .worktrees/
+packages/agent-core/.eval-tmp/

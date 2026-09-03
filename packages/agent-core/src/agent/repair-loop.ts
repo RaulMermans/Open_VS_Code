@@ -220,7 +220,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
        return this.#terminate("CANCELLED", "Agent runner cancelled")
     }
     
-    return this.#terminate("FAILED", "Agent completed without verifying fix")
+    console.log("MUTATIONS:", this.#mutationsApplied, "VERIFICATIONS:", this.#verificationRuns); return this.#terminate("FAILED", "Agent completed without verifying fix")
   }
 
   #emitEvent(type: string, payload: any) {

@@ -1,6 +1,6 @@
 # Scratchpad
 
-- Current state: Sprint 1K and 1L are COMPLETE.
+- Current state: Sprint 2A is COMPLETE.
 - Accomplishments:
   - deterministic coding cases: 30
   - coding eval expected outcomes: 30/30
@@ -21,3 +21,6 @@
   - IDE: no
   - model weights on dev machine: no
   - real model required: no
+
+  - project memory snapshot: yes
+  - cross-session continuity: yes

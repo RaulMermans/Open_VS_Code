@@ -386,7 +386,7 @@ export class AgentRunner {
         try {
           reviewable = await prepared.prepareForReview({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
           const isVerification = prepared.definition.action === "run_known_test"
-          this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
+          this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id, path: (prepared.arguments as any).path || (prepared.arguments as any).targetFile || (prepared.arguments as any).file })
           if (reviewable.reviewPayload.truncated === true) {
             throw new Error("Diff is truncated and cannot be reviewed safely")
           }

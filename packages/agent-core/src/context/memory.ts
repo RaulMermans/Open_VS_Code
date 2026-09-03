@@ -61,4 +61,11 @@ export interface MemorySelection {
   readonly knownIssues: readonly KnownIssue[]
   readonly sessionSummaries: readonly SessionSummary[]
   readonly estimatedTokens: number
+  readonly documentsDiscovered: number
+  readonly documentsSelected: number
+  readonly sectionsSelected: number
+  readonly sessionSummariesConsidered: number
+  readonly sessionSummariesSelected: number
+  readonly duplicatesDropped: number
+  readonly tiersUsed: readonly string[]
 }

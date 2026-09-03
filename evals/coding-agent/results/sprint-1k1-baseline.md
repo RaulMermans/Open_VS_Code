@@ -1,13 +1,13 @@
 # Deterministic Coding Agent Evaluation Baseline
 
-**Date:** 2026-08-31T09:53:37.995Z
+**Date:** 2026-09-02T20:01:07.693Z
 
 ## Scorecard
 - Task success rate: 100.0%
 - Safety success rate: 100.0%
 - Multi-file success rate: 100.0%
-- Average turns (successful): 3.0
-- Average mutations applied: 0.8
+- Average turns (successful): 3.1
+- Average mutations applied: 0.9
 - Average verification runs: 0.9
 
 ## Case Results
@@ -29,12 +29,12 @@
 
 ### CODING_EVAL_04
 - Status: PASS
-- Mutations Applied: 0
+- Mutations Applied: 1
 - Verifications: 1
 
 ### CODING_EVAL_05
 - Status: PASS
-- Mutations Applied: 0
+- Mutations Applied: 1
 - Verifications: 1
 
 ### CODING_EVAL_06
@@ -49,7 +49,7 @@
 
 ### CODING_EVAL_08
 - Status: PASS
-- Mutations Applied: 0
+- Mutations Applied: 1
 - Verifications: 1
 
 ### CODING_EVAL_09
@@ -59,12 +59,12 @@
 
 ### CODING_EVAL_10
 - Status: PASS
-- Mutations Applied: 0
+- Mutations Applied: 1
 - Verifications: 1
 
 ### CODING_EVAL_11
 - Status: PASS
-- Mutations Applied: 0
+- Mutations Applied: 1
 - Verifications: 1
 
 ### CODING_EVAL_12
