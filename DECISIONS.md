@@ -15,6 +15,7 @@
 | [ADR-011](docs/adrs/ADR-011-safe-mutation-layer.md) | Safe mutation layer | Accepted |
 | [ADR-012](docs/adrs/ADR-012-bounded-repair-loops.md) | Bounded autonomous repair loops | Accepted |
 | [ADR-013](docs/adrs/ADR-013-bounded-session-continuity.md) | Markdown-First Project Memory & Bounded Session Continuity | Accepted |
+| [ADR-014](docs/adrs/ADR-014-metadata-first-skills.md) | Metadata-First Skills & Prompt Primitives | Accepted |
 
 Decision status changes belong in the ADR and this index.
 

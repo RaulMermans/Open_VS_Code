@@ -3,7 +3,6 @@ import type { SkillMetadata } from "./skills.ts"
 export interface SkillSelectionInput {
   readonly task: string
   readonly mode: string
-  readonly relevantFiles?: readonly string[]
   readonly catalog: readonly SkillMetadata[]
   readonly budgetTokens: number
 }
@@ -33,6 +32,16 @@ function calculateScore(skill: SkillMetadata, task: string, mode: string): { sco
   let isEligible = true
   let reason = ""
 
+  const legacyIds = new Set(["repo-intake", "upstream-audit", "change-with-tests"]);
+  if (legacyIds.has(skill.id)) {
+     if (!task.includes(skill.id)) {
+         return { score: 0, isEligible: false, reason: "Legacy skill excluded from automatic selection" }
+     } else {
+         score += 50
+         reason = "Legacy skill explicitly requested"
+     }
+  }
+
   if (skill.modes.length > 0) {
     if (!skill.modes.includes(mode)) {
       isEligible = false
@@ -41,7 +50,8 @@ function calculateScore(skill: SkillMetadata, task: string, mode: string): { sco
     score += 10
   }
 
-  const terms = lowerTask.split(/\W+/).filter(t => t.length > 2)
+  const stopWords = new Set(["the", "and", "for", "with", "from", "that", "this", "what", "how", "why", "can", "you", "not", "but", "are", "have", "has", "had", "will", "would", "could", "should", "does", "did"]);
+  const terms = lowerTask.split(/\W+/).filter(t => t.length > 2 && !stopWords.has(t))
   let matchedTags = 0
   for (const tag of skill.tags) {
     if (terms.includes(tag.toLowerCase())) {
@@ -67,7 +77,8 @@ function calculateScore(skill: SkillMetadata, task: string, mode: string): { sco
   const metadataText = `${skill.title} ${skill.summary}`.toLowerCase()
   let overlap = 0
   for (const term of terms) {
-    if (metadataText.includes(term)) {
+    const regex = new RegExp(`\\b${term}\\b`, 'i')
+    if (regex.test(metadataText)) {
       overlap++
     }
   }
@@ -80,12 +91,13 @@ function calculateScore(skill: SkillMetadata, task: string, mode: string): { sco
   if (score > 0 && !reason) {
      reason = `Mode matched`
   }
-  if (score === 0 && skill.modes.includes(mode)) {
-     score += 1 // Base score for mode match
-     reason = "Mode fallback"
-  } else if (score === 0) {
+  
+  // Enforce minimum meaningful relevance
+  // Mode alone is +10. We require at least a tag (5), trigger (15), or overlap (2).
+  // So score must be > 10 if mode matched, or > 0 if no mode matched.
+  if ((skill.modes.includes(mode) && score <= 10) || (!skill.modes.includes(mode) && score === 0)) {
      isEligible = false
-     reason = "No signals matched"
+     reason = "No meaningful relevance signals matched"
   }
 
   return { score, isEligible, reason }
@@ -150,7 +162,7 @@ export function selectSkills(input: SkillSelectionInput): SkillSelectionResult {
     skillsDiscovered: input.catalog.length,
     skillsEligible: eligibleCandidates.length,
     skillsSelected: (primary ? 1 : 0) + supporting.length,
-    primarySkill: primary,
+    ...(primary ? { primarySkill: primary } : {}),
     supportingSkills: supporting,
     estimatedSkillTokens: usedTokens,
     skillBudget: input.budgetTokens,

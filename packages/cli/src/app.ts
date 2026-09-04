@@ -5,7 +5,7 @@ import { VerificationEngine } from "@open-vs-code/agent-core";
 import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core";
 import { createMutationToolRegistrations } from "@open-vs-code/agent-core";
 import { createVerificationToolRegistrations } from "@open-vs-code/agent-core";
-import { calculateBudget, classifyPermission, ProjectMemoryLoader, SessionSummaryStorage, MemoryRetriever, discoverSkills, selectSkills, loadSkill } from "@open-vs-code/agent-core";
+import { calculateBudget, classifyPermission, ProjectMemoryLoader, SessionSummaryStorage, MemoryRetriever, discoverSkills, selectSkills, loadSkill, estimateTokens } from "@open-vs-code/agent-core";
 import * as readline from "node:readline/promises";
 
 import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
@@ -149,13 +149,33 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   });
 
   const selectedSkills = [];
+  let actualSkillTokens = 0;
   if (skillSelection.primarySkill) {
-     const loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata);
-     selectedSkills.push(loaded);
+     let sections = [...skillSelection.primarySkill.sections];
+     let loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata, { sections });
+     let t = estimateTokens(loaded.body);
+     if (t > skillBudget) {
+         sections = ["Intent", "When", "Inputs", "Procedure", "Template", "Expected Output"];
+         loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata, { sections });
+         t = estimateTokens(loaded.body);
+     }
+     if (t > skillBudget) {
+         sections = ["Intent", "When", "Procedure"];
+         loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata, { sections });
+         t = estimateTokens(loaded.body);
+     }
+     if (t <= skillBudget) {
+         selectedSkills.push(loaded);
+         actualSkillTokens += t;
+     }
   }
   for (const s of skillSelection.supportingSkills) {
-     const loaded = await loadSkill(options.workspaceRoot, s.metadata);
-     selectedSkills.push(loaded);
+     const loaded = await loadSkill(options.workspaceRoot, s.metadata, { sections: s.sections });
+     const t = estimateTokens(loaded.body);
+     if (actualSkillTokens + t <= skillBudget) {
+         selectedSkills.push(loaded);
+         actualSkillTokens += t;
+     }
   }
 
   const runnerInput: any = {
