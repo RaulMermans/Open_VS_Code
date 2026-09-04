@@ -1,0 +1,1 @@
+- [ADR-014: Metadata-First Skills & Prompt Primitives](ADR-014-metadata-first-skills.md)
