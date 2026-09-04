@@ -33,6 +33,7 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Bounded Repair** | ✅ Complete | Gated loop orchestration, exact package-script review, human-gated verification approval, timeouts, and multi-attempt repair limits. |
 | **Interactive CLI** | ✅ Complete | Standalone terminal interface. |
 | **Project Memory** | ✅ Complete | Bounded Markdown-first context injection and cross-session persistence. |
+| **Skills & Primitives** | ✅ Complete | Reusable metadata-first procedural playbooks (e.g., Bug Triage, Refactoring) with progressive token disclosure. |
 | **IDE Integration** | ⏳ Planned | VS Code / Code-OSS extension integration. |
 
 ---
@@ -185,6 +186,8 @@ REVIEW ✅
 Human-gated mutation ✅
 Human-gated verification ✅
 Bounded repair ✅
+Project Memory ✅
+Skills & Prompt Primitives ✅
 30-case deterministic evaluation ✅
 
 Canonical tools: read_file, list_directory, search_text, find_files.

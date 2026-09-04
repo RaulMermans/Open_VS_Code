@@ -14,7 +14,7 @@ export interface ContextCompilerInput {
   readonly task: string
   readonly projectInstructions: readonly ProjectInstruction[]
   readonly memory?: MemorySelection
-  readonly selectedSkill?: LoadedSkill
+  readonly selectedSkills?: readonly LoadedSkill[]
   readonly codeContext?: readonly ContextItem[]
   readonly observations?: readonly ToolObservation[]
   readonly maxObservations?: number
@@ -108,16 +108,18 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     }
   }
 
-  if (input.selectedSkill) {
-    required.push({
-      id: `skill:${input.selectedSkill.name}`,
-      source: { kind: "skill", path: input.selectedSkill.path },
-      content: input.selectedSkill.body,
-      priority: 1_000,
-      estimatedTokens: estimateTokens(input.selectedSkill.body),
-      required: true,
-      metadata: { name: input.selectedSkill.name, description: input.selectedSkill.description },
-    })
+  if (input.selectedSkills) {
+    for (const skill of input.selectedSkills) {
+      required.push({
+        id: `skill:${skill.id}`,
+        source: { kind: "skill", path: skill.path },
+        content: skill.body,
+        priority: 950,
+        estimatedTokens: estimateTokens(skill.body),
+        required: true,
+        metadata: { id: skill.id, title: skill.title, summary: skill.summary },
+      })
+    }
   }
   const observations = recentObservations(input.observations ?? [], input.maxObservations ?? 6).map((observation, index): ContextItem => ({
     id: `observation:${observation.callId}`,

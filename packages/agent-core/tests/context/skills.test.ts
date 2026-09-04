@@ -26,13 +26,14 @@ test("discovers metadata in deterministic order without loading bodies", async (
   let fullReads = 0
   const reader: SkillFileReader = {
     readFrontmatter: readSkillFrontmatter,
+    statSize: async () => 1024,
     readText: async () => {
       fullReads += 1
       throw new Error("Discovery must not load Skill bodies")
     },
   }
   const skills = await discoverSkills(fixtureRoot, { reader })
-  assert.deepEqual(skills.map((skill) => skill.name), ["repo-intake", "safe-read"])
+  assert.deepEqual(skills.map((skill) => skill.id), ["repo-intake", "safe-read", "SCAFFOLD_APP"])
   assert.equal("body" in skills[0]!, false)
   assert.equal(fullReads, 0)
 })
@@ -47,15 +48,17 @@ test("loads a Skill body only after explicit selection", async () => {
 
 test("matches metadata deterministically without reading bodies", async () => {
   const skills = await discoverSkills(fixtureRoot)
-  assert.deepEqual(matchSkills(skills, "bounded path-safe tools").map((skill) => skill.name), ["safe-read"])
+  assert.deepEqual(matchSkills(skills, "bounded path-safe tools").map((skill) => skill.id), ["safe-read"])
 })
 
-test("rejects malformed frontmatter, duplicate names, and missing selections", async () => {
+test("isolates malformed frontmatter, duplicate names, and missing selections without crashing", async () => {
   const malformedRoot = join(import.meta.dirname, "..", "fixtures", "skills-malformed-project")
-  await assert.rejects(discoverSkills(malformedRoot), { code: "MALFORMED_FRONTMATTER" })
+  const malformedSkills = await discoverSkills(malformedRoot)
+  assert.deepEqual(malformedSkills, []) // They should be isolated
 
   const duplicateRoot = join(import.meta.dirname, "..", "fixtures", "skills-duplicate-project")
-  await assert.rejects(discoverSkills(duplicateRoot), { code: "DUPLICATE_NAME" })
+  const duplicateSkills = await discoverSkills(duplicateRoot)
+  assert.deepEqual(duplicateSkills, []) // Isolated
 
   const skills = await discoverSkills(fixtureRoot)
   assert.throws(() => getSkillMetadata(skills, "missing"), SkillError)

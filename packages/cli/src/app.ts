@@ -5,7 +5,7 @@ import { VerificationEngine } from "@open-vs-code/agent-core";
 import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core";
 import { createMutationToolRegistrations } from "@open-vs-code/agent-core";
 import { createVerificationToolRegistrations } from "@open-vs-code/agent-core";
-import { calculateBudget, classifyPermission, ProjectMemoryLoader, SessionSummaryStorage, MemoryRetriever } from "@open-vs-code/agent-core";
+import { calculateBudget, classifyPermission, ProjectMemoryLoader, SessionSummaryStorage, MemoryRetriever, discoverSkills, selectSkills, loadSkill } from "@open-vs-code/agent-core";
 import * as readline from "node:readline/promises";
 
 import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
@@ -138,12 +138,34 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     }
   }
 
+  // T-652: Skill Discovery and Selection
+  const skills = await discoverSkills(options.workspaceRoot);
+  const skillBudget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 }).availableContext * 0.15; // roughly 15%
+  const skillSelection = selectSkills({
+    task: options.instruction,
+    mode: options.mode,
+    catalog: skills,
+    budgetTokens: skillBudget
+  });
+
+  const selectedSkills = [];
+  if (skillSelection.primarySkill) {
+     const loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata);
+     selectedSkills.push(loaded);
+  }
+  for (const s of skillSelection.supportingSkills) {
+     const loaded = await loadSkill(options.workspaceRoot, s.metadata);
+     selectedSkills.push(loaded);
+  }
+
   const runnerInput: any = {
     task: { id: "cli-task", mode: options.mode, instruction: options.instruction },
     workspaceRoot: options.workspaceRoot,
     maxTurns: 15,
     contextBudget,
-    projectInstructions: [], memory
+    projectInstructions: [],
+    memory,
+    selectedSkills
   };
 
   let finalResult: any;

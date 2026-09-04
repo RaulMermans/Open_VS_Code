@@ -29,7 +29,7 @@ export interface AgentRunnerInput {
   readonly maxTurns: number
   readonly contextBudget: ContextBudget
   readonly projectInstructions: readonly ProjectInstruction[]
-  readonly selectedSkill?: LoadedSkill
+  readonly selectedSkills?: readonly LoadedSkill[]
   readonly codeContext?: readonly ContextItem[]
   readonly signal?: AbortSignal
   readonly taskProfile?: TaskProfile
@@ -274,7 +274,7 @@ export class AgentRunner {
         compiled = this.#contextCompiler({
           task: session.input.task.instruction,
           projectInstructions: [guidanceInstruction, ...session.input.projectInstructions],
-          ...(session.input.selectedSkill ? { selectedSkill: session.input.selectedSkill } : {}),
+          ...(session.input.selectedSkills ? { selectedSkills: session.input.selectedSkills } : {}),
           ...(session.input.codeContext ? { codeContext: session.input.codeContext } : {}),
           observations: session.observations,
           budget: session.input.contextBudget,

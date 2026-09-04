@@ -7,10 +7,14 @@ import type { LoadedSkill } from "../../src/context/skills.ts"
 import type { ToolObservation } from "../../src/agent/observations.ts"
 
 const skill: LoadedSkill = {
-  name: "safe-read",
-  description: "Read safely",
+  id: "safe-read",
+  title: "Safe Read",
+  summary: "Read safely",
+  modes: ["PLAN"],
+  tags: ["read"],
   path: ".agents/skills/safe-read/SKILL.md",
   body: "Reject repository escapes.",
+  estimatedTokens: 5,
 }
 
 test("compiles project instructions, task, selected Skill, then bounded code with provenance", () => {
@@ -20,7 +24,7 @@ test("compiles project instructions, task, selected Skill, then bounded code wit
       { id: "agents", path: "AGENTS.md", content: "Follow repository rules." },
       { id: "project", path: "PROJECT.md", content: "Build local-first." },
     ],
-    selectedSkill: skill,
+    selectedSkills: [skill],
     codeContext: [
       { id: "active", source: { kind: "active-code", path: "src/index.ts" }, content: "export const x = 1", priority: 10, estimatedTokens: 4, required: false },
       { id: "background", source: { kind: "background", path: "notes.txt" }, content: "optional notes", priority: 0, estimatedTokens: 50, required: false },
