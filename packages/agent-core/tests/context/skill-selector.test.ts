@@ -48,7 +48,7 @@ const catalog: SkillMetadata[] = [
     title: "Security Hardening Pass",
     summary: "Review for vulnerabilities like path traversal.",
     modes: ["REVIEW"],
-    tags: ["security", "audit", "path traversal", "leakage"],
+    tags: ["security", "audit", "path traversal", "leakage", "path", "secret"],
     path: "SECURITY_HARDENING_PASS/SKILL.md",
     estimatedTokens: 120,
   },
@@ -57,7 +57,7 @@ const catalog: SkillMetadata[] = [
     title: "Architecture Review Pass",
     summary: "Inspect architecture.",
     modes: ["REVIEW", "PLAN"],
-    tags: ["architecture", "structure", "coupling", "restructuring"],
+    tags: ["architecture", "structure", "coupling", "restructuring", "boundary"],
     path: "ARCH_REVIEW_PASS/SKILL.md",
     estimatedTokens: 130,
   },
@@ -80,6 +80,23 @@ const catalog: SkillMetadata[] = [
     path: "MCP_TOOL_CONTRACT/SKILL.md",
     estimatedTokens: 110,
   },
+  // Legacy skills
+  {
+    id: "repo-intake",
+    title: "Repo Intake",
+    summary: "Legacy intake",
+    modes: ["PLAN"],
+    tags: ["intake"],
+    path: "legacy", estimatedTokens: 50
+  },
+  {
+    id: "change-with-tests",
+    title: "Legacy Change",
+    summary: "Legacy feature",
+    modes: ["BUILD"],
+    tags: ["feature"],
+    path: "legacy", estimatedTokens: 50
+  }
 ]
 
 const testCases = [
@@ -124,6 +141,12 @@ const testCases = [
 
   // 24. No-skill ASK
   { task: "What does this variable mean?", mode: "ASK", expectedNoSkill: true },
+  
+  // 25. Non-ASK no-skill case (e.g. simple BUILD rename)
+  { task: "Rename the local variable `idx` to `index`.", mode: "BUILD", expectedNoSkill: true },
+  { task: "Explain what files this folder contains", mode: "PLAN", expectedNoSkill: true },
+  { task: "What does this error message mean?", mode: "DEBUG", expectedNoSkill: true },
+  { task: "Summarize this README", mode: "REVIEW", expectedNoSkill: true }
 ]
 
 test("SkillSelector deterministic evaluation corpus", () => {
@@ -168,3 +191,12 @@ test("SkillSelector enforces budget token limits strictly", () => {
    assert.ok(result.skillsDroppedForBudget > 0 || result.primarySkill?.sections.length! < 8) // Should drop something or reduce sections
 })
 
+test("SkillSelector respects legacy policy", () => {
+   // Legacy skills are not selected automatically
+   const result1 = selectSkills({ task: "Build a new feature", mode: "BUILD", catalog, budgetTokens: 500 })
+   assert.notEqual(result1.primarySkill?.metadata.id, "change-with-tests")
+   
+   // Explicit request selects it
+   const result2 = selectSkills({ task: "Build a new feature using change-with-tests", mode: "BUILD", catalog, budgetTokens: 500 })
+   assert.equal(result2.primarySkill?.metadata.id, "change-with-tests")
+})

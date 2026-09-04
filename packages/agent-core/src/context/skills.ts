@@ -201,7 +201,7 @@ export function getSkillMetadata(skills: readonly SkillMetadata[], id: string): 
 export async function loadSkill(
   workspaceRoot: string,
   metadata: SkillMetadata,
-  options: { readonly reader?: SkillFileReader; readonly maxBytes?: number } = {},
+  options: { readonly reader?: SkillFileReader; readonly maxBytes?: number; readonly sections?: readonly string[] } = {},
 ): Promise<LoadedSkill> {
   const reader = options.reader ?? nodeSkillFileReader
   const maxBytes = options.maxBytes ?? 64 * 1024
@@ -212,12 +212,16 @@ export async function loadSkill(
   if (parsed.metadata.id !== metadata.id) {
     throw new SkillError("INVALID_METADATA", `Skill metadata changed before loading: ${metadata.id}`)
   }
-  return { ...metadata, body: parsed.body }
+  let body = parsed.body
+  if (options.sections && options.sections.length > 0) {
+    body = loadSkillSections(body, options.sections as string[])
+  }
+  return { ...metadata, body }
 }
 
 export function loadSkillSections(body: string, sections: string[]): string {
   if (sections.length === 0) return body
-  const regex = /^#\s+(.+)$/gm
+  const regex = /^#+\s+(.+)$/gm
   let match
   const blocks: {title: string, start: number}[] = []
   while ((match = regex.exec(body)) !== null) {
