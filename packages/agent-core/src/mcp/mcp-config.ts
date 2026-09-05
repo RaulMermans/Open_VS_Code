@@ -10,3 +10,60 @@ export interface McpServerConfig {
   envFrom?: string[];
   enabled: boolean;
 }
+
+const DENYLIST = ["npx", "npm exec", "pnpm dlx", "yarn dlx", "bunx"];
+
+export function validateMcpConfig(data: unknown): McpConfig | null {
+  if (typeof data !== "object" || data === null) return null;
+  const raw = data as any;
+  if (typeof raw.servers !== "object" || raw.servers === null) return null;
+
+  const validServers: Record<string, McpServerConfig> = {};
+  for (const [key, srv] of Object.entries(raw.servers)) {
+    if (typeof srv !== "object" || srv === null) continue;
+    const s = srv as any;
+
+    if (typeof s.enabled !== "boolean") continue;
+    if (s.transport !== "stdio" && s.transport !== "test") continue;
+
+    if (s.transport === "stdio") {
+      if (typeof s.command !== "string") continue;
+
+      const cmdLower = s.command.toLowerCase();
+      if (DENYLIST.includes(cmdLower) || (s.command === "npm" && s.args?.[0] === "exec")) {
+        throw new Error(`MCP config uses forbidden auto-install launcher: ${s.command}`);
+      }
+
+      if (s.args !== undefined && !Array.isArray(s.args)) continue;
+      if (s.args?.some((a: any) => typeof a !== "string")) continue;
+
+      if (s.envFrom !== undefined && !Array.isArray(s.envFrom)) continue;
+      if (s.envFrom?.some((e: any) => typeof e !== "string")) continue;
+    }
+
+    validServers[key] = {
+      transport: s.transport,
+      command: s.command,
+      args: s.args,
+      envFrom: s.envFrom,
+      enabled: s.enabled
+    };
+  }
+
+  let toolPolicies: Record<string, "read" | "side_effect" | "unknown"> | undefined;
+  if (raw.toolPolicies !== undefined) {
+    if (typeof raw.toolPolicies !== "object" || raw.toolPolicies === null) return null;
+    toolPolicies = {};
+    for (const [k, v] of Object.entries(raw.toolPolicies)) {
+      if (v === "read" || v === "side_effect" || v === "unknown") {
+        toolPolicies[k] = v;
+      }
+    }
+  }
+
+  const result: any = { servers: validServers };
+  if (toolPolicies) {
+    result.toolPolicies = toolPolicies;
+  }
+  return result as McpConfig;
+}

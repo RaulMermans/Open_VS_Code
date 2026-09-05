@@ -24,7 +24,7 @@ export interface CLIAppOptions {
 
 
 
-export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number }> {
+export async function runCLI(options: CLIAppOptions): Promise<any> {
   const startedAt = new Date().toISOString();
   let provider: ModelProvider = options.provider as any;
   if (!provider) {
@@ -119,7 +119,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   const mcpCatalog = new McpCatalog(mcpConfig, sink);
   await mcpCatalog.discover();
   const allMcpTools = mcpCatalog.getTools();
-  const selectedMcpTools = selectMcpTools(allMcpTools, {
+  const { selected: selectedMcpTools, eligibleCount: toolsEligible } = selectMcpTools(allMcpTools, {
     task: options.instruction,
     mode: options.mode,
     maxTools: 3,
@@ -132,6 +132,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     callsRejected: 0,
     callsCancelled: 0,
     callsTimedOut: 0,
+    callsFailed: 0,
     resultBytesRetained: 0,
     resultsTruncated: 0,
   };
@@ -142,6 +143,18 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
       registry.register(createMcpToolRegistration(mcpTool, transport, mcpConfig, mcpStats));
     }
   }
+
+  const mcpSnapshot = () => ({
+    serversConfigured: Object.keys(mcpConfig.servers).length,
+    serversConnected: mcpCatalog.getConnectedServers().length,
+    toolsDiscovered: allMcpTools.length,
+    toolsEligible,
+    toolsSelected: selectedMcpTools.length,
+    schemasLoaded: selectedMcpTools.length,
+    estimatedSchemaTokens: selectedMcpTools.reduce((acc, t) => acc + t.estimatedSchemaTokens, 0),
+    schemaBudget: 1500,
+    ...mcpStats
+  });
 
   const contextBudget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 });
   
@@ -355,15 +368,17 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     } else {
       console.error(`\nError: ${err.message}`);
     }
+    const mcpDiagnostics = mcpSnapshot();
     await mcpCatalog.close();
     rl.close();
   // Remove listener
   if (typeof sigintHandler !== "undefined") {
     process.removeListener("SIGINT", sigintHandler);
   }
-    return { exitCode: 3 }; // config / runtime error
+    return { exitCode: 3, mcpDiagnostics }; // config / runtime error
   }
 
+  const mcpDiagnostics = mcpSnapshot();
   await mcpCatalog.close();
   rl.close();
 
@@ -438,18 +453,6 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
       ...(skillSelection.primarySkill ? [skillSelection.primarySkill.reason] : []),
       ...skillSelection.supportingSkills.map(s => s.reason)
     ],
-  };
-
-  const mcpDiagnostics = {
-    serversConfigured: Object.keys(mcpConfig.servers).length,
-    serversConnected: mcpCatalog.getConnectedServers().length,
-    toolsDiscovered: allMcpTools.length,
-    toolsEligible: allMcpTools.filter(t => true).length, // simplified
-    toolsSelected: selectedMcpTools.length,
-    schemasLoaded: selectedMcpTools.length,
-    estimatedSchemaTokens: selectedMcpTools.reduce((acc, t) => acc + t.estimatedSchemaTokens, 0),
-    schemaBudget: 1500,
-    ...mcpStats
   };
 
   if (options.json) {

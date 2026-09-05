@@ -18,8 +18,8 @@ test("MCP Runtime Scorecard and structural identity", async () => {
       }
     },
     toolPolicies: {
-      "mcp.mock_server.test_tool": "side_effect",
-      "mcp.mock_server.read_tool": "read"
+      "mcp_mock_server_test_tool": "side_effect",
+      "mcp_mock_server_read_tool": "read"
     }
   };
 
@@ -28,7 +28,7 @@ test("MCP Runtime Scorecard and structural identity", async () => {
     callsCompleted: 0,
     callsRejected: 0,
     callsCancelled: 0,
-    callsTimedOut: 0,
+    callsTimedOut: 0, callsFailed: 0,
     resultBytesRetained: 0,
     resultsTruncated: 0,
   };
@@ -60,7 +60,7 @@ test("MCP Runtime Scorecard and structural identity", async () => {
       const discovered = [];
       const serverId = "mock_server";
       for (const t of this.mockTransport.tools) {
-        const canonicalName = `mcp.${serverId}.${t.name}`;
+        const canonicalName = `mcp_${serverId}_${t.name}`;
         const meta = {
           serverId,
           toolName: t.name,
@@ -85,7 +85,7 @@ test("MCP Runtime Scorecard and structural identity", async () => {
     task: "test_tool read_tool",
     mode: "BUILD",
     maxTools: 3
-  });
+  }).selected;
   
   assert.equal(selected.length, 2);
 

@@ -1,2 +1,2 @@
 {"sessionId":"old","task":"Fix the bug","mode":"DEBUG","outcome":"FAILED","changedFiles":[],"decisions":[],"unresolvedIssues":["repair budget exhausted"]}
-{"sessionId":"session-1788588013493","startedAt":"2026-09-05T06:00:13.491Z","completedAt":"2026-09-05T06:00:13.493Z","mode":"DEBUG","task":"Fix the bug again","outcome":"COMPLETED","changedFiles":[],"decisions":[],"unresolvedIssues":[]}
+{"sessionId":"session-1788616125600","startedAt":"2026-09-05T13:48:45.558Z","completedAt":"2026-09-05T13:48:45.600Z","mode":"DEBUG","task":"Fix the bug again","outcome":"COMPLETED","changedFiles":[],"decisions":[],"unresolvedIssues":[]}

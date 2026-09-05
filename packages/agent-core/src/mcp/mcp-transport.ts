@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from "node:child_process";
 import * as readline from "node:readline";
+import { killProcessTree } from "../tools/kill-process-tree.ts";
 
 export interface McpToolDeclaration {
   name: string;
@@ -57,7 +58,7 @@ export class StdioMcpTransport implements McpTransport {
       try {
         this.child = spawn(this.command, this.args, {
           shell: false,
-          env: { ...process.env, ...this.env },
+          env: this.env,
           stdio: ["pipe", "pipe", "pipe"],
         });
       } catch (err) {
@@ -66,7 +67,7 @@ export class StdioMcpTransport implements McpTransport {
         return;
       }
 
-      this.child.on("error", (err) => {
+      this.child.on("error", (_err) => {
         clearTimeout(timeout);
         reject(err);
         this.cleanup(err);
@@ -78,8 +79,8 @@ export class StdioMcpTransport implements McpTransport {
         this.cleanup(err);
       });
 
-      this.child.stderr?.on("data", (chunk) => {
-        // Just discard stderr for now or we could log it
+      this.child.stderr?.on("data", (_chunk) => {
+        // Just discard stderr for now
       });
 
       if (!this.child.stdout || !this.child.stdin) {
@@ -98,32 +99,30 @@ export class StdioMcpTransport implements McpTransport {
         try {
           const msg = JSON.parse(line);
           if (msg.id !== undefined && this.pendingRequests.has(msg.id)) {
-            const { resolve, reject } = this.pendingRequests.get(msg.id)!;
+            const req = this.pendingRequests.get(msg.id)!;
             this.pendingRequests.delete(msg.id);
             if (msg.error) {
-              reject(new JsonRpcError(msg.error.code, msg.error.message, msg.error.data));
+              req.reject(new JsonRpcError(msg.error.code, msg.error.message, msg.error.data));
             } else {
-              resolve(msg.result);
+              req.resolve(msg.result);
             }
           }
         } catch (err) {
-          // Ignore malformed JSON or log it
+          // Ignore malformed JSON
         }
       });
 
-      // Send initialize
       this.sendRequest("initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
         clientInfo: { name: "agent-core", version: "0.1.0" }
-      }).then((result) => {
+      }).then((_result) => {
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);
         this.initialized = true;
-        // Send notifications/initialized
         this.sendNotification("notifications/initialized", {});
         resolve();
-      }).catch((err) => {
+      }).catch((_err) => {
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);
         reject(err);
@@ -155,17 +154,21 @@ export class StdioMcpTransport implements McpTransport {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(new Error("Aborted"));
       
+      let id: number | undefined;
+
       const timeout = setTimeout(() => {
+        if (id !== undefined) this.pendingRequests.delete(id);
         reject(new Error(`Timeout waiting for MCP method ${method}`));
       }, timeoutMs);
 
       const onAbort = () => {
         clearTimeout(timeout);
+        if (id !== undefined) this.pendingRequests.delete(id);
         reject(new Error("Aborted"));
       };
       signal?.addEventListener("abort", onAbort);
 
-      this.sendRequest(method, params).then(res => {
+      this.sendRequest(method, params, (newId) => { id = newId; }).then(res => {
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);
         resolve(res);
@@ -177,13 +180,14 @@ export class StdioMcpTransport implements McpTransport {
     });
   }
 
-  private sendRequest(method: string, params: any): Promise<any> {
+  private sendRequest(method: string, params: any, onIdAssigned?: (id: number) => void): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.child?.stdin) return reject(new Error("Not connected"));
       const id = this.messageId++;
+      if (onIdAssigned) onIdAssigned(id);
       this.pendingRequests.set(id, { resolve, reject });
       const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
-      this.child.stdin.write(msg, (err) => {
+      this.child.stdin.write(msg, (_err) => {
         if (err) {
           this.pendingRequests.delete(id);
           reject(err);
@@ -205,10 +209,10 @@ export class StdioMcpTransport implements McpTransport {
       this.rl = undefined;
     }
     if (this.child) {
-      this.child.kill();
+      killProcessTree(this.child);
       this.child = undefined;
     }
-    for (const [id, req] of this.pendingRequests.entries()) {
+    for (const [_id, req] of this.pendingRequests.entries()) {
       req.reject(err);
     }
     this.pendingRequests.clear();

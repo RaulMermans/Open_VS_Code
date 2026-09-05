@@ -8,16 +8,21 @@ export interface McpSelectorOptions {
   schemaBudget?: number;
 }
 
-export function selectMcpTools(tools: McpToolMetadata[], options: McpSelectorOptions): McpToolMetadata[] {
+export interface McpSelectorResult {
+  selected: McpToolMetadata[];
+  eligibleCount: number;
+}
+
+export function selectMcpTools(tools: McpToolMetadata[], options: McpSelectorOptions): McpSelectorResult {
   const maxTools = options.maxTools ?? 3;
   const schemaBudget = options.schemaBudget ?? 1500;
 
-  const taskTokens = options.task.toLowerCase().split(/[\s_\-\.\,]+/);
+  const taskTokens = options.task.toLowerCase().split(/[\s_\-.,]+/);
 
   const scored = tools.map(tool => {
     let score = 0;
-    const nameTokens = tool.toolName.toLowerCase().split(/[\s_\-\.\,]+/);
-    const descTokens = tool.description.toLowerCase().split(/[\s_\-\.\,]+/);
+    const nameTokens = tool.toolName.toLowerCase().split(/[\s_\-.,]+/);
+    const descTokens = tool.description.toLowerCase().split(/[\s_\-.,]+/);
     
     for (const t of taskTokens) {
       if (t.length < 3) continue;
@@ -25,21 +30,17 @@ export function selectMcpTools(tools: McpToolMetadata[], options: McpSelectorOpt
       if (descTokens.includes(t)) score += 1;
     }
     
-    // Explicit mention of server or tool name in task gets high boost
     if (options.task.toLowerCase().includes(tool.serverId.toLowerCase())) score += 5;
     if (options.task.toLowerCase().includes(tool.toolName.toLowerCase())) score += 5;
     
     return { tool, score };
   });
 
-  // Sort by score descending, then alphabetical for determinism
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     return a.tool.canonicalName.localeCompare(b.tool.canonicalName);
   });
 
-  // Filter out zero score unless it's a very short task where everything matches? No, require some relevance.
-  // Actually, we should only include tools with score > 0 to prevent irrelevant injection.
   const relevant = scored.filter(s => s.score > 0).map(s => s.tool);
 
   const selected: McpToolMetadata[] = [];
@@ -56,5 +57,5 @@ export function selectMcpTools(tools: McpToolMetadata[], options: McpSelectorOpt
     currentTokens += tool.estimatedSchemaTokens;
   }
 
-  return selected;
+  return { selected, eligibleCount: relevant.length };
 }
