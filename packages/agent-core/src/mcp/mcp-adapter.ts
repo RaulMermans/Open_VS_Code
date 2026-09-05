@@ -18,6 +18,10 @@ export interface McpStats {
 function validateSchema(schema: any, input: any): Error | null {
   if (!schema || typeof schema !== "object") return null;
 
+  if (schema.oneOf || schema.anyOf || schema.allOf || schema.$ref) {
+    return new Error("Unsupported schema feature: oneOf/anyOf/allOf/$ref");
+  }
+
   if (schema.type === "object") {
     if (typeof input !== "object" || input === null) return new Error("Expected object");
 
@@ -89,7 +93,9 @@ export function createMcpToolRegistration(
       action,
     },
     validate: (input) => {
-      if (typeof input !== "object" || input === null) return {};
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        throw new Error("Expected object root for tool input");
+      }
       const err = validateSchema(metadata.inputSchema, input);
       if (err) throw err;
       return input as Readonly<Record<string, unknown>>;

@@ -11,7 +11,7 @@ export interface McpServerConfig {
   enabled: boolean;
 }
 
-const DENYLIST = ["npx", "npm exec", "pnpm dlx", "yarn dlx", "bunx"];
+
 
 export function validateMcpConfig(data: unknown): McpConfig | null {
   if (typeof data !== "object" || data === null) return null;
@@ -29,9 +29,15 @@ export function validateMcpConfig(data: unknown): McpConfig | null {
     if (s.transport === "stdio") {
       if (typeof s.command !== "string") continue;
       
-      const cmdLower = s.command.toLowerCase();
-      if (DENYLIST.includes(cmdLower) || (s.command === "npm" && s.args?.[0] === "exec")) {
-        throw new Error(`MCP config uses forbidden auto-install launcher: ${s.command}`);
+      const cmdBasename = (s.command.split(/[/\\]/).pop() || "").toLowerCase();
+      if (
+        cmdBasename === "npx" ||
+        cmdBasename === "bunx" ||
+        (cmdBasename === "npm" && s.args?.[0] === "exec") ||
+        (cmdBasename === "pnpm" && s.args?.[0] === "dlx") ||
+        (cmdBasename === "yarn" && s.args?.[0] === "dlx")
+      ) {
+        continue; // Silently omit instead of throwing
       }
       
       if (s.args !== undefined && !Array.isArray(s.args)) continue;

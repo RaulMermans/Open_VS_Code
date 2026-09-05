@@ -60,8 +60,9 @@ export class StdioMcpTransport implements McpTransport {
           shell: false,
           env: this.env,
           stdio: ["pipe", "pipe", "pipe"],
+          detached: process.platform !== "win32"
         });
-      } catch {
+      } catch (err) {
         clearTimeout(timeout);
         reject(err);
         return;

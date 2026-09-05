@@ -188,7 +188,7 @@ test("SkillSelector enforces budget token limits strictly", () => {
    }
    const result = selectSkills(input)
    assert.ok(result.estimatedSkillTokens <= 250)
-   assert.ok(result.skillsDroppedForBudget > 0 || result.primarySkill?.sections.length! < 8) // Should drop something or reduce sections
+   assert.ok(result.skillsDroppedForBudget > 0 || (result.primarySkill?.sections.length ?? 0) < 8) // Should drop something or reduce sections
 })
 
 test("SkillSelector respects legacy policy", () => {

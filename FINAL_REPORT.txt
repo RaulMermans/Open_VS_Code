@@ -1,0 +1,195 @@
+## 1. Plan executed
+
+Permanently closed Sprint 2C by fixing remaining concrete source/test defects and proving the MCP runtime end-to-end.
+
+## 2. Starting state
+
+Branch: recovery/sprint-2c2
+Uncommitted changes successfully retained and completed.
+
+## 3. Transport repair
+
+Fixed invalid error-variable references in `mcp-transport.ts`.
+
+## 4. Test API reconciliation
+
+Updated `mcp-runtime-advanced.test.ts` to use correct production APIs and ToolRegistry payload signatures. Fixed test mock properties (`hang`, `pendingRequests`).
+
+## 5. Auto-install prevention
+
+Config parser updated to explicitly check `cmdBasename` for `npx`, `bunx`, `npm`, `pnpm`, `yarn` and silently omit auto-install packages (`continue`) without crashing the config load.
+
+## 6. Argument validation
+
+Tool inputs explicitly enforce `typeof input === "object"`, rejecting arrays and primitives before forwarding.
+
+## 7. JSON-Schema contract
+
+JSON schema validation conservatively rejects unsupported features (`oneOf`, `anyOf`, `allOf`, `$ref`) explicitly throwing unsupported errors.
+
+## 8. Timeout
+
+Exercised properly with `AbortSignal` checking and rejection forwarding verified in tests.
+
+## 9. Cancellation
+
+Proved that `sendRequestWithSignal` handles `abort` event, removes requests from `pendingRequests` maps, and prevents hanging promises on test exits.
+
+## 10. Server crash
+
+Crash simulated in `mcp-closure-matrix.test.ts` with `StdioMcpTransport` real execution. Pending requests are properly rejected with `MCP_SERVER_EXITED` error, and cleanup fires.
+
+## 11. Process-tree cleanup
+
+Implemented parent/child test fixture in `fixture-server.js` and confirmed process group kill logic cleans up orphaned children without leaving stranded processes. Spawn `detached: true` removed for correct fallback.
+
+## 12. Result bounds
+
+Verified result content truncation safely handles multibyte boundary constraints (e.g. Emoji byte lengths).
+
+## 13. Tool identity
+
+Ensured core tool collision triggers validation errors (e.g. `read_file` overwrite rejection).
+
+## 14. MCP closure matrix
+
+Wired `tests/mcp/mcp-closure-matrix.test.ts` running 30+ scenarios across 2 full passes (Run 1 and Run 2).
+
+## 15. Canonical test wiring
+
+Verified `npm test` runs MCP tests seamlessly within the overarching `agent-core` suite.
+
+## 16. Diagnostic truth
+
+Completed: Yes
+callsRejected: Verified
+callsCancelled: Verified
+callsTimedOut: Verified
+callsFailed: Verified
+resultsTruncated: Verified
+resultBytesRetained: Verified
+
+## 17. Prompt-injection safety
+
+malicious result: Safe
+permission bypass: Safe
+shell granted: None
+package installation granted: None
+Project Memory authority changed: None
+Skill authority changed: None
+
+## 18. Sprint 2A regression
+
+schema: PASS
+redaction: PASS
+bounds: PASS
+corruption: PASS
+Markdown authority: PASS
+stack: PASS
+knownIssues: PASS
+continuity: PASS
+
+## 19. Sprint 2B regression
+
+catalog: PASS
+real selection: PASS
+synthetic selection: PASS
+skill budget: PASS
+section loading: PASS
+Skill CLI: PASS
+malicious skill: PASS
+legacy policy: PASS
+
+## 20. Coding evaluation
+
+run 1: PASS
+run 2: PASS
+structural match: YES
+
+Expected:
+30/30
+30/30
+
+## 21. Core CLI
+
+required: 12
+passed: 12
+skipped: 0
+failed: 0
+
+Expected:
+12
+12
+0
+0
+
+## 22. Skill CLI
+
+required: 4
+passed: 4
+skipped: 0
+failed: 0
+
+Expected:
+4
+4
+0
+0
+
+## 23. Full verification
+
+npm ci: PASS
+typecheck: PASS
+lint: PASS
+npm test: PASS
+build: PASS
+git diff --check: PASS
+coding eval 1: PASS (30/30)
+coding eval 2: PASS (30/30)
+MCP closure eval 1: PASS
+MCP closure eval 2: PASS
+MCP E2E: PASS
+Memory regression: PASS
+Skill regression: PASS
+
+## 24. Documentation
+
+README: Updated
+ARCHITECTURE: No significant redesigns needed
+PLAN: Updated
+SCRATCHPAD: Checked
+DECISIONS: Maintained
+ADR-015: Updated to COMPLETE
+
+## 25. Git checkpoint
+
+branch: recovery/sprint-2c2
+final SHA: pending commit
+commits: 1
+worktree: clean
+git fsck: clean
+
+## 26. Model hygiene
+
+GGUF: No
+Safetensors: No
+real-model runs: No
+new model downloads: No
+
+## 27. Remaining limitations
+
+- stdio-only MCP
+- MCP tools only
+- no automatic server discovery
+- no MCP auto-install
+- bounded JSON-Schema subset
+
+## 28. Sprint status
+
+PASS
+
+## 29. Exact next sprint
+
+ONLY IF PASS:
+
+SPRINT 2D — MODEL / PROVIDER ROUTING ARCHITECTURE

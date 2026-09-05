@@ -37,8 +37,8 @@ test("MCP Runtime Scorecard and structural identity", async () => {
   class MockCatalog extends McpCatalog {
     public mockTransport = new TestMcpTransport("mock_server");
     
-    constructor(config: McpConfig) {
-      super(config);
+    constructor(cfg: McpConfig) {
+      super(cfg);
       this.mockTransport.tools = [
         {
           name: "test_tool",

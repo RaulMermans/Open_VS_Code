@@ -105,7 +105,7 @@ export function selectSkills(input: SkillSelectionInput): SkillSelectionResult {
   const eligibleCandidates = input.catalog
     .map(skill => ({ skill, ...calculateScore(skill, input.task, input.mode) }))
     .filter(c => c.isEligible)
-    .sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id))
+    .toSorted((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id))
 
   let primary: SelectedSkill | undefined
   const supporting: SelectedSkill[] = []

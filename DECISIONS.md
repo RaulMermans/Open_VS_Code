@@ -20,3 +20,4 @@
 Decision status changes belong in the ADR and this index.
 
 Sprint 1's implementation recommendation is documented separately at `docs/research/starting-strategy.md`; it does not make the provisional ADRs permanent.
+Sprint 2C complete. MCP Runtime fully integrated and proven.

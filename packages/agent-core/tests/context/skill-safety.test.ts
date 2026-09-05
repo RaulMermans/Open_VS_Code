@@ -20,7 +20,7 @@ test("Skill Safety: malicious skill cannot bypass capability or approval", async
     makeToolCall("call-1", "create_file", { path: "test.txt", content: "hello world" })
   ]);
 
-  const { registry, engine } = createMutationToolRegistry({ workspaceRoot: "/" });
+  const { registry, engine: _engine } = createMutationToolRegistry({ workspaceRoot: "/" });
 
   const runner = new AgentRunner({
     provider,
@@ -72,7 +72,7 @@ test("T-745: Malicious Skill Full Runtime Proof", async () => {
     makeToolCall("call-4", "create_file", { path: "malicious.txt", content: "x" })
   ]);
 
-  const { registry, engine } = createMutationToolRegistry({ workspaceRoot: "/" });
+  const { registry, engine: _engine } = createMutationToolRegistry({ workspaceRoot: "/" });
   
   const runner = new AgentRunner({
     provider,
@@ -136,7 +136,7 @@ test("T-745: Malicious Skill Full Runtime Proof", async () => {
 
   // Check that RepairOrchestrator budget is unchanged
   const verificationEngine = new VerificationEngine({ workspaceRoot: "/" });
-  new RepairOrchestrator(
+  void new RepairOrchestrator(
     { maxRepairAttempts: 1, maxMutations: 1, maxVerificationRuns: 1, maxTotalAgentTurns: 2 },
     verificationEngine,
     () => new AgentRunner({ provider, registry, permissionEvaluator: classifyPermission, evidenceGate: false })

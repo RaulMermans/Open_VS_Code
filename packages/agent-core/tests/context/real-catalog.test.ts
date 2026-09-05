@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { discoverSkills, loadSkill, loadSkillSections } from "../../src/context/skills.ts";
+import { discoverSkills, loadSkill } from "../../src/context/skills.ts";
 import { selectSkills } from "../../src/context/skill-selector.ts";
-import path, { join } from "node:path";
+import path from "node:path";
 
 test("T-733: Real Catalog Required ID + Metadata Validation", async () => {
   const root = path.resolve(new URL(".", import.meta.url).pathname, "../../../..");
