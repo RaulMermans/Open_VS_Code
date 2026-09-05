@@ -22,7 +22,8 @@ rl.on("line", (line) => {
       { name: "echo", description: "echo", inputSchema: { type: "object", properties: { text: { type: "string" } } } },
       { name: "hang", description: "hang", inputSchema: { type: "object", properties: {} } },
       { name: "crash", description: "crash", inputSchema: { type: "object", properties: {} } },
-      { name: "spawn_child", description: "spawn child", inputSchema: { type: "object", properties: {} } }
+      { name: "spawn_child", description: "spawn child", inputSchema: { type: "object", properties: {} } },
+      { name: "respondAfterDelay", description: "respond after delay", inputSchema: { type: "object", properties: { delay: { type: "number" } } } }
     ] });
   } else if (method === "tools/call") {
     if (params.name === "echo") {
@@ -34,6 +35,10 @@ rl.on("line", (line) => {
     } else if (params.name === "spawn_child") {
       childProc = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
       sendResponse(id, { content: [{ type: "text", text: String(childProc.pid) }], isError: false });
+    } else if (params.name === "respondAfterDelay") {
+      setTimeout(() => {
+        sendResponse(id, { content: [{ type: "text", text: "late" }], isError: false });
+      }, params.arguments.delay || 1000);
     }
   }
 });

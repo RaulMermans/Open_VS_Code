@@ -26,6 +26,10 @@ class JsonRpcError extends Error {
   }
 }
 
+export interface StdioMcpTransportOptions {
+  requestTimeoutMs?: number;
+}
+
 export class StdioMcpTransport implements McpTransport {
   private child?: ChildProcess | undefined;
   private rl?: readline.Interface | undefined;
@@ -36,8 +40,14 @@ export class StdioMcpTransport implements McpTransport {
   constructor(
     private command: string,
     private args: string[],
-    private env: Record<string, string | undefined>
+    private env: Record<string, string | undefined>,
+    private options?: StdioMcpTransportOptions
   ) {}
+
+  getPendingRequestCountForDiagnostics(): number {
+    return this.pendingRequests.size;
+  }
+
 
   async connect(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw new Error("Aborted");
@@ -151,12 +161,13 @@ export class StdioMcpTransport implements McpTransport {
     this.cleanup(new Error("Client closed"));
   }
 
-  private sendRequestWithSignal(method: string, params: any, signal?: AbortSignal, timeoutMs: number = 30000): Promise<any> {
+  private sendRequestWithSignal(method: string, params: any, signal?: AbortSignal, defaultTimeoutMs: number = 30000): Promise<any> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(new Error("Aborted"));
       
       let id: number | undefined;
 
+      const timeoutMs = this.options?.requestTimeoutMs ?? defaultTimeoutMs;
       const timeout = setTimeout(() => {
         if (id !== undefined) this.pendingRequests.delete(id);
         reject(new Error(`Timeout waiting for MCP method ${method}`));

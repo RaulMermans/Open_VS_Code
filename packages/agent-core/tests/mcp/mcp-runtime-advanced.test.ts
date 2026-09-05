@@ -111,7 +111,4 @@ test("MCP Runtime Advanced Coverage", async () => {
   assert.equal(stats.callsCancelled, 1);
   assert.equal(mockTransport.pendingRequests.size, 0, "Pending map cleared on cancel");
   
-  // 8. Timeout
-  // (Assuming timeout is covered by process cleanup or we can simulate it by replacing settimeout)
-  
 });
