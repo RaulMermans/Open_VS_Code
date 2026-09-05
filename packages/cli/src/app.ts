@@ -1,4 +1,6 @@
 import { AgentRunner } from "@open-vs-code/agent-core";
+import { loadMcpConfig } from "./mcp-loader.ts";
+import { McpCatalog, selectMcpTools, createMcpToolRegistration } from "@open-vs-code/agent-core";
 import { RepairOrchestrator } from "@open-vs-code/agent-core";
 import { MutationEngine } from "@open-vs-code/agent-core";
 import { VerificationEngine } from "@open-vs-code/agent-core";
@@ -112,6 +114,34 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
         break;
     }
   };
+
+  const mcpConfig = await loadMcpConfig(options.workspaceRoot);
+  const mcpCatalog = new McpCatalog(mcpConfig, sink);
+  await mcpCatalog.discover();
+  const allMcpTools = mcpCatalog.getTools();
+  const selectedMcpTools = selectMcpTools(allMcpTools, {
+    task: options.instruction,
+    mode: options.mode,
+    maxTools: 3,
+    schemaBudget: 1500
+  });
+
+  const mcpStats = {
+    callsStarted: 0,
+    callsCompleted: 0,
+    callsRejected: 0,
+    callsCancelled: 0,
+    callsTimedOut: 0,
+    resultBytesRetained: 0,
+    resultsTruncated: 0,
+  };
+
+  for (const mcpTool of selectedMcpTools) {
+    const transport = mcpCatalog.getTransport(mcpTool.serverId);
+    if (transport) {
+      registry.register(createMcpToolRegistration(mcpTool, transport, mcpConfig, mcpStats));
+    }
+  }
 
   const contextBudget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 });
   
@@ -244,6 +274,24 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
           if (!options.json) console.log("REJECT");
           runnerResult = await runner.resume("REJECT");
         }
+      } else if (conf.action === "mcp_external_side_effect" || conf.action === "mcp_external_unknown") {
+        const reviewPayload = (conf as any).preparedMutation;
+        if (!options.json) {
+          console.log(`\nProposed MCP Action:`);
+          console.log(`Server: ${reviewPayload?.server}`);
+          console.log(`Tool: ${reviewPayload?.tool}`);
+          console.log(`Risk: ${reviewPayload?.risk}`);
+          console.log(`Arguments: ${JSON.stringify(reviewPayload?.arguments, null, 2)}`);
+          console.log(`\nWARNING: ${reviewPayload?.warning}`);
+        }
+        const approved = await confirm("\nApprove this MCP tool execution? [y/N] ");
+        if (approved) {
+          runnerResult = await runner.resume("APPROVE");
+        } else {
+          if (!options.json) console.log("REJECT");
+          mcpStats.callsRejected++;
+          runnerResult = await runner.resume("REJECT");
+        }
             } else if (conf.action === "run_known_test") {
         if (!options.json) {
           console.log(`\nProposed Verification:`);
@@ -307,6 +355,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     } else {
       console.error(`\nError: ${err.message}`);
     }
+    await mcpCatalog.close();
     rl.close();
   // Remove listener
   if (typeof sigintHandler !== "undefined") {
@@ -315,6 +364,7 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     return { exitCode: 3 }; // config / runtime error
   }
 
+  await mcpCatalog.close();
   rl.close();
 
 
@@ -376,17 +426,35 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     skillsSelected: skillSelection.skillsSelected,
     primarySkill: skillSelection.primarySkill ? skillSelection.primarySkill.metadata.id : undefined,
     supportingSkills: skillSelection.supportingSkills.map(s => s.metadata.id),
-    loadedSections: skillSelection.primarySkill ? skillSelection.primarySkill.sections : [],
+    loadedSections: [
+      ...(skillSelection.primarySkill ? skillSelection.primarySkill.sections : []),
+      ...skillSelection.supportingSkills.flatMap(s => s.sections)
+    ],
     selectorEstimatedTokens: skillSelection.estimatedSkillTokens,
     actualCompiledSkillTokens: actualSkillTokens,
     skillBudget: skillSelection.skillBudget,
     skillsDroppedForBudget: skillSelection.skillsDroppedForBudget,
-    reasonCodes: skillSelection.primarySkill ? [skillSelection.primarySkill.reason] : [],
+    reasonCodes: [
+      ...(skillSelection.primarySkill ? [skillSelection.primarySkill.reason] : []),
+      ...skillSelection.supportingSkills.map(s => s.reason)
+    ],
+  };
+
+  const mcpDiagnostics = {
+    serversConfigured: Object.keys(mcpConfig.servers).length,
+    serversConnected: mcpCatalog.getConnectedServers().length,
+    toolsDiscovered: allMcpTools.length,
+    toolsEligible: allMcpTools.filter(t => true).length, // simplified
+    toolsSelected: selectedMcpTools.length,
+    schemasLoaded: selectedMcpTools.length,
+    estimatedSchemaTokens: selectedMcpTools.reduce((acc, t) => acc + t.estimatedSchemaTokens, 0),
+    schemaBudget: 1500,
+    ...mcpStats
   };
 
   if (options.json) {
-    console.log(JSON.stringify({ ...finalResult, skillDiagnostics }, null, 2));
-    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, ...finalResult };
+    console.log(JSON.stringify({ ...finalResult, skillDiagnostics, mcpDiagnostics }, null, 2));
+    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, mcpDiagnostics, ...finalResult };
   }
 
   if (changedFiles.size > 0) {

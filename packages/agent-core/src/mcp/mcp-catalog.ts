@@ -1,0 +1,122 @@
+import type { McpConfig } from "./mcp-config.ts";
+import { StdioMcpTransport } from "./mcp-transport.ts";
+import { TestMcpTransport } from "./mcp-test-transport.ts";
+import type { McpTransport } from "./mcp-transport.ts";
+
+export interface McpToolMetadata {
+  serverId: string;
+  toolName: string;
+  canonicalName: string;
+  description: string;
+  inputSchemaSummary?: string;
+  inputSchema?: any; // kept but not necessarily sent to model until selected
+  annotations?: {
+    readOnlyHint?: boolean;
+    [key: string]: unknown;
+  };
+  schemaHash?: string;
+  estimatedSchemaTokens: number;
+}
+
+export class McpCatalog {
+  private transports = new Map<string, McpTransport>();
+  private tools = new Map<string, McpToolMetadata>();
+  private connectedServers = new Set<string>();
+
+  constructor(private config: McpConfig, private eventSink?: (ev: any) => void) {}
+
+  private emit(type: string, payload: any) {
+    if (this.eventSink) {
+      this.eventSink({ id: `mcp-ev-${Date.now()}-${Math.random()}`, type, timestamp: new Date().toISOString(), payload });
+    }
+  }
+
+  async discover(signal?: AbortSignal): Promise<void> {
+    for (const [serverId, serverConfig] of Object.entries(this.config.servers)) {
+      if (!serverConfig.enabled) continue;
+      
+      let transport: McpTransport;
+      if (serverConfig.transport === "stdio") {
+        if (!serverConfig.command) continue;
+        
+        // Filter env
+        const env: Record<string, string> = {};
+        if (serverConfig.envFrom) {
+          for (const key of serverConfig.envFrom) {
+            if (process.env[key] !== undefined) {
+              env[key] = process.env[key]!;
+            }
+          }
+        }
+        
+        transport = new StdioMcpTransport(serverConfig.command, serverConfig.args || [], env);
+      } else if (serverConfig.transport === "test") {
+        transport = new TestMcpTransport(serverId);
+        // For testing, populate dummy tools if not already done externally
+      } else {
+        continue; // Unsupported
+      }
+
+      this.transports.set(serverId, transport);
+      
+      try {
+        await transport.connect(signal);
+        this.connectedServers.add(serverId);
+        this.emit("mcp.server_connected", { serverId });
+        
+        const serverTools = await transport.listTools(signal);
+        const discovered = [];
+        for (const tool of serverTools) {
+          const canonicalName = `mcp.${serverId}.${tool.name}`;
+          
+          let schemaString = "";
+          try {
+            schemaString = JSON.stringify(tool.inputSchema || {});
+          } catch (e) {
+            // Malformed schema
+            console.warn(`Malformed schema for MCP tool ${canonicalName}`);
+            continue;
+          }
+          
+          const meta = {
+            serverId,
+            toolName: tool.name,
+            canonicalName,
+            description: tool.description || "",
+            inputSchema: tool.inputSchema || {},
+            estimatedSchemaTokens: Math.ceil(schemaString.length / 4),
+          };
+          this.tools.set(canonicalName, meta);
+          discovered.push(meta);
+        }
+        this.emit("mcp.tools_discovered", { serverId, tools: discovered.map(t => t.canonicalName) });
+      } catch (e) {
+        console.warn(`Failed to connect to MCP server ${serverId}: ${e}`);
+        transport.close().catch(() => {});
+        this.transports.delete(serverId);
+      }
+    }
+  }
+
+  getTools(): McpToolMetadata[] {
+    return Array.from(this.tools.values());
+  }
+
+  getTransport(serverId: string): McpTransport | undefined {
+    return this.transports.get(serverId);
+  }
+
+  getConnectedServers(): string[] {
+    return Array.from(this.connectedServers);
+  }
+
+  async close(): Promise<void> {
+    for (const [serverId, transport] of this.transports.entries()) {
+      await transport.close().catch(() => {});
+      this.emit("mcp.server_closed", { serverId });
+    }
+    this.transports.clear();
+    this.tools.clear();
+    this.connectedServers.clear();
+  }
+}

@@ -217,7 +217,7 @@ export async function loadSkill(
   if (options.sections && options.sections.length > 0) {
     body = loadSkillSections(body, options.sections as string[])
   }
-  return { ...metadata, body, sections: options.sections }
+  return { ...metadata, body, ...(options.sections ? { sections: options.sections } : {}) }
 }
 
 export function loadSkillSections(body: string, sections: string[]): string {

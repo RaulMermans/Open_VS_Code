@@ -15,7 +15,9 @@ export type ToolAction =
   | "system_configuration"
   | "destructive_disk"
   | "unknown"
-
+  | "mcp_external_read"
+  | "mcp_external_side_effect"
+  | "mcp_external_unknown"
 export interface ToolDefinition {
   readonly name: string
   readonly description: string
