@@ -35,17 +35,17 @@ function calculateScore(skill: SkillMetadata, task: string, mode: string): { sco
   const legacyIds = new Set(["repo-intake", "upstream-audit", "change-with-tests"]);
   if (legacyIds.has(skill.id)) {
      if (!task.includes(skill.id)) {
-         return { score: 0, isEligible: false, reason: "Legacy skill excluded from automatic selection" }
+         return { score: 0, isEligible: false, reason: "legacy_excluded" }
      } else {
          score += 50
-         reason = "Legacy skill explicitly requested"
+         reason = "explicit_request"
      }
   }
 
   if (skill.modes.length > 0) {
     if (!skill.modes.includes(mode)) {
       isEligible = false
-      return { score, isEligible, reason: `Mode mismatch: ${mode} not in ${skill.modes.join(",")}` }
+      return { score, isEligible, reason: "mode_mismatch" }
     }
     score += 10
   }
@@ -64,13 +64,13 @@ function calculateScore(skill: SkillMetadata, task: string, mode: string): { sco
     for (const trigger of skill.triggers) {
       if (lowerTask.includes(trigger.toLowerCase())) {
         score += 15
-        reason = `Trigger matched: ${trigger}`
+        reason = "trigger_match"
       }
     }
   }
 
   if (matchedTags > 0 && !reason) {
-    reason = `Matched ${matchedTags} tags`
+    reason = "tag_overlap"
   }
 
   // Task-term overlap with title/summary
@@ -85,19 +85,17 @@ function calculateScore(skill: SkillMetadata, task: string, mode: string): { sco
   score += overlap * 2
   
   if (overlap > 0 && !reason) {
-     reason = `Text overlap`
+     reason = "text_overlap"
   }
   
   if (score > 0 && !reason) {
-     reason = `Mode matched`
+     reason = "mode_compatible"
   }
   
   // Enforce minimum meaningful relevance
-  // Mode alone is +10. We require at least a tag (5), trigger (15), or overlap (2).
-  // So score must be > 10 if mode matched, or > 0 if no mode matched.
   if ((skill.modes.includes(mode) && score <= 10) || (!skill.modes.includes(mode) && score === 0)) {
      isEligible = false
-     reason = "No meaningful relevance signals matched"
+     reason = "no_relevance"
   }
 
   return { score, isEligible, reason }

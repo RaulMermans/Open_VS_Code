@@ -117,7 +117,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
         priority: 950,
         estimatedTokens: estimateTokens(skill.body),
         required: true,
-        metadata: { id: skill.id, title: skill.title, summary: skill.summary },
+        metadata: { id: skill.id, title: skill.title, summary: skill.summary, sections: skill.sections, estimatedTokens: estimateTokens(skill.body) },
       })
     }
   }

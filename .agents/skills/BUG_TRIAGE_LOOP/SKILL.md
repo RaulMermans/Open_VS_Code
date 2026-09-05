@@ -8,6 +8,9 @@ tags:
   - debugging
   - regression
   - diagnosis
+triggers:
+  - fix
+  - crash
 tools:
   - read_file
   - search_text
