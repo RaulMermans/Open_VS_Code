@@ -28,6 +28,7 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Context Compiler & Memory**| ✅ Complete | Progressive disclosure, dynamic token budgeting, and Markdown project memory (`PROJECT.md`, `PLAN.md`, `ARCHITECTURE.md`). |
 | **Permission Engine** | ✅ Complete | Action table validation, read-only enforcement, mode switching. |
 | **Agent Reasoning Reliability**| ✅ Complete | Evidence-driven orchestration: task profiling, tool narrowing, evidence ledger, premature-answer gate. |
+| **Bounded MCP Support** | ✅ Complete | Native stdio transport, dynamic token-budgeted tool selection, and deterministic risk mapping. |
 | **Safe Workspace Mutation** | ✅ Complete | Autonomous reasoning with human-gated side effects. Reversible edits, deterministic patches, exact base-hash verification, and atomic writes. |
 | **Controlled Verification** | ✅ Complete | Autonomous reasoning with human-gated side effects. Exact verification discovery (TEST, TYPECHECK, LINT), and stale-base guards. |
 | **Bounded Repair** | ✅ Complete | Gated loop orchestration, exact package-script review, human-gated verification approval, timeouts, and multi-attempt repair limits. |

@@ -42,6 +42,8 @@ deterministic infrastructure
    |-- bounded cross-session memory (SessionSummaryStorage)
    |-- metadata-first Skills discovery and explicit loading
    |-- bounded read/list/search/find repository tools
+   |-- Model Context Protocol (MCP) tool discovery and deterministic selection
+   |-- native stdio JSON-RPC MCP client
    |-- mode-aware permission classification
    |-- immutable lifecycle transitions
    |-- minimal context compiler

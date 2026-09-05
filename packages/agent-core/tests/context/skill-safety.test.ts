@@ -11,7 +11,8 @@ function makeToolCall(id: string, name: string, args: Record<string, unknown>): 
   return {
     message: { role: "assistant", content: "" },
     toolCalls: [{ id: id, name, arguments: args }],
-    usage: { tokensIn: 10, tokensOut: 10 },
+    model: "test",
+    usage: { inputTokens: 10, outputTokens: 10 },
   }
 }
 
@@ -118,16 +119,18 @@ test("T-745: Malicious Skill Full Runtime Proof", async () => {
   // Eventually it reaches apply_patch which PAUSES.
   // We can inspect the events to see tool executions.
   
-  const shellToolEvents = res.events.filter((e: any) => e.type === "tool.completed" && e.payload.name === "shell");
+  const shellToolEvents = res.events.filter((e: any) => e.type === "tool.completed" && e.payload?.name === "shell");
   if (shellToolEvents.length > 0) {
-    assert.strictEqual(shellToolEvents[0].payload.ok, false);
-    assert.ok(shellToolEvents[0].payload.content.includes("Unknown tool"));
+    const payload = (shellToolEvents[0] as any).payload;
+    assert.strictEqual(payload?.ok, false);
+    assert.ok(payload?.content?.includes("Unknown tool"));
   }
   
-  const gitToolEvents = res.events.filter((e: any) => e.type === "tool.completed" && e.payload.name === "git");
+  const gitToolEvents = res.events.filter((e: any) => e.type === "tool.completed" && e.payload?.name === "git");
   if (gitToolEvents.length > 0) {
-    assert.strictEqual(gitToolEvents[0].payload.ok, false);
-    assert.ok(gitToolEvents[0].payload.content.includes("Unknown tool"));
+    const payload = (gitToolEvents[0] as any).payload;
+    assert.strictEqual(payload?.ok, false);
+    assert.ok(payload?.content?.includes("Unknown tool"));
   }
   
   assert.strictEqual(res.status, "PAUSED", `Write approval bypass: no (must pause for approval). Runner failed with: ${res.failureReason}`);
