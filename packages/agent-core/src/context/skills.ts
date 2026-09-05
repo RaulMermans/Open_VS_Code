@@ -2,7 +2,6 @@ import { open, readFile, readdir, stat } from "node:fs/promises"
 import { join, relative } from "node:path"
 
 import { RepositoryPathError, resolveRepositoryPath } from "../tools/path-safety.ts"
-import { estimateTokens } from "./budget.ts"
 
 export type SkillErrorCode = "MALFORMED_FRONTMATTER" | "INVALID_METADATA" | "DUPLICATE_NAME" | "MISSING_FILE" | "SKILL_NOT_FOUND" | "TOO_LARGE" | "DUPLICATE_ID"
 
@@ -66,7 +65,7 @@ const nodeSkillFileReader: SkillFileReader = {
   statSize: async (path) => (await stat(path)).size,
 }
 
-function parseSkillDocument(content: string, path: string, fileSize: number): { metadata: Omit<SkillMetadata, "path" | "estimatedTokens">; body: string } {
+function parseSkillDocument(content: string, path: string, _fileSize: number): { metadata: Omit<SkillMetadata, "path" | "estimatedTokens">; body: string } {
   const normalized = content.replaceAll("\r\n", "\n")
   if (!normalized.startsWith("---\n")) throw new SkillError("MALFORMED_FRONTMATTER", `Skill frontmatter is missing: ${path}`)
   const end = normalized.indexOf("\n---\n", 4)

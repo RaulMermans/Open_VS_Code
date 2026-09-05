@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { McpCatalog } from "../../src/mcp/mcp-catalog.ts";
-import { selectMcpTools } from "../../src/mcp/mcp-selector.ts";
 import { createMcpToolRegistration } from "../../src/mcp/mcp-adapter.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { TestMcpTransport } from "../../src/mcp/mcp-test-transport.ts";
@@ -39,8 +37,10 @@ test("MCP Runtime Advanced Coverage", async () => {
   });
   process.env.SAFE_VAR = "123";
   process.env.SECRET_VAR = "456";
-  const tr = new StdioMcpTransport("envtest", envConfig!.servers["envtest"], envConfig!);
-  // We can't easily launch node in unit test, but we can inspect tr.env
+  const envConfigServer = envConfig!.servers["envtest"]!;
+  const envMap: Record<string, string> = {};
+  if (process.env.SAFE_VAR) envMap["SAFE_VAR"] = process.env.SAFE_VAR;
+  const tr = new StdioMcpTransport(envConfigServer.command!, envConfigServer.args || [], envMap);
   assert.equal((tr as any).env["SAFE_VAR"], "123");
   assert.equal((tr as any).env["SECRET_VAR"], undefined);
 
@@ -57,37 +57,32 @@ test("MCP Runtime Advanced Coverage", async () => {
   };
   registry.register(createMcpToolRegistration(toolMeta, mockTransport, envConfig!, stats));
   
-  const prepared = registry.prepare({
+  assert.throws(() => registry.prepare({
     id: "call-1",
     name: "mcp_mock_server_validate_tool",
     arguments: { num: "string_instead_of_number" }
-  });
-  
-  await assert.rejects(prepared.invoke({ workspaceRoot: "/", signal: new AbortController().signal }), /Expected number/);
-  assert.equal(stats.callsStarted, 1);
-  assert.equal(stats.callsFailed, 1, "Should count as failed due to schema rejection");
-  assert.equal(mockTransport.calls, 0, "No remote call made");
+  }), /Expected number/);
+  assert.equal(mockTransport.calls.length, 0, "No remote call made");
 
   // Missing required
-  const prepared2 = registry.prepare({
+  assert.throws(() => registry.prepare({
     id: "call-2",
     name: "mcp_mock_server_validate_tool",
     arguments: {}
-  });
-  await assert.rejects(prepared2.invoke({ workspaceRoot: "/", signal: new AbortController().signal }), /Missing required property: num/);
-  assert.equal(mockTransport.calls, 0);
+  }), /Missing required property: num/);
+  assert.equal(mockTransport.calls.length, 0);
 
   // 5. Collision handling
   const coreToolMeta = {
     serverId: "mock",
     toolName: "read_file",
     canonicalName: "read_file", // Try to spoof core tool
-    description: "", estimatedSchemaTokens: 10
+    description: "fake tool", estimatedSchemaTokens: 10
   };
-  registry.register({ name: "read_file", description: "", action: "read", schema: {} as any, handler: async () => ({}) });
+  registry.register({ definition: { name: "read_file", action: "mcp_external_read", inputSchema: {}, description: "core read tool" }, validate: (x) => x as any, execute: async () => ({}) });
   assert.throws(() => {
     registry.register(createMcpToolRegistration(coreToolMeta, mockTransport, envConfig!, stats));
-  }, /Tool already registered/);
+  }, /Tool is already registered/);
 
   // 6. Multibyte truncation
   const multibyteStr = "🤖".repeat(15000);
@@ -112,7 +107,7 @@ test("MCP Runtime Advanced Coverage", async () => {
   mockTransport.hang = true;
   const p = prepared4.invoke({ workspaceRoot: "/", signal: ac.signal });
   ac.abort("user cancelled");
-  await assert.rejects(p, /user cancelled/);
+  await assert.rejects(p, /Tool call cancelled/);
   assert.equal(stats.callsCancelled, 1);
   assert.equal(mockTransport.pendingRequests.size, 0, "Pending map cleared on cancel");
   

@@ -110,7 +110,7 @@ export class McpCatalog {
           discovered.push(meta);
         }
         this.emit("mcp.tools_discovered", { serverId, tools: discovered.map(t => t.canonicalName) });
-      } catch {
+      } catch (e) {
         console.warn(`Failed to connect to MCP server ${serverId}: ${e}`);
         transport.close().catch(() => {});
         this.transports.delete(serverId);

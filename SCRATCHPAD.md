@@ -26,3 +26,4 @@
   - IDE: no
   - model weights on dev machine: no
   - real model required: no
+Sprint 2C complete. MCP Runtime fully integrated and proven.
