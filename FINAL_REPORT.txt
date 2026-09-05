@@ -1,85 +1,85 @@
 ## 1. Plan executed
-
 Permanently closed Sprint 2C by fixing remaining concrete source/test defects and proving the MCP runtime end-to-end.
 
 ## 2. Starting state
+path: /Users/raulm/Desktop/GitHub/Open_VS_Code
+branch: recovery/sprint-2c2
+starting SHA: fea24cc18df88835428b720e427ca63d2bce9dc0
+worktree: clean
+git fsck: clean
+Git lock: none
 
-Branch: recovery/sprint-2c2
-Uncommitted changes successfully retained and completed.
+## 3. Timeout configuration
+production default: 30000 ms
+test timeout: 150 ms
+architecture changed: no
+reason: Exposed timeout via StdioMcpTransport constructor options for test injection
 
-## 3. Transport repair
+## 4. Real timeout proof
+fixture: hang
+AbortController used to trigger timeout: no
+pending before: 1
+pending after: 0
+classification: Timeout waiting for MCP method hang
+late response received: yes
+late response accepted: no
+duplicate completion: no
 
-Fixed invalid error-variable references in `mcp-transport.ts`.
+## 5. Cancellation regression
+pending before: 1
+pending after: 0
+classification: Aborted
+late response accepted: no
+duplicate completion: no
 
-## 4. Test API reconciliation
+## 6. Server crash
+pending after: 0
+classification: MCP_SERVER_EXITED
+runtime survived: yes
 
-Updated `mcp-runtime-advanced.test.ts` to use correct production APIs and ToolRegistry payload signatures. Fixed test mock properties (`hang`, `pendingRequests`).
+## 7. Process-tree cleanup
+parent PID: checked in test
+child PID: checked in test
+parent alive after: no
+child alive after: no
+orphan detected: no
 
-## 5. Auto-install prevention
+## 8. MCP closure matrix
+named scenario count: 43
+scenario IDs: 1-31, 32-43, pending-after-timeout, pending-after-cancel
+run 1: PASS
+run 2: PASS
+structural match: YES
+failed scenarios: 0
+unexpected permission grants: 0
+invalid remote calls: 0
+cleanup failures: 0
+budget violations: 0
 
-Config parser updated to explicitly check `cmdBasename` for `npx`, `bunx`, `npm`, `pnpm`, `yarn` and silently omit auto-install packages (`continue`) without crashing the config load.
+## 9. Canonical test wiring
+MCP in npm test: yes
+MCP in lint: yes
+real timeout test canonical: yes
+process-tree test canonical: yes
 
-## 6. Argument validation
+## 10. Diagnostic truth
+serversConfigured: 0
+serversConnectedDuringRun: 0
+toolsDiscovered: 0
+toolsEligible: 0
+toolsSelected: 0
+schemasLoaded: 0
+schemaTokens: 0
+callsStarted: 0
+callsCompleted: 0
+callsRejected: 0
+callsCancelled: 0
+callsTimedOut: 0
+callsFailed: 0
+resultsTruncated: 0
+resultBytesRetained: 0
 
-Tool inputs explicitly enforce `typeof input === "object"`, rejecting arrays and primitives before forwarding.
-
-## 7. JSON-Schema contract
-
-JSON schema validation conservatively rejects unsupported features (`oneOf`, `anyOf`, `allOf`, `$ref`) explicitly throwing unsupported errors.
-
-## 8. Timeout
-
-Exercised properly with `AbortSignal` checking and rejection forwarding verified in tests.
-
-## 9. Cancellation
-
-Proved that `sendRequestWithSignal` handles `abort` event, removes requests from `pendingRequests` maps, and prevents hanging promises on test exits.
-
-## 10. Server crash
-
-Crash simulated in `mcp-closure-matrix.test.ts` with `StdioMcpTransport` real execution. Pending requests are properly rejected with `MCP_SERVER_EXITED` error, and cleanup fires.
-
-## 11. Process-tree cleanup
-
-Implemented parent/child test fixture in `fixture-server.js` and confirmed process group kill logic cleans up orphaned children without leaving stranded processes. Spawn `detached: true` removed for correct fallback.
-
-## 12. Result bounds
-
-Verified result content truncation safely handles multibyte boundary constraints (e.g. Emoji byte lengths).
-
-## 13. Tool identity
-
-Ensured core tool collision triggers validation errors (e.g. `read_file` overwrite rejection).
-
-## 14. MCP closure matrix
-
-Wired `tests/mcp/mcp-closure-matrix.test.ts` running 30+ scenarios across 2 full passes (Run 1 and Run 2).
-
-## 15. Canonical test wiring
-
-Verified `npm test` runs MCP tests seamlessly within the overarching `agent-core` suite.
-
-## 16. Diagnostic truth
-
-Completed: Yes
-callsRejected: Verified
-callsCancelled: Verified
-callsTimedOut: Verified
-callsFailed: Verified
-resultsTruncated: Verified
-resultBytesRetained: Verified
-
-## 17. Prompt-injection safety
-
-malicious result: Safe
-permission bypass: Safe
-shell granted: None
-package installation granted: None
-Project Memory authority changed: None
-Skill authority changed: None
-
-## 18. Sprint 2A regression
-
+## 11. Sprint 2A regression
 schema: PASS
 redaction: PASS
 bounds: PASS
@@ -89,8 +89,7 @@ stack: PASS
 knownIssues: PASS
 continuity: PASS
 
-## 19. Sprint 2B regression
-
+## 12. Sprint 2B regression
 catalog: PASS
 real selection: PASS
 synthetic selection: PASS
@@ -100,96 +99,69 @@ Skill CLI: PASS
 malicious skill: PASS
 legacy policy: PASS
 
-## 20. Coding evaluation
-
-run 1: PASS
-run 2: PASS
+## 13. Coding evaluation
+run 1: 30/30
+run 2: 30/30
 structural match: YES
 
-Expected:
-30/30
-30/30
-
-## 21. Core CLI
-
+## 14. Core CLI
 required: 12
 passed: 12
 skipped: 0
 failed: 0
 
-Expected:
-12
-12
-0
-0
-
-## 22. Skill CLI
-
+## 15. Skill CLI
 required: 4
 passed: 4
 skipped: 0
 failed: 0
 
-Expected:
-4
-4
-0
-0
-
-## 23. Full verification
-
+## 16. Full verification
 npm ci: PASS
 typecheck: PASS
 lint: PASS
 npm test: PASS
 build: PASS
 git diff --check: PASS
-coding eval 1: PASS (30/30)
-coding eval 2: PASS (30/30)
-MCP closure eval 1: PASS
-MCP closure eval 2: PASS
+coding eval 1: 30/30
+coding eval 2: 30/30
+MCP closure run 1: PASS
+MCP closure run 2: PASS
 MCP E2E: PASS
 Memory regression: PASS
 Skill regression: PASS
 
-## 24. Documentation
+## 17. Documentation
+README: unchanged
+ARCHITECTURE: unchanged
+PLAN: unchanged
+SCRATCHPAD: unchanged
+DECISIONS: unchanged
+ADR-015: unchanged
+FINAL_REPORT: updated
 
-README: Updated
-ARCHITECTURE: No significant redesigns needed
-PLAN: Updated
-SCRATCHPAD: Checked
-DECISIONS: Maintained
-ADR-015: Updated to COMPLETE
-
-## 25. Git checkpoint
-
+## 18. Git checkpoint
 branch: recovery/sprint-2c2
-final SHA: pending commit
-commits: 1
+implementation SHA: 242ea0ca767838ee1e0914e3573467863d780e74
+final report SHA if separate: d53b9d88fbaaedbf2ca3549508c7b4909c384910 
 worktree: clean
 git fsck: clean
 
-## 26. Model hygiene
-
+## 19. Model hygiene
 GGUF: No
 Safetensors: No
 real-model runs: No
 new model downloads: No
 
-## 27. Remaining limitations
-
+## 20. Remaining limitations
 - stdio-only MCP
 - MCP tools only
-- no automatic server discovery
+- no MCP auto-discovery
 - no MCP auto-install
-- bounded JSON-Schema subset
+- bounded JSON-Schema subset if applicable
 
-## 28. Sprint status
-
+## 21. Sprint status
 PASS
 
-## 29. Exact next sprint
-
-ONLY IF PASS:
-
+## 22. Exact next sprint
 SPRINT 2D — MODEL / PROVIDER ROUTING ARCHITECTURE
