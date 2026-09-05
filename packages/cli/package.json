@@ -11,7 +11,7 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx/esm --test tests/cli.test.ts tests/cli-skills.test.ts",
-    "lint": "oxlint -c ../../.oxlintrc.json src tests"
+    "lint": "oxlint -c ../../.oxlintrc.json --deny-warnings src tests"
   },
   "dependencies": {
     "@open-vs-code/agent-core": "*"

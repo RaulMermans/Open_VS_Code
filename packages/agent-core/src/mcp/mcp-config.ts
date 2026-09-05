@@ -22,21 +22,21 @@ export function validateMcpConfig(data: unknown): McpConfig | null {
   for (const [key, srv] of Object.entries(raw.servers)) {
     if (typeof srv !== "object" || srv === null) continue;
     const s = srv as any;
-
+    
     if (typeof s.enabled !== "boolean") continue;
     if (s.transport !== "stdio" && s.transport !== "test") continue;
-
+    
     if (s.transport === "stdio") {
       if (typeof s.command !== "string") continue;
-
+      
       const cmdLower = s.command.toLowerCase();
       if (DENYLIST.includes(cmdLower) || (s.command === "npm" && s.args?.[0] === "exec")) {
         throw new Error(`MCP config uses forbidden auto-install launcher: ${s.command}`);
       }
-
+      
       if (s.args !== undefined && !Array.isArray(s.args)) continue;
       if (s.args?.some((a: any) => typeof a !== "string")) continue;
-
+      
       if (s.envFrom !== undefined && !Array.isArray(s.envFrom)) continue;
       if (s.envFrom?.some((e: any) => typeof e !== "string")) continue;
     }

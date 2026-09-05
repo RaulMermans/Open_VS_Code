@@ -61,13 +61,13 @@ export class StdioMcpTransport implements McpTransport {
           env: this.env,
           stdio: ["pipe", "pipe", "pipe"],
         });
-      } catch (err) {
+      } catch {
         clearTimeout(timeout);
         reject(err);
         return;
       }
 
-      this.child.on("error", (_err) => {
+      this.child.on("error", (err) => {
         clearTimeout(timeout);
         reject(err);
         this.cleanup(err);
@@ -107,7 +107,7 @@ export class StdioMcpTransport implements McpTransport {
               req.resolve(msg.result);
             }
           }
-        } catch (err) {
+        } catch {
           // Ignore malformed JSON
         }
       });
@@ -122,7 +122,7 @@ export class StdioMcpTransport implements McpTransport {
         this.initialized = true;
         this.sendNotification("notifications/initialized", {});
         resolve();
-      }).catch((_err) => {
+      }).catch((err) => {
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);
         reject(err);
@@ -187,7 +187,7 @@ export class StdioMcpTransport implements McpTransport {
       if (onIdAssigned) onIdAssigned(id);
       this.pendingRequests.set(id, { resolve, reject });
       const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
-      this.child.stdin.write(msg, (_err) => {
+      this.child.stdin.write(msg, (err) => {
         if (err) {
           this.pendingRequests.delete(id);
           reject(err);
