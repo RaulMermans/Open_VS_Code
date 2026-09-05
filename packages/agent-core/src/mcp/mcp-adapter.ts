@@ -7,11 +7,61 @@ import type { McpConfig } from "./mcp-config.ts";
 export interface McpStats {
   callsStarted: number;
   callsCompleted: number;
-  callsRejected: number; // Not tracked inside execute directly, tracked in app.ts, wait... if it is not called it is rejected? Actually, confirmation flow handles rejection. We can track it there. Wait, AgentRunner doesn't call execute if rejected. So we track rejection where? In app.ts!
+  callsRejected: number;
   callsCancelled: number;
   callsTimedOut: number;
+  callsFailed: number;
   resultBytesRetained: number;
   resultsTruncated: number;
+}
+
+function validateSchema(schema: any, input: any): Error | null {
+  if (!schema || typeof schema !== "object") return null;
+
+  if (schema.type === "object") {
+    if (typeof input !== "object" || input === null) return new Error("Expected object");
+
+    if (schema.required && Array.isArray(schema.required)) {
+      for (const req of schema.required) {
+        if (!(req in input) || input[req] === undefined) {
+          return new Error(`Missing required property: ${req}`);
+        }
+      }
+    }
+
+    if (schema.properties) {
+      for (const [key, value] of Object.entries(input)) {
+        if (schema.properties[key]) {
+          const err = validateSchema(schema.properties[key], value);
+          if (err) return new Error(`Property ${key}: ${err.message}`);
+        } else if (schema.additionalProperties === false) {
+          return new Error(`Unexpected property: ${key}`);
+        }
+      }
+    }
+  } else if (schema.type === "string") {
+    if (typeof input !== "string") return new Error("Expected string");
+  } else if (schema.type === "number" || schema.type === "integer") {
+    if (typeof input !== "number") return new Error("Expected number");
+  } else if (schema.type === "boolean") {
+    if (typeof input !== "boolean") return new Error("Expected boolean");
+  } else if (schema.type === "array") {
+    if (!Array.isArray(input)) return new Error("Expected array");
+    if (schema.items) {
+      for (let i = 0; i < input.length; i++) {
+        const err = validateSchema(schema.items, input[i]);
+        if (err) return new Error(`Array item ${i}: ${err.message}`);
+      }
+    }
+  }
+
+  if (schema.enum && Array.isArray(schema.enum)) {
+    if (!schema.enum.includes(input)) {
+      return new Error(`Expected one of: ${schema.enum.join(", ")}`);
+    }
+  }
+
+  return null;
 }
 
 export function createMcpToolRegistration(
@@ -22,7 +72,6 @@ export function createMcpToolRegistration(
 ): ToolRegistration {
   const localPolicy = config.toolPolicies?.[metadata.canonicalName];
   
-  // Risk classification
   let action: ToolAction = "mcp_external_unknown";
   
   if (localPolicy === "read") action = "mcp_external_read";
@@ -32,22 +81,22 @@ export function createMcpToolRegistration(
     action = "mcp_external_unknown";
   }
 
-  const safeName = metadata.canonicalName.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
-
   return {
     definition: {
-      name: safeName,
+      name: metadata.canonicalName,
       description: `[MCP: ${metadata.serverId}] ${metadata.description}`,
       inputSchema: metadata.inputSchema || {},
       action,
     },
     validate: (input) => {
       if (typeof input !== "object" || input === null) return {};
+      const err = validateSchema(metadata.inputSchema, input);
+      if (err) throw err;
       return input as Readonly<Record<string, unknown>>;
     },
     ...(action === "mcp_external_side_effect" || action === "mcp_external_unknown"
       ? {
-          prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
+          prepareForReview: async (input: Readonly<Record<string, unknown>>, _context: ToolExecutionContext): Promise<ReviewableExecution> => {
             return {
               id: `mcp-${Date.now()}`,
               reviewPayload: {
@@ -64,8 +113,8 @@ export function createMcpToolRegistration(
           }
         }
       : {}),
-    execute: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext) => {
-      return executeMcpCall(metadata, transport, input, context, stats);
+    execute: async (input: Readonly<Record<string, unknown>>, _context: ToolExecutionContext) => {
+      return executeMcpCall(metadata, transport, input, _context, stats);
     }
   };
 }
@@ -75,19 +124,18 @@ async function executeMcpCall(metadata: McpToolMetadata, transport: McpTransport
   try {
     const result = await transport.callTool(metadata.toolName, input, context.signal);
     
-    // Bounds check
     let truncated = false;
     let finalContent = result.content;
     
-    const maxContentBytes = 50 * 1024; // 50KB bound
+    const maxContentBytes = 50 * 1024;
     const stringified = JSON.stringify(result.content);
-    let bytesRetained = stringified.length;
+    let bytesRetained = Buffer.byteLength(stringified, "utf8");
     
-    if (stringified.length > maxContentBytes) {
+    if (bytesRetained > maxContentBytes) {
       truncated = true;
       const partial = stringified.substring(0, Math.min(500, maxContentBytes));
       finalContent = [{ type: "text", text: `[TRUNCATED] Response exceeded ${maxContentBytes} bytes. Showing partial summary: ${partial}...` }];
-      bytesRetained = JSON.stringify(finalContent).length;
+      bytesRetained = Buffer.byteLength(JSON.stringify(finalContent), "utf8");
       if (stats) stats.resultsTruncated++;
     }
 
@@ -109,10 +157,9 @@ async function executeMcpCall(metadata: McpToolMetadata, transport: McpTransport
     if (err.message && err.message.includes("Timeout")) {
       if (stats) stats.callsTimedOut++;
     } else {
-      if (stats) stats.callsCompleted++; // Errored but completed
+      if (stats) stats.callsFailed = (stats.callsFailed || 0) + 1; // Wait, callsFailed might not be in stats. Let me add it.
     }
     
-    // Return bounded error observation
     return {
       error: {
         code: err.code || "MCP_CALL_ERROR",

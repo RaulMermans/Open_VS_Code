@@ -246,7 +246,7 @@ test("CLI E2E: BUILD -> ASK continuity (T-557)", async () => {
     }]},
     { model: "scripted", message: { role: "assistant", content: "Done" } }
   ])
-  const res1 = await runCLI({ mode: "BUILD", instruction: "Change config to 2", workspaceRoot: ws, json: true, provider: provider1, mockApproval: "APPROVE" });
+  await runCLI({ mode: "BUILD", instruction: "Change config to 2", workspaceRoot: ws, json: true, provider: provider1, mockApproval: "APPROVE" });
   
   // Session 2: ASK
   const provider2 = new ScriptedModelProvider([

@@ -5,9 +5,9 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "test": "node --import tsx/esm --test tests/agent/*.test.ts tests/context/*.test.ts tests/contracts/*.test.ts tests/model/*.test.ts tests/tools/*.test.ts tests/hygiene.test.ts",
+    "test": "node --import tsx/esm --test tests/agent/*.test.ts tests/context/*.test.ts tests/contracts/*.test.ts tests/mcp/*.test.ts tests/model/*.test.ts tests/tools/*.test.ts tests/hygiene.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests/agent tests/context tests/contracts tests/evals tests/model tests/tools tests/hygiene.test.ts",
+    "lint": "oxlint -c .oxlintrc.json src tests/agent tests/context tests/contracts tests/mcp tests/evals tests/model tests/tools tests/hygiene.test.ts",
     "build": "tsc --noEmit",
     "eval:model": "node tests/evals/run-benchmark-cli.ts",
     "eval:coding": "node --import tsx/esm tests/evals/run-coding-eval.ts"

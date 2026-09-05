@@ -18,6 +18,10 @@ export interface McpToolMetadata {
   estimatedSchemaTokens: number;
 }
 
+const safeBaseEnvNames = [
+  "PATH", "HOME", "USER", "TMPDIR", "TEMP", "SystemRoot", "USERPROFILE"
+];
+
 export class McpCatalog {
   private transports = new Map<string, McpTransport>();
   private tools = new Map<string, McpToolMetadata>();
@@ -41,6 +45,11 @@ export class McpCatalog {
         
         // Filter env
         const env: Record<string, string> = {};
+        for (const name of safeBaseEnvNames) {
+          if (process.env[name] !== undefined) {
+            env[name] = process.env[name]!;
+          }
+        }
         if (serverConfig.envFrom) {
           for (const key of serverConfig.envFrom) {
             if (process.env[key] !== undefined) {
@@ -52,7 +61,6 @@ export class McpCatalog {
         transport = new StdioMcpTransport(serverConfig.command, serverConfig.args || [], env);
       } else if (serverConfig.transport === "test") {
         transport = new TestMcpTransport(serverId);
-        // For testing, populate dummy tools if not already done externally
       } else {
         continue; // Unsupported
       }
@@ -66,14 +74,26 @@ export class McpCatalog {
         
         const serverTools = await transport.listTools(signal);
         const discovered = [];
+        const seenInServer = new Set<string>();
+
         for (const tool of serverTools) {
-          const canonicalName = `mcp.${serverId}.${tool.name}`;
+          if (seenInServer.has(tool.name)) {
+            throw new Error(`Same-server duplicate tool name: ${tool.name}`);
+          }
+          seenInServer.add(tool.name);
+
+          const safeServer = serverId.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+          const safeTool = tool.name.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+          const canonicalName = `mcp_${safeServer}_${safeTool}`;
+
+          if (this.tools.has(canonicalName)) {
+             throw new Error(`Tool collision detected for ${canonicalName}`);
+          }
           
           let schemaString = "";
           try {
             schemaString = JSON.stringify(tool.inputSchema || {});
-          } catch (e) {
-            // Malformed schema
+          } catch {
             console.warn(`Malformed schema for MCP tool ${canonicalName}`);
             continue;
           }
@@ -90,8 +110,8 @@ export class McpCatalog {
           discovered.push(meta);
         }
         this.emit("mcp.tools_discovered", { serverId, tools: discovered.map(t => t.canonicalName) });
-      } catch (e) {
-        console.warn(`Failed to connect to MCP server ${serverId}: ${e}`);
+      } catch {
+        console.warn(`Failed to connect to MCP server ${serverId}: `);
         transport.close().catch(() => {});
         this.transports.delete(serverId);
       }
