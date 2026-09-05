@@ -7,7 +7,7 @@
   "rules": {
     "no-underscore-dangle": "off",
     "typescript/no-base-to-string": "warn",
-    "no-control-regex": "off","no-unused-vars": "off","typescript/no-non-null-asserted-optional-chain": "off",
+    "no-control-regex": "off",
     "unicorn/no-array-sort": "off",
     "unicorn/no-array-reverse": "off"
   },

@@ -4,7 +4,6 @@ import { AgentRunner } from "../../src/agent/runner.ts";
 import { classifyPermission } from "../../src/tools/permissions.ts";
 import { createMutationToolRegistry } from "../../src/tools/mutation-registry.ts";
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts";
-import { MutationEngine } from "../../src/tools/mutation-engine.ts";
 import type { ModelResponse } from "../../src/contracts/model.ts";
 
 function makeToolCall(id: string, name: string, args: Record<string, unknown>): ModelResponse {
@@ -137,7 +136,7 @@ test("T-745: Malicious Skill Full Runtime Proof", async () => {
 
   // Check that RepairOrchestrator budget is unchanged
   const verificationEngine = new VerificationEngine({ workspaceRoot: "/" });
-  const repair = new RepairOrchestrator(
+  new RepairOrchestrator(
     { maxRepairAttempts: 1, maxMutations: 1, maxVerificationRuns: 1, maxTotalAgentTurns: 2 },
     verificationEngine,
     () => new AgentRunner({ provider, registry, permissionEvaluator: classifyPermission, evidenceGate: false })

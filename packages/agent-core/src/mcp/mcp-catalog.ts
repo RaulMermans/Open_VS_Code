@@ -111,7 +111,7 @@ export class McpCatalog {
         }
         this.emit("mcp.tools_discovered", { serverId, tools: discovered.map(t => t.canonicalName) });
       } catch {
-        console.warn(`Failed to connect to MCP server ${serverId}: `);
+        console.warn(`Failed to connect to MCP server ${serverId}: ${e}`);
         transport.close().catch(() => {});
         this.transports.delete(serverId);
       }
