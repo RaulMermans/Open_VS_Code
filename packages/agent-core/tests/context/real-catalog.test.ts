@@ -2,10 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { discoverSkills, loadSkill, loadSkillSections } from "../../src/context/skills.ts";
 import { selectSkills } from "../../src/context/skill-selector.ts";
-import { join } from "node:path";
+import path, { join } from "node:path";
 
 test("T-733: Real Catalog Required ID + Metadata Validation", async () => {
-  const root = process.cwd();
+  const root = path.resolve(new URL(".", import.meta.url).pathname, "../../../..");
   const skills = await discoverSkills(root);
   const required = new Set([
     "SCAFFOLD_APP",
@@ -33,7 +33,7 @@ test("T-733: Real Catalog Required ID + Metadata Validation", async () => {
 });
 
 test("T-731 & T-732: Real Catalog Case Matrix", async () => {
-  const root = process.cwd();
+  const root = path.resolve(new URL(".", import.meta.url).pathname, "../../../..");
   const catalog = await discoverSkills(root);
   const budgetTokens = 2000;
 
@@ -73,7 +73,7 @@ test("T-731 & T-732: Real Catalog Case Matrix", async () => {
 import { compileContext } from "../../src/context/compiler.ts";
 
 test("T-740: End-to-End Section Loading Proof", async () => {
-  const root = process.cwd();
+  const root = path.resolve(new URL(".", import.meta.url).pathname, "../../../..");
   const catalog = await discoverSkills(root);
   const bugTriage = catalog.find(s => s.id === "BUG_TRIAGE_LOOP")!;
   assert.ok(bugTriage, "BUG_TRIAGE_LOOP should exist");
@@ -102,7 +102,7 @@ test("T-740: End-to-End Section Loading Proof", async () => {
 });
 
 test("T-741 & T-742: Budget Degradation E2E", async () => {
-  const root = process.cwd();
+  const root = path.resolve(new URL(".", import.meta.url).pathname, "../../../..");
   const catalog = await discoverSkills(root);
   
   const budgetTokens = 300; 
@@ -127,7 +127,7 @@ test("T-741 & T-742: Budget Degradation E2E", async () => {
 });
 
 test("T-744: Legacy Skill Real-Catalog Proof", async () => {
-  const root = process.cwd();
+  const root = path.resolve(new URL(".", import.meta.url).pathname, "../../../..");
   const catalog = await discoverSkills(root);
   const budgetTokens = 2000;
 

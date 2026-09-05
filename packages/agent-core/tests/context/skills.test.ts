@@ -17,7 +17,7 @@ const fixtureRoot = join(import.meta.dirname, "..", "fixtures", "skills-project"
 test("reads exactly the frontmatter without loading body bytes", async () => {
   const path = join(fixtureRoot, ".agents", "skills", "safe-read", "SKILL.md")
   const frontmatter = await readSkillFrontmatter(path, 8 * 1024)
-  assert.equal(frontmatter.endsWith("\n---\n"), true)
+  assert.equal(frontmatter.endsWith("\n---\n") || frontmatter.endsWith("\r\n---\r\n"), true)
   assert.equal(frontmatter.includes("# Safe Read"), false)
   assert.equal(frontmatter.includes("Reject paths"), false)
 })
