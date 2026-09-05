@@ -31,6 +31,7 @@ export interface SkillMetadata {
 
 export interface LoadedSkill extends SkillMetadata {
   readonly body: string
+  readonly sections?: readonly string[]
 }
 
 export interface SkillFileReader {
@@ -216,7 +217,7 @@ export async function loadSkill(
   if (options.sections && options.sections.length > 0) {
     body = loadSkillSections(body, options.sections as string[])
   }
-  return { ...metadata, body }
+  return { ...metadata, body, sections: options.sections }
 }
 
 export function loadSkillSections(body: string, sections: string[]): string {

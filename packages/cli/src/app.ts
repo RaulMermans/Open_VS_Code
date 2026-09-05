@@ -370,9 +370,23 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
     console.warn("\nWarning: Session continuity: not saved — storage write failed");
   }
 
+  const skillDiagnostics = {
+    skillsDiscovered: skillSelection.skillsDiscovered,
+    skillsEligible: skillSelection.skillsEligible,
+    skillsSelected: skillSelection.skillsSelected,
+    primarySkill: skillSelection.primarySkill ? skillSelection.primarySkill.metadata.id : undefined,
+    supportingSkills: skillSelection.supportingSkills.map(s => s.metadata.id),
+    loadedSections: skillSelection.primarySkill ? skillSelection.primarySkill.sections : [],
+    selectorEstimatedTokens: skillSelection.estimatedSkillTokens,
+    actualCompiledSkillTokens: actualSkillTokens,
+    skillBudget: skillSelection.skillBudget,
+    skillsDroppedForBudget: skillSelection.skillsDroppedForBudget,
+    reasonCodes: skillSelection.primarySkill ? [skillSelection.primarySkill.reason] : [],
+  };
+
   if (options.json) {
-    console.log(JSON.stringify(finalResult, null, 2));
-    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, ...finalResult };
+    console.log(JSON.stringify({ ...finalResult, skillDiagnostics }, null, 2));
+    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, ...finalResult };
   }
 
   if (changedFiles.size > 0) {
@@ -392,5 +406,5 @@ export async function runCLI(options: CLIAppOptions): Promise<{ exitCode: number
   if (finalResult.status === "FAILED") exitCode = 1;
   if (finalResult.status === "CANCELLED") exitCode = 2;
 
-  return { exitCode, memorySelection: memory, ...finalResult };
+  return { exitCode, memorySelection: memory, skillDiagnostics, ...finalResult };
 }
