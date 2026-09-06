@@ -1,6 +1,6 @@
 # Scratchpad
 
-- Current state: Sprint 2C is COMPLETE.
+- Current state: Sprint 2D is COMPLETE.
 - Accomplishments:
   - deterministic coding cases: 30
   - coding eval expected outcomes: 30/30
@@ -26,4 +26,17 @@
   - IDE: no
   - model weights on dev machine: no
   - real model required: no
-Sprint 2C complete. MCP Runtime fully integrated and proven.
+Sprint 2D complete. Deterministic model routing integrated.
+# Scratchpad
+
+- Current state: Sprint 2D is COMPLETE.
+- Accomplishments:
+  - Canonical routing contracts implemented
+  - ModelRouter supports capability filtering, context compatibility, explicit local fallback, health state, and tie-breaking.
+  - ScriptedModelProvider E2E tests passing.
+  - Bounded explicit fallback; no silent cloud fallback.
+  - Retained strict model-weight-free invariant on the dev machine.
+  - 35 structural routing scenarios tested and deterministic.
+
+Next:
+Sprint 3A — IDE ADAPTER / CODE-OSS INTEGRATION

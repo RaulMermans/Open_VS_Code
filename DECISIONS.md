@@ -16,6 +16,7 @@
 | [ADR-012](docs/adrs/ADR-012-bounded-repair-loops.md) | Bounded autonomous repair loops | Accepted |
 | [ADR-013](docs/adrs/ADR-013-bounded-session-continuity.md) | Markdown-First Project Memory & Bounded Session Continuity | Accepted |
 | [ADR-014](docs/adrs/ADR-014-metadata-first-skills.md) | Metadata-First Skills & Prompt Primitives | Accepted |
+| [ADR-016](docs/adrs/ADR-016-deterministic-model-provider-routing.md) | Deterministic Model / Provider Routing Architecture | Accepted |
 
 Decision status changes belong in the ADR and this index.
 

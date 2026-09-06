@@ -1,0 +1,179 @@
+import type {
+  RoutingConfiguration,
+  ModelRouteRequirements,
+  RouteDecision,
+  RejectedCandidate,
+  RouteReasonCode,
+  ProviderHealthState,
+  ModelDeployment,
+  ModelDescriptor,
+} from "../contracts/routing.ts"
+
+export interface HealthChecker {
+  checkHealth(deploymentId: string, signal?: AbortSignal): Promise<ProviderHealthState>
+}
+
+interface ScoredCandidate {
+  deployment: ModelDeployment
+  model: ModelDescriptor
+  effectiveContext: number
+  health: ProviderHealthState
+  specializationScore: number
+  priority: number
+  rejectedReason?: RouteReasonCode
+}
+
+const candidateSorter = (a: ScoredCandidate, b: ScoredCandidate) => {
+  if (a.specializationScore !== b.specializationScore) {
+    return b.specializationScore - a.specializationScore
+  }
+  if (a.priority !== b.priority) {
+    return b.priority - a.priority
+  }
+  return a.deployment.id.localeCompare(b.deployment.id)
+}
+
+export class ModelRouter {
+  readonly #config: RoutingConfiguration
+
+  constructor(config: RoutingConfiguration) {
+    this.#validateConfig(config)
+    this.#config = config
+  }
+
+  #validateConfig(config: RoutingConfiguration) {
+    const providerIds = new Set(config.providers.map(p => p.id))
+    const modelIds = new Set(config.models.map(m => m.id))
+    const deploymentIds = new Set<string>()
+
+    for (const d of config.deployments) {
+      if (deploymentIds.has(d.id)) {
+        throw new Error(`Duplicate deployment ID: ${d.id}`)
+      }
+      deploymentIds.add(d.id)
+      if (!providerIds.has(d.providerId)) {
+        throw new Error(`Unknown provider ID '${d.providerId}' in deployment '${d.id}'`)
+      }
+      if (!modelIds.has(d.modelId)) {
+        throw new Error(`Unknown model ID '${d.modelId}' in deployment '${d.id}'`)
+      }
+    }
+  }
+
+  async route(requirements: ModelRouteRequirements, healthChecker: HealthChecker, signal?: AbortSignal): Promise<RouteDecision> {
+    const candidateIds = this.#config.routes[requirements.taskClass] ?? this.#config.routes.default ?? []
+    
+    if (candidateIds.length === 0) {
+      throw new Error("ROUTE_UNAVAILABLE: No candidates configured for task class")
+    }
+
+
+    const scored: ScoredCandidate[] = []
+    const rejected: RejectedCandidate[] = []
+
+    for (const deploymentId of candidateIds) {
+      const deployment = this.#config.deployments.find(d => d.id === deploymentId)
+      if (!deployment) continue
+
+      if (!deployment.enabled) {
+        rejected.push({ deploymentId, reason: "disabled" })
+        continue
+      }
+
+      const model = this.#config.models.find(m => m.id === deployment.modelId)!
+      const effectiveContext = deployment.contextWindow ?? model.contextWindow
+      
+      let rejectReason: RouteReasonCode | undefined
+
+      if (effectiveContext < requirements.requiredContextWindow) {
+        rejectReason = "insufficient_context"
+      } else if (requirements.needsTools && !model.capabilities.includes("toolUse")) {
+        rejectReason = "missing_tool_use"
+      } else if (requirements.needsStructuredOutput && !model.capabilities.includes("structuredOutput")) {
+        rejectReason = "missing_structured_output"
+      }
+
+      if (rejectReason) {
+        rejected.push({ deploymentId, reason: rejectReason })
+        scored.push({
+          deployment,
+          model,
+          effectiveContext,
+          health: "unknown",
+          specializationScore: -1,
+          priority: -1,
+          rejectedReason: rejectReason
+        })
+        continue
+      }
+
+      // Check health
+      const health = await healthChecker.checkHealth(deploymentId, signal)
+      
+      let specScore = 0
+      if (requirements.specialization && model.specialization === requirements.specialization) {
+        specScore = 1
+      }
+      const priority = deployment.priority ?? 0
+
+      if (health === "unavailable") {
+        rejected.push({ deploymentId, reason: "unhealthy" })
+        scored.push({
+          deployment,
+          model,
+          effectiveContext,
+          health,
+          specializationScore: specScore,
+          priority,
+          rejectedReason: "unhealthy"
+        })
+        continue
+      }
+
+      scored.push({
+        deployment,
+        model,
+        effectiveContext,
+        health,
+        specializationScore: specScore,
+        priority
+      })
+    }
+
+    const eligible = scored.filter(c => !c.rejectedReason)
+
+    if (eligible.length === 0) {
+      throw new Error("ROUTE_UNAVAILABLE: No compatible healthy deployment found in the permitted fallback chain")
+    }
+
+    // Sort: specializationScore (desc) > priority (desc) > stable ID tie-break (asc)
+    eligible.sort(candidateSorter)
+
+    const selected = eligible[0]!
+    
+    const allCompatible = scored
+      .filter(c => !c.rejectedReason || c.rejectedReason === "unhealthy")
+      .toSorted(candidateSorter)
+
+    const fallbackLevel = allCompatible.findIndex(c => c.deployment.id === selected.deployment.id)
+
+    const reasons: RouteReasonCode[] = ["health_ready", "context_fit"]
+    if (requirements.needsTools) reasons.push("tool_use_required")
+    if (requirements.needsStructuredOutput) reasons.push("structured_output_required")
+    if (selected.specializationScore > 0) reasons.push("coding_specialization")
+    if (selected.deployment.priority !== undefined) reasons.push("priority")
+
+    return {
+      deploymentId: selected.deployment.id,
+      providerId: selected.deployment.providerId,
+      modelId: selected.deployment.modelId,
+      taskClass: requirements.taskClass,
+      reasons,
+      rejectedCandidates: rejected,
+      fallbackLevel: Math.max(0, fallbackLevel),
+      requiredContext: requirements.requiredContextWindow,
+      selectedContext: selected.effectiveContext,
+      healthState: selected.health
+    }
+  }
+}
