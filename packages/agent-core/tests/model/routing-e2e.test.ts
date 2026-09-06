@@ -50,16 +50,16 @@ class TestHealthChecker implements HealthChecker {
 // A wrapper provider that uses the router to route requests to actual ScriptedModelProviders
 class RoutedModelProvider implements ModelProvider {
   capabilities = new Set(["chat", "tools"] as const)
-  
+
   constructor(
     private router: ModelRouter,
     private healthChecker: HealthChecker,
     private taskClass: "general" | "coding",
     private providers: Record<string, ModelProvider>
   ) {}
-  
+
   lastDecision?: RouteDecision
-  
+
   async complete(request: ModelRequest): Promise<ModelResponse> {
     // Determine requirements (stubbed for E2E proof)
     const req: ModelRouteRequirements = {
@@ -70,13 +70,13 @@ class RoutedModelProvider implements ModelProvider {
       requiredContextWindow: 2000,
       specialization: this.taskClass === "coding" ? "coding" : "general"
     }
-    
+
     const decision = await this.router.route(req, this.healthChecker, request.signal)
     this.lastDecision = decision
-    
+
     const provider = this.providers[decision.providerId]
     if (!provider) throw new Error("Provider not found")
-      
+
     // Inject provenance metadata into response
     const res = await provider.complete(request)
     return {
@@ -94,16 +94,16 @@ test("AgentRunner E2E with routing", async () => {
     "scripted-general": new ScriptedModelProvider([response("I am general")]),
     "scripted-coding": new ScriptedModelProvider([response("I am coding")]),
   }
-  
+
   const router = new ModelRouter(config)
   const health = new TestHealthChecker()
   const routedProvider = new RoutedModelProvider(router, health, "general", providers)
-  
+
   const runner = new AgentRunner({
     provider: routedProvider,
     registry: createReadOnlyToolRegistry(),
   })
-  
+
   const result = await runner.run({
     task: { id: "task-ask", mode: "ASK", instruction: "Hello" },
     workspaceRoot,
@@ -111,7 +111,7 @@ test("AgentRunner E2E with routing", async () => {
     contextBudget,
     projectInstructions: [],
   })
-  
+
   assert.equal(result.status, "COMPLETED")
   assert.equal(result.finalAnswer, "I am general")
   assert.equal(routedProvider.lastDecision?.deploymentId, "dep-general")
@@ -121,11 +121,11 @@ test("RepairOrchestrator E2E with routing", async () => {
   const providers = {
     "scripted-coding": new ScriptedModelProvider([response("I am coding repair")]),
   }
-  
+
   const router = new ModelRouter(config)
   const health = new TestHealthChecker()
   const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
-  
+
   class MockVerificationEngine {
     async execute(): Promise<any> {
       return {
@@ -150,7 +150,7 @@ test("RepairOrchestrator E2E with routing", async () => {
       registry,
     })
   )
-  
+
   try {
     await orchestrator.run(
       {
@@ -172,7 +172,7 @@ test("RepairOrchestrator E2E with routing", async () => {
   } catch (err) {
     console.error(err)
   }
-  
+
   assert.equal(routedProvider.lastDecision?.deploymentId, "dep-coding")
 })
 
@@ -181,18 +181,18 @@ test("Provider failure / fallback E2E", async () => {
     "scripted-coding": new ScriptedModelProvider([response("Never called")]),
     "scripted-fallback": new ScriptedModelProvider([response("I am fallback")]),
   }
-  
+
   const router = new ModelRouter(config)
   const health = new TestHealthChecker()
   health.unavailableDeployments.add("dep-coding") // Force fallback
-  
+
   const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
-  
+
   const runner = new AgentRunner({
     provider: routedProvider,
     registry: createReadOnlyToolRegistry(),
   })
-  
+
   const result = await runner.run({
     task: { id: "task-build", mode: "BUILD", instruction: "Code" },
     workspaceRoot,
@@ -200,7 +200,7 @@ test("Provider failure / fallback E2E", async () => {
     contextBudget,
     projectInstructions: [],
   })
-  
+
   assert.equal(result.finalAnswer, "I am fallback")
   assert.equal(routedProvider.lastDecision?.deploymentId, "dep-fallback")
   assert.equal(routedProvider.lastDecision?.fallbackLevel, 1)
@@ -215,16 +215,16 @@ test("Cancellation aborts before provider fallback", async () => {
       }
     ]),
   }
-  
+
   const router = new ModelRouter(config)
   const health = new TestHealthChecker()
   const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
-  
+
   const runner = new AgentRunner({
     provider: routedProvider,
     registry: createReadOnlyToolRegistry(),
   })
-  
+
   const ac = new AbortController()
   const p = runner.run({
     task: { id: "task-build", mode: "BUILD", instruction: "Code" },
@@ -234,8 +234,97 @@ test("Cancellation aborts before provider fallback", async () => {
     projectInstructions: [],
     signal: ac.signal
   })
-  
+
   ac.abort()
   const res = await p
   assert.equal(res.status, "CANCELLED")
+})
+
+test("Post-invocation failure zero fallback calls", async () => {
+  let codingCalls = 0;
+  let fallbackCalls = 0;
+
+  const providers = {
+    "scripted-coding": new ScriptedModelProvider([
+      () => {
+        codingCalls++;
+        throw new Error("Provider Connection Error");
+      }
+    ]),
+    "scripted-fallback": new ScriptedModelProvider([
+      () => {
+        fallbackCalls++;
+        return response("I am fallback");
+      }
+    ]),
+  }
+
+  const router = new ModelRouter(config)
+  const health = new TestHealthChecker() // dep-coding is healthy
+
+  const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
+
+  const runner = new AgentRunner({
+    provider: routedProvider,
+    registry: createReadOnlyToolRegistry(),
+  })
+
+  const result = await runner.run({
+    task: { id: "task-build", mode: "BUILD", instruction: "Code" },
+    workspaceRoot,
+    maxTurns: 5,
+    contextBudget,
+    projectInstructions: [],
+  })
+
+  assert.equal(result.status, "FAILED")
+  assert.equal(codingCalls, 1, "Primary provider should be called exactly once")
+  assert.equal(fallbackCalls, 0, "Fallback provider should never be called after primary fails")
+})
+
+test("Cancellation zero fallback calls", async () => {
+  let codingCalls = 0;
+  let fallbackCalls = 0;
+
+  const providers = {
+    "scripted-coding": new ScriptedModelProvider([
+      (req) => {
+        codingCalls++;
+        if (req.signal?.aborted) throw new Error("AbortError")
+        return response("slow")
+      }
+    ]),
+    "scripted-fallback": new ScriptedModelProvider([
+      () => {
+        fallbackCalls++;
+        return response("I am fallback");
+      }
+    ]),
+  }
+
+  const router = new ModelRouter(config)
+  const health = new TestHealthChecker()
+
+  const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
+
+  const runner = new AgentRunner({
+    provider: routedProvider,
+    registry: createReadOnlyToolRegistry(),
+  })
+
+  const ac = new AbortController()
+  const p = runner.run({
+    task: { id: "task-build", mode: "BUILD", instruction: "Code" },
+    workspaceRoot,
+    maxTurns: 5,
+    contextBudget,
+    projectInstructions: [],
+    signal: ac.signal
+  })
+
+  ac.abort()
+  const res = await p
+  assert.equal(res.status, "CANCELLED")
+  assert.equal(codingCalls, 1, "Primary provider should be called exactly once")
+  assert.equal(fallbackCalls, 0, "Fallback provider should never be called upon cancellation")
 })

@@ -583,7 +583,6 @@ describe("Production Routing E2E", () => {
       const parsed = JSON.parse(raw)
       const config = validateRoutingConfig(parsed)
       
-      const { ScriptedModelProvider } = await import("../../src/testing/scripted-model.ts")
       const { OpenAICompatibleProvider } = await import("../../src/model/openai-compatible.ts")
       const providers = new Map<string, ModelProvider>()
       
