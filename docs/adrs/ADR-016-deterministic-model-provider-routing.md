@@ -13,7 +13,7 @@ We implemented a deterministic Model / Provider Routing Architecture with the fo
 
 2. **Deterministic Router**: The `ModelRouter` is purely deterministic. It evaluates candidates against explicit hard capabilities (context window size, tool use, structured output), filters by health state, and scores them based on specialization preference and configured priority. Tie-breaking relies on a stable ID sort. **No LLM is used to choose an LLM.**
 
-3. **Explicit Local Fallback**: Fallback chains are explicitly configured. If a primary deployment is unavailable (e.g., unhealthy), the router gracefully fails over to the next compatible healthy candidate in the chain. We strictly enforced a **no silent cloud fallback** policy. If no local fallback is available or permitted, the router explicitly fails.
+3. **Explicit Local Fallback**: Fallback chains are explicitly configured. If a primary deployment is unavailable (e.g., unhealthy) *before invocation*, the router gracefully fails over to the next compatible healthy candidate in the chain. We strictly enforced a **no silent cloud fallback** policy. If no local fallback is available or permitted, the router explicitly fails. After provider invocation begins, transport/provider errors propagate normally; the gateway does not silently replay on another deployment.
 
 4. **ScriptedModelProvider on Dev Machine**: To maintain a model-weight-free development environment, we use `ScriptedModelProvider` as a first-class deployment for testing and E2E verification, deferring real open-weight benchmarking to the target inference machine.
 

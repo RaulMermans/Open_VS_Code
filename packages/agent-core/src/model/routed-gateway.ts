@@ -145,7 +145,7 @@ export class RoutedModelGateway implements ModelProvider {
     this.#lastDecision = decision
 
     // Step 4: Resolve provider from registry
-    const provider = this.#providers.get(decision.providerId)
+    const provider = this.#providers.get(decision.deploymentId) ?? this.#providers.get(decision.providerId)
     if (!provider) {
       throw new Error(`Provider '${decision.providerId}' not found in registry`)
     }

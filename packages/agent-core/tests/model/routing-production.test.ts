@@ -60,15 +60,9 @@ describe("Production Routing E2E", () => {
 
   describe("T-1131: Config Load E2E", () => {
     test("production config fixture validates through production loader", async () => {
-      // Load the actual .open-vs-code/models.json
-      const configPath = join(import.meta.dirname, "..", "..", "..", "..", ".open-vs-code", "models.json")
-      let raw: string
-      try {
-        raw = await readFile(configPath, "utf-8")
-      } catch {
-        // If file doesn't exist in test env, use the prod config fixture
-        raw = JSON.stringify(prodConfig)
-      }
+      // Load the committed example config
+      const configPath = join(import.meta.dirname, "..", "..", "..", "..", "config", "examples", "models.local.example.json")
+      const raw = await readFile(configPath, "utf-8")
       const parsed = JSON.parse(raw)
       const validated = validateRoutingConfig(parsed)
       assert.ok(validated.providers.length > 0)
@@ -581,3 +575,48 @@ describe("Production Routing E2E", () => {
     })
   })
 })
+
+  describe("Provider Registry Safety", () => {
+    test("instantiates openai_compatible_local from config without real calls", async () => {
+      const configPath = join(import.meta.dirname, "..", "..", "..", "..", "config", "examples", "models.local.example.json")
+      const raw = await readFile(configPath, "utf-8")
+      const parsed = JSON.parse(raw)
+      const config = validateRoutingConfig(parsed)
+      
+      const { ScriptedModelProvider } = await import("../../src/testing/scripted-model.ts")
+      const { OpenAICompatibleProvider } = await import("../../src/model/openai-compatible.ts")
+      const providers = new Map<string, ModelProvider>()
+      
+      for (const p of config.providers) {
+        if (p.kind === "scripted") {
+          providers.set(p.id, new ScriptedModelProvider([]))
+        }
+      }
+      for (const d of config.deployments) {
+        const providerConfig = config.providers.find(p => p.id === d.providerId)
+        if (providerConfig?.kind === "openai_compatible_local") {
+          providers.set(d.id, new OpenAICompatibleProvider({
+            baseUrl: d.endpoint!,
+            model: d.modelId
+          }))
+        }
+      }
+      
+      const provider = providers.get("dep-llama-3")
+      assert.ok(provider instanceof OpenAICompatibleProvider)
+      assert.equal(provider.model, "llama-3-8b-instruct")
+      
+      const healthChecker = new StaticHealthChecker(new Map([["dep-llama-3", "ready"]]))
+      const gateway = new RoutedModelGateway({
+        config,
+        providers,
+        healthChecker,
+        mode: "BUILD",
+        hasTools: true,
+        hasStructuredOutput: false
+      })
+      
+      // We do not run complete() to avoid real network requests
+      assert.ok(gateway)
+    })
+  })

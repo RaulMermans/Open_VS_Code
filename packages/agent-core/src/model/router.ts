@@ -157,7 +157,9 @@ export class ModelRouter {
 
     const fallbackLevel = allCompatible.findIndex(c => c.deployment.id === selected.deployment.id)
 
-    const reasons: RouteReasonCode[] = ["health_ready", "context_fit"]
+    const reasons: RouteReasonCode[] = ["context_fit"]
+    if (selected.health === "ready") reasons.push("health_ready")
+    if (selected.health === "unknown") reasons.push("health_unknown")
     if (requirements.needsTools) reasons.push("tool_use_required")
     if (requirements.needsStructuredOutput) reasons.push("structured_output_required")
     if (selected.specializationScore > 0) reasons.push("coding_specialization")

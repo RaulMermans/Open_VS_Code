@@ -34,17 +34,30 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     
     if (config) {
       // 2. Set up providers registry.
-      // In this phase, we only instantiate the scripted provider for dev/test.
-      // (The local open-weight integration is deferred to Sprint 4D).
-      const { ScriptedModelProvider } = await import("@open-vs-code/agent-core");
-      const devProvider = new ScriptedModelProvider([{ 
-        model: "scripted-general", 
-        message: { role: "assistant", content: "I am a deterministic scripted model. Override OPEN_VS_CODE_MOCK_MODEL to use me without real routing." } 
-      }]);
-      
-      const providers = new Map<string, ModelProvider>([
-        ["scripted-dev", devProvider]
-      ]);
+      const { ScriptedModelProvider, OpenAICompatibleProvider } = await import("@open-vs-code/agent-core");
+      const providers = new Map<string, ModelProvider>();
+
+      for (const p of config.providers) {
+        if (p.kind === "scripted") {
+          providers.set(p.id, new ScriptedModelProvider([{ 
+            model: "scripted-general", 
+            message: { role: "assistant", content: "I am a deterministic scripted model." } 
+          }]));
+        } else if (p.kind !== "openai_compatible_local" && p.kind !== "fake") {
+          throw new Error(`Unknown provider kind: ${p.kind}`);
+        }
+      }
+
+      for (const d of config.deployments) {
+        const providerConfig = config.providers.find(p => p.id === d.providerId);
+        if (providerConfig?.kind === "openai_compatible_local") {
+          if (!d.endpoint) throw new Error(`Deployment ${d.id} missing endpoint`);
+          providers.set(d.id, new OpenAICompatibleProvider({
+            baseUrl: d.endpoint,
+            model: d.modelId,
+          }));
+        }
+      }
 
       // 3. Initialize Gateway
       // For now, assume deployments are healthy.

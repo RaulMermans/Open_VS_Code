@@ -1,0 +1,15 @@
+{
+  "providers": [
+    { "id": "scripted-dev", "kind": "scripted" },
+    { "id": "openai-local", "kind": "openai_compatible_local" }
+  ],
+  "models": [
+    { "id": "llama-3-8b-instruct", "contextWindow": 8192, "capabilities": ["toolUse", "coding"], "specialization": "coding" }
+  ],
+  "deployments": [
+    { "id": "dep-llama-3", "providerId": "openai-local", "modelId": "llama-3-8b-instruct", "endpoint": "http://127.0.0.1:11434/v1", "enabled": true }
+  ],
+  "routes": {
+    "default": ["dep-llama-3"]
+  }
+}

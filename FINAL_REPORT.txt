@@ -2,99 +2,78 @@
 Yes
 
 ## 2. Starting state
-path: /Users/raulm/Desktop/GitHub/Open_VS_Code
 branch: main
-starting SHA: 71dee11b7ad89857919323389fa0ca19555626d8
+starting SHA: 0a47261c2093b8a46f6b6d703115ee114052bcec
 worktree: clean
 git fsck: passed
 Git lock: (none)
 
-## 3. Placeholder audit
-unconditional scenario records found: 17
-real-proof records: 26
-placeholders found: 17
-placeholders remaining: 0
+## 3. Canonical config artifact
+path: config/examples/models.local.example.json
+tracked: yes
+providers: 2
+models: 1
+deployments: 1
+routes: 1
+canonical loader test uses real file: yes
+silent fixture fallback: no
 
-## 4. Scenario registry
-named scenario count: 43
-unique IDs: 43
-duplicate IDs: 0
-duplicate names: 0
-minimum threshold met: yes
+## 4. Production provider registry
+scripted provider: yes
+openai_compatible_local: yes
+provider construction: deterministic mapping without network calls
+real endpoint called: no
+unknown provider rejected: yes
 
-## 5. Selection scenarios
-relevant selection: yes
-irrelevant exclusion: yes
-schema budget: yes
-max tool count: yes
+## 5. Fallback policy
+pre-invocation candidate fallback: yes
+post-invocation transport fallback: no
+cancellation fallback: no
+verification-failure model escalation: no
+cloud fallback: no
 
-## 6. Risk scenarios
-read: yes
-side-effect confirmation: yes
-rejection remote calls: 0
-unknown risk: yes
-annotation cannot lower risk: yes
+## 6. Fallback E2E
+primary unavailable before invocation: yes
+fallback selected: yes
+selected provider throws after invocation: no
+second provider invoked: no
+cancellation: yes
+fallback after cancellation: no
 
-## 7. Identity scenarios
-same-server duplicate: yes
-normalized collision: yes
-core collision: yes
-cross-server namespacing: yes
-silent overwrite: no
-
-## 8. Protocol failure
-real stdio fixture: yes
-malformed data emitted: yes
-classification: yes
-pending after: 0
-runtime survived: yes
-
-## 9. Result safety
-ASCII oversize: yes
-ASCII retained: <= 51200
-multibyte oversize: yes
-multibyte retained: <= 51200
-canonical max bytes: 51200
-violations: 0
-malicious result: yes
-permission bypass: no
-
-## 10. Core survival
-malformed config + ASK: yes
-MCP process launched: no
-missing server + core task: yes
-install attempted: no
-
-## 11. Timeout regression
-real timeout: PASS
-AbortController used: no
-pending before: 1
-pending after: 0
-late accepted: no
-duplicate completion: no
-
-## 12. Process-tree regression
-parent alive after: no
-child alive after: no
-orphan detected: no
-
-## 13. MCP closure matrix
-scenario count: 43
+## 7. Deterministic routing evaluation
+meaningful cases: 35
+placeholder cases: 0
 run 1: PASS
 run 2: PASS
-structural match: YES
-failed scenarios: 0
-unexpected permission grants: 0
-invalid remote calls: 0
-cleanup failures: 0
-budget violations: 0
+normalized deep equality: YES
+failed: 0
+capability violations: 0
+context violations: 0
+fallback violations: 0
 
-## 14. Canonical test wiring
-MCP tests in npm test: yes
-MCP tests in lint: yes
-closure matrix canonical: yes
+## 8. Health truth
+ready reason: health_ready
+unknown reason: health_unknown
+unknown reported as ready: no
+unavailable behavior: rejects candidate
 
-## 15. Sprint 2A regression
+## 9. Large registry proof
+actual deployment count: 55
+registry content injected into prompt: no
+ContextCompiler registry inflation: no
+diagnostics bounded: yes
+
+## 10. Production routing E2E
+config loaded: yes
+provider registry built: yes
+router: yes
+gateway: yes
+AgentRunner: yes
+RepairOrchestrator: yes
+route provenance: yes
+usage provenance: yes
+
+## 11. Sprint 2A regression
 schema: PASS
 redaction: PASS
 bounds: PASS
@@ -104,7 +83,7 @@ stack: PASS
 knownIssues: PASS
 continuity: PASS
 
-## 16. Sprint 2B regression
+## 12. Sprint 2B regression
 catalog: PASS
 real selection: PASS
 synthetic selection: PASS
@@ -114,69 +93,70 @@ Skill CLI: PASS
 malicious skill: PASS
 legacy policy: PASS
 
-## 17. Coding evaluation
+## 13. Sprint 2C regression
+closure: PASS
+timeout: PASS
+process cleanup: PASS
+malicious result: PASS
+core survival: PASS
+result bound: PASS
+
+## 14. Coding evaluation
 run 1: 30/30
 run 2: 30/30
-structural match: YES
 
-## 18. Core CLI
-required: 12
-passed: 12
-skipped: 0
-failed: 0
+## 15. CLI
+Core CLI required: 12
+Core CLI passed: 12
+Skill CLI required: 4
+Skill CLI passed: 4
+Routing CLI required: 4
+Routing CLI passed: 4
 
-## 19. Skill CLI
-required: 4
-passed: 4
-skipped: 0
-failed: 0
-
-## 20. Full verification
+## 16. Full verification
 npm ci: PASS
 typecheck: PASS
 lint: PASS
 npm test: PASS
 build: PASS
 git diff --check: PASS
-coding eval 1: PASS
-coding eval 2: PASS
-MCP closure run 1: PASS
-MCP closure run 2: PASS
-MCP E2E: PASS
-Memory regression: PASS
-Skill regression: PASS
+routing eval 1: PASS
+routing eval 2: PASS
+deep equality: PASS
 
-## 21. Documentation
+## 17. Model hygiene
+GGUF: 0
+Safetensors: 0
+real model runs: 0
+downloads: 0
+real inference calls: 0
+cloud calls: 0
+paid calls: 0
+
+## 18. Documentation
 README: up to date
-ARCHITECTURE: up to date
-PLAN: updated
+ARCHITECTURE: updated
+PLAN: up to date
 SCRATCHPAD: up to date
 DECISIONS: up to date
-ADR-015: up to date
+ADR-016: updated
 FINAL_REPORT: updated
 
-## 22. Git checkpoint
+## 19. Git checkpoint
 branch: main
-implementation SHA: 275eb1210938901969b5e2e0a7a4e6580e92ebd5
-closure report status: finalized in subsequent docs commit
+final SHA: 
+commits: 
 worktree: clean
 git fsck: passed
 
-## 23. Model hygiene
-GGUF: no
-Safetensors: no
-real-model runs: 0
-new model downloads: 0
+## 20. Remaining limitations
+- real OSS model benchmarking deferred to target machine
+- no post-invocation provider failover in V1
+- external local inference service required later
+- bounded/simple health policy
 
-## 24. Remaining limitations
-- stdio-only MCP
-- MCP tools only
-- no MCP auto-discovery
-- no MCP auto-install
-- bounded JSON-Schema subset
-
-## 25. Sprint status
+## 21. Sprint status
 PASS
 
-## 26. Exact next sprint
-SPRINT 2D — MODEL / PROVIDER ROUTING ARCHITECTURE
+## 22. Exact next sprint
+SPRINT 3A — IDE ADAPTER / CODE-OSS INTEGRATION

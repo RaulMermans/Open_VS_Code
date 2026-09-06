@@ -56,6 +56,7 @@ export type RouteReasonCode =
   | "context_fit"
   | "priority"
   | "health_ready"
+  | "health_unknown"
 
 export interface RejectedCandidate {
   readonly deploymentId: string
