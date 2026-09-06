@@ -185,7 +185,7 @@ async function runMatrix() {
     assertScenario("20", riskUnknown === "CONFIRM", { permissionDecision: riskUnknown });
 
     const mockTr = new TestMcpTransport("mock");
-    const regPolicyUnknown = createMcpToolRegistration({ serverId: "mock", toolName: "test2", canonicalName: "mcp_mock_test2", description: "", inputSchema: {}, estimatedSchemaTokens: 10 }, mockTr, { servers: {}, toolPolicies: { mcp_mock_test2: "unknown" } } as any);
+    const regPolicyUnknown = createMcpToolRegistration({ serverId: "mock", toolName: "test2", canonicalName: "mcp_mock_test2", description: "", inputSchema: {}, estimatedSchemaTokens: 10, annotations: { readOnlyHint: true } }, mockTr, { servers: {}, toolPolicies: { mcp_mock_test2: "unknown" } } as any);
     assertScenario("21", regPolicyUnknown.definition.action === "mcp_external_unknown");
 
     // ARGUMENTS & JSON-SCHEMA (22-27)
