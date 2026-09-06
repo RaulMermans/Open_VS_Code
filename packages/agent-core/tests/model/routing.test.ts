@@ -1,7 +1,7 @@
 import { describe, test } from "node:test"
 import assert from "node:assert/strict"
 import { ModelRouter, type HealthChecker } from "../../src/model/router.ts"
-import type { RoutingConfiguration, ModelRouteRequirements, ProviderHealthState, RouteDecision } from "../../src/contracts/routing.ts"
+import type { RoutingConfiguration, ModelRouteRequirements, ProviderHealthState } from "../../src/contracts/routing.ts"
 
 const baseConfig: RoutingConfiguration = {
   providers: [
@@ -149,7 +149,7 @@ const cases: RoutingEvalCase[] = [
     id: "15",
     name: "All contexts insufficient",
     requirements: { taskClass: "coding", needsTools: false, needsStructuredOutput: false, estimatedInputTokens: 35000, requiredContextWindow: 40000, specialization: "coding" },
-    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "insufficient_context_window" }
+    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "insufficient_context" }
   },
   {
     id: "16",
@@ -179,7 +179,7 @@ const cases: RoutingEvalCase[] = [
       h.unavailableDeployments.add("dep-general-small");
       h.unavailableDeployments.add("dep-general-large");
     },
-    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "health_unavailable" }
+    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "unhealthy" }
   },
   {
     id: "20",
@@ -249,7 +249,7 @@ const cases: RoutingEvalCase[] = [
       c.routes = { ...c.routes, coding: ["dep-coder-all"] }; // only 1 in chain
       h.unavailableDeployments.add("dep-coder-all");
     },
-    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "health_unavailable" }
+    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "unhealthy" }
   },
   {
     id: "28",
@@ -259,7 +259,7 @@ const cases: RoutingEvalCase[] = [
       c.routes = { ...c.routes, coding: ["dep-coder-tools"] };
       h.unavailableDeployments.add("dep-coder-tools");
     },
-    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "health_unavailable" }
+    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "unhealthy" }
   },
   {
     id: "29",
@@ -273,7 +273,7 @@ const cases: RoutingEvalCase[] = [
       c.models = [...c.models, { id: "cloud-mod", contextWindow: 128000, capabilities: [], specialization: "general" }];
       c.deployments = [...c.deployments, { id: "dep-cloud", providerId: "cloud-1", modelId: "cloud-mod", enabled: true }];
     },
-    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "health_unavailable" }
+    expected: { failureCode: "ROUTE_UNAVAILABLE", rejectedReason: "unhealthy" }
   },
   {
     id: "30",
@@ -330,69 +330,78 @@ const cases: RoutingEvalCase[] = [
   },
 ];
 
+
+function compareRoutingResult(actual: any, expected: any) {
+  const mismatches = [];
+
+  if (expected.errorPattern) {
+    if (!actual.error || !expected.errorPattern.test(actual.error)) {
+      mismatches.push({ field: "errorPattern", expected: expected.errorPattern.toString(), actual: actual.error });
+    }
+  } else if (expected.failureCode) {
+    if (!actual.error || !actual.error.includes(expected.failureCode)) {
+      mismatches.push({ field: "failureCode", expected: expected.failureCode, actual: actual.error });
+    }
+  } else {
+    if (actual.error) {
+      mismatches.push({ field: "success", expected: "no error", actual: actual.error });
+    }
+    if (expected.selectedDeploymentId !== undefined) {
+      if (actual.deploymentId !== expected.selectedDeploymentId) {
+        mismatches.push({ field: "selectedDeploymentId", expected: expected.selectedDeploymentId, actual: actual.deploymentId });
+      }
+    }
+    if (expected.fallbackLevel !== undefined) {
+      if (actual.fallbackLevel !== expected.fallbackLevel) {
+        mismatches.push({ field: "fallbackLevel", expected: expected.fallbackLevel, actual: actual.fallbackLevel });
+      }
+    }
+  }
+
+  if (expected.rejectedReason !== undefined) {
+    if (!actual.rejectedCandidates || !Array.isArray(actual.rejectedCandidates)) {
+      mismatches.push({ field: "rejectedReason", expected: expected.rejectedReason, actual: "missing actual.rejectedCandidates" });
+    } else {
+      const hasReason = actual.rejectedCandidates.some((r: any) => r.reason === expected.rejectedReason);
+      if (!hasReason) {
+        mismatches.push({ field: "rejectedReason", expected: expected.rejectedReason, actual: actual.rejectedCandidates.map((r: any) => r.reason).join(",") });
+      }
+    }
+  }
+
+  return { passed: mismatches.length === 0, mismatches };
+}
+
 const runRoutingEvaluation = async () => {
   const results = [];
   let passed = 0;
   let failed = 0;
 
   for (const tc of cases) {
-    const config = JSON.parse(JSON.stringify(baseConfig)) as RoutingConfiguration;
+    const config = JSON.parse(JSON.stringify(baseConfig));
     const health = new TestHealthChecker();
 
     if (tc.setup) {
       await tc.setup(config, health);
     }
 
-    let actual: Partial<RouteDecision> & { error?: string } = {};
+    let actual = {};
 
     try {
       const router = new ModelRouter(config);
       const decision = await router.route(tc.requirements, health);
       actual = decision;
     } catch (e: any) {
-      actual = { error: e.message || e.toString() };
+      actual = { error: e.message || e.toString(), rejectedCandidates: e.rejectedCandidates };
     }
 
-    let isPass = true;
-
-    if (tc.expected.errorPattern) {
-      if (!actual.error || !tc.expected.errorPattern.test(actual.error)) {
-        isPass = false;
-      }
-    } else if (tc.expected.failureCode) {
-      if (!actual.error || !actual.error.includes(tc.expected.failureCode)) {
-        isPass = false;
-      }
-    } else {
-      if (actual.error) {
-        isPass = false;
-      }
-      if (tc.expected.selectedDeploymentId && actual.deploymentId !== tc.expected.selectedDeploymentId) {
-        if (tc.id === "34" && actual.deploymentId?.startsWith("dep-")) {
-          // Large registry test allows any dep-
-        } else {
-          isPass = false;
-        }
-      }
-      if (tc.expected.fallbackLevel !== undefined && actual.fallbackLevel !== tc.expected.fallbackLevel) {
-        if (tc.id === "34") {
-          // Large registry test
-        } else {
-          isPass = false;
-        }
-      }
-    }
-
-    if (tc.expected.rejectedReason && actual.rejectedCandidates) {
-      const hasReason = actual.rejectedCandidates.some(r => r.reason === tc.expected.rejectedReason!);
-      if (!hasReason) isPass = false;
-    }
+    const { passed: isPass, mismatches } = compareRoutingResult(actual, tc.expected);
 
     if (isPass) {
       passed++;
     } else {
       failed++;
-      console.error(`Failed scenario ${tc.id}: ${tc.name}`, { expected: tc.expected, actual });
+      console.error(`Failed scenario ${tc.id}: ${tc.name}`, { mismatches, expected: tc.expected, actual });
     }
 
     results.push({
@@ -407,6 +416,7 @@ const runRoutingEvaluation = async () => {
 
   return { results, passed, failed, total: cases.length };
 };
+
 
 const normalize = (res: any) => {
   const norm = JSON.parse(JSON.stringify(res));
@@ -484,3 +494,27 @@ describe("Usage unknown remains unknown Test", () => {
     assert.equal(usageProv.totalTokens, undefined)
   })
 })
+
+
+describe("Strict Expectation Comparator - Negative Self-Test", () => {
+  test("fails if expected field is missing from actual", () => {
+    const res = compareRoutingResult({}, { rejectedReason: "unhealthy" });
+    assert.equal(res.passed, false);
+    assert.equal(res.mismatches[0]?.field, "rejectedReason");
+  });
+  test("fails if actual value is wrong", () => {
+    const res = compareRoutingResult({ deploymentId: "dep-21" }, { selectedDeploymentId: "dep-20" });
+    assert.equal(res.passed, false);
+    assert.equal(res.mismatches[0]?.field, "selectedDeploymentId");
+  });
+  test("fails if success expected but error occurred", () => {
+    const res = compareRoutingResult({ error: "OOM" }, { selectedDeploymentId: "dep-20" });
+    assert.equal(res.passed, false);
+    assert.equal(res.mismatches[0]?.field, "success");
+  });
+  test("fails if error expected but success occurred", () => {
+    const res = compareRoutingResult({ deploymentId: "dep-20" }, { failureCode: "ROUTE_UNAVAILABLE" });
+    assert.equal(res.passed, false);
+    assert.equal(res.mismatches[0]?.field, "failureCode");
+  });
+});

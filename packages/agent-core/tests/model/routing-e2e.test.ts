@@ -4,12 +4,13 @@ import test from "node:test"
 
 import { AgentRunner } from "../../src/agent/runner.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
-import type { ModelResponse, ModelProvider, ModelRequest } from "../../src/contracts/model.ts"
+import type { ModelResponse } from "../../src/contracts/model.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
 import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.ts"
 import { RepairOrchestrator } from "../../src/agent/repair-loop.ts"
-import { ModelRouter, type HealthChecker } from "../../src/model/router.ts"
-import type { RoutingConfiguration, ModelRouteRequirements, ProviderHealthState, RouteDecision } from "../../src/contracts/routing.ts"
+import type { HealthChecker } from "../../src/model/router.ts"
+import { RoutedModelGateway } from "../../src/model/routed-gateway.ts"
+import type { RoutingConfiguration, ProviderHealthState } from "../../src/contracts/routing.ts"
 
 const workspaceRoot = join(import.meta.dirname, "..", "fixtures", "simple-ts-project")
 const contextBudget = calculateBudget({ contextWindow: 32_000, reservedOutput: 100, reservedToolHistory: 100 })
@@ -47,57 +48,22 @@ class TestHealthChecker implements HealthChecker {
   }
 }
 
-// A wrapper provider that uses the router to route requests to actual ScriptedModelProviders
-class RoutedModelProvider implements ModelProvider {
-  capabilities = new Set(["chat", "tools"] as const)
-
-  constructor(
-    private router: ModelRouter,
-    private healthChecker: HealthChecker,
-    private taskClass: "general" | "coding",
-    private providers: Record<string, ModelProvider>
-  ) {}
-
-  lastDecision?: RouteDecision
-
-  async complete(request: ModelRequest): Promise<ModelResponse> {
-    // Determine requirements (stubbed for E2E proof)
-    const req: ModelRouteRequirements = {
-      taskClass: this.taskClass,
-      needsTools: true,
-      needsStructuredOutput: false,
-      estimatedInputTokens: 1000,
-      requiredContextWindow: 2000,
-      specialization: this.taskClass === "coding" ? "coding" : "general"
-    }
-
-    const decision = await this.router.route(req, this.healthChecker, request.signal)
-    this.lastDecision = decision
-
-    const provider = this.providers[decision.providerId]
-    if (!provider) throw new Error("Provider not found")
-
-    // Inject provenance metadata into response
-    const res = await provider.complete(request)
-    return {
-      ...res,
-      metadata: {
-        ...res.metadata,
-        routeDecision: decision
-      }
-    }
-  }
-}
 
 test("AgentRunner E2E with routing", async () => {
   const providers = {
     "scripted-general": new ScriptedModelProvider([response("I am general")]),
     "scripted-coding": new ScriptedModelProvider([response("I am coding")]),
   }
-
-  const router = new ModelRouter(config)
   const health = new TestHealthChecker()
-  const routedProvider = new RoutedModelProvider(router, health, "general", providers)
+  const providerMap = new Map(Object.entries(providers))
+  const routedProvider = new RoutedModelGateway({
+    config,
+    providers: providerMap,
+    healthChecker: health,
+    mode: "ASK",
+    hasTools: true,
+    hasStructuredOutput: false
+  })
 
   const runner = new AgentRunner({
     provider: routedProvider,
@@ -121,10 +87,16 @@ test("RepairOrchestrator E2E with routing", async () => {
   const providers = {
     "scripted-coding": new ScriptedModelProvider([response("I am coding repair")]),
   }
-
-  const router = new ModelRouter(config)
   const health = new TestHealthChecker()
-  const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
+  const providerMap = new Map(Object.entries(providers))
+  const routedProvider = new RoutedModelGateway({
+    config,
+    providers: providerMap,
+    healthChecker: health,
+    mode: "BUILD",
+    hasTools: true,
+    hasStructuredOutput: false
+  })
 
   class MockVerificationEngine {
     async execute(): Promise<any> {
@@ -181,12 +153,18 @@ test("Provider failure / fallback E2E", async () => {
     "scripted-coding": new ScriptedModelProvider([response("Never called")]),
     "scripted-fallback": new ScriptedModelProvider([response("I am fallback")]),
   }
-
-  const router = new ModelRouter(config)
   const health = new TestHealthChecker()
   health.unavailableDeployments.add("dep-coding") // Force fallback
 
-  const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
+  const providerMap = new Map(Object.entries(providers))
+  const routedProvider = new RoutedModelGateway({
+    config,
+    providers: providerMap,
+    healthChecker: health,
+    mode: "BUILD",
+    hasTools: true,
+    hasStructuredOutput: false
+  })
 
   const runner = new AgentRunner({
     provider: routedProvider,
@@ -215,10 +193,16 @@ test("Cancellation aborts before provider fallback", async () => {
       }
     ]),
   }
-
-  const router = new ModelRouter(config)
   const health = new TestHealthChecker()
-  const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
+  const providerMap = new Map(Object.entries(providers))
+  const routedProvider = new RoutedModelGateway({
+    config,
+    providers: providerMap,
+    healthChecker: health,
+    mode: "BUILD",
+    hasTools: true,
+    hasStructuredOutput: false
+  })
 
   const runner = new AgentRunner({
     provider: routedProvider,
@@ -258,11 +242,17 @@ test("Post-invocation failure zero fallback calls", async () => {
       }
     ]),
   }
-
-  const router = new ModelRouter(config)
   const health = new TestHealthChecker() // dep-coding is healthy
 
-  const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
+  const providerMap = new Map(Object.entries(providers))
+  const routedProvider = new RoutedModelGateway({
+    config,
+    providers: providerMap,
+    healthChecker: health,
+    mode: "BUILD",
+    hasTools: true,
+    hasStructuredOutput: false
+  })
 
   const runner = new AgentRunner({
     provider: routedProvider,
@@ -285,13 +275,25 @@ test("Post-invocation failure zero fallback calls", async () => {
 test("Cancellation zero fallback calls", async () => {
   let codingCalls = 0;
   let fallbackCalls = 0;
+  let observedAbort = false;
+
+  const ac = new AbortController()
 
   const providers = {
     "scripted-coding": new ScriptedModelProvider([
-      (req) => {
+      async (req) => {
         codingCalls++;
-        if (req.signal?.aborted) throw new Error("AbortError")
-        return response("slow")
+        // Abort right after the provider begins processing
+        ac.abort();
+        
+        // Simulate a small delay
+        await new Promise(r => setTimeout(r, 10));
+        
+        if (req.signal?.aborted) {
+          observedAbort = true;
+          throw new Error("AbortError");
+        }
+        return response("late response");
       }
     ]),
     "scripted-fallback": new ScriptedModelProvider([
@@ -301,18 +303,23 @@ test("Cancellation zero fallback calls", async () => {
       }
     ]),
   }
-
-  const router = new ModelRouter(config)
   const health = new TestHealthChecker()
 
-  const routedProvider = new RoutedModelProvider(router, health, "coding", providers)
+  const providerMap = new Map(Object.entries(providers))
+  const routedProvider = new RoutedModelGateway({
+    config,
+    providers: providerMap,
+    healthChecker: health,
+    mode: "BUILD",
+    hasTools: true,
+    hasStructuredOutput: false
+  })
 
   const runner = new AgentRunner({
     provider: routedProvider,
     registry: createReadOnlyToolRegistry(),
   })
 
-  const ac = new AbortController()
   const p = runner.run({
     task: { id: "task-build", mode: "BUILD", instruction: "Code" },
     workspaceRoot,
@@ -322,9 +329,10 @@ test("Cancellation zero fallback calls", async () => {
     signal: ac.signal
   })
 
-  ac.abort()
   const res = await p
   assert.equal(res.status, "CANCELLED")
   assert.equal(codingCalls, 1, "Primary provider should be called exactly once")
+  assert.equal(observedAbort, true, "Primary AbortSignal observed = yes")
   assert.equal(fallbackCalls, 0, "Fallback provider should never be called upon cancellation")
 })
+

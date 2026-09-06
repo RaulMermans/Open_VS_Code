@@ -33,6 +33,17 @@ const candidateSorter = (a: ScoredCandidate, b: ScoredCandidate) => {
   return a.deployment.id.localeCompare(b.deployment.id)
 }
 
+
+export class RouteUnavailableError extends Error {
+  public readonly rejectedCandidates: readonly RejectedCandidate[] | undefined
+  
+  constructor(message: string, rejectedCandidates?: readonly RejectedCandidate[]) {
+    super(message)
+    this.name = "RouteUnavailableError"
+    this.rejectedCandidates = rejectedCandidates
+  }
+}
+
 export class ModelRouter {
   readonly #config: RoutingConfiguration
 
@@ -64,7 +75,7 @@ export class ModelRouter {
     const candidateIds = this.#config.routes[requirements.taskClass] ?? this.#config.routes.default ?? []
     
     if (candidateIds.length === 0) {
-      throw new Error("ROUTE_UNAVAILABLE: No candidates configured for task class")
+      throw new RouteUnavailableError("ROUTE_UNAVAILABLE: No candidates configured for task class")
     }
 
 
@@ -143,7 +154,7 @@ export class ModelRouter {
     const eligible = scored.filter(c => !c.rejectedReason)
 
     if (eligible.length === 0) {
-      throw new Error("ROUTE_UNAVAILABLE: No compatible healthy deployment found in the permitted fallback chain")
+      throw new RouteUnavailableError("ROUTE_UNAVAILABLE: No compatible healthy deployment found in the permitted fallback chain", rejected)
     }
 
     // Sort: specializationScore (desc) > priority (desc) > stable ID tie-break (asc)

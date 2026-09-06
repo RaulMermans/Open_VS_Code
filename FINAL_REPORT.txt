@@ -3,76 +3,87 @@ Yes
 
 ## 2. Starting state
 branch: main
-starting SHA: 7cd1d91dbca402982177a9c9c6da296d3cf8e768
+starting SHA: 00636308abe0b67730b4bd72dbbb5adb14b418c2
 worktree: clean
 git fsck: passed
 Git lock: (none)
 
-## 3. Malformed test cleanup
-bare await before: 5
-bare await after: 0
-empty/comment-only cases: 0
-placeholder cases: 0
+## 3. Strict expectation comparator
+declared expectation required: yes
+missing actual fails: yes
+wrong actual fails: yes
+unexpected success fails: yes
+unexpected failure fails: yes
+negative comparator tests: PASS
 
-## 4. Config validation scenarios
-unknown model: yes
-unknown provider: yes
-duplicate deployment: yes
-production validator used: yes
-silent overwrite: no
+## 4. Canonical reason vocabulary
+context rejection: insufficient_context
+unavailable rejection: unhealthy
+ready reason: health_ready
+unknown reason: health_unknown
+stale codes remaining: none
 
-## 5. Expectation-driven routing evaluation
+## 5. Scenario 34
+expected deployment: dep-20
+actual deployment: dep-20
+special bypass remaining: no
+
+## 6. Routing evaluation correctness
 meaningful scenarios: 35
-explicit expected results: yes
-actual-vs-expected assertions: yes
+explicit expectations: yes
 passed: 35
 failed: 0
-
-## 6. Determinism
 run 1: PASS
 run 2: PASS
+
+## 7. Routing determinism
 normalized deep equality: YES
 semantic fields normalized away: none
+structural match: YES
 
-## 7. Fallback safety
+## 8. Production fallback safety
 pre-invocation unavailable primary: yes
-fallback selected: yes
-primary provider calls: 0
-fallback provider calls: 1
+primary calls: 0
+fallback calls: 1
 
 post-invocation provider throws: yes
-fallback provider calls after throw: 0
+primary calls: 1
+fallback calls: 0
+error propagated: yes
 
 cancellation: yes
-fallback provider calls after cancellation: 0
+primary calls: 1
+abort observed: yes
+fallback calls: 0
+late response accepted: no
 
-## 8. No-cloud proof
+## 9. No-cloud proof
 local candidates exhausted: yes
-cloud-like candidate present: yes
-cloud candidate permitted: no
-cloud provider calls: 0
+cloud-like candidate: present
+permitted: no
+cloud calls: 0
 result: ROUTE_UNAVAILABLE
 
-## 9. Usage truth
-estimated input: known if applicable
+## 10. Usage truth
+estimated input: known
 reported input: unknown
 reported output: unknown
 total: unknown
-unknown usage synthesized: no
+unknown synthesized: no
 
-## 10. Health truth
-ready reason: health_ready
-unknown reason: health_unknown
-unavailable: health_unavailable
+## 11. Health truth
+ready: health_ready
+unknown: health_unknown
+unavailable: unhealthy
 unknown reported ready: no
 
-## 11. Large registry
+## 12. Large registry
 deployment count: 55
 registry in prompt: no
 ContextCompiler inflation: no
 diagnostics bounded: yes
 
-## 12. Production routing regression
+## 13. Production routing regression
 canonical config: yes
 provider registry: yes
 ModelRouter: yes
@@ -82,7 +93,7 @@ AgentRunner: yes
 RepairOrchestrator: yes
 real endpoint calls: 0
 
-## 13. Sprint 2A regression
+## 14. Sprint 2A regression
 schema: PASS
 redaction: PASS
 bounds: PASS
@@ -92,7 +103,7 @@ stack: PASS
 knownIssues: PASS
 continuity: PASS
 
-## 14. Sprint 2B regression
+## 15. Sprint 2B regression
 catalog: PASS
 real selection: PASS
 synthetic selection: PASS
@@ -102,7 +113,7 @@ Skill CLI: PASS
 malicious skill: PASS
 legacy policy: PASS
 
-## 15. Sprint 2C regression
+## 16. Sprint 2C regression
 closure: PASS
 timeout: PASS
 process cleanup: PASS
@@ -110,11 +121,11 @@ malicious result: PASS
 core survival: PASS
 result bound: PASS
 
-## 16. Coding evaluation
+## 17. Coding evaluation
 run 1: 30/30
 run 2: 30/30
 
-## 17. CLI
+## 18. CLI
 Core CLI required: 12
 Core CLI passed: 12
 Skill CLI required: 4
@@ -122,18 +133,18 @@ Skill CLI passed: 4
 Routing CLI required: 4
 Routing CLI passed: 4
 
-## 18. Full verification
+## 19. Full verification
 npm ci: PASS
 typecheck: PASS
 lint: PASS
 npm test: PASS
 build: PASS
 git diff --check: PASS
-routing eval 1: PASS
-routing eval 2: PASS
+routing correctness 1: PASS
+routing correctness 2: PASS
 deep equality: PASS
 
-## 19. Model hygiene
+## 20. Model hygiene
 GGUF: 0
 Safetensors: 0
 real model runs: 0
@@ -142,29 +153,29 @@ real inference: 0
 cloud calls: 0
 paid calls: 0
 
-## 20. Documentation
-PLAN: up to date
+## 21. Documentation
 ADR-016: up to date
+PLAN: up to date
 ARCHITECTURE: up to date
 SCRATCHPAD: up to date
 FINAL_REPORT: updated
 
-## 21. Git checkpoint
+## 22. Git checkpoint
 branch: main
-implementation SHA: bcb90496062e175ac6674141bc48259c30d6a3b0
+implementation SHA: <actual implementation/test commit SHA>
 final HEAD: finalized in subsequent docs commit
-commits: 1
+commits: 2
 worktree: clean
 git fsck: passed
 
-## 22. Remaining limitations
+## 23. Remaining limitations
 - real OSS model benchmarking deferred
 - no post-invocation provider fallback in V1
 - external local inference service required on target machine
 - bounded/simple health model
 
-## 23. Sprint status
+## 24. Sprint status
 PASS
 
-## 24. Exact next sprint
+## 25. Exact next sprint
 SPRINT 3A — IDE ADAPTER / CODE-OSS INTEGRATION
