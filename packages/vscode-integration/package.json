@@ -1,0 +1,57 @@
+{
+  "name": "@open-vs-code/vscode-integration",
+  "version": "0.1.0",
+  "displayName": "Open VS Code Agent",
+  "description": "Minimal integration for Open VS Code agent",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "type": "commonjs",
+  "main": "dist/extension.js",
+  "activationEvents": [
+    "onCommand:open-vs-code.ask",
+    "onCommand:open-vs-code.plan",
+    "onCommand:open-vs-code.build",
+    "onCommand:open-vs-code.debug",
+    "onCommand:open-vs-code.review"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "open-vs-code.ask",
+        "title": "Agent: Ask"
+      },
+      {
+        "command": "open-vs-code.plan",
+        "title": "Agent: Plan"
+      },
+      {
+        "command": "open-vs-code.build",
+        "title": "Agent: Build"
+      },
+      {
+        "command": "open-vs-code.debug",
+        "title": "Agent: Debug"
+      },
+      {
+        "command": "open-vs-code.review",
+        "title": "Agent: Review"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-test-coverage"
+  },
+  "dependencies": {
+    "@open-vs-code/agent-core": "*",
+    "@open-vs-code/ide-adapter": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.8.2"
+  }
+}

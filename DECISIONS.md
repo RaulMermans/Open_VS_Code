@@ -17,6 +17,7 @@
 | [ADR-013](docs/adrs/ADR-013-bounded-session-continuity.md) | Markdown-First Project Memory & Bounded Session Continuity | Accepted |
 | [ADR-014](docs/adrs/ADR-014-metadata-first-skills.md) | Metadata-First Skills & Prompt Primitives | Accepted |
 | [ADR-016](docs/adrs/ADR-016-deterministic-model-provider-routing.md) | Deterministic Model / Provider Routing Architecture | Accepted |
+| [ADR-017](docs/adrs/ADR-017-ide-host-adapter-boundary.md) | IDE Host Adapter Boundary | Accepted |
 
 Decision status changes belong in the ADR and this index.
 
@@ -24,3 +25,4 @@ Sprint 1's implementation recommendation is documented separately at `docs/resea
 Sprint 2C complete. MCP Runtime fully integrated and proven.
 
 - **Sprint 2D.1**: ADR-016 integrated into production execution path via `RoutedModelGateway`.
+- **Sprint 3A**: IDE Adapter / Code-OSS Integration Foundation complete.

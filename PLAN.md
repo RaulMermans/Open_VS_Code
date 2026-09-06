@@ -12,3 +12,7 @@ STATUS: COMPLETE
 
 Next:
 Sprint 3A — IDE Adapter / Code-OSS Integration
+STATUS: COMPLETE
+
+Next:
+Sprint 3B — Chat UX
