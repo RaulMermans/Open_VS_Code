@@ -118,8 +118,14 @@ export class StdioMcpTransport implements McpTransport {
               req.resolve(msg.result);
             }
           }
-        } catch {
-          // Ignore malformed JSON
+        } catch (e: any) {
+          // A malformed protocol message means we can't reliably match responses to requests.
+          // Reject all pending requests with a protocol error to prevent hanging.
+          const error = new Error(`invalid protocol data: ${e.message}`);
+          for (const [id, req] of this.pendingRequests.entries()) {
+            req.reject(error);
+          }
+          this.pendingRequests.clear();
         }
       });
 
