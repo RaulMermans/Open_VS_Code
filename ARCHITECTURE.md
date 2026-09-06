@@ -149,3 +149,7 @@ The audited Kilo baseline remains in repository history for provenance and possi
                     │              │
               HUMAN APPROVAL  HUMAN APPROVAL
 ```
+
+
+## Model Routing
+Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `RoutedModelGateway` in production. Routing is based dynamically on `AgentMode` with no LLM dependency in the routing decision.

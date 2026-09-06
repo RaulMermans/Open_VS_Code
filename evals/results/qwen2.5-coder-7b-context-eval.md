@@ -4,9 +4,9 @@ Evaluated across varying context window budgets (n = 10 tasks).
 
 | Context Budget | Pass Rate | Valid Tool Calls | Avg Turns | Avg Latency | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Small (2048 tokens) | 30.0% (3/10) | 100.0% | 2.80 | 5318ms | Strict minimal context, fast latency |
-| Medium (8192 tokens) | 20.0% (2/10) | 100.0% | 2.60 | 3693ms | Optimal balance of memory and observation capacity |
-| Large (32768 tokens) | 40.0% (4/10) | 100.0% | 3.10 | 7054ms | Headroom for larger repositories, slightly higher turn latency |
+| Small (2048 tokens) | 0.0% (0/10) | 100.0% | 1.00 | 3ms | Strict minimal context, fast latency |
+| Medium (8192 tokens) | 0.0% (0/10) | 100.0% | 1.00 | 2ms | Optimal balance of memory and observation capacity |
+| Large (32768 tokens) | 0.0% (0/10) | 100.0% | 1.00 | 3ms | Headroom for larger repositories, slightly higher turn latency |
 
 ## Key Findings
 

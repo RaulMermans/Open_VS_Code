@@ -209,8 +209,22 @@ describe("Model Router - Deterministic Evaluation", () => {
       await assert.rejects(router.route(req, health), /ROUTE_UNAVAILABLE/)
     })
 
-    test("20. Health unknown policy (treats unknown as healthy until tested, but here health check resolves)", async () => {
-      // test covered by normal health resolution
+    test("20. Health unknown policy - unknown treated as eligible", async () => {
+      // Policy: deployments with health='unknown' ARE eligible for selection.
+      // The HealthChecker returns actual health state; 'unknown' means the checker
+      // could not determine health, but the deployment is not confirmed unavailable.
+      const unknownHealthChecker: HealthChecker = {
+        async checkHealth(): Promise<ProviderHealthState> { return "unknown" }
+      }
+      const router = new ModelRouter(config)
+      const req: ModelRouteRequirements = { taskClass: "general", needsTools: false, needsStructuredOutput: false, estimatedInputTokens: 1000, requiredContextWindow: 2000 }
+      // With unknown health, deployments should still be selected (not rejected)
+      const decision = await router.route(req, unknownHealthChecker)
+      assert.equal(decision.deploymentId, "dep-general-small") // highest priority
+      assert.equal(decision.healthState, "unknown")
+      // No deployment should be rejected for unhealthy
+      const unhealthyRejections = decision.rejectedCandidates?.filter(r => r.reason === "unhealthy") ?? []
+      assert.equal(unhealthyRejections.length, 0, "Unknown health should not cause rejection")
     })
 
     test("21. Disabled deployment", async () => {
@@ -273,8 +287,40 @@ describe("Model Router - Deterministic Evaluation", () => {
       await assert.rejects(router.route(req, health), /ROUTE_UNAVAILABLE/)
     })
 
-    test("29. No cloud fallback", async () => {
-      // no cloud providers are registered, so it fails if local fails
+    test("29. No cloud fallback - all local fail, no unconfigured provider selected", async () => {
+      // Prove: when all permitted local deployments fail/are incompatible,
+      // a hypothetical unconfigured cloud-like candidate is NOT selected.
+      // The policy cannot cross into an unpermitted provider.
+      const localOnlyConfig: RoutingConfiguration = {
+        providers: [
+          { id: "local-only", kind: "scripted" },
+        ],
+        models: [
+          { id: "local-model", contextWindow: 8000, capabilities: [], specialization: "general" },
+        ],
+        deployments: [
+          { id: "dep-local-1", providerId: "local-only", modelId: "local-model", enabled: true },
+          { id: "dep-local-2", providerId: "local-only", modelId: "local-model", enabled: true },
+        ],
+        routes: {
+          default: ["dep-local-1", "dep-local-2"],
+        }
+      }
+      const router = new ModelRouter(localOnlyConfig)
+      const health: HealthChecker = {
+        async checkHealth(): Promise<ProviderHealthState> { return "unavailable" }
+      }
+      const req: ModelRouteRequirements = { taskClass: "general", needsTools: false, needsStructuredOutput: false, estimatedInputTokens: 1000, requiredContextWindow: 2000 }
+      
+      // Must throw ROUTE_UNAVAILABLE — no cloud fallback, no unconfigured provider
+      await assert.rejects(router.route(req, health), /ROUTE_UNAVAILABLE/)
+      
+      // Explicitly prove: there's no way a 'cloud' provider could be selected
+      // because only providers in the config can ever be selected
+      assert.equal(localOnlyConfig.providers.length, 1)
+      assert.equal(localOnlyConfig.providers[0]!.kind, "scripted")
+      // No 'cloud', 'openai', 'anthropic' kind exists in config
+      assert.ok(!localOnlyConfig.providers.some(p => (p.kind as string).includes("cloud")))
     })
 
     test("30. Tie-break determinism", async () => {
@@ -349,8 +395,44 @@ describe("Model Router - Deterministic Evaluation", () => {
       }
     })
 
-    test("35. Usage unknown remains unknown", () => {
-      // Test handled in AgentRunner E2E
+    test("35. Usage unknown remains unknown", async () => {
+      // Scripted provider returns response with no usage.
+      // Assert: reported values are unknown (undefined), not synthesized.
+      const { ScriptedModelProvider } = await import("../../src/testing/scripted-model.ts")
+      const { RoutedModelGateway, StaticHealthChecker } = await import("../../src/model/routed-gateway.ts")
+
+      const providerNoUsage = new ScriptedModelProvider([
+        { model: "no-usage-model", message: { role: "assistant", content: "hello" } }
+        // Note: no usage field in response
+      ])
+
+      const gatewayConfig: RoutingConfiguration = {
+        providers: [{ id: "no-usage-provider", kind: "scripted" }],
+        models: [{ id: "no-usage-model", contextWindow: 16000, capabilities: ["toolUse"], specialization: "general" }],
+        deployments: [{ id: "dep-no-usage", providerId: "no-usage-provider", modelId: "no-usage-model", enabled: true }],
+        routes: { default: ["dep-no-usage"] }
+      }
+
+      const gateway = new RoutedModelGateway({
+        config: gatewayConfig,
+        providers: new Map([["no-usage-provider", providerNoUsage]]),
+        healthChecker: new StaticHealthChecker(new Map([["dep-no-usage", "ready"]])),
+        mode: "ASK",
+        hasTools: true,
+        hasStructuredOutput: false,
+      })
+
+      const response = await gateway.complete({
+        messages: [{ role: "user", content: "hello" }],
+      })
+
+      // Usage provenance must truthfully reflect unknown
+      const usageProv = (response.metadata as any)?.usageProvenance
+      assert.ok(usageProv, "Usage provenance must be present")
+      assert.ok(usageProv.estimatedInputTokens > 0, "Estimated input should be known")
+      assert.equal(usageProv.reportedInputTokens, undefined, "Reported input must be undefined when provider doesn't report")
+      assert.equal(usageProv.reportedOutputTokens, undefined, "Reported output must be undefined when provider doesn't report")
+      assert.equal(usageProv.totalTokens, undefined, "Total must be undefined when provider doesn't report usage")
     })
   }
 

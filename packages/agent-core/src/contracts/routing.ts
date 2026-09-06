@@ -6,7 +6,7 @@ export interface ProviderDescriptor {
   readonly protocol?: string
 }
 
-export type ModelCapability = "toolUse" | "structuredOutput" | "coding" | "reasoning" | "longContext" | "vision"
+export type RoutingModelCapability = "toolUse" | "structuredOutput" | "coding" | "reasoning" | "longContext" | "vision"
 export type ModelSpecialization = "general" | "coding" | "reasoning"
 
 export interface ModelDescriptor {
@@ -15,7 +15,7 @@ export interface ModelDescriptor {
   readonly family?: string
   readonly contextWindow: number
   readonly maxOutputTokens?: number
-  readonly capabilities: readonly ModelCapability[]
+  readonly capabilities: readonly RoutingModelCapability[]
   readonly specialization: ModelSpecialization
   readonly provenance?: string
 }

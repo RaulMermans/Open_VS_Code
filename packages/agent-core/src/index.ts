@@ -44,3 +44,9 @@ export * from "./context/memory-loader.ts";
 export * from "./context/memory-retriever.ts";
 export * from "./context/session-storage.ts";
 export * from "./mcp/index.ts"
+
+export * from "./contracts/routing.ts"
+export * from "./model/router.ts"
+export * from "./model/route-requirements.ts"
+export * from "./model/config-loader.ts"
+export * from "./model/routed-gateway.ts"

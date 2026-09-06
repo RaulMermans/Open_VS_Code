@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests/agent tests/context tests/contracts tests/mcp tests/evals tests/model tests/tools tests/hygiene.test.ts",
     "build": "tsc --noEmit",
-    "eval:model": "node tests/evals/run-benchmark-cli.ts",
+    "eval:model": "node --import tsx/esm tests/evals/run-benchmark-cli.ts",
     "eval:coding": "node --import tsx/esm tests/evals/run-coding-eval.ts"
   },
   "devDependencies": {

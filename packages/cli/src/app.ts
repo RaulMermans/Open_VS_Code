@@ -8,6 +8,7 @@ import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core";
 import { createMutationToolRegistrations } from "@open-vs-code/agent-core";
 import { createVerificationToolRegistrations } from "@open-vs-code/agent-core";
 import { calculateBudget, classifyPermission, ProjectMemoryLoader, SessionSummaryStorage, MemoryRetriever, discoverSkills, selectSkills, loadSkill, estimateTokens } from "@open-vs-code/agent-core";
+import { RoutedModelGateway, loadRoutingConfig, StaticHealthChecker } from "@open-vs-code/agent-core";
 import * as readline from "node:readline/promises";
 
 import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
@@ -28,7 +29,40 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
   const startedAt = new Date().toISOString();
   let provider: ModelProvider = options.provider as any;
   if (!provider) {
-    if (process.env.OPEN_VS_CODE_MOCK_MODEL === "1") {
+    // 1. Try to load routing config from workspace
+    const config = await loadRoutingConfig(options.workspaceRoot);
+    
+    if (config) {
+      // 2. Set up providers registry.
+      // In this phase, we only instantiate the scripted provider for dev/test.
+      // (The local open-weight integration is deferred to Sprint 4D).
+      const { ScriptedModelProvider } = await import("@open-vs-code/agent-core");
+      const devProvider = new ScriptedModelProvider([{ 
+        model: "scripted-general", 
+        message: { role: "assistant", content: "I am a deterministic scripted model. Override OPEN_VS_CODE_MOCK_MODEL to use me without real routing." } 
+      }]);
+      
+      const providers = new Map<string, ModelProvider>([
+        ["scripted-dev", devProvider]
+      ]);
+
+      // 3. Initialize Gateway
+      // For now, assume deployments are healthy.
+      const healthChecker = new StaticHealthChecker(
+        new Map(config.deployments.map(d => [d.id, "ready" as const]))
+      );
+
+      // The ContextBudget will be formally calculated later, but we can pass undefined 
+      // here and the gateway will use DEFAULT_OUTPUT_RESERVE
+      provider = new RoutedModelGateway({
+        config,
+        providers,
+        healthChecker,
+        mode: options.mode,
+        hasTools: true, // We always provide tools in the CLI
+        hasStructuredOutput: false, // Not using structured output yet
+      });
+    } else if (process.env.OPEN_VS_CODE_MOCK_MODEL === "1") {
       provider = {
         capabilities: new Set(["chat", "tools"] as any),
         async complete() {
@@ -36,16 +70,13 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
         }
       };
     } else {
-      // If no provider injected, we create a proxy that throws configuration error
-      // because real open-weight models belong on the target inference machine.
-      provider = {
-        capabilities: new Set(["chat", "tools"] as any),
-        async complete() {
-          console.error("\nModel configuration error: Live open-weight inference is configured on the target inference machine.\n"); throw new Error("Model configuration error: Live open-weight inference is configured on the target inference machine.");
-        }
-      };
+      // If no routing config and no mock, we throw configuration error
+      console.error("\nModel configuration error: Live open-weight inference is configured on the target inference machine.\n"); throw new Error("Model configuration error: Live open-weight inference is configured on the target inference machine.");
     }
   }
+  
+  // Track the routed gateway for reporting diagnostics later
+  const routedGateway = provider instanceof RoutedModelGateway ? provider : undefined;
 
   const mutationEngine = new MutationEngine(options.workspaceRoot);
   const verificationEngine = new VerificationEngine({ workspaceRoot: options.workspaceRoot });
@@ -465,8 +496,8 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
   };
 
   if (options.json) {
-    console.log(JSON.stringify({ ...finalResult, skillDiagnostics, mcpDiagnostics }, null, 2));
-    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, mcpDiagnostics, ...finalResult };
+    console.log(JSON.stringify({ ...finalResult, skillDiagnostics, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics }, null, 2));
+    return { exitCode: finalResult.status === "COMPLETED" ? 0 : (finalResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...finalResult };
   }
 
   if (changedFiles.size > 0) {
@@ -480,11 +511,23 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     console.log(`\nVerification runs: ${verifications}`);
   }
 
+  if (routedGateway?.lastDiagnostics) {
+    const diag = routedGateway.lastDiagnostics;
+    console.log(`\nModel Route:`);
+    console.log(`- Provider: ${diag.route.providerId}`);
+    console.log(`- Model: ${diag.route.modelId}`);
+    console.log(`- Deployment: ${diag.route.deploymentId}`);
+    console.log(`- Task Class: ${diag.route.taskClass}`);
+    if (diag.route.fallbackLevel > 0) {
+      console.log(`- Fallback Level: ${diag.route.fallbackLevel}`);
+    }
+  }
+
   console.log(`\nTurns: ${finalResult.turns}`);
 
   let exitCode = 0;
   if (finalResult.status === "FAILED") exitCode = 1;
   if (finalResult.status === "CANCELLED") exitCode = 2;
 
-  return { exitCode, memorySelection: memory, skillDiagnostics, ...finalResult };
+  return { exitCode, memorySelection: memory, skillDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...finalResult };
 }
