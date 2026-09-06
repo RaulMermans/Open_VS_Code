@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { McpCatalog } from "../../src/mcp/mcp-catalog.ts";
 import { selectMcpTools } from "../../src/mcp/mcp-selector.ts";
-import { createMcpToolRegistration } from "../../src/mcp/mcp-adapter.ts";
+import { createMcpToolRegistration, MAX_MCP_RESULT_BYTES } from "../../src/mcp/mcp-adapter.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { TestMcpTransport } from "../../src/mcp/mcp-test-transport.ts";
 import type { McpConfig } from "../../src/mcp/mcp-config.ts";
@@ -136,7 +136,7 @@ test("MCP Runtime Scorecard and structural identity", async () => {
 
   // Test truncation
   catalog.mockTransport.results.set("read_tool", {
-    content: [{ type: "text", text: "x".repeat(60000) }],
+    content: [{ type: "text", text: "x".repeat(MAX_MCP_RESULT_BYTES + 10000) }],
     isError: false
   });
   

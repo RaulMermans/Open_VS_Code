@@ -167,8 +167,8 @@ async function runMatrix() {
     registry19.register(reg19);
     
     const provider19 = new ScriptedModelProvider([
-      { message: { role: "assistant", content: "Calling side effect tool" }, toolCalls: [{ id: "c1", name: "mcp_mock19_side_effect_tool", arguments: {} }], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } },
-      { message: { role: "assistant", content: "Done" }, toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }
+      { model: "mock", message: { role: "assistant", content: "Calling side effect tool" }, toolCalls: [{ id: "c1", name: "mcp_mock19_side_effect_tool", arguments: {} }], usage: { inputTokens: 0, outputTokens: 0 } },
+      { model: "mock", message: { role: "assistant", content: "Done" }, toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 } }
     ]);
     const runner19 = new AgentRunner({ provider: provider19, registry: registry19 });
     const res19a = await runner19.run({ task: { id: "t19", mode: "BUILD", instruction: "test" }, workspaceRoot: "/", maxTurns: 5, contextBudget: calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 }), projectInstructions: [] });
@@ -185,7 +185,7 @@ async function runMatrix() {
     assertScenario("20", riskUnknown === "CONFIRM", { permissionDecision: riskUnknown });
 
     const mockTr = new TestMcpTransport("mock");
-    const regPolicyUnknown = createMcpToolRegistration({ serverId: "mock", toolName: "test2", canonicalName: "mcp_mock_test2", description: "", inputSchema: {}, estimatedSchemaTokens: 10, readOnlyHint: true }, mockTr, { servers: {}, toolPolicies: { mcp_mock_test2: "unknown" } } as any);
+    const regPolicyUnknown = createMcpToolRegistration({ serverId: "mock", toolName: "test2", canonicalName: "mcp_mock_test2", description: "", inputSchema: {}, estimatedSchemaTokens: 10 }, mockTr, { servers: {}, toolPolicies: { mcp_mock_test2: "unknown" } } as any);
     assertScenario("21", regPolicyUnknown.definition.action === "mcp_external_unknown");
 
     // ARGUMENTS & JSON-SCHEMA (22-27)
@@ -297,8 +297,8 @@ async function runMatrix() {
     });
     
     const provider41 = new ScriptedModelProvider([
-      { message: { role: "assistant", content: "calling tool" }, toolCalls: [{ id: "c1", name: "mcp_mock_malicious", arguments: {} }], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } },
-      { message: { role: "assistant", content: "now running shell" }, toolCalls: [{ id: "c2", name: "run_command", arguments: { command: "rm -rf /" } }], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }
+      { model: "mock", message: { role: "assistant", content: "calling tool" }, toolCalls: [{ id: "c1", name: "mcp_mock_malicious", arguments: {} }], usage: { inputTokens: 0, outputTokens: 0 } },
+      { model: "mock", message: { role: "assistant", content: "now running shell" }, toolCalls: [{ id: "c2", name: "run_command", arguments: { command: "rm -rf /" } }], usage: { inputTokens: 0, outputTokens: 0 } }
     ]);
     const runner41 = new AgentRunner({ provider: provider41, registry: registry41 });
     const res41 = await runner41.run({ task: { id: "t41", mode: "BUILD", instruction: "test" }, workspaceRoot: "/", maxTurns: 5, contextBudget: calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 }), projectInstructions: [] });
@@ -439,6 +439,7 @@ test("MCP Closure Matrix - Run 2", async () => {
 });
 
 test("MCP Closure Matrix - Repeatability", () => {
+  // oxlint-disable-next-line unicorn/consistent-function-scoping
   const normalize = (res: any) => {
     const copy = JSON.parse(JSON.stringify(res));
     for (const key of Object.keys(copy)) {

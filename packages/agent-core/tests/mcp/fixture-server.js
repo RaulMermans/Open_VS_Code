@@ -23,7 +23,8 @@ rl.on("line", (line) => {
       { name: "hang", description: "hang", inputSchema: { type: "object", properties: {} } },
       { name: "crash", description: "crash", inputSchema: { type: "object", properties: {} } },
       { name: "spawn_child", description: "spawn child", inputSchema: { type: "object", properties: {} } },
-      { name: "respondAfterDelay", description: "respond after delay", inputSchema: { type: "object", properties: { delay: { type: "number" } } } }
+      { name: "respondAfterDelay", description: "respond after delay", inputSchema: { type: "object", properties: { delay: { type: "number" } } } },
+      { name: "malformed_response", description: "malformed response", inputSchema: { type: "object", properties: {} } }
     ] });
   } else if (method === "tools/call") {
     if (params.name === "echo") {
@@ -32,6 +33,9 @@ rl.on("line", (line) => {
       // do nothing, let it hang
     } else if (params.name === "crash") {
       process.exit(1);
+    } else if (params.name === "malformed_response") {
+      // Write malformed JSON directly to stdout
+      process.stdout.write('{"jsonrpc": "2.0", "id": ' + id + ', "result": { "content": [{ "type": "text", "text": "missing end quote }]\n');
     } else if (params.name === "spawn_child") {
       childProc = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
       sendResponse(id, { content: [{ type: "text", text: String(childProc.pid) }], isError: false });

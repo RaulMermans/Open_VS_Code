@@ -43,17 +43,19 @@ cross-server namespacing: yes
 silent overwrite: no
 
 ## 8. Protocol failure
-malformed response fixture: yes
+real stdio fixture: yes
+malformed data emitted: yes
 classification: yes
 pending after: 0
 runtime survived: yes
 
 ## 9. Result safety
 ASCII oversize: yes
-ASCII retained bytes: <= 60000
+ASCII retained: <= 51200
 multibyte oversize: yes
-multibyte retained bytes: <= 60000
-max bytes: 50000
+multibyte retained: <= 51200
+canonical max bytes: 51200
+violations: 0
 malicious result: yes
 permission bypass: no
 

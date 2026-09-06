@@ -125,6 +125,8 @@ export function createMcpToolRegistration(
   };
 }
 
+export const MAX_MCP_RESULT_BYTES = 50 * 1024;
+
 async function executeMcpCall(metadata: McpToolMetadata, transport: McpTransport, input: Readonly<Record<string, unknown>>, context: ToolExecutionContext, stats?: McpStats) {
   if (stats) stats.callsStarted++;
   try {
@@ -133,7 +135,7 @@ async function executeMcpCall(metadata: McpToolMetadata, transport: McpTransport
     let truncated = false;
     let finalContent = result.content;
     
-    const maxContentBytes = 50 * 1024;
+    const maxContentBytes = MAX_MCP_RESULT_BYTES;
     const stringified = JSON.stringify(result.content);
     let bytesRetained = Buffer.byteLength(stringified, "utf8");
     

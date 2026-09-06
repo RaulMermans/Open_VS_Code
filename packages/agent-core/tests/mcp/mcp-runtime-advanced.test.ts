@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMcpToolRegistration } from "../../src/mcp/mcp-adapter.ts";
+import { createMcpToolRegistration, MAX_MCP_RESULT_BYTES } from "../../src/mcp/mcp-adapter.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { TestMcpTransport } from "../../src/mcp/mcp-test-transport.ts";
 import { StdioMcpTransport } from "../../src/mcp/mcp-transport.ts";
@@ -94,7 +94,7 @@ test("MCP Runtime Advanced Coverage", async () => {
   });
   const res3: any = await prepared3.invoke({ workspaceRoot: "/", signal: new AbortController().signal });
   assert.equal(res3.truncated, true);
-  assert.ok(Buffer.byteLength(res3.content[0].text, "utf8") <= 50000);
+  assert.ok(Buffer.byteLength(res3.content[0].text, "utf8") <= MAX_MCP_RESULT_BYTES);
   assert.ok(stats.resultsTruncated > 0);
 
   // 7. Cancellation

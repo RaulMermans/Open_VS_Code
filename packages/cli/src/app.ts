@@ -28,14 +28,23 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
   const startedAt = new Date().toISOString();
   let provider: ModelProvider = options.provider as any;
   if (!provider) {
-    // If no provider injected, we create a proxy that throws configuration error
-    // because real open-weight models belong on the target inference machine.
-    provider = {
-      capabilities: new Set(["chat", "tools"] as any),
-      async complete() {
-        console.error("\nModel configuration error: Live open-weight inference is configured on the target inference machine.\n"); throw new Error("Model configuration error: Live open-weight inference is configured on the target inference machine.");
-      }
-    };
+    if (process.env.OPEN_VS_CODE_MOCK_MODEL === "1") {
+      provider = {
+        capabilities: new Set(["chat", "tools"] as any),
+        async complete() {
+          return { model: "mock", message: { role: "assistant", content: "hi" }, usage: { inputTokens: 0, outputTokens: 0 } };
+        }
+      };
+    } else {
+      // If no provider injected, we create a proxy that throws configuration error
+      // because real open-weight models belong on the target inference machine.
+      provider = {
+        capabilities: new Set(["chat", "tools"] as any),
+        async complete() {
+          console.error("\nModel configuration error: Live open-weight inference is configured on the target inference machine.\n"); throw new Error("Model configuration error: Live open-weight inference is configured on the target inference machine.");
+        }
+      };
+    }
   }
 
   const mutationEngine = new MutationEngine(options.workspaceRoot);
