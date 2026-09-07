@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { McpConfig, validateMcpConfig } from "@open-vs-code/agent-core";
+import { type McpConfig, validateMcpConfig } from "./mcp-config.ts";
 
 export async function loadMcpConfig(workspaceRoot: string): Promise<McpConfig> {
   const configPath = path.join(workspaceRoot, ".open-vs-code", "mcp.json");

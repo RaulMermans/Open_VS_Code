@@ -42,7 +42,7 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-test-coverage"
+    "test": "node --import tsx --test tests/extension.test.ts"
   },
   "dependencies": {
     "@open-vs-code/agent-core": "*",

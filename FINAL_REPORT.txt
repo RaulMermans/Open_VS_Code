@@ -6,145 +6,96 @@ branch: main
 starting SHA: 00636308abe0b67730b4bd72dbbb5adb14b418c2
 worktree: clean
 git fsck: passed
-Git lock: (none)
+Git lock: none
 
-## 3. Strict expectation comparator
-declared expectation required: yes
-missing actual fails: yes
-wrong actual fails: yes
-unexpected success fails: yes
-unexpected failure fails: yes
-negative comparator tests: PASS
-
-## 4. Canonical reason vocabulary
-context rejection: insufficient_context
-unavailable rejection: unhealthy
-ready reason: health_ready
-unknown reason: health_unknown
-stale codes remaining: none
-
-## 5. Scenario 34
-expected deployment: dep-20
-actual deployment: dep-20
-special bypass remaining: no
-
-## 6. Routing evaluation correctness
-meaningful scenarios: 35
+## 3. Matrix truth
+meaningful scenarios: 32
+padding before: 15
+padding after: 0
 explicit expectations: yes
-passed: 35
+strict comparator: yes
+passed: 32
 failed: 0
 run 1: PASS
 run 2: PASS
+deep equality: YES
 
-## 7. Routing determinism
-normalized deep equality: YES
-semantic fields normalized away: none
-structural match: YES
+## 4. Shared runtime
+factory: createAgentRuntime
+CLI uses shared factory: yes
+IDE uses shared factory: yes
+duplicate AgentRunner assembly: no
+duplicate MCP loader: no
+duplicate permission engine: no
+duplicate ContextCompiler: no
 
-## 8. Production fallback safety
-pre-invocation unavailable primary: yes
-primary calls: 0
-fallback calls: 1
+## 5. BUILD permission E2Es
+approve confirmation: yes
+approval ID preserved: yes
+mutation executed: yes
+reject confirmation: yes
+mutation aborted: yes
+cross-session approval: denied
+REVIEW mutation denied: yes
+DEBUG repair approval: yes
+untrusted workspace: rejected
 
-post-invocation provider throws: yes
-primary calls: 1
-fallback calls: 0
-error propagated: yes
+## 6. Token-aware bounds
+selection budget fraction: ~25%
+visible doc bound: 20
+diagnostic bound: 100
 
-cancellation: yes
-primary calls: 1
-abort observed: yes
-fallback calls: 0
-late response accepted: no
+## 7. Multi-root and path safety
+multi-root active ownership: proven
+multi-root ambiguous: handled
+path escape read: blocked at core
+path escape mutation: blocked at core
 
-## 9. No-cloud proof
-local candidates exhausted: yes
-cloud-like candidate: present
-permitted: no
-cloud calls: 0
-result: ROUTE_UNAVAILABLE
+## 8. Cancellation proof
+delayed provider fixture: present
+AbortSignal observed: yes
+late result rejected: yes
 
-## 10. Usage truth
-estimated input: known
-reported input: unknown
-reported output: unknown
-total: unknown
-unknown synthesized: no
+## 9. Lifecycle cleanup
+finally block guaranteed: yes
+cleanup after completion: yes
+cleanup after error: yes
+cleanup after cancellation: yes
+MCP catalog closed: yes
+cleanup after confirmation error: yes
 
-## 11. Health truth
-ready: health_ready
-unknown: health_unknown
-unavailable: unhealthy
-unknown reported ready: no
+## 10. VS Code Extension Smoke
+production code imported: yes
+mocked vscode host: yes
+activation proven: yes
+ask command registered: yes
+plan command registered: yes
+build command registered: yes
+debug command registered: yes
+review command registered: yes
+deactivation proven: yes
 
-## 12. Large registry
-deployment count: 55
-registry in prompt: no
-ContextCompiler inflation: no
-diagnostics bounded: yes
+## 11. Core imports
+agent-core vscode imports: 0
 
-## 13. Production routing regression
-canonical config: yes
-provider registry: yes
-ModelRouter: yes
-RoutedModelGateway: yes
-CLI: yes
-AgentRunner: yes
-RepairOrchestrator: yes
-real endpoint calls: 0
-
-## 14. Sprint 2A regression
-schema: PASS
-redaction: PASS
-bounds: PASS
-corruption: PASS
-Markdown authority: PASS
-stack: PASS
-knownIssues: PASS
-continuity: PASS
-
-## 15. Sprint 2B regression
-catalog: PASS
-real selection: PASS
-synthetic selection: PASS
-skill budget: PASS
-section loading: PASS
-Skill CLI: PASS
-malicious skill: PASS
-legacy policy: PASS
-
-## 16. Sprint 2C regression
-closure: PASS
-timeout: PASS
-process cleanup: PASS
-malicious result: PASS
-core survival: PASS
-result bound: PASS
-
-## 17. Coding evaluation
+## 12. Coding evaluation
 run 1: 30/30
 run 2: 30/30
 
-## 18. CLI
-Core CLI required: 12
-Core CLI passed: 12
-Skill CLI required: 4
-Skill CLI passed: 4
-Routing CLI required: 4
-Routing CLI passed: 4
-
-## 19. Full verification
+## 13. Full verification
 npm ci: PASS
 typecheck: PASS
 lint: PASS
 npm test: PASS
 build: PASS
 git diff --check: PASS
-routing correctness 1: PASS
-routing correctness 2: PASS
-deep equality: PASS
+IDE matrix 1: PASS
+IDE matrix 2: PASS
+extension smoke: PASS
+coding eval 1: PASS
+coding eval 2: PASS
 
-## 20. Model hygiene
+## 14. Model/network hygiene
 GGUF: 0
 Safetensors: 0
 real model runs: 0
@@ -152,30 +103,36 @@ downloads: 0
 real inference: 0
 cloud calls: 0
 paid calls: 0
+activation network calls: 0
 
-## 21. Documentation
-ADR-016: up to date
+## 15. Documentation
+ADR-017: up to date
 PLAN: up to date
 ARCHITECTURE: up to date
+DECISIONS: up to date
 SCRATCHPAD: up to date
-FINAL_REPORT: updated
+FINAL_REPORT Sprint: 3A
 
-## 22. Git checkpoint
+## 16. Git checkpoint
 branch: main
-implementation SHA: c076f2782e
+implementation SHA: f374519fbc
 final HEAD: finalized in subsequent docs commit
 commits: 2
 worktree: clean
 git fsck: passed
 
-## 23. Remaining limitations
-- real OSS model benchmarking deferred
-- no post-invocation provider fallback in V1
-- external local inference service required on target machine
-- bounded/simple health model
+## 17. Remaining limitations
+- minimal command/OutputChannel UX
+- no sidebar/chat UI
+- dirty editor buffer not a virtual filesystem overlay
+- no diff UX
+- no terminal UX
+- no autocomplete
+- mocked VS Code host smoke instead of full Electron host if documented
+- no real model benchmark
 
-## 24. Sprint status
+## 18. Sprint status
 PASS
 
-## 25. Exact next sprint
-SPRINT 3A — IDE ADAPTER / CODE-OSS INTEGRATION
+## 19. Exact next sprint
+SPRINT 3B — CHAT UX

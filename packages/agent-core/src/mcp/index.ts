@@ -4,3 +4,4 @@ export * from "./mcp-test-transport.ts";
 export { McpCatalog, type McpToolMetadata } from "./mcp-catalog.ts";
 export * from "./mcp-selector.ts";
 export { type McpStats, createMcpToolRegistration } from "./mcp-adapter.ts";
+export * from "./mcp-config-loader.ts";

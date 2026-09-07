@@ -50,3 +50,4 @@ export * from "./model/router.ts"
 export * from "./model/route-requirements.ts"
 export * from "./model/config-loader.ts"
 export * from "./model/routed-gateway.ts"
+export * from "./agent/runtime.ts";
