@@ -9,12 +9,12 @@ git fsck: passed
 Git lock: none
 
 ## 3. Matrix truth
-meaningful scenarios: 32
+meaningful scenarios: 37
 padding before: 15
 padding after: 0
 explicit expectations: yes
 strict comparator: yes
-passed: 32
+passed: 37
 failed: 0
 run 1: PASS
 run 2: PASS

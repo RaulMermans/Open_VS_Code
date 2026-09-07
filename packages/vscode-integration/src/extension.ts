@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition } from '@open-vs-code/ide-adapter';
+import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 
 class VSCodeIdeHost implements IdeHost {
   private outputChannel: vscode.OutputChannel;
@@ -159,10 +159,26 @@ export function activate(context: vscode.ExtensionContext) {
       }
       
       const activeEditor = vscode.window.activeTextEditor;
-      let workspaceRoot = folders[0].uri.fsPath;
-      if (activeEditor) {
-        const wf = vscode.workspace.getWorkspaceFolder(activeEditor.document.uri);
-        if (wf) workspaceRoot = wf.uri.fsPath;
+      
+      const snapshot: IdeContextSnapshot = {
+        workspaceRoots: folders.map(f => ({ uri: f.uri.toString(), fsPath: f.uri.fsPath, name: f.name })),
+        activeDocument: activeEditor ? {
+          uri: activeEditor.document.uri.toString(),
+          workspaceRelativePath: vscode.workspace.asRelativePath(activeEditor.document.uri),
+          languageId: activeEditor.document.languageId,
+          version: activeEditor.document.version,
+          isDirty: activeEditor.document.isDirty
+        } : null,
+        selection: null,
+        visibleDocuments: [],
+        diagnostics: [],
+        isTrusted: vscode.workspace.isTrusted
+      };
+      
+      const resolvedRoot = resolveWorkspaceRoot(snapshot);
+      if (!resolvedRoot) {
+          vscode.window.showErrorMessage("Could not resolve a workspace root.");
+          return;
       }
       
       const instruction = await vscode.window.showInputBox({ prompt: `Enter instruction for ${mode}` });
@@ -182,7 +198,7 @@ export function activate(context: vscode.ExtensionContext) {
       
       activeBridge = new AgentSessionBridge({
         host: host!,
-        workspaceRoot
+        workspaceRoot: resolvedRoot
       });
       
       vscode.window.withProgress({

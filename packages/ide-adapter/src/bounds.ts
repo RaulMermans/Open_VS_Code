@@ -26,3 +26,25 @@ export function buildBoundedIdeContextSnapshot(snapshot: IdeContextSnapshot, con
     isTrusted: snapshot.isTrusted
   };
 }
+
+export function resolveWorkspaceRoot(snapshot: IdeContextSnapshot): string | null {
+  if (!snapshot.workspaceRoots || snapshot.workspaceRoots.length === 0) {
+    return null;
+  }
+  
+  // Explicitly check for no file multi-root ambiguity
+  if (snapshot.workspaceRoots.length > 1 && !snapshot.activeDocument) {
+      return null;
+  }
+  
+  if (snapshot.activeDocument) {
+    const activeUri = snapshot.activeDocument.uri;
+    for (const root of snapshot.workspaceRoots) {
+      if (activeUri.startsWith(root.uri)) {
+        return root.fsPath;
+      }
+    }
+  }
+  
+  return snapshot.workspaceRoots[0].fsPath;
+}

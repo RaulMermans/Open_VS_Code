@@ -5,16 +5,19 @@ import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 export interface BridgeOptions {
   host: IdeHost;
   workspaceRoot: string;
+  providerOverride?: any;
 }
 
 export class AgentSessionBridge {
   private host: IdeHost;
   private workspaceRoot: string;
   private activeSession: boolean = false;
+  private providerOverride?: any;
   
   constructor(options: BridgeOptions) {
     this.host = options.host;
     this.workspaceRoot = options.workspaceRoot;
+    this.providerOverride = options.providerOverride;
   }
   
   public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal): Promise<void> {
@@ -64,7 +67,8 @@ export class AgentSessionBridge {
         instruction: contextInstruction,
         signal,
         isTrusted,
-        eventSink: sink
+        eventSink: sink,
+        providerOverride: this.providerOverride
       });
       
       const { runner, repairOrchestrator, runnerInput } = runtime;

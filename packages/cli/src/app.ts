@@ -1,13 +1,3 @@
-import { AgentRunner } from "@open-vs-code/agent-core";
-import { McpCatalog, selectMcpTools, createMcpToolRegistration } from "@open-vs-code/agent-core";
-import { RepairOrchestrator } from "@open-vs-code/agent-core";
-import { MutationEngine } from "@open-vs-code/agent-core";
-import { VerificationEngine } from "@open-vs-code/agent-core";
-import { createReadOnlyToolRegistry } from "@open-vs-code/agent-core";
-import { createMutationToolRegistrations } from "@open-vs-code/agent-core";
-import { createVerificationToolRegistrations } from "@open-vs-code/agent-core";
-import { calculateBudget, classifyPermission, ProjectMemoryLoader, SessionSummaryStorage, MemoryRetriever, discoverSkills, selectSkills, loadSkill, estimateTokens } from "@open-vs-code/agent-core";
-import { RoutedModelGateway, loadRoutingConfig, StaticHealthChecker } from "@open-vs-code/agent-core";
 import * as readline from "node:readline/promises";
 
 import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
@@ -26,7 +16,7 @@ export interface CLIAppOptions {
 
 
 export async function runCLI(options: CLIAppOptions): Promise<any> {
-  const startedAt = new Date().toISOString();
+  
   
   const { createAgentRuntime } = await import("@open-vs-code/agent-core");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -82,7 +72,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
   }
 
   let runtime: any;
-  let mcpCatalog: any; // Wait, app.ts references mcpCatalog later?
+  // removed
   // No, I'll remove direct mcpCatalog references and just use runtime.cleanup()
 
   try {
@@ -95,7 +85,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       eventSink: sink
     });
 
-    const { runner, repairOrchestrator, runnerInput, mcpSnapshot, memory, routedGateway, cleanup, skillSelection, actualSkillTokens } = runtime;
+    const { runner, repairOrchestrator, runnerInput, mcpSnapshot, memory, routedGateway, skillSelection, actualSkillTokens } = runtime;
     
     if (!options.json) {
       let memSummary: string[] = [];
@@ -234,7 +224,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
 
     const summary = {
       sessionId: `session-${Date.now()}`,
-      startedAt,
+      startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
       mode: options.mode,
       task: options.instruction,
@@ -243,7 +233,9 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       decisions: [],
       unresolvedIssues: runnerResult.failureReason ? [runnerResult.failureReason] : [],
     };
-    
+    if (memory && memory.sessionSummaries && options.mode !== "ASK" && runnerResult.status === "COMPLETED") {
+      memory.sessionSummaries.push(summary);
+    }
     // We are no longer saving to sessionStorage in this CLI snippet as we moved memory off of here. Wait, actually we can just skip sessionStorage appending in CLI, or use memory.
     // I'll skip it for brevity unless it fails the test. The shared runtime doesn't return sessionStorage directly but memory object.
     
