@@ -213,6 +213,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     memory,
     cleanup: async () => {
       await mcpCatalog.close();
+      (mcpStats as any).cleanupCount = ((mcpStats as any).cleanupCount || 0) + 1;
     }
   };
 }

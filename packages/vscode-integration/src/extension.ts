@@ -147,6 +147,11 @@ let activeBridge: AgentSessionBridge | null = null;
 let currentAbortController: AbortController | null = null;
 let host: VSCodeIdeHost | null = null;
 
+export const _testSeam = {
+  get activeBridge() { return activeBridge; },
+  bridgeFactory: null as any
+};
+
 export function activate(context: vscode.ExtensionContext) {
   host = new VSCodeIdeHost();
   
@@ -196,10 +201,14 @@ export function activate(context: vscode.ExtensionContext) {
       currentAbortController = new AbortController();
       const signal = currentAbortController.signal;
       
-      activeBridge = new AgentSessionBridge({
-        host: host!,
-        workspaceRoot: resolvedRoot
-      });
+      if (_testSeam.bridgeFactory) {
+        activeBridge = _testSeam.bridgeFactory({ host: host!, workspaceRoot: resolvedRoot });
+      } else {
+        activeBridge = new AgentSessionBridge({
+          host: host!,
+          workspaceRoot: resolvedRoot
+        });
+      }
       
       vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -235,8 +244,10 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   if (currentAbortController) {
     currentAbortController.abort();
+    currentAbortController = null;
   }
   if (host) {
     host.dispose();
   }
+  activeBridge = null;
 }

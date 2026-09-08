@@ -1,6 +1,7 @@
 import { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
-import { createAgentRuntime } from "@open-vs-code/agent-core";
+import { createAgentRuntime, calculateBudget } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
+import { buildBoundedIdeContextSnapshot } from "./bounds.js";
 
 export interface BridgeOptions {
   host: IdeHost;
@@ -45,7 +46,13 @@ export class AgentSessionBridge {
     }
     
     // Capture IDE context
-    const snapshot = await this.host.getSnapshot();
+    const rawSnapshot = await this.host.getSnapshot();
+    
+    // We do not have the exact model context window until after routing.
+    // Use the canonical pre-route context policy: 8000 total window.
+    const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 });
+    const snapshot = buildBoundedIdeContextSnapshot(rawSnapshot, budget.availableContext);
+    
     await this.host.showOutput(`Captured IDE Context: Active=${snapshot.activeDocument?.uri ?? 'none'}, Visible=${snapshot.visibleDocuments.length}, Diagnostics=${snapshot.diagnostics.length}`);
     
     // Append IDE context to instruction
@@ -70,6 +77,7 @@ export class AgentSessionBridge {
         eventSink: sink,
         providerOverride: this.providerOverride
       });
+      (this as any)._lastRuntime = runtime;
       
       const { runner, repairOrchestrator, runnerInput } = runtime;
       

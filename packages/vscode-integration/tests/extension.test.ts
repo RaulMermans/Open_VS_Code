@@ -83,24 +83,65 @@ describe("VS Code Extension Smoke Test", () => {
     const context = { subscriptions: [] as any[] };
     ext.activate(context);
     
-    // It should invoke AgentSessionBridge
-    // We can't easily mock the internal bridge here without deep prototype pollution,
-    // but we can ensure running the command resolves correctly without crashing.
+    let bridgeCalled = false;
+    let bridgeMode = "";
+    let providerCalls = 0;
+    
+    ext._testSeam.bridgeFactory = (options: any) => {
+       return {
+          runTask: async (instruction: string, mode: string, signal: AbortSignal) => {
+             bridgeCalled = true;
+             bridgeMode = mode;
+             providerCalls++;
+          }
+       };
+    };
+    
     const askCommand = mockVscode.commands.registered['open-vs-code.ask'];
     
-    // We expect it to at least run withProgress and return a completed state
-    // Note: since our workspace doesn't have an .open-vs-code folder and we mock vscode,
-    // it will try to hit createAgentRuntime and run. 
-    // We just assert that it executes.
-    // If it throws an error because of missing models.json or other things, 
-    // we can mock createAgentRuntime or just catch it.
+    // Activation safety: 0 calls
+    assert.strictEqual(bridgeCalled, false);
     
-    try {
-        await askCommand();
-    } catch (e: any) {
-        // If it fails due to config not found, it still proves the command was executed.
-        assert.ok(e.message.includes("ENOENT") || e.message.includes("Missing provider configuration"), "Should attempt to run bridge");
-    }
+    await askCommand();
+    
+    assert.strictEqual(bridgeCalled, true, "Bridge runTask should be called");
+    assert.strictEqual(bridgeMode, "ASK", "Should be ASK mode");
+    assert.strictEqual(providerCalls, 1, "Provider calls = 1");
+    assert.strictEqual(ext._testSeam.activeBridge, null, "Active session cleared");
+    
+    ext._testSeam.bridgeFactory = null;
+  });
+
+  test("deactivation cleanup", async () => {
+    const ext = require("../src/extension.ts");
+    let aborted = false;
+    
+    // Setup a fake active request
+    ext.activate({ subscriptions: [] });
+    const askCommand = mockVscode.commands.registered['open-vs-code.ask'];
+    
+    // Intercept bridge to just wait and check abort
+    ext._testSeam.bridgeFactory = (options: any) => {
+       return {
+          runTask: async (instruction: string, mode: string, signal: AbortSignal) => {
+             signal.addEventListener("abort", () => { aborted = true; });
+             await new Promise(r => setTimeout(r, 100)); // wait a bit
+          }
+       };
+    };
+    
+    // don't await, let it run in background
+    askCommand();
+    
+    // give it a tick to start
+    await new Promise(r => setImmediate(r));
+    
+    ext.deactivate();
+    
+    assert.strictEqual(aborted, true, "Active request should be aborted on deactivate");
+    assert.strictEqual(ext._testSeam.activeBridge, null, "Bridge reference should be cleared");
+    
+    ext._testSeam.bridgeFactory = null;
   });
 });
 

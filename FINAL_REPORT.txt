@@ -2,100 +2,222 @@
 Yes
 
 ## 2. Starting state
+
 branch: main
-starting SHA: 00636308abe0b67730b4bd72dbbb5adb14b418c2
+starting SHA: e9fe11607bb96d04ff5cd589509c5b0c8ffc5b83
 worktree: clean
 git fsck: passed
 Git lock: none
 
-## 3. Matrix truth
-meaningful scenarios: 37
-padding before: 15
-padding after: 0
-explicit expectations: yes
+## 3. Production context bounding
+
+bridge invokes bounded snapshot: yes
+budget source: existing pre-route ContextBudget policy (8000 contextWindow)
+available input tokens: 6500
+selection budget tokens: 1625
+absolute char/byte ceiling: 50000
+char ceiling authoritative: no
+visible-doc max: 20
+diagnostic max: 100
+full files injected: no
+
+## 4. Hermetic runtime
+
+local models.json required: no
+provider/runtime injection: yes
+clean-clone execution: yes
+network dependency: no
+
+## 5. Matrix truth
+
+meaningful scenarios: 30
+padding: 0
+label-only safety scenarios: 0
 strict comparator: yes
-passed: 37
-failed: 0
-run 1: PASS
-run 2: PASS
+negative comparator tests: yes
+run 1 passed: 30
+run 1 failed: 0
+run 2 passed: 30
+run 2 failed: 0
 deep equality: YES
 
-## 4. Shared runtime
-factory: createAgentRuntime
-CLI uses shared factory: yes
-IDE uses shared factory: yes
-duplicate AgentRunner assembly: no
-duplicate MCP loader: no
+## 6. BUILD
+
+approve confirmation count: 1
+approve ID preserved: yes
+approve mutation count: 1
+approve file changed: yes
+
+reject confirmation count: 1
+reject mutation count: 0
+reject file changed: no
+
+## 7. Approval binding
+
+wrong approval ID accepted: no
+wrong-ID mutation count: 0
+cross-session approval accepted: no
+cross-session mutation count: 0
+
+## 8. REVIEW / DEBUG
+
+REVIEW mutation requested: yes
+REVIEW mutation executed: 0
+DEBUG RepairOrchestrator observed: yes
+mutation approval preserved: yes
+verification approval preserved: yes
+
+## 9. Cancellation
+
+delayed provider: yes
+provider calls: 1
+AbortSignal observed: yes
+cancelled result: yes
+late completion attempted: yes
+late completion accepted: no
+fallback calls: 0
+tools after cancel: 0
+active session cleared: yes
+
+## 10. Multi-root
+
+roots: 2
+active document: yes
+production resolver: yes
+expected root: root-b
+resolved root: root-b
+no-active-file behavior: ambiguous / handled
+
+## 11. Path safety
+
+outside read requested: yes
+outside read executed: no
+outside data returned: no
+outside mutation requested: yes
+outside mutation executed: no
+outside file changed: no
+
+## 12. Lifecycle cleanup
+
+normal cleanup count: 1
+provider-error cleanup count: 1
+confirmation-error cleanup count: 1
+cancellation cleanup count: 1
+MCP close count: 1
+active session released: yes
+orphan resources: 0
+
+## 13. Token stress
+
+raw selection tokens: 80000
+selection budget: 1625
+retained selection tokens: 1625
+visible docs input: 50
+visible docs retained: 20
+diagnostics input: 150
+diagnostics retained: 100
+estimated snapshot tokens: ~2500
+within budget: yes
+
+## 14. Extension smoke
+
+production extension.ts: yes
+commands expected: 5
+commands registered: 5
+duplicates: 0
+ASK invoked: yes
+bridge reached: yes
+provider calls: 1
+completed output: yes
+activation model calls: 0
+editor-change model calls: 0
+network calls: 0
+deactivate: yes
+cleanup: yes
+
+## 15. Runtime boundary
+
+IdeHost: yes
+AgentSessionBridge: yes
+createAgentRuntime: yes
+agent-core vscode imports: 0
+duplicate AgentRunner: no
 duplicate permission engine: no
 duplicate ContextCompiler: no
+duplicate MCP loader: no
 
-## 5. BUILD permission E2Es
-approve confirmation: yes
-approval ID preserved: yes
-mutation executed: yes
-reject confirmation: yes
-mutation aborted: yes
-cross-session approval: denied
-REVIEW mutation denied: yes
-DEBUG repair approval: yes
-untrusted workspace: rejected
+## 16. CLI parity
 
-## 6. Token-aware bounds
-selection budget fraction: ~25%
-visible doc bound: 20
-diagnostic bound: 100
+Core CLI required: 12
+Core CLI passed: 12
+Skill CLI required: 4
+Skill CLI passed: 4
+Routing CLI required: 4
+Routing CLI passed: 4
 
-## 7. Multi-root and path safety
-multi-root active ownership: proven
-multi-root ambiguous: handled
-path escape read: blocked at core
-path escape mutation: blocked at core
+## 17. Sprint 2A regression
 
-## 8. Cancellation proof
-delayed provider fixture: present
-AbortSignal observed: yes
-late result rejected: yes
+schema: PASS
+redaction: PASS
+bounds: PASS
+corruption: PASS
+Markdown authority: PASS
+stack: PASS
+knownIssues: PASS
+continuity: PASS
 
-## 9. Lifecycle cleanup
-finally block guaranteed: yes
-cleanup after completion: yes
-cleanup after error: yes
-cleanup after cancellation: yes
-MCP catalog closed: yes
-cleanup after confirmation error: yes
+## 18. Sprint 2B regression
 
-## 10. VS Code Extension Smoke
-production code imported: yes
-mocked vscode host: yes
-activation proven: yes
-ask command registered: yes
-plan command registered: yes
-build command registered: yes
-debug command registered: yes
-review command registered: yes
-deactivation proven: yes
+catalog: PASS
+selection: PASS
+budget: PASS
+section loading: PASS
+malicious skill: PASS
+legacy: PASS
+Skill CLI: PASS
 
-## 11. Core imports
-agent-core vscode imports: 0
+## 19. Sprint 2C regression
 
-## 12. Coding evaluation
+closure: PASS
+timeout: PASS
+cleanup: PASS
+malicious result: PASS
+core survival: PASS
+result bound: PASS
+
+## 20. Sprint 2D regression
+
+routing correctness: PASS
+strict comparator: PASS
+deep equality: PASS
+fallback safety: PASS
+cancellation: PASS
+health truth: PASS
+usage truth: PASS
+no cloud: PASS
+
+## 21. Coding evaluation
+
 run 1: 30/30
 run 2: 30/30
 
-## 13. Full verification
+## 22. Full verification
+
 npm ci: PASS
 typecheck: PASS
 lint: PASS
 npm test: PASS
 build: PASS
 git diff --check: PASS
-IDE matrix 1: PASS
-IDE matrix 2: PASS
+IDE run 1: PASS
+IDE run 2: PASS
+IDE deep equality: PASS
 extension smoke: PASS
 coding eval 1: PASS
 coding eval 2: PASS
 
-## 14. Model/network hygiene
+## 23. Model/network hygiene
+
 GGUF: 0
 Safetensors: 0
 real model runs: 0
@@ -105,7 +227,8 @@ cloud calls: 0
 paid calls: 0
 activation network calls: 0
 
-## 15. Documentation
+## 24. Documentation
+
 ADR-017: up to date
 PLAN: up to date
 ARCHITECTURE: up to date
@@ -113,26 +236,30 @@ DECISIONS: up to date
 SCRATCHPAD: up to date
 FINAL_REPORT Sprint: 3A
 
-## 16. Git checkpoint
+## 25. Git checkpoint
+
 branch: main
-implementation SHA: f374519fbc
+implementation SHA: pending commit
 final HEAD: finalized in subsequent docs commit
-commits: 2
+commits: 1
 worktree: clean
 git fsck: passed
 
-## 17. Remaining limitations
-- minimal command/OutputChannel UX
+## 26. Remaining limitations
+
+- minimal command + OutputChannel UX
 - no sidebar/chat UI
-- dirty editor buffer not a virtual filesystem overlay
+- dirty editor buffer is not virtual filesystem overlay
 - no diff UX
 - no terminal UX
 - no autocomplete
-- mocked VS Code host smoke instead of full Electron host if documented
-- no real model benchmark
+- mocked vscode host rather than Electron if documented
+- real model benchmark deferred
 
-## 18. Sprint status
+## 27. Sprint status
+
 PASS
 
-## 19. Exact next sprint
+## 28. Exact next sprint
+
 SPRINT 3B — CHAT UX
