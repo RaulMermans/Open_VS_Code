@@ -39,8 +39,12 @@ export function resolveWorkspaceRoot(snapshot: IdeContextSnapshot): string | nul
   
   if (snapshot.activeDocument) {
     const activeUri = snapshot.activeDocument.uri;
-    for (const root of snapshot.workspaceRoots) {
-      if (activeUri.startsWith(root.uri)) {
+    
+    // Sort by descending URI length to find the most specific match first
+    const sortedRoots = [...snapshot.workspaceRoots].sort((a, b) => b.uri.length - a.uri.length);
+    
+    for (const root of sortedRoots) {
+      if (activeUri === root.uri || activeUri.startsWith(root.uri + '/') || activeUri.startsWith(root.uri + '\\')) {
         return root.fsPath;
       }
     }

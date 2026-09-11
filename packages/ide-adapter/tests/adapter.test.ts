@@ -159,6 +159,9 @@ const extra: IdeEvalCase[] = [
     { id: "5 small selection under budget", setup: (h) => { h.activeDocument = { uri: "f", workspaceRelativePath: "f", languageId: "ts", version:1, isDirty:false}; h.selection = { start: {line:1, character:0}, end: {line:2, character:0}, selectedText: "hello" }; }, action: (b, ac) => b.runTask("hello", "ASK", ac.signal), expected: { status: "COMPLETED", selectionInputTokens: 2, selectionRetainedTokens: 2 } },
     // T-1603: "6 oversized selection" — selectionInputTokens > budget, retained <= budget
     // "A".repeat(400000): input=100000 tokens, budget=128000->maxSel=32000, allowedChars=112000, retained=ceil(112016/4)=28004
+    // T-1603: "6b production bridge selection budget" — tests the 6500 budget inside AgentSessionBridge
+    { id: "6b production bridge selection budget", setup: (h) => { h.activeDocument = { uri: "f", workspaceRelativePath: "f", languageId: "ts", version:1, isDirty:false}; h.selection = { start: {line:1, character:0}, end: {line:2, character:0}, selectedText: "A".repeat(400000) }; }, action: (b, ac) => b.runTask("hello", "ASK", ac.signal), expected: { status: "COMPLETED", productionSelectionRetained: 1426 } },
+
     { id: "6 oversized selection truncated", setup: (h) => { h.activeDocument = { uri: "f", workspaceRelativePath: "f", languageId: "ts", version:1, isDirty:false}; h.selection = { start: {line:1, character:0}, end: {line:2, character:0}, selectedText: "A".repeat(400000) }; }, action: (b, ac) => b.runTask("hello", "ASK", ac.signal), expected: { status: "COMPLETED", selectionInputTokens: 100000, selectionRetainedTokens: 28004 } },
     // T-1603: "7 dirty editor" — isDirty=true asserted from snapshot
     { id: "7 dirty editor asserted", setup: (h) => { h.activeDocument = { uri: "f", workspaceRelativePath: "f", languageId: "ts", version:1, isDirty:true}; }, action: (b, ac) => b.runTask("hello", "ASK", ac.signal), expected: { status: "COMPLETED", isDirty: true } },
@@ -391,6 +394,16 @@ async function runIdeEvaluation(idSuffix: string) {
         if (bounded.selection?.selectedText) selectionRetainedTokens = estimateTokens(bounded.selection.selectedText);
 
         // T-1626: fallbackCalls — number of provider calls if status=CANCELLED but bridge made extra calls
+        let productionSelectionRetained = 0;
+        const runnerInput = (bridge as any)._lastRuntime?.runnerInput;
+        if (runnerInput && runnerInput.task.instruction) {
+
+             const match = runnerInput.task.instruction.match(/\nSelection:\n([\s\S]*)/);
+             if (match) {
+                 productionSelectionRetained = estimateTokens(match[1]);
+             }
+        }
+
         const fallbackCalls = (status === "CANCELLED" && reqs.length > 1) ? reqs.length - 1 : 0;
 
         results.push({
@@ -408,6 +421,8 @@ async function runIdeEvaluation(idSuffix: string) {
             lateCompletionAccepted,
             cleanupCount: (bridge as any)._lastRuntime?.mcpStats?.cleanupCount || 0,
             selectionInputTokens,
+            productionSelectionRetained,
+
             selectionRetainedTokens,
             visibleDocsInput: snapshot.visibleDocuments.length,
             visibleDocsRetained: bounded.visibleDocuments.length,

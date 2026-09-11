@@ -1,228 +1,92 @@
-## 1. Plan executed
-Yes
-
-## 2. Starting state
+## 1. Starting state
 
 branch: main
-starting SHA: e9fe11607bb96d04ff5cd589509c5b0c8ffc5b83
+starting SHA: a8963ec78734ee845bae9f405e509ef6853d4ac4
 worktree: clean
 git fsck: passed
-Git lock: none
 
-## 3. Production context bounding
+## 2. Workspace ownership
 
-bridge invokes bounded snapshot: yes
-budget source: existing pre-route ContextBudget policy (8000 contextWindow)
-available input tokens: 6500
-selection budget tokens: 1625
-absolute char/byte ceiling: 50000
-char ceiling authoritative: no
-visible-doc max: 20
-diagnostic max: 100
-full files injected: no
+single-root: first root returned
+nested-root expected: most-specific owner
+nested-root actual: root-b
+overlapping-name expected: boundaries enforced
+overlapping-name actual: root-b
+raw prefix authority remaining: no
+ambiguous no-active-file: null returned
 
-## 4. Hermetic runtime
+## 3. Production token budget
 
-local models.json required: no
-provider/runtime injection: yes
-clean-clone execution: yes
-network dependency: no
+context window: 8000
+available input: 6500
+selection budget: 1625
+raw selection chars: 400000
+raw selection estimated tokens: 100000
+retained selection chars: 5703
+retained selection estimated tokens: 1426
+within budget: yes
+
+## 4. Stress-helper token proof
+
+helper context budget: 128000
+helper selection budget: 32000
+raw chars: 400000
+raw estimated tokens: 100000
+retained chars: 112016
+retained estimated tokens: 28004
+within helper budget: yes
 
 ## 5. Matrix truth
 
-meaningful scenarios: 30
+actual meaningful scenarios: 41
 padding: 0
-label-only safety scenarios: 0
-strict comparator: yes
-negative comparator tests: yes
-run 1 passed: 30
-run 1 failed: 0
-run 2 passed: 30
-run 2 failed: 0
+failed run 1: 0
+failed run 2: 0
 deep equality: YES
 
-## 6. BUILD
+## 6. Safety regressions
 
-approve confirmation count: 1
-approve ID preserved: yes
-approve mutation count: 1
-approve file changed: yes
-
-reject confirmation count: 1
-reject mutation count: 0
-reject file changed: no
-
-## 7. Approval contract
-
-canonical approval binding: AgentRunner internal (resume takes APPROVE|REJECT only, no external ID)
-wrong-ID externally expressible: no
-wrong-ID proof: structural — no external approval ID API exists
-cross-session externally expressible: no
-cross-session proof: structural — session isolation enforced by AgentRunner instance boundary
-unsupported claims remaining: none
-
-## 8. REVIEW / DEBUG
-
-REVIEW mutation requested: yes
-REVIEW mutation executed: 0
-DEBUG RepairOrchestrator observed: yes
-mutation approval preserved: yes
-verification approval preserved: yes
-
-## 9. Cancellation
-
-delayed provider: yes
-provider calls: 1
-AbortSignal observed: yes
-cancelled result: yes
-late completion attempted: yes
+BUILD approve: 1 confirmation, mutated
+BUILD reject: 1 confirmation, no mutation
+REVIEW mutation denial: yes
+cancellation: observed
 late completion accepted: no
-fallback calls: 0
-tools after cancel: 0
-active session cleared: yes
+path escape: rejected
+lifecycle cleanup: session cleared
 
-## 10. Multi-root
+## 7. Extension smoke
 
-roots: 2
-active document: yes
-production resolver: yes
-expected root: root-b
-resolved root: root-b
-no-active-file behavior: ambiguous / handled
-
-## 11. Path safety
-
-outside read requested: yes
-outside read executed: no
-outside data returned: no
-outside mutation requested: yes
-outside mutation executed: no
-outside file changed: no
-
-## 12. Lifecycle cleanup
-
-normal cleanup count: 1
-provider-error cleanup count: 1
-confirmation-error cleanup count: 1
-cancellation cleanup count: 1
-MCP close count: 1
-active session released: yes
-orphan resources: 0
-
-## 13. Token stress
-
-raw selection characters: 400000
-raw selection estimated tokens: 100000 (= ceil(400000/4))
-selection budget in test measurement (budget=128000): 32000 (= floor(128000 * 0.25))
-selection budget in production bridge (budget=6500): 1625 (= floor(6500 * 0.25))
-retained selection characters: 112016
-retained selection estimated tokens: 28004 (= ceil(112016/4))
-visible docs input: 50
-visible docs retained: 20
-diagnostics input: 150
-diagnostics retained: 100
-estimated snapshot tokens: ~2500
-within budget: yes
-
-## 14. Extension smoke
-
-production extension.ts: yes
-commands expected: 5
 commands registered: 5
-duplicates: 0
 ASK invoked: yes
-bridge reached: yes
-bridge calls: 1 (fake bridge stub, no real provider)
+bridge calls: 1
 real provider used: no (fake bridge stub)
-completed output: yes
 activation model calls: 0
-editor-change model calls: 0
 network calls: 0
-deactivate: yes
-cleanup: yes
+deactivation cleanup: yes
 
-## 15. Runtime boundary
+## 8. CLI / previous sprint regressions
 
-IdeHost: yes
-AgentSessionBridge: yes
-createAgentRuntime: yes
-agent-core vscode imports: 0
-duplicate AgentRunner: no
-duplicate permission engine: no
-duplicate ContextCompiler: no
-duplicate MCP loader: no
+Core CLI: 12/12
+Skill CLI: 4/4
+Routing CLI: 4/4
+Sprint 2A: PASS
+Sprint 2B: PASS
+Sprint 2C: PASS
+Sprint 2D: PASS
+coding eval 1: 30/30
+coding eval 2: 30/30
 
-## 16. CLI parity
+## 9. Full verification
 
-Core CLI required: 12
-Core CLI passed: 12
-Skill CLI required: 4
-Skill CLI passed: 4
-Routing CLI required: 4
-Routing CLI passed: 4
-
-## 17. Sprint 2A regression
-
-schema: PASS
-redaction: PASS
-bounds: PASS
-corruption: PASS
-Markdown authority: PASS
-stack: PASS
-knownIssues: PASS
-continuity: PASS
-
-## 18. Sprint 2B regression
-
-catalog: PASS
-selection: PASS
-budget: PASS
-section loading: PASS
-malicious skill: PASS
-legacy: PASS
-Skill CLI: PASS
-
-## 19. Sprint 2C regression
-
-closure: PASS
-timeout: PASS
-cleanup: PASS
-malicious result: PASS
-core survival: PASS
-result bound: PASS
-
-## 20. Sprint 2D regression
-
-routing correctness: PASS
-strict comparator: PASS
-deep equality: PASS
-fallback safety: PASS
-cancellation: PASS
-health truth: PASS
-usage truth: PASS
-no cloud: PASS
-
-## 21. Coding evaluation
-
-run 1: 30/30
-run 2: 30/30
-
-## 22. Full verification
-
-npm ci: PASS
 typecheck: PASS
-lint: PASS
 npm test: PASS
 build: PASS
 git diff --check: PASS
 IDE run 1: PASS
 IDE run 2: PASS
-IDE deep equality: PASS
 extension smoke: PASS
-coding eval 1: PASS
-coding eval 2: PASS
 
-## 23. Model/network hygiene
+## 10. Model/network hygiene
 
 GGUF: 0
 Safetensors: 0
@@ -231,41 +95,25 @@ downloads: 0
 real inference: 0
 cloud calls: 0
 paid calls: 0
-activation network calls: 0
 
-## 24. Documentation
+## 11. Documentation
 
 ADR-017: up to date
 PLAN: up to date
-ARCHITECTURE: up to date
-DECISIONS: up to date
-SCRATCHPAD: up to date
 FINAL_REPORT Sprint: 3A
+implementation SHA recorded: a8963ec78734ee845bae9f405e509ef6853d4ac4
 
-## 25. Git checkpoint
+## 12. Git checkpoint
 
-branch: main
-implementation SHA: 51b81fcfc73ad52971ca39ce09cb0d4a486250e3
+implementation SHA: a8963ec78734ee845bae9f405e509ef6853d4ac4
 final HEAD: finalized in subsequent docs commit
-commits: 1
 worktree: clean
 git fsck: passed
 
-## 26. Remaining limitations
-
-- minimal command + OutputChannel UX
-- no sidebar/chat UI
-- dirty editor buffer is not virtual filesystem overlay
-- no diff UX
-- no terminal UX
-- no autocomplete
-- mocked vscode host rather than Electron if documented
-- real model benchmark deferred
-
-## 27. Sprint status
+## 13. Sprint status
 
 PASS
 
-## 28. Exact next sprint
+## 14. Exact next sprint
 
 SPRINT 3B — CHAT UX
