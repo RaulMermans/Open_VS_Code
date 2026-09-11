@@ -139,6 +139,14 @@ export class AgentSessionBridge {
       }
       
       await this.host.showOutput(`Task Finished: ${runnerResult.status}`);
+    } catch (e: any) {
+      // T-1612: observe cancellation from actual core/bridge result, not inferred from signal alone.
+      // AbortError thrown by the provider when signal fires → emit observable CANCELLED terminal result.
+      if (e?.name === "AbortError" || signal.aborted) {
+        await this.host.showOutput("Task Finished: CANCELLED");
+      } else {
+        throw e;
+      }
     } finally {
       if (runtime) {
         await runtime.cleanup();

@@ -78,36 +78,39 @@ describe("VS Code Extension Smoke Test", () => {
     ext.deactivate();
   });
   
-  test("explicit ASK invokes bridge and cleans up", async () => {
+  test("explicit ASK invokes bridge (fake stub) and cleans up", async () => {
     const ext = require("../src/extension.ts");
     const context = { subscriptions: [] as any[] };
     ext.activate(context);
     
     let bridgeCalled = false;
     let bridgeMode = "";
-    let providerCalls = 0;
+    // T-1621: this is bridgeCalls NOT providerCalls.
+    // The bridge injected here is a fake stub — no real model provider is invoked.
+    let bridgeCalls = 0;
     
     ext._testSeam.bridgeFactory = (options: any) => {
        return {
           runTask: async (instruction: string, mode: string, signal: AbortSignal) => {
              bridgeCalled = true;
              bridgeMode = mode;
-             providerCalls++;
+             bridgeCalls++;
           }
        };
     };
     
     const askCommand = mockVscode.commands.registered['open-vs-code.ask'];
     
-    // Activation safety: 0 calls
-    assert.strictEqual(bridgeCalled, false);
+    // T-1623: activation safety — 0 bridge calls before any explicit user command
+    assert.strictEqual(bridgeCalled, false, "No bridge invocations at activation");
     
     await askCommand();
     
     assert.strictEqual(bridgeCalled, true, "Bridge runTask should be called");
     assert.strictEqual(bridgeMode, "ASK", "Should be ASK mode");
-    assert.strictEqual(providerCalls, 1, "Provider calls = 1");
-    assert.strictEqual(ext._testSeam.activeBridge, null, "Active session cleared");
+    // T-1621: bridge calls = 1 (fake bridge stub, not real model provider)
+    assert.strictEqual(bridgeCalls, 1, "Bridge stub calls = 1");
+    assert.strictEqual(ext._testSeam.activeBridge, null, "Active session cleared after task completes");
     
     ext._testSeam.bridgeFactory = null;
   });
