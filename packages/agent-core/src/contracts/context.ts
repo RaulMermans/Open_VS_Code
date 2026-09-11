@@ -31,3 +31,8 @@ export interface CompiledContext {
   readonly budget: ContextBudget
   readonly omittedItemIds: readonly string[]
 }
+
+export interface ConversationTurn {
+  readonly role: "user" | "assistant"
+  readonly content: string
+}

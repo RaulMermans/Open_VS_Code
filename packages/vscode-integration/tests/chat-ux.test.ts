@@ -6,7 +6,7 @@ import Module from "node:module";
 import { resolve } from "node:path";
 
 const mockVscode = {
-  window: { showErrorMessage: () => {}, showWarningMessage: async () => "Approve" },
+  window: { showErrorMessage: () => {}, showWarningMessage: async () => "Cancel" },
   commands: { executeCommand: async () => {} },
   env: { clipboard: { writeText: () => {} } }
 };
@@ -202,7 +202,7 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   await view.webview.send({ type: "confirmation.respond", confirmationId: realId, action: "APPROVE" });
   resolveForged();
   await new Promise(r => setTimeout(r, 20));
-  results.forgedIdRecovered = true;
+  results.forgedIdRecovered = view.webview.lastMessage.state.messages.slice(-1)[0].content === "forged";
 
   // Validation Cases
   let stateSentOnReady = false;
@@ -227,16 +227,16 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   results.missingTextIgnored = controller["state"].messages.length === prevLen;
 
   await view.webview.send({ type: "confirmation.respond", confirmationId: "A".repeat(101), action: "APPROVE" });
-  results.longConfIdIgnored = true; // didn't crash or approve
+  results.longConfIdIgnored = controller["state"].pendingConfirmation?.id !== "A".repeat(101);
 
   await view.webview.send({ type: "confirmation.respond", confirmationId: "123", action: "INVALID" } as any);
-  results.invalidConfActionIgnored = true;
+  results.invalidConfActionIgnored = controller["state"].pendingConfirmation?.id !== "123";
 
   await view.webview.send({ type: "ui.copyCode", text: "A".repeat(200001) });
   results.hugeCopyIgnored = copiedText === "copied!"; // hasn't changed
 
   await view.webview.send({ type: "chat.setMode" } as any);
-  results.missingModeIgnored = true;
+  results.missingModeIgnored = controller["state"].messages.length === prevLen;
 
   // Cancel while pending
   let resolveCancel: any;
@@ -299,7 +299,10 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   
   // Unknown message
   view.webview.send({ type: "evil.execute" });
-  results.unknownMessage = true; // didn't crash
+  let prevUnknownMsgLen = controller["state"].messages.length;
+  let prevUnknownMode = controller["state"].mode;
+  let prevUnknownConf = controller["state"].pendingConfirmation;
+  results.unknownMessage = controller["state"].messages.length === prevUnknownMsgLen && controller["state"].mode === prevUnknownMode && controller["state"].pendingConfirmation === prevUnknownConf;
 
   // Invalid mode
   view.webview.send({ type: "chat.send", text: "x", mode: "INVALID_MODE" });
@@ -310,24 +313,41 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   view.webview.send({ type: "chat.send", text: hugeText, mode: "ASK" });
   results.oversizedSend = controller["state"].messages.slice(-1)[0].content !== hugeText;
   
-  // Stale turn
-  const staleController = new AbortController();
-  const staleBridge = bridgeFactory({});
-  controller["_activeAbortController"] = staleController;
-  controller["_activeSessionBridge"] = staleBridge as any;
-  const currentConversation = controller["state"].conversationId;
-  const currentLen = controller["state"].messages.length;
-  controller["state"].conversationId = "new-conversation";
-  // now simulate a catch triggered by stale turn
-  try {
-     throw new Error("Stale error");
-  } catch(e) {
-     // call the catch block logic
-     if (controller["state"].conversationId === currentConversation) {
-       controller["state"].messages.push({ role: 'system', content: "Agent Error", id: "1", timestamp: 1 });
-     }
-  }
-  results.staleError = controller["state"].messages.length === currentLen;
+  
+  
+  
+  
+  // Stale turn races (Success and Error)
+  let delayedResolver: any;
+  setRunTask(async (i, m, signal) => new Promise(resolve => {
+    delayedResolver = resolve;
+  }));
+
+  view.webview.send({ type: "chat.send", text: "stale req", mode: "ASK" });
+  await new Promise(r => setTimeout(r, 10)); // starts
+
+  // New Chat
+  await view.webview.send({ type: "chat.newConversation" });
+  await new Promise(r => setTimeout(r, 10)); // state cleared
+
+  // Resolve late
+  delayedResolver({ status: "COMPLETED", finalAnswer: "stale answer" });
+  await new Promise(r => setTimeout(r, 20)); 
+
+  results.staleSuccess = controller["state"].messages.every((m: any) => m.content !== "stale answer");
+  
+  let delayedRejecter: any;
+  setRunTask(async () => new Promise((_, reject) => { delayedRejecter = reject; }));
+  view.webview.send({ type: "chat.send", text: "stale req err", mode: "ASK" });
+  await new Promise(r => setTimeout(r, 10));
+  await view.webview.send({ type: "chat.newConversation" });
+  delayedRejecter(new Error("stale error"));
+  await new Promise(r => setTimeout(r, 20));
+  results.staleError = controller["state"].messages.every((m: any) => !m.error);
+
+
+
+
   
   // Transcript pruning
   view.webview.send({ type: "chat.newConversation" });

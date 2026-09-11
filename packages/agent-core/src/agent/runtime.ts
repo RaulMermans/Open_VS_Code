@@ -22,7 +22,7 @@ import { calculateBudget, estimateTokens } from "../context/budget.ts";
 import type { AgentMode, AgentEvent } from "../contracts/agent.ts";
 import type { ModelProvider } from "../contracts/model.ts";
 
-import type { ConversationTurn } from "../context/compiler.ts";
+import type { ConversationTurn } from "../contracts/context.ts";
 
 export interface CreateAgentRuntimeOptions {
   workspaceRoot: string;

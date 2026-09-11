@@ -1,4 +1,4 @@
-import type { CompiledContext, ContextBudget, ContextItem } from "../contracts/context.ts"
+import type { CompiledContext, ContextBudget, ContextItem, ConversationTurn } from "../contracts/context.ts"
 import { estimateTokens, fitContext } from "./budget.ts"
 import type { LoadedSkill } from "./skills.ts"
 import type { MemorySelection } from "./memory.ts"
@@ -10,10 +10,6 @@ export interface ProjectInstruction {
   readonly content: string
 }
 
-export interface ConversationTurn {
-  readonly role: "user" | "assistant"
-  readonly content: string
-}
 
 export interface ContextCompilerInput {
   readonly task: string

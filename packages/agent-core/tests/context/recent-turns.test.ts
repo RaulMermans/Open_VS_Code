@@ -44,7 +44,7 @@ test("ContextCompiler - Recent Turns E2E", async (t) => {
     const turns: ConversationTurn[] = Array.from({length: 50}, () => ({ role: "user", content: "A".repeat(1000) }));
     const ctx = compileContext({ 
       ...baseInput, 
-      memory: { projectFacts: [{ source: "test", content: "fact" }], activeTasks: [], decisions: [], sessionSummaries: [] }, 
+      memory: { projectFacts: [{ source: "test", content: "fact" }], activeTasks: [], decisions: [], sessionSummaries: [] } as any, 
       recentTurns: turns 
     });
     assert.ok(ctx.items.some(i => i.id === "memory:fact:test"));
@@ -70,7 +70,7 @@ test("ContextCompiler - Recent Turns E2E", async (t) => {
     const ctx = compileContext({ ...baseInput, budget: { contextWindow: 200, reservedOutput: 10, reservedToolHistory: 10, availableContext: 180 }, recentTurns: turns });
     const retained = ctx.items.filter(i => i.id.startsWith("recent-turn-group"));
     assert.strictEqual(retained.length, 1);
-    assert.ok(retained[0].content.includes("newest"));
+    assert.ok(retained[0]!.content.includes("newest"));
   });
 
   await t.test("10. current task always retained", () => {

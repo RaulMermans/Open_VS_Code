@@ -15,7 +15,7 @@ const mockVscode = {
       const progress = { report: () => {} };
       return task(progress, token);
     },
-    onDidChangeActiveTextEditor: () => ({ dispose: () => {} }),
+    onDidChangeActiveTextEditor: () => ({ dispose: () => {} }), onDidChangeTextEditorSelection: () => ({ dispose: () => {} }),
     registerWebviewViewProvider: () => ({ dispose: () => {} })
   },
   workspace: {
@@ -25,7 +25,7 @@ const mockVscode = {
     asRelativePath: () => "f.ts",
     onDidChangeWorkspaceFolders: () => ({ dispose: () => {} })
   },
-  languages: {
+  languages: { onDidChangeDiagnostics: () => ({ dispose: () => {} }),
     getDiagnostics: () => []
   },
   commands: {

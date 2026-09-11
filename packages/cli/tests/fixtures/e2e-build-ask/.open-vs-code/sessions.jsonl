@@ -1,2 +1,0 @@
-{"sessionId":"session-1788712591605","startedAt":"2026-09-06T16:36:31.599Z","completedAt":"2026-09-06T16:36:31.605Z","mode":"BUILD","task":"Change config to 2","outcome":"COMPLETED","changedFiles":["file.ts"],"decisions":[],"unresolvedIssues":[]}
-{"sessionId":"session-1788712591619","startedAt":"2026-09-06T16:36:31.610Z","completedAt":"2026-09-06T16:36:31.619Z","mode":"ASK","task":"How does the config behavior work now?","outcome":"COMPLETED","changedFiles":[],"decisions":[],"unresolvedIssues":[]}

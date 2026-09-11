@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { AgentEvent, AgentResult, calculateBudget, estimateTokens } from '@open-vs-code/agent-core';
+import { AgentEvent, AgentResult, calculateBudget, estimateTokens, ConversationTurn } from '@open-vs-code/agent-core';
 import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, ChatContextChip, ConfirmationRequestPayload, parseWebviewMessage } from './chat-protocol.js';
 
 export class ChatController {
@@ -148,7 +148,7 @@ export class ChatController {
     };
     this.state.messages.push(userMsg);
     
-    const recentTurns: { role: "user" | "assistant", content: string }[] = [];
+    const recentTurns: ConversationTurn[] = [];
     
     // We collect them backwards to get the most recent, then reverse them
     for (let i = this.state.messages.length - 2; i >= 0; i--) {

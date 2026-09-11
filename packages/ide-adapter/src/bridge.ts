@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -21,7 +21,7 @@ export class AgentSessionBridge {
     this.providerOverride = options.providerOverride;
   }
   
-  public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly any[]): Promise<AgentResult> {
+  public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly ConversationTurn[]): Promise<AgentResult> {
     if (this.activeSession) {
       await this.host.showError("A session is already active.");
       return Promise.reject(new Error("A session is already active."));
@@ -35,7 +35,7 @@ export class AgentSessionBridge {
     }
   }
   
-  private async _run(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly any[]): Promise<AgentResult> {
+  private async _run(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly ConversationTurn[]): Promise<AgentResult> {
     await this.host.showOutput(`Starting ${mode} task: ${instruction}`);
     
     // Check trust
