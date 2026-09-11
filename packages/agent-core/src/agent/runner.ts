@@ -11,7 +11,7 @@ import type {
   AgentTask,
   AgentToolCallRecord,
 } from "../contracts/agent.ts"
-import type { CompiledContext, ContextBudget, ContextItem } from "../contracts/context.ts"
+import type { CompiledContext, ContextBudget, ContextItem, ConversationTurn } from "../contracts/context.ts"
 import type { ModelProvider, ModelRequest } from "../contracts/model.ts"
 import type { ToolCall, ToolPermission } from "../contracts/tools.ts"
 import { classifyPermission } from "../tools/permissions.ts"
@@ -31,7 +31,7 @@ export interface AgentRunnerInput {
   readonly projectInstructions: readonly ProjectInstruction[]
   readonly selectedSkills?: readonly LoadedSkill[]
   readonly codeContext?: readonly ContextItem[]
-  readonly recentTurns?: readonly any[]
+  readonly recentTurns?: readonly ConversationTurn[]
   readonly signal?: AbortSignal
   readonly taskProfile?: TaskProfile
 }

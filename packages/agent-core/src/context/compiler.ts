@@ -149,7 +149,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       }
       required.push({
         id: `recent-turn-group:${i}`,
-        source: { kind: "historical-session" as any },
+        source: { kind: "historical-session" },
         content: content.trim(),
         priority: 749 - i,
         estimatedTokens: estimateTokens(content.trim()),
