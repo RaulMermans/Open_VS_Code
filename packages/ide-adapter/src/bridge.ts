@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -21,28 +21,28 @@ export class AgentSessionBridge {
     this.providerOverride = options.providerOverride;
   }
   
-  public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal): Promise<void> {
+  public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void): Promise<AgentResult> {
     if (this.activeSession) {
       await this.host.showError("A session is already active.");
-      return;
+      return Promise.reject(new Error("A session is already active."));
     }
     
     this.activeSession = true;
     try {
-      await this._run(instruction, mode, signal);
+      return await this._run(instruction, mode, signal, onEvent);
     } finally {
       this.activeSession = false;
     }
   }
   
-  private async _run(instruction: string, mode: AgentMode, signal: AbortSignal) {
+  private async _run(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void): Promise<AgentResult> {
     await this.host.showOutput(`Starting ${mode} task: ${instruction}`);
     
     // Check trust
     const isTrusted = await this.host.isWorkspaceTrusted();
     if (!isTrusted && (mode === "BUILD" || mode === "DEBUG")) {
       await this.host.showError("Cannot run BUILD or DEBUG in an untrusted workspace.");
-      return;
+      return { status: "FAILED", failureReason: "INTERNAL_ERROR", turns: 0, finalState: { status: "FAILED", events: [] }, events: [], contextDiagnostics: [], toolCalls: [] };
     }
     
     // Capture IDE context
@@ -64,7 +64,10 @@ export class AgentSessionBridge {
       }
     }
     
-    const sink = (ev: AgentEvent) => this.handleEvent(ev);
+    const sink = (ev: AgentEvent) => {
+      this.handleEvent(ev);
+      if (onEvent) onEvent(ev);
+    };
 
     let runtime: any;
     try {
@@ -137,13 +140,14 @@ export class AgentSessionBridge {
           runnerResult = await runner.resume("REJECT");
         }
       }
-      
       await this.host.showOutput(`Task Finished: ${runnerResult.status}`);
+      return runnerResult as AgentResult;
     } catch (e: any) {
       // T-1612: observe cancellation from actual core/bridge result, not inferred from signal alone.
       // AbortError thrown by the provider when signal fires → emit observable CANCELLED terminal result.
       if (e?.name === "AbortError" || signal.aborted) {
         await this.host.showOutput("Task Finished: CANCELLED");
+        return { status: "CANCELLED", turns: 0, finalState: { status: "CANCELLED", events: [] }, events: [], contextDiagnostics: [], toolCalls: [] } as AgentResult;
       } else {
         throw e;
       }

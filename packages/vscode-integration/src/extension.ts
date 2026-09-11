@@ -112,6 +112,9 @@ class VSCodeIdeHost implements IdeHost {
   }
 
   async requestConfirmation(prompt: string, payload: any): Promise<"APPROVE" | "REJECT"> {
+    if (chatController) {
+      return chatController.requestConfirmation(prompt, payload);
+    }
     const res = await vscode.window.showWarningMessage(prompt, { modal: true }, "Approve", "Reject");
     return res === "Approve" ? "APPROVE" : "REJECT";
   }
@@ -143,91 +146,50 @@ class VSCodeIdeHost implements IdeHost {
   }
 }
 
+import { ChatController } from './chat-controller.js';
+import { ChatViewProvider } from './chat-view-provider.js';
+
 let activeBridge: AgentSessionBridge | null = null;
 let currentAbortController: AbortController | null = null;
 let host: VSCodeIdeHost | null = null;
+let chatController: ChatController | null = null;
 
 export const _testSeam = {
   get activeBridge() { return activeBridge; },
-  bridgeFactory: null as any
+  bridgeFactory: null as any,
+  get chatController() { return chatController; }
 };
 
 export function activate(context: vscode.ExtensionContext) {
   host = new VSCodeIdeHost();
   
+  chatController = new ChatController(host, (options) => {
+    if (_testSeam.bridgeFactory) {
+      activeBridge = _testSeam.bridgeFactory(options);
+    } else {
+      activeBridge = new AgentSessionBridge(options);
+    }
+    return activeBridge!;
+  });
+
+  const provider = new ChatViewProvider(context.extensionUri, chatController);
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider)
+  );
+  
+  const updateContext = async () => {
+    if (chatController) {
+      chatController.refreshContext(await host!.getSnapshot());
+    }
+  };
+  
+  context.subscriptions.push(host.onWorkspaceChange(updateContext));
+  updateContext(); // Initial context
+  
   const registerAgentCommand = (commandId: string, mode: "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW") => {
     return vscode.commands.registerCommand(commandId, async () => {
-      const folders = vscode.workspace.workspaceFolders;
-      if (!folders || folders.length === 0) {
-        vscode.window.showErrorMessage("Open VS Code Agent requires an open workspace.");
-        return;
-      }
-      
-      const activeEditor = vscode.window.activeTextEditor;
-      
-      const snapshot: IdeContextSnapshot = {
-        workspaceRoots: folders.map(f => ({ uri: f.uri.toString(), fsPath: f.uri.fsPath, name: f.name })),
-        activeDocument: activeEditor ? {
-          uri: activeEditor.document.uri.toString(),
-          workspaceRelativePath: vscode.workspace.asRelativePath(activeEditor.document.uri),
-          languageId: activeEditor.document.languageId,
-          version: activeEditor.document.version,
-          isDirty: activeEditor.document.isDirty
-        } : null,
-        selection: null,
-        visibleDocuments: [],
-        diagnostics: [],
-        isTrusted: vscode.workspace.isTrusted
-      };
-      
-      const resolvedRoot = resolveWorkspaceRoot(snapshot);
-      if (!resolvedRoot) {
-          vscode.window.showErrorMessage("Could not resolve a workspace root.");
-          return;
-      }
-      
-      const instruction = await vscode.window.showInputBox({ prompt: `Enter instruction for ${mode}` });
-      if (!instruction) return;
-      
-      if (currentAbortController) {
-        const res = await vscode.window.showWarningMessage("A session is already running.", "Cancel Current", "Ignore");
-        if (res === "Cancel Current") {
-          currentAbortController.abort();
-        } else {
-          return;
-        }
-      }
-      
-      currentAbortController = new AbortController();
-      const signal = currentAbortController.signal;
-      
-      if (_testSeam.bridgeFactory) {
-        activeBridge = _testSeam.bridgeFactory({ host: host!, workspaceRoot: resolvedRoot });
-      } else {
-        activeBridge = new AgentSessionBridge({
-          host: host!,
-          workspaceRoot: resolvedRoot
-        });
-      }
-      
-      vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Agent (${mode}) running...`,
-        cancellable: true
-      }, async (progress, token) => {
-        token.onCancellationRequested(() => {
-          if (currentAbortController) currentAbortController.abort();
-        });
-        
-        try {
-          await activeBridge!.runTask(instruction, mode, signal);
-        } catch (e: any) {
-          vscode.window.showErrorMessage(`Agent Error: ${e.message}`);
-        } finally {
-          currentAbortController = null;
-          activeBridge = null;
-        }
-      });
+      await chatController?.handleCommand(mode);
     });
   };
 
@@ -245,6 +207,10 @@ export function deactivate() {
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
+  }
+  if (chatController) {
+    chatController.cancelTurn();
+    chatController = null;
   }
   if (host) {
     host.dispose();

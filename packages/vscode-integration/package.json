@@ -16,6 +16,15 @@
     "onCommand:open-vs-code.review"
   ],
   "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "open-vs-code.chat",
+          "name": "Open VS Code Chat"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "open-vs-code.ask",
@@ -42,7 +51,7 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/extension.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@open-vs-code/agent-core": "*",

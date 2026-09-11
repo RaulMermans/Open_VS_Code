@@ -15,7 +15,8 @@ const mockVscode = {
       const progress = { report: () => {} };
       return task(progress, token);
     },
-    onDidChangeActiveTextEditor: () => ({ dispose: () => {} })
+    onDidChangeActiveTextEditor: () => ({ dispose: () => {} }),
+    registerWebviewViewProvider: () => ({ dispose: () => {} })
   },
   workspace: {
     workspaceFolders: [{ uri: { fsPath: "/test/workspace", toString: () => "file:///test/workspace" }, name: "workspace" }],
@@ -32,6 +33,7 @@ const mockVscode = {
       mockVscode.commands.registered[id] = callback;
       return { dispose: () => {} };
     },
+    executeCommand: async () => {},
     registered: {} as any
   },
   ProgressLocation: {
@@ -78,15 +80,13 @@ describe("VS Code Extension Smoke Test", () => {
     ext.deactivate();
   });
   
-  test("explicit ASK invokes bridge (fake stub) and cleans up", async () => {
+  test("explicit ASK focuses chat and sets mode without model call, send triggers bridge", async () => {
     const ext = require("../src/extension.ts");
     const context = { subscriptions: [] as any[] };
     ext.activate(context);
     
     let bridgeCalled = false;
     let bridgeMode = "";
-    // T-1621: this is bridgeCalls NOT providerCalls.
-    // The bridge injected here is a fake stub — no real model provider is invoked.
     let bridgeCalls = 0;
     
     ext._testSeam.bridgeFactory = (options: any) => {
@@ -95,22 +95,27 @@ describe("VS Code Extension Smoke Test", () => {
              bridgeCalled = true;
              bridgeMode = mode;
              bridgeCalls++;
+             return { status: "COMPLETED", turns: 1, finalState: { status: "COMPLETED", events: [] }, events: [], contextDiagnostics: [], toolCalls: [] };
           }
        };
     };
     
     const askCommand = mockVscode.commands.registered['open-vs-code.ask'];
     
-    // T-1623: activation safety — 0 bridge calls before any explicit user command
     assert.strictEqual(bridgeCalled, false, "No bridge invocations at activation");
     
     await askCommand();
     
+    assert.strictEqual(bridgeCalled, false, "Command should only reveal UI, not invoke bridge");
+    
+    // Simulate webview send
+    const chatController = ext._testSeam.chatController;
+    await chatController.handleWebviewMessage({ type: 'chat.send', text: 'test', mode: 'ASK' });
+    
     assert.strictEqual(bridgeCalled, true, "Bridge runTask should be called");
     assert.strictEqual(bridgeMode, "ASK", "Should be ASK mode");
-    // T-1621: bridge calls = 1 (fake bridge stub, not real model provider)
     assert.strictEqual(bridgeCalls, 1, "Bridge stub calls = 1");
-    assert.strictEqual(ext._testSeam.activeBridge, null, "Active session cleared after task completes");
+    assert.strictEqual(chatController['_activeSessionBridge'], undefined, "Active session cleared after task completes");
     
     ext._testSeam.bridgeFactory = null;
   });
@@ -119,30 +124,27 @@ describe("VS Code Extension Smoke Test", () => {
     const ext = require("../src/extension.ts");
     let aborted = false;
     
-    // Setup a fake active request
     ext.activate({ subscriptions: [] });
-    const askCommand = mockVscode.commands.registered['open-vs-code.ask'];
     
-    // Intercept bridge to just wait and check abort
     ext._testSeam.bridgeFactory = (options: any) => {
        return {
           runTask: async (instruction: string, mode: string, signal: AbortSignal) => {
              signal.addEventListener("abort", () => { aborted = true; });
              await new Promise(r => setTimeout(r, 100)); // wait a bit
+             return { status: "CANCELLED", turns: 0, finalState: { status: "CANCELLED", events: [] }, events: [], contextDiagnostics: [], toolCalls: [] };
           }
        };
     };
     
-    // don't await, let it run in background
-    askCommand();
+    const chatController = ext._testSeam.chatController;
+    chatController.handleWebviewMessage({ type: 'chat.send', text: 'test', mode: 'ASK' });
     
-    // give it a tick to start
     await new Promise(r => setImmediate(r));
     
     ext.deactivate();
     
     assert.strictEqual(aborted, true, "Active request should be aborted on deactivate");
-    assert.strictEqual(ext._testSeam.activeBridge, null, "Bridge reference should be cleared");
+    assert.strictEqual(ext._testSeam.chatController, null, "Chat controller reference should be cleared");
     
     ext._testSeam.bridgeFactory = null;
   });
