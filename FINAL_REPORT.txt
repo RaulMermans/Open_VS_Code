@@ -52,12 +52,14 @@ reject confirmation count: 1
 reject mutation count: 0
 reject file changed: no
 
-## 7. Approval binding
+## 7. Approval contract
 
-wrong approval ID accepted: no
-wrong-ID mutation count: 0
-cross-session approval accepted: no
-cross-session mutation count: 0
+canonical approval binding: AgentRunner internal (resume takes APPROVE|REJECT only, no external ID)
+wrong-ID externally expressible: no
+wrong-ID proof: structural — no external approval ID API exists
+cross-session externally expressible: no
+cross-session proof: structural — session isolation enforced by AgentRunner instance boundary
+unsupported claims remaining: none
 
 ## 8. REVIEW / DEBUG
 
@@ -109,9 +111,12 @@ orphan resources: 0
 
 ## 13. Token stress
 
-raw selection tokens: 80000
-selection budget: 1625
-retained selection tokens: 1625
+raw selection characters: 400000
+raw selection estimated tokens: 100000 (= ceil(400000/4))
+selection budget in test measurement (budget=128000): 32000 (= floor(128000 * 0.25))
+selection budget in production bridge (budget=6500): 1625 (= floor(6500 * 0.25))
+retained selection characters: 112016
+retained selection estimated tokens: 28004 (= ceil(112016/4))
 visible docs input: 50
 visible docs retained: 20
 diagnostics input: 150
@@ -127,7 +132,8 @@ commands registered: 5
 duplicates: 0
 ASK invoked: yes
 bridge reached: yes
-provider calls: 1
+bridge calls: 1 (fake bridge stub, no real provider)
+real provider used: no (fake bridge stub)
 completed output: yes
 activation model calls: 0
 editor-change model calls: 0
@@ -239,7 +245,7 @@ FINAL_REPORT Sprint: 3A
 ## 25. Git checkpoint
 
 branch: main
-implementation SHA: pending commit
+implementation SHA: 51b81fcfc73ad52971ca39ce09cb0d4a486250e3
 final HEAD: finalized in subsequent docs commit
 commits: 1
 worktree: clean
