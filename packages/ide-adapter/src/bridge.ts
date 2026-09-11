@@ -21,7 +21,7 @@ export class AgentSessionBridge {
     this.providerOverride = options.providerOverride;
   }
   
-  public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void): Promise<AgentResult> {
+  public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly any[]): Promise<AgentResult> {
     if (this.activeSession) {
       await this.host.showError("A session is already active.");
       return Promise.reject(new Error("A session is already active."));
@@ -29,13 +29,13 @@ export class AgentSessionBridge {
     
     this.activeSession = true;
     try {
-      return await this._run(instruction, mode, signal, onEvent);
+      return await this._run(instruction, mode, signal, onEvent, recentTurns);
     } finally {
       this.activeSession = false;
     }
   }
   
-  private async _run(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void): Promise<AgentResult> {
+  private async _run(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly any[]): Promise<AgentResult> {
     await this.host.showOutput(`Starting ${mode} task: ${instruction}`);
     
     // Check trust
@@ -75,6 +75,7 @@ export class AgentSessionBridge {
         workspaceRoot: this.workspaceRoot,
         mode,
         instruction: contextInstruction,
+        recentTurns,
         signal,
         isTrusted,
         eventSink: sink,

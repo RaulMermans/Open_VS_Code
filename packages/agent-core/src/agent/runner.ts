@@ -31,6 +31,7 @@ export interface AgentRunnerInput {
   readonly projectInstructions: readonly ProjectInstruction[]
   readonly selectedSkills?: readonly LoadedSkill[]
   readonly codeContext?: readonly ContextItem[]
+  readonly recentTurns?: readonly any[]
   readonly signal?: AbortSignal
   readonly taskProfile?: TaskProfile
 }
@@ -276,6 +277,7 @@ export class AgentRunner {
           projectInstructions: [guidanceInstruction, ...session.input.projectInstructions],
           ...(session.input.selectedSkills ? { selectedSkills: session.input.selectedSkills } : {}),
           ...(session.input.codeContext ? { codeContext: session.input.codeContext } : {}),
+          ...(session.input.recentTurns ? { recentTurns: session.input.recentTurns } : {}),
           observations: session.observations,
           budget: session.input.contextBudget,
         })

@@ -190,9 +190,11 @@ describe("Chat UX Matrix", () => {
     setupTest();
     
     let capturedInstruction = "";
+    let capturedRecentTurns: any[] = [];
     bridgeFactory = (options: any) => ({
-      runTask: async (instruction: string, mode: string) => {
+      runTask: async (instruction: string, mode: string, signal: AbortSignal, onEvent: any, recentTurns?: any[]) => {
         capturedInstruction = instruction;
+        if (recentTurns) capturedRecentTurns = [...recentTurns];
         return { status: 'COMPLETED', turns: 1, finalState: { status: 'COMPLETED', events: [] }, events: [], contextDiagnostics: [], toolCalls: [], finalAnswer: "done" };
       }
     });
@@ -202,8 +204,8 @@ describe("Chat UX Matrix", () => {
     await view.webview.send({ type: "chat.send", text: "first", mode: "ASK" });
     await view.webview.send({ type: "chat.send", text: "second", mode: "ASK" });
     
-    assert.ok(capturedInstruction.includes("[Recent Conversation Context]"));
-    assert.ok(capturedInstruction.includes("first"));
+    assert.strictEqual(capturedInstruction, "second");
+    assert.ok(capturedRecentTurns.some(t => t.role === "user" && t.content === "first"));
   });
 
   test("20 BUILD approve", async () => {

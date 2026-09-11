@@ -44,9 +44,8 @@ export type WebviewToHostMessage =
   | { type: "chat.cancel" }
   | { type: "chat.setMode"; mode: ChatMode }
   | { type: "chat.newConversation" }
-  | { type: "confirmation.respond"; action: "APPROVE" | "REJECT" }
-  | { type: "ui.copyCode"; text: string }
-  | { type: "ui.openFile"; path: string };
+  | { type: "confirmation.respond"; confirmationId: string; action: "APPROVE" | "REJECT" }
+  | { type: "ui.copyCode"; text: string };
 
 // Host -> Webview
 export type HostToWebviewMessage =

@@ -234,26 +234,50 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             });
             
             // Render confirmation
+            // Render confirmation
             confirmationContainer.innerHTML = '';
             if (state.pendingConfirmation) {
                 const conf = state.pendingConfirmation;
                 const div = document.createElement('div');
                 div.className = 'confirmation-card';
-                div.innerHTML = \`
-                    <div style="font-weight: bold; margin-bottom: 5px;">\${conf.riskLabel || 'Approval Required'}</div>
-                    <div style="font-size: 0.9em; margin-bottom: 10px;">\${conf.summary}</div>
-                    <div class="confirmation-actions">
-                        <button class="btn-reject" id="btn-reject">Reject</button>
-                        <button class="btn-approve" id="btn-approve">Approve</button>
-                    </div>
-                \`;
+                
+                const title = document.createElement('div');
+                title.style.fontWeight = 'bold';
+                title.style.marginBottom = '5px';
+                title.textContent = conf.riskLabel || 'Approval Required';
+                
+                const summary = document.createElement('div');
+                summary.style.fontSize = '0.9em';
+                summary.style.marginBottom = '10px';
+                summary.textContent = conf.summary;
+                
+                const actions = document.createElement('div');
+                actions.className = 'confirmation-actions';
+                
+                const btnReject = document.createElement('button');
+                btnReject.className = 'btn-reject';
+                btnReject.id = 'btn-reject';
+                btnReject.textContent = 'Reject';
+                
+                const btnApprove = document.createElement('button');
+                btnApprove.className = 'btn-approve';
+                btnApprove.id = 'btn-approve';
+                btnApprove.textContent = 'Approve';
+                
+                actions.appendChild(btnReject);
+                actions.appendChild(btnApprove);
+                
+                div.appendChild(title);
+                div.appendChild(summary);
+                div.appendChild(actions);
+
                 confirmationContainer.appendChild(div);
                 
                 document.getElementById('btn-approve').addEventListener('click', () => {
-                    vscode.postMessage({ type: 'confirmation.respond', action: 'APPROVE' });
+                    vscode.postMessage({ type: 'confirmation.respond', confirmationId: conf.id, action: 'APPROVE' });
                 });
                 document.getElementById('btn-reject').addEventListener('click', () => {
-                    vscode.postMessage({ type: 'confirmation.respond', action: 'REJECT' });
+                    vscode.postMessage({ type: 'confirmation.respond', confirmationId: conf.id, action: 'REJECT' });
                 });
             }
             

@@ -10,6 +10,11 @@ export interface ProjectInstruction {
   readonly content: string
 }
 
+export interface ConversationTurn {
+  readonly role: "user" | "assistant"
+  readonly content: string
+}
+
 export interface ContextCompilerInput {
   readonly task: string
   readonly projectInstructions: readonly ProjectInstruction[]
@@ -17,6 +22,7 @@ export interface ContextCompilerInput {
   readonly selectedSkills?: readonly LoadedSkill[]
   readonly codeContext?: readonly ContextItem[]
   readonly observations?: readonly ToolObservation[]
+  readonly recentTurns?: readonly ConversationTurn[]
   readonly maxObservations?: number
   readonly budget: ContextBudget
 }
@@ -121,6 +127,22 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       })
     }
   }
+  
+  if (input.recentTurns && input.recentTurns.length > 0) {
+    let recentTurnsContent = '';
+    for (const turn of input.recentTurns) {
+      recentTurnsContent += `[Turn ${turn.role}]: ${turn.content}\n\n`;
+    }
+    required.push({
+      id: `recent-turns`,
+      source: { kind: "historical-session" },
+      content: recentTurnsContent.trim(),
+      priority: 920,
+      estimatedTokens: estimateTokens(recentTurnsContent),
+      required: true,
+    })
+  }
+
   const observations = recentObservations(input.observations ?? [], input.maxObservations ?? 6).map((observation, index): ContextItem => ({
     id: `observation:${observation.callId}`,
     source: { kind: "observation", ...(observation.provenance.paths[0] ? { path: observation.provenance.paths[0] } : {}) },

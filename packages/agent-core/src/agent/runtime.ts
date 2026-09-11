@@ -22,10 +22,13 @@ import { calculateBudget, estimateTokens } from "../context/budget.ts";
 import type { AgentMode, AgentEvent } from "../contracts/agent.ts";
 import type { ModelProvider } from "../contracts/model.ts";
 
+import type { ConversationTurn } from "../context/compiler.ts";
+
 export interface CreateAgentRuntimeOptions {
   workspaceRoot: string;
   mode: AgentMode;
   instruction: string;
+  recentTurns?: readonly ConversationTurn[];
   signal?: AbortSignal;
   eventSink: (ev: AgentEvent) => void;
   isTrusted: boolean;
@@ -180,6 +183,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     maxTurns: 15,
     contextBudget,
     projectInstructions: [],
+    ...(options.recentTurns ? { recentTurns: options.recentTurns } : {}),
     memory,
     selectedSkills,
     signal: options.signal
