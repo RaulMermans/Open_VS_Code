@@ -129,18 +129,37 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
   }
   
   if (input.recentTurns && input.recentTurns.length > 0) {
-    let recentTurnsContent = '';
+    const groups: ConversationTurn[][] = [];
+    let currentGroup: ConversationTurn[] = [];
     for (const turn of input.recentTurns) {
-      recentTurnsContent += `[Turn ${turn.role}]: ${turn.content}\n\n`;
+      if (turn.role === "user" && currentGroup.length > 0) {
+        groups.push(currentGroup);
+        currentGroup = [];
+      }
+      currentGroup.push(turn);
     }
-    required.push({
-      id: `recent-turns`,
-      source: { kind: "historical-session" },
-      content: recentTurnsContent.trim(),
-      priority: 920,
-      estimatedTokens: estimateTokens(recentTurnsContent),
-      required: true,
-    })
+    if (currentGroup.length > 0) {
+      groups.push(currentGroup);
+    }
+    
+    // Reverse to process newest first, they get the highest priority
+    const reversedGroups = [...groups].reverse();
+    for (let i = 0; i < reversedGroups.length; i++) {
+      const group = reversedGroups[i];
+      if (!group) continue;
+      let content = "";
+      for (const turn of group) {
+        content += `[Turn ${turn.role}]: ${turn.content}\n\n`;
+      }
+      required.push({
+        id: `recent-turn-group:${i}`,
+        source: { kind: "historical-session" as any },
+        content: content.trim(),
+        priority: 749 - i,
+        estimatedTokens: estimateTokens(content.trim()),
+        required: false, // Make it optional
+      });
+    }
   }
 
   const observations = recentObservations(input.observations ?? [], input.maxObservations ?? 6).map((observation, index): ContextItem => ({

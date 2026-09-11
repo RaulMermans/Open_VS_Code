@@ -122,10 +122,14 @@ class VSCodeIdeHost implements IdeHost {
   onWorkspaceChange(listener: () => void): { dispose: () => void; } {
     const d1 = vscode.workspace.onDidChangeWorkspaceFolders(listener);
     const d2 = vscode.window.onDidChangeActiveTextEditor(listener);
+    const d3 = vscode.window.onDidChangeTextEditorSelection(listener);
+    const d4 = vscode.languages.onDidChangeDiagnostics(listener);
     return {
       dispose: () => {
         d1.dispose();
         d2.dispose();
+        d3.dispose();
+        d4.dispose();
       }
     };
   }

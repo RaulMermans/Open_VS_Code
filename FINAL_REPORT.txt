@@ -8,8 +8,8 @@ Status: ✅ COMPLETED
 - Implemented `ChatViewProvider` to render the conversational webview in the IDE sidebar.
 - Implemented `ChatController` to orchestrate interactions between the user view and the existing `AgentSessionBridge`.
 - Refactored `extension.ts` to reveal the view rather than triggering the model blindly, while preserving command compatibility (`open-vs-code.ask`, etc.).
-- Embedded bounded conversation context seamlessly into instructions before passing to `agent-core`'s context compiler to manage strict token limits.
-- Fully typed protocol added in `chat-protocol.ts` for clean host ↔ webview communication.
+- Integrated structured `recentTurns` directly into `ContextCompiler` via `AgentSessionBridge`, giving the core full authority over token priority (Turn Safety).
+- Fully typed protocol added in `chat-protocol.ts` with strict runtime validation (`parseWebviewMessage`) to guard against forged inputs.
 - Confirmation actions (`APPROVE`/`REJECT`) routed into the chat interface for intuitive interactions (resolving T-1620 style prompts).
 - Wrote 35 deterministic E2E Chat UX tests covering empty states, modes, chips, continuity, oversized payloads, cancellations, and confirmations.
 - Strict CSP and DOM security employed within the webview.

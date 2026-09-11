@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { AgentEvent, AgentResult, calculateBudget, estimateTokens } from '@open-vs-code/agent-core';
-import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, ChatContextChip, ConfirmationRequestPayload } from './chat-protocol.js';
+import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, ChatContextChip, ConfirmationRequestPayload, parseWebviewMessage } from './chat-protocol.js';
 
 export class ChatController {
   private state: WebviewState;
@@ -83,10 +83,9 @@ export class ChatController {
     this.sendState();
   }
   
-  private async handleWebviewMessage(message: WebviewToHostMessage) {
-    if (!message || typeof message.type !== 'string') return;
-    
-    const validModes = ['ASK', 'PLAN', 'BUILD', 'DEBUG', 'REVIEW'];
+  private async handleWebviewMessage(rawMessage: any) {
+    const message = parseWebviewMessage(rawMessage);
+    if (!message) return;
     
     switch (message.type) {
       case 'chat.ready':
@@ -94,18 +93,12 @@ export class ChatController {
         break;
       case 'chat.send':
         if (this.state.activeTurn) return;
-        if (!validModes.includes(message.mode)) return;
-        if (!message.text || typeof message.text !== 'string' || message.text.length > 50000) {
-          vscode.window.showErrorMessage("Message is empty or too large.");
-          return;
-        }
         await this.startTurn(message.text, message.mode);
         break;
       case 'chat.cancel':
         this.cancelTurn();
         break;
       case 'chat.setMode':
-        if (!validModes.includes(message.mode)) return;
         this.state.mode = message.mode;
         this.sendState();
         break;
@@ -131,23 +124,17 @@ export class ChatController {
         break;
       case 'confirmation.respond':
         if (this.state.pendingConfirmation && this._confirmationResolver) {
-          const confirmationId = (message as any).confirmationId;
-          const action = (message as any).action;
-          
-          if (confirmationId === this.state.pendingConfirmation.id) {
+          if (message.confirmationId === this.state.pendingConfirmation.id) {
             this.state.pendingConfirmation = undefined;
             this.sendState();
             const resolver = this._confirmationResolver;
             this._confirmationResolver = undefined;
-            resolver(action);
+            resolver(message.action);
           }
         }
         break;
       case 'ui.copyCode':
         vscode.env.clipboard.writeText(message.text);
-        break;
-      default:
-        // Ignore unknown messages
         break;
     }
   }
@@ -161,22 +148,13 @@ export class ChatController {
     };
     this.state.messages.push(userMsg);
     
-    // Bounds conversation token limit: budget is 8000, maybe reserve 1600 (20%) for continuity
-    const maxContinuityTokens = 1600;
     const recentTurns: { role: "user" | "assistant", content: string }[] = [];
-    let currentTokens = 0;
     
     // We collect them backwards to get the most recent, then reverse them
     for (let i = this.state.messages.length - 2; i >= 0; i--) {
       const msg = this.state.messages[i];
       if (msg.role !== 'user' && msg.role !== 'assistant') continue;
-      const msgTokens = estimateTokens(msg.content);
-      if (currentTokens + msgTokens < maxContinuityTokens) {
-        recentTurns.unshift({ role: msg.role as "user" | "assistant", content: msg.content });
-        currentTokens += msgTokens;
-      } else {
-        break;
-      }
+      recentTurns.unshift({ role: msg.role as "user" | "assistant", content: msg.content });
     }
     
     const fullInstruction = text;
@@ -209,9 +187,11 @@ export class ChatController {
     // Bind current turn for isolation
     const currentConversationId = this.state.conversationId;
     const currentTurnMsgId = userMsg.id;
+    const currentAbortController = this._activeAbortController;
+    const currentBridge = this._activeSessionBridge;
     
     try {
-      const result = await this._activeSessionBridge.runTask(fullInstruction, mode, this._activeAbortController.signal, (ev) => {
+      const result = await currentBridge.runTask(fullInstruction, mode, currentAbortController.signal, (ev) => {
         if (this.state.conversationId === currentConversationId && this.state.activeTurn) {
           this.handleAgentEvent(ev);
         }
@@ -253,6 +233,8 @@ export class ChatController {
       }
       this.sendState();
     } catch (e: any) {
+      if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
+      
       this.state.activeTurn = false;
       this.state.activities = [];
       this.state.pendingConfirmation = undefined;
@@ -267,8 +249,12 @@ export class ChatController {
       this.state.messages.push(errorMsg);
       this.sendState();
     } finally {
-      this._activeAbortController = undefined;
-      this._activeSessionBridge = undefined;
+      if (this._activeAbortController === currentAbortController) {
+        this._activeAbortController = undefined;
+      }
+      if (this._activeSessionBridge === currentBridge) {
+        this._activeSessionBridge = undefined;
+      }
     }
   }
   
