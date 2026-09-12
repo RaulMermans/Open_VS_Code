@@ -6,7 +6,7 @@ import { DiffReviewController } from './diff-review-controller.js';
 
 export class ChatController {
   private state: WebviewState;
-  private bridgeFactory: (options: { host: any, workspaceRoot: string }) => AgentSessionBridge;
+  private bridgeFactory: (options: { host: any, workspaceRoot: string, mode: ChatMode }) => AgentSessionBridge;
   private host: any; // VSCodeIdeHost
   private diffReviewController: DiffReviewController;
   private _webviewView?: vscode.WebviewView;
@@ -217,7 +217,7 @@ export class ChatController {
     }
     
     this._activeAbortController = new AbortController();
-    this._activeSessionBridge = this.bridgeFactory({ host: this.host, workspaceRoot: resolvedRoot });
+    this._activeSessionBridge = this.bridgeFactory({ host: this.host, workspaceRoot: resolvedRoot, mode });
     
     // Bind current turn for isolation
     const currentConversationId = this.state.conversationId;
