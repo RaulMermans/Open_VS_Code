@@ -1,9 +1,21 @@
 import * as vscode from 'vscode';
 
 export class DiffReviewController implements vscode.TextDocumentContentProvider {
-  private registry = new Map<string, { before: string; after: string }>();
+  private registry = new Map<string, { before: string; after: string; size: number }>();
   private onDidChangeEmitter = vscode.EventEmitter ? new vscode.EventEmitter<vscode.Uri>() : null;
   onDidChange = this.onDidChangeEmitter?.event;
+  
+  private maxCount = 20;
+  private maxBytes = 5 * 1024 * 1024; // 5 MB
+  private currentBytes = 0;
+
+  get registrySize() {
+    return this.registry.size;
+  }
+  
+  get registryBytes() {
+    return this.currentBytes;
+  }
 
   provideTextDocumentContent(uri: vscode.Uri): string {
     const params = new URLSearchParams(uri.query);
@@ -18,19 +30,40 @@ export class DiffReviewController implements vscode.TextDocumentContentProvider 
   }
 
   registerReview(mutationId: string, beforeContent: string, afterContent: string) {
-    if (this.registry.size > 20) {
-      const firstKey = this.registry.keys().next().value;
-      if (firstKey) this.registry.delete(firstKey);
+    if (this.registry.has(mutationId)) return; // Don't duplicate
+
+    const size = Buffer.byteLength(beforeContent) + Buffer.byteLength(afterContent);
+    
+    // Oversize preview policy
+    if (size > this.maxBytes) {
+      throw new Error("LARGE_CHANGE: review content exceeds max bytes.");
     }
-    this.registry.set(mutationId, { before: beforeContent, after: afterContent });
+
+    // Evict until we have space
+    while (this.registry.size > 0 && (this.registry.size >= this.maxCount || this.currentBytes + size > this.maxBytes)) {
+      const firstKey = this.registry.keys().next().value;
+      if (firstKey) {
+        const entry = this.registry.get(firstKey)!;
+        this.currentBytes -= entry.size;
+        this.registry.delete(firstKey);
+      }
+    }
+
+    this.registry.set(mutationId, { before: beforeContent, after: afterContent, size });
+    this.currentBytes += size;
   }
 
   clearReview(mutationId: string) {
-    this.registry.delete(mutationId);
+    const entry = this.registry.get(mutationId);
+    if (entry) {
+      this.currentBytes -= entry.size;
+      this.registry.delete(mutationId);
+    }
   }
 
   clearAll() {
     this.registry.clear();
+    this.currentBytes = 0;
   }
 
   async openDiff(mutationId: string, targetPath: string, isCreate: boolean) {

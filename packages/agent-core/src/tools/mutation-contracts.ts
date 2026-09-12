@@ -25,6 +25,8 @@ export interface PreparedMutation {
   readonly operation: MutationOperation
   readonly path: string
   readonly resolvedPath: string  // absolute resolved path
+  readonly beforeContent: string | null
+  readonly proposedContent: string
   readonly baseHash: string  // SHA-256 of file before mutation (or "" for create)
   readonly resultHash: string // SHA-256 of file after mutation
   readonly diff: MutationDiff

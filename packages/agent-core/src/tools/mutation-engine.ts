@@ -381,6 +381,8 @@ export class MutationEngine {
       operation: "patch",
       path: relPath,
       resolvedPath,
+      beforeContent,
+      proposedContent: afterContent,
       baseHash,
       resultHash,
       diff,
@@ -457,6 +459,8 @@ export class MutationEngine {
       operation: "create",
       path: relPath,
       resolvedPath,
+      beforeContent: null,
+      proposedContent: request.content,
       baseHash: "",
       resultHash,
       diff,
@@ -516,32 +520,12 @@ export class MutationEngine {
       timestamp: this.#timestampFactory(),
     }
 
-    // Compute result content
-    // We stored the diff, but we need to recreate the result.
-    // The search/replace was validated during prepare, so we can derive from the diff.
-    // For safety, re-derive from the prepared state.
-    // The prepared mutation was validated with a specific search/replace. We know the baseHash matches.
-    // We need to reconstruct the after content. The simplest safe way:
-    // The diff contains the unified diff. We need the actual content.
-    // SOLUTION: We'll store the expected result hash and verify.
-    // For the actual content, we need to track it. Let's add it through a WeakMap approach.
-
-    // Since we validated the hash matches, and the prepared mutation was created from a specific
-    // search/replace, we need the result content. We'll compute it from the diff by
-    // extracting added/removed lines... Actually, that's fragile.
-    // Better: we store result content in a private cache keyed by prepared.id.
-
-    // For a clean implementation, we'll re-derive the patch from the diff.
-    // Actually, the cleanest approach: store expected result in the engine during prepare.
-    const expectedResult = this.#preparedResults.get(prepared.id)
-    if (!expectedResult) {
-      return this.#failureResult(prepared, "INVALID_PATCH", "No cached result content for prepared mutation")
-    }
+    const expectedResult = prepared.proposedContent;
 
     // Atomic write: write temp file, then rename
     const tempPath = `${prepared.resolvedPath}.mutation-tmp`
     try {
-      await writeFile(tempPath, expectedResult.after, "utf8")
+      await writeFile(tempPath, expectedResult, "utf8")
 
       // Verify written content
       const writtenBytes = await readFile(tempPath)
@@ -581,10 +565,7 @@ export class MutationEngine {
       // File doesn't exist - proceed
     }
 
-    const expectedContent = this.#preparedResults.get(prepared.id)
-    if (!expectedContent) {
-      return this.#failureResult(prepared, "INVALID_PATCH", "No cached result content for prepared mutation")
-    }
+    const expectedContent = prepared.proposedContent;
 
     // Create snapshot
     const snapshot: MutationSnapshot = {
@@ -605,7 +586,7 @@ export class MutationEngine {
     // Atomic write: write temp file, then rename
     const tempPath = `${prepared.resolvedPath}.mutation-tmp`
     try {
-      await writeFile(tempPath, expectedContent.after, "utf8")
+      await writeFile(tempPath, expectedContent, "utf8")
 
       // Verify written content
       const writtenBytes = await readFile(tempPath)
@@ -636,8 +617,6 @@ export class MutationEngine {
     }
   }
 
-  // --- Result content cache ---
-  readonly #preparedResults = new Map<string, { before: string | null; after: string }>()
   readonly #consumed = new Set<string>()
 
   isConsumed(id: string): boolean {
@@ -646,28 +625,6 @@ export class MutationEngine {
 
   rejectMutation(id: string): void {
     this.#consumed.add(id)
-    this.#preparedResults.delete(id)
-  }
-
-  getPreparedContent(id: string): { before: string | null; after: string } | undefined {
-    return this.#preparedResults.get(id)
-  }
-
-  async preparePatchFull(request: MutationRequest): Promise<PreparedMutation> {
-    const prepared = await this.preparePatch(request)
-    // Re-derive result content and cache it
-    const rawBytes = await readFile(prepared.resolvedPath)
-    const content = rawBytes.toString("utf8")
-    const searchIndex = content.indexOf(request.patch!.search)
-    const result = content.slice(0, searchIndex) + request.patch!.replace + content.slice(searchIndex + request.patch!.search.length)
-    this.#preparedResults.set(prepared.id, { before: content, after: result })
-    return prepared
-  }
-
-  async prepareCreateFull(request: MutationRequest): Promise<PreparedMutation> {
-    const prepared = await this.prepareCreate(request)
-    this.#preparedResults.set(prepared.id, { before: null, after: request.content! })
-    return prepared
   }
 
   // --- Rollback ---
@@ -710,7 +667,6 @@ export class MutationEngine {
     }
 
     this.#snapshots.delete(snapshot.id)
-    this.#preparedResults.delete(snapshot.id)
 
     return {
       id: snapshot.id,
@@ -748,7 +704,6 @@ export class MutationEngine {
     await unlink(snapshot.resolvedPath)
 
     this.#snapshots.delete(snapshot.id)
-    this.#preparedResults.delete(snapshot.id)
 
     return {
       id: snapshot.id,

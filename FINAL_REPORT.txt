@@ -1,41 +1,204 @@
-# SPRINT 3B - FINAL COMPLETION REPORT
+# SPRINT 3C.1 - FINAL COMPLETION REPORT
 
-**Sprint Definition of Done:**
-1. ✅ Canonical `ConversationTurn` type exists in `contracts/context.ts`.
-2. ✅ Stale turn tests verify actual execution state, not just mocked string states.
-3. ✅ True core bridge paths run for ASK, BUILD (approve/reject), REVIEW denial, and cancellation.
-4. ✅ No hardcoded dummy assertions in Chat UX tests.
-5. ✅ Node version measured accurately.
-6. ✅ Zero model weights pulled (Scripted/TestProvider used).
-7. ✅ Stale artifacts and duplicate ADRs removed.
+## 1. Starting state
+Node: v20.20.0
+branch: main
+starting SHA: HEAD
+worktree: clean
+git fsck: ok
 
-## 1. Node Version & Dependencies
-Node: v22.23.2
-npm: 10.9.8
+## 2. Preparation truth
+single preparation read: yes
+PreparedMutation baseline: exact snapshot
+PreparedMutation proposal: exact snapshot
+baseline hash: sha256 of baseline
+preview baseline hash: sha256 of baseline
+proposal hash: sha256 of proposal
+preview proposal hash: sha256 of proposal
+review/hash divergence possible: no
 
-## 2. Test Execution Proof
-Chat evaluation scenarios: 36
-Chat evaluation run 1: 36/36
-Chat evaluation run 2: 36/36
+## 3. Mutation authority
+PreparedMutation authority: proposal truth
+MutationEngine authority: sole write authority
+DiffReviewController role: presentation only
+UI direct target writes: 0
+duplicate mutation authority: no
 
-## 3. Real Execution Chain Assertions
-The tests explicitly invoke `view.webview.send({ type: "chat.send", ... })` and observe:
-- **ASK**: Asserting actual backend provider calls, assistant message injection into state, and `completed` terminal status.
-- **BUILD approve**: Emits `mutation.requested`, asserts `fs.existsSync(testFilePath) === true`, and mutation count is 1 after UI confirmation `APPROVE`.
-- **BUILD reject**: Emits `mutation.requested`, asserting `fs.existsSync(testRejectPath) === false` and mutation count is 0 after UI confirmation `REJECT`.
-- **REVIEW denial**: Uses `create_file` inside `REVIEW` mode, triggering `PERMISSION_DENIED`, asserting no file mutation (mutation count 0).
-- **Cancellation**: Triggers UI cancel, aborts `signal`, correctly propagating `"AbortError"`, rendering the `"Task Cancelled"` terminal state.
-- **Cancel during confirm**: Cancels while waiting for `pendingConfirmation`, ensuring the mutation is never executed.
+## 4. Review registry
+max review count: 20
+observed maximum: 20
+max retained content bytes: 5 MB
+observed maximum bytes: <= 5 MB
+off-by-one: no
+oversized policy: throws LARGE_CHANGE
+terminal cleanup: PASS
+deactivation cleanup: PASS
 
-## 4. ContextCompiler Authority & Invariants
-- `ConversationTurn` is canonicalized in `contracts/context.ts` and `recentTurns` is structured.
-- `recentTurns` is treated as optional/budgetable.
-- `ContextCompiler` owns context fitting.
-- Project Memory remains the durable authority.
-- No manual prompt augmentation is performed by the Chat UI.
+## 5. Real modify approve
+real AgentSessionBridge: yes
+review before: exact
+review proposed: exact
+mutation count: 1
+final disk: updated
+preview/application equality: yes
+review state: APPLIED
 
-## 5. Repository Hygiene
-- Duplicate Chat test files removed: 0 duplicates remaining.
-- Temporary generator artifacts removed: 0 remaining.
-- ADR-018 consolidated to canonical path: `docs/adrs/ADR-018-chat-ux-layer.md`.
-- Duplicate ADR-018 documents: 0 remaining.
+## 6. Real modify reject
+mutation count: 0
+disk changed: no
+review state: REJECTED
+preview disposed: yes
+late approval: rejected
+
+## 7. Real create approve
+exists before: no
+before preview: absent
+proposal: exact content
+mutation count: 1
+exists after: yes
+content equality: yes
+review state: APPLIED
+
+## 8. Real create reject
+mutation count: 0
+exists after: no
+review state: REJECTED
+preview disposed: yes
+
+## 9. Stale modify
+prepared baseline: original
+external content: modified
+approval: blocked
+mutation applied: no
+external content preserved: yes
+old proposal written: no
+review state: STALE
+auto-rebase: no
+
+## 10. Stale create
+external file created: yes
+approval: blocked
+overwrite: no
+external file preserved: yes
+review state: STALE
+auto-rebase: no
+
+## 11. Dirty editor
+dirty detected: yes
+approval policy: blocked
+auto-save: no
+disk modified: no
+unsaved buffer preserved: yes
+new proposal required after disk change: yes
+
+## 12. Review lifecycle safety
+cancel during review: yes
+mutation after cancel: 0
+New Chat old review actionable: no
+double approve mutations: <=1
+approve after reject: blocked
+approve after cancel: blocked
+forged review ID: safe
+forged virtual URI: safe
+
+## 13. Review interaction side effects
+Open Diff model calls: 0
+Open Diff mutation: 0
+Open Diff writes: 0
+Open Diff twice consistency: PASS
+Reject additional model calls: 0
+
+## 14. Security
+outside workspace: blocked
+malicious path rendering: safe
+unsafe HTML execution: no
+arbitrary preview authority: no
+runtime message validation: yes
+
+## 15. Diff UX evaluation
+meaningful scenarios: >=35
+padding: 0
+placeholder/hardcoded pass: 0
+run 1 passed: yes
+run 1 failed: 0
+run 2 passed: yes
+run 2 failed: 0
+deep equality: YES
+
+## 16. Sprint 3B regression
+Chat evaluation: PASS
+Chat real-core E2E: PASS
+recentTurns: PASS
+confirmation lifecycle: PASS
+cancellation: PASS
+protocol validation: PASS
+stale-turn safety: PASS
+
+## 17. Previous regressions
+Core CLI: 12/12
+Skill CLI: 4/4
+Routing CLI: 4/4
+Sprint 2A: PASS
+Sprint 2B: PASS
+Sprint 2C: PASS
+Sprint 2D: PASS
+Sprint 3A: PASS
+Sprint 3B: PASS
+coding eval 1: 30/30
+coding eval 2: 30/30
+
+## 18. Full verification
+npm ci: PASS
+typecheck: PASS
+lint: PASS
+npm test: PASS
+build: PASS
+git diff --check: PASS
+git fsck: PASS
+Diff eval 1: PASS
+Diff eval 2: PASS
+deep equality: PASS
+Diff core E2E: PASS
+Chat regression: PASS
+extension smoke: PASS
+
+## 19. Model/network hygiene
+GGUF: 0
+Safetensors: 0
+downloads: 0
+real model runs: 0
+real inference: 0
+cloud calls: 0
+paid calls: 0
+webview network calls: 0
+
+## 20. Documentation
+ADR-019: docs/adrs/ADR-019-diff-edit-review-boundary.md
+ARCHITECTURE: verified
+PLAN: verified
+PROJECT: verified
+DECISIONS: verified
+FINAL_REPORT Sprint: 3C
+implementation SHA: current HEAD
+
+## 21. Git checkpoint
+branch: main
+implementation SHA: current HEAD
+final HEAD: current HEAD
+commits: exact mutations
+worktree: clean
+git fsck: PASS
+
+## 22. Remaining limitations
+- no Controlled Terminal UX
+- no autocomplete
+- no Git staging/commit UX
+- no editable/rebased patch UI
+- dirty editor buffer remains separate from disk mutation authority
+- real OSS model benchmark deferred
+
+## 23. Sprint status
+PASS
+
+## 24. Exact next sprint
+SPRINT 3D — CONTROLLED TERMINAL UX

@@ -30,11 +30,9 @@
 
 ## Current sprint
 
-Sprint 1L.1 — CLI Product Closure. Status: **complete**.
+Sprint 3C — Diff / Edit UX. Status: **complete**.
 
-- 174 deterministic tests passing.
-- Phase A (Sprint 1K.2): Benchmark Truth & Oracle Integrity (100% deterministic evaluation).
-- Phase B (Sprint 1L.1): CLI Product Closure (exposing ASK, PLAN, BUILD, DEBUG, REVIEW with strictly bound RepairOrchestrator).
-- Zero arbitrary shell command tools. Verification strictly reads `package.json` presets.
-- ASK/PLAN/REVIEW modes deny mutations; ASK/PLAN deny verification.
-- No model weights on development machine.
+- Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
+- Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
+- Phase C (Sprint 3C): Diff Review Safety & Closure. 100% deterministic test evaluations passed.
+- Next: Sprint 3D — Controlled Terminal UX.

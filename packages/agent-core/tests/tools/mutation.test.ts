@@ -212,7 +212,7 @@ test("resolveWritePath rejects missing parent directory", async () => {
 
 // --- Mutation Engine: Patch ---
 
-test("preparePatchFull and apply produces correct file content", async () => {
+test("preparePatch and apply produces correct file content", async () => {
   const ws = await createTempWorkspace()
   try {
     await createFile(ws, "greeting.txt", "Hello World")
@@ -222,7 +222,7 @@ test("preparePatchFull and apply produces correct file content", async () => {
       path: "greeting.txt",
       patch: { search: "Hello", replace: "Welcome" },
     }
-    const prepared = await engine.preparePatchFull(request)
+    const prepared = await engine.preparePatch(request)
     assert.equal(prepared.operation, "patch")
     assert.equal(prepared.path, "greeting.txt")
     assert.ok(prepared.baseHash)
@@ -251,7 +251,7 @@ test("patch rejects when search text not found", async () => {
     await createFile(ws, "test.txt", "abc")
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.preparePatchFull({ operation: "patch", path: "test.txt", patch: { search: "xyz", replace: "q" } }),
+      engine.preparePatch({ operation: "patch", path: "test.txt", patch: { search: "xyz", replace: "q" } }),
       (err: MutationFailure) => err.code === "PATCH_MISMATCH",
     )
   } finally {
@@ -265,7 +265,7 @@ test("patch rejects ambiguous search text", async () => {
     await createFile(ws, "test.txt", "foo bar foo")
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.preparePatchFull({ operation: "patch", path: "test.txt", patch: { search: "foo", replace: "baz" } }),
+      engine.preparePatch({ operation: "patch", path: "test.txt", patch: { search: "foo", replace: "baz" } }),
       (err: MutationFailure) => err.code === "PATCH_AMBIGUOUS",
     )
   } finally {
@@ -281,7 +281,7 @@ test("patch rejects binary file", async () => {
     await writeFile(join(ws, "binary.dat"), content)
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.preparePatchFull({ operation: "patch", path: "binary.dat", patch: { search: "x", replace: "y" } }),
+      engine.preparePatch({ operation: "patch", path: "binary.dat", patch: { search: "x", replace: "y" } }),
       (err: MutationFailure) => err.code === "BINARY_FILE",
     )
   } finally {
@@ -296,7 +296,7 @@ test("patch rejects file in excluded directory", async () => {
     await createFile(ws, ".git/config", "[core]")
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.preparePatchFull({ operation: "patch", path: ".git/config", patch: { search: "[core]", replace: "[new]" } }),
+      engine.preparePatch({ operation: "patch", path: ".git/config", patch: { search: "[core]", replace: "[new]" } }),
       (err: MutationFailure) => err.code === "SENSITIVE_PATH",
     )
   } finally {
@@ -309,7 +309,7 @@ test("patch rejects path traversal", async () => {
   try {
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.preparePatchFull({ operation: "patch", path: "../../etc/passwd", patch: { search: "root", replace: "hacked" } }),
+      engine.preparePatch({ operation: "patch", path: "../../etc/passwd", patch: { search: "root", replace: "hacked" } }),
       (err: MutationFailure) => err.code === "OUTSIDE_WORKSPACE",
     )
   } finally {
@@ -319,7 +319,7 @@ test("patch rejects path traversal", async () => {
 
 // --- Mutation Engine: Create ---
 
-test("prepareCreateFull and apply creates new file", async () => {
+test("prepareCreate and apply creates new file", async () => {
   const ws = await createTempWorkspace()
   try {
     const engine = deterministicEngine(ws)
@@ -328,7 +328,7 @@ test("prepareCreateFull and apply creates new file", async () => {
       path: "new-module.ts",
       content: "export const x = 42\n",
     }
-    const prepared = await engine.prepareCreateFull(request)
+    const prepared = await engine.prepareCreate(request)
     assert.equal(prepared.operation, "create")
     assert.equal(prepared.baseHash, "")
     assert.ok(prepared.resultHash)
@@ -351,7 +351,7 @@ test("create rejects when file already exists", async () => {
     await createFile(ws, "existing.txt", "content")
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.prepareCreateFull({ operation: "create", path: "existing.txt", content: "new" }),
+      engine.prepareCreate({ operation: "create", path: "existing.txt", content: "new" }),
       (err: MutationFailure) => err.code === "FILE_EXISTS",
     )
   } finally {
@@ -364,7 +364,7 @@ test("create rejects binary extension", async () => {
   try {
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.prepareCreateFull({ operation: "create", path: "data.bin", content: "text" }),
+      engine.prepareCreate({ operation: "create", path: "data.bin", content: "text" }),
       (err: MutationFailure) => err.code === "BINARY_FILE",
     )
   } finally {
@@ -377,7 +377,7 @@ test("create rejects oversized file", async () => {
   try {
     const engine = deterministicEngine(ws, { budgets: { ...DEFAULT_MUTATION_BUDGETS, maxNewFileBytes: 10 } })
     await assert.rejects(
-      engine.prepareCreateFull({ operation: "create", path: "big.ts", content: "a".repeat(100) }),
+      engine.prepareCreate({ operation: "create", path: "big.ts", content: "a".repeat(100) }),
       (err: MutationFailure) => err.code === "OVERSIZED_FILE",
     )
   } finally {
@@ -391,7 +391,7 @@ test("create rejects path in node_modules", async () => {
     await mkdir(join(ws, "node_modules"), { recursive: true })
     const engine = deterministicEngine(ws)
     await assert.rejects(
-      engine.prepareCreateFull({ operation: "create", path: "node_modules/pkg.js", content: "hack" }),
+      engine.prepareCreate({ operation: "create", path: "node_modules/pkg.js", content: "hack" }),
       (err: MutationFailure) => err.code === "SENSITIVE_PATH",
     )
   } finally {
@@ -406,7 +406,7 @@ test("apply rejects stale base when file changed after preparation", async () =>
   try {
     await createFile(ws, "volatile.txt", "original content")
     const engine = deterministicEngine(ws)
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "volatile.txt",
       patch: { search: "original", replace: "modified" },
@@ -437,7 +437,7 @@ test("rollback restores original content for patch", async () => {
     await createFile(ws, "rollback.ts", originalContent)
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "rollback.ts",
       patch: { search: "const x = 1", replace: "const x = 2" },
@@ -464,7 +464,7 @@ test("rollback removes created file", async () => {
   try {
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.prepareCreateFull({
+    const prepared = await engine.prepareCreate({
       operation: "create",
       path: "temp.ts",
       content: "temporary",
@@ -490,7 +490,7 @@ test("rollback detects conflict when file modified after mutation", async () => 
     await createFile(ws, "conflict.txt", "before")
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "conflict.txt",
       patch: { search: "before", replace: "after" },
@@ -538,12 +538,12 @@ test("mutation engine enforces files-per-step budget", async () => {
     await createFile(ws, "file1.txt", "content1")
     await createFile(ws, "file2.txt", "content2")
 
-    const p1 = await engine.preparePatchFull({ operation: "patch", path: "file1.txt", patch: { search: "content1", replace: "changed1" } })
+    const p1 = await engine.preparePatch({ operation: "patch", path: "file1.txt", patch: { search: "content1", replace: "changed1" } })
     await engine.applyPreparedMutation(p1)
 
     // Second mutation should exceed budget
     await assert.rejects(
-      engine.preparePatchFull({ operation: "patch", path: "file2.txt", patch: { search: "content2", replace: "changed2" } }),
+      engine.preparePatch({ operation: "patch", path: "file2.txt", patch: { search: "content2", replace: "changed2" } }),
       (err: MutationFailure) => err.code === "BUDGET_EXCEEDED",
     )
   } finally {
@@ -561,13 +561,13 @@ test("mutation engine step counter resets", async () => {
     await createFile(ws, "file1.txt", "content1")
     await createFile(ws, "file2.txt", "content2")
 
-    const p1 = await engine.preparePatchFull({ operation: "patch", path: "file1.txt", patch: { search: "content1", replace: "changed1" } })
+    const p1 = await engine.preparePatch({ operation: "patch", path: "file1.txt", patch: { search: "content1", replace: "changed1" } })
     await engine.applyPreparedMutation(p1)
 
     engine.resetStepCounter()
 
     // After reset, should succeed
-    const p2 = await engine.preparePatchFull({ operation: "patch", path: "file2.txt", patch: { search: "content2", replace: "changed2" } })
+    const p2 = await engine.preparePatch({ operation: "patch", path: "file2.txt", patch: { search: "content2", replace: "changed2" } })
     await engine.applyPreparedMutation(p2)
 
     assert.equal(await readFile(join(ws, "file2.txt"), "utf8"), "changed2")
@@ -584,7 +584,7 @@ test("snapshot is stored after successful mutation", async () => {
     await createFile(ws, "snap.txt", "original")
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "snap.txt",
       patch: { search: "original", replace: "modified" },
@@ -608,7 +608,7 @@ test("create snapshot records null beforeContent", async () => {
   const ws = await createTempWorkspace()
   try {
     const engine = deterministicEngine(ws)
-    const prepared = await engine.prepareCreateFull({
+    const prepared = await engine.prepareCreate({
       operation: "create",
       path: "created.txt",
       content: "new content",
@@ -632,7 +632,7 @@ test("mutation observation is compact", async () => {
     await createFile(ws, "obs.txt", "old value")
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "obs.txt",
       patch: { search: "old value", replace: "new value" },
@@ -659,7 +659,7 @@ test("stale base produces failure observation", async () => {
     await createFile(ws, "stale.txt", "version1")
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "stale.txt",
       patch: { search: "version1", replace: "version2" },
@@ -683,7 +683,7 @@ test("post-write hash verification catches corruption", async () => {
     await createFile(ws, "verify.txt", "content A")
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "verify.txt",
       patch: { search: "content A", replace: "content B" },
@@ -707,7 +707,7 @@ test("prepared mutation includes complete FileChange", async () => {
     await createFile(ws, "change.txt", "before text")
     const engine = deterministicEngine(ws)
 
-    const prepared = await engine.preparePatchFull({
+    const prepared = await engine.preparePatch({
       operation: "patch",
       path: "change.txt",
       patch: { search: "before", replace: "after" },
@@ -735,7 +735,7 @@ test("patch rejects symlink pointing outside workspace", async () => {
     const engine = deterministicEngine(ws)
 
     await assert.rejects(
-      engine.preparePatchFull({
+      engine.preparePatch({
         operation: "patch",
         path: "symlink.txt",
         patch: { search: "external", replace: "hacked" },
@@ -759,7 +759,7 @@ test("create rejects symlinked parent directory escape", async () => {
     const engine = deterministicEngine(ws)
 
     await assert.rejects(
-      engine.prepareCreateFull({
+      engine.prepareCreate({
         operation: "create",
         path: "escaped/evil.txt",
         content: "malicious",

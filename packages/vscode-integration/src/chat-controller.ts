@@ -144,6 +144,17 @@ export class ChatController {
       case 'confirmation.respond':
         if (this.state.pendingConfirmation && this._confirmationResolver) {
           if (message.confirmationId === this.state.pendingConfirmation.id) {
+            if (message.action === 'APPROVE' && this.state.pendingConfirmation.path) {
+              const pendingPath = this.state.pendingConfirmation.path.replace(/\\/g, '/');
+              const isDirty = vscode.workspace?.textDocuments?.some(doc => 
+                doc.isDirty && doc.uri.path.replace(/\\/g, '/').endsWith(pendingPath)
+              );
+              if (isDirty) {
+                vscode.window.showErrorMessage("Save or discard unsaved changes before applying this proposal.");
+                return;
+              }
+            }
+
             this.state.pendingConfirmation = undefined;
             this.sendState();
             const resolver = this._confirmationResolver;
