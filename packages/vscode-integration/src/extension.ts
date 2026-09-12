@@ -152,11 +152,13 @@ class VSCodeIdeHost implements IdeHost {
 
 import { ChatController } from './chat-controller.js';
 import { ChatViewProvider } from './chat-view-provider.js';
+import { DiffReviewController } from './diff-review-controller.js';
 
 let activeBridge: AgentSessionBridge | null = null;
 let currentAbortController: AbortController | null = null;
 let host: VSCodeIdeHost | null = null;
 let chatController: ChatController | null = null;
+let diffReviewController: DiffReviewController | null = null;
 
 export const _testSeam = {
   get activeBridge() { return activeBridge; },
@@ -166,8 +168,15 @@ export const _testSeam = {
 
 export function activate(context: vscode.ExtensionContext) {
   host = new VSCodeIdeHost();
+  diffReviewController = new DiffReviewController();
   
-  chatController = new ChatController(host, (options) => {
+  if (vscode.workspace.registerTextDocumentContentProvider) {
+    context.subscriptions.push(
+      vscode.workspace.registerTextDocumentContentProvider('open-vs-code-diff', diffReviewController)
+    );
+  }
+
+  chatController = new ChatController(host, diffReviewController, (options: { host: any, workspaceRoot: string }) => {
     if (_testSeam.bridgeFactory) {
       activeBridge = _testSeam.bridgeFactory(options);
     } else {
@@ -215,6 +224,10 @@ export function deactivate() {
   if (chatController) {
     chatController.cancelTurn();
     chatController = null;
+  }
+  if (diffReviewController) {
+    diffReviewController.clearAll();
+    diffReviewController = null;
   }
   if (host) {
     host.dispose();

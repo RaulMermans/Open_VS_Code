@@ -264,6 +264,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 btnApprove.id = 'btn-approve';
                 btnApprove.textContent = 'Approve';
                 
+                if (conf.mutationId) {
+                    const btnDiff = document.createElement('button');
+                    btnDiff.className = 'btn-reject'; // use secondary style
+                    btnDiff.id = 'btn-diff';
+                    btnDiff.textContent = 'Open Diff';
+                    actions.appendChild(btnDiff);
+                }
+
                 actions.appendChild(btnReject);
                 actions.appendChild(btnApprove);
                 
@@ -272,6 +280,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 div.appendChild(actions);
 
                 confirmationContainer.appendChild(div);
+                
+                if (conf.mutationId) {
+                    document.getElementById('btn-diff').addEventListener('click', () => {
+                        vscode.postMessage({ type: 'ui.openDiff', mutationId: conf.mutationId, path: conf.path || 'unknown', isCreate: conf.type === 'create' });
+                    });
+                }
+
                 
                 document.getElementById('btn-approve').addEventListener('click', () => {
                     vscode.postMessage({ type: 'confirmation.respond', confirmationId: conf.id, action: 'APPROVE' });

@@ -2,19 +2,27 @@ import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { AgentEvent, AgentResult, calculateBudget, estimateTokens, ConversationTurn } from '@open-vs-code/agent-core';
 import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, ChatContextChip, ConfirmationRequestPayload, parseWebviewMessage } from './chat-protocol.js';
+import { DiffReviewController } from './diff-review-controller.js';
 
 export class ChatController {
   private state: WebviewState;
   private bridgeFactory: (options: { host: any, workspaceRoot: string }) => AgentSessionBridge;
   private host: any; // VSCodeIdeHost
+  private diffReviewController: DiffReviewController;
   private _webviewView?: vscode.WebviewView;
   private _activeAbortController?: AbortController;
   private _activeSessionBridge?: AgentSessionBridge;
   private _confirmationResolver?: (value: "APPROVE" | "REJECT") => void;
   
-  constructor(host: any, bridgeFactory: (options: { host: any, workspaceRoot: string }) => AgentSessionBridge) {
+  constructor(host: any, arg2: any, arg3?: any) {
     this.host = host;
-    this.bridgeFactory = bridgeFactory;
+    if (typeof arg2 === 'function') {
+      this.bridgeFactory = arg2;
+      this.diffReviewController = { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {} } as any;
+    } else {
+      this.diffReviewController = arg2;
+      this.bridgeFactory = arg3;
+    }
     
     this.state = {
       conversationId: this.generateId(),
@@ -34,11 +42,24 @@ export class ChatController {
     // Clear old activities to keep UI clean
     this.state.activities = [];
 
+    const isWriteFile = payload?.action === 'write_file' || payload?.operation === 'patch' || payload?.operation === 'create';
+    const mutationId = payload?.id || this.generateId();
+
+    if (isWriteFile && payload?.reviewPayload) {
+      this.diffReviewController.registerReview(
+        mutationId,
+        payload.reviewPayload.beforeContent || '',
+        payload.reviewPayload.proposedContent || ''
+      );
+    }
+
     this.state.pendingConfirmation = {
       id: this.generateId(),
-      type: payload?.action || 'unknown',
+      type: payload?.action || payload?.operation || 'unknown',
       summary: prompt,
-      riskLabel: payload?.action === 'write_file' ? 'High Risk Mutation' : 'Verification/External'
+      riskLabel: isWriteFile ? 'High Risk Mutation' : 'Verification/External',
+      mutationId: isWriteFile ? mutationId : undefined,
+      path: payload?.path || payload?.reviewPayload?.path
     };
     
     this.sendState();
@@ -47,8 +68,6 @@ export class ChatController {
       this._confirmationResolver = resolve;
     });
   }
-
-  
   public setWebviewView(webviewView: vscode.WebviewView) {
     this._webviewView = webviewView;
     webviewView.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
@@ -131,6 +150,11 @@ export class ChatController {
             this._confirmationResolver = undefined;
             resolver(message.action);
           }
+        }
+        break;
+      case 'ui.openDiff':
+        if (this.state.pendingConfirmation?.mutationId === message.mutationId) {
+          this.diffReviewController.openDiff(message.mutationId, message.path, message.isCreate);
         }
         break;
       case 'ui.copyCode':

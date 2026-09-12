@@ -24,6 +24,8 @@ export interface ConfirmationRequestPayload {
   type: string;
   summary: string;
   riskLabel: string;
+  mutationId?: string;
+  path?: string;
 }
 
 export interface WebviewState {
@@ -45,6 +47,7 @@ export type WebviewToHostMessage =
   | { type: "chat.setMode"; mode: ChatMode }
   | { type: "chat.newConversation" }
   | { type: "confirmation.respond"; confirmationId: string; action: "APPROVE" | "REJECT" }
+  | { type: "ui.openDiff"; mutationId: string; path: string; isCreate: boolean }
   | { type: "ui.copyCode"; text: string };
 
 // Host -> Webview
@@ -94,6 +97,13 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
       return { type: "confirmation.respond", confirmationId: raw.confirmationId, action: raw.action };
     }
       
+    case "ui.openDiff": {
+      if (typeof raw.mutationId !== 'string' || !raw.mutationId) return null;
+      if (typeof raw.path !== 'string' || !raw.path) return null;
+      if (typeof raw.isCreate !== 'boolean') return null;
+      return { type: "ui.openDiff", mutationId: raw.mutationId, path: raw.path, isCreate: raw.isCreate };
+    }
+
     case "ui.copyCode": {
       if (typeof raw.text !== 'string' || raw.text.length > 200000) return null;
       return { type: "ui.copyCode", text: raw.text };

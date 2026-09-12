@@ -139,7 +139,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     }
     
     // Reverse to process newest first, they get the highest priority
-    const reversedGroups = [...groups].reverse();
+    const reversedGroups = groups.toReversed();
     for (let i = 0; i < reversedGroups.length; i++) {
       const group = reversedGroups[i];
       if (!group) continue;

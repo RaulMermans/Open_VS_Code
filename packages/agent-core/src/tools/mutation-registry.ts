@@ -64,6 +64,8 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
         const prepared = await engine.preparePatchFull(request)
         let consumed = false
 
+        const content = engine.getPreparedContent(prepared.id)
+
         return {
           id: prepared.id,
           reviewPayload: {
@@ -77,6 +79,8 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
             bytesChanged: prepared.diff.bytesChanged,
             diff: prepared.diff.unified,
             truncated: prepared.diff.truncated,
+            beforeContent: content?.before ?? "",
+            proposedContent: content?.after ?? "",
           },
           apply: async () => {
             if (consumed) throw new MutationFailure("INVALID_PATCH", "already consumed")
@@ -120,6 +124,8 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
 
         const prepared = await engine.prepareCreateFull(request)
         let consumed = false
+        
+        const content = engine.getPreparedContent(prepared.id)
 
         return {
           id: prepared.id,
@@ -134,6 +140,8 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
             bytesChanged: prepared.diff.bytesChanged,
             diff: prepared.diff.unified,
             truncated: prepared.diff.truncated,
+            beforeContent: "",
+            proposedContent: content?.after ?? "",
           },
           apply: async () => {
             if (consumed) throw new MutationFailure("INVALID_PATCH", "already consumed")
