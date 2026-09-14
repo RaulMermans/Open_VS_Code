@@ -1,112 +1,96 @@
 ## 1. Starting state
 
-Node: v22.23.2
+Node: >=22 (v22.23.2)
 branch: main
-starting SHA: 655894408ebb7345646ae908975d3099ac0c1b56
+starting SHA: 3b2dcb840594d058e769c86c27c5ff8f5ddf1b4e
 worktree: clean
 git fsck: PASS
 
-## 2. Evaluation architecture
+## 2. Cancellation root cause
 
-runDiffUxEvaluation: yes
-explicit expected values: yes
-strict comparator: yes
-negative comparator tests: yes
-determinism separate from correctness: yes
+classification: TEST_SYNCHRONIZATION_DEFECT
+provider started before cancel: no
+abort listener installed before cancel: no
+signal present: yes
+signal initially aborted: no
+production signal propagation defect: no
+test synchronization defect: yes
+root cause: The prior scenario (scenario 4 - REVIEW mode) did not consume its final test provider step. Thus, when scenario 5 (REAL CANCELLATION) pushed its provider step and began its turn, it incorrectly consumed the leftover `"done review"` step. Because that step completed instantly, the async cancellation function was never executed. The test arbitrarily waited 500ms and then issued the cancel, but the turn had already finished. Clearing `provider.steps` between tests and using a deterministic `providerStarted` readiness handshake guarantees the test properly waits for the provider to become active and registers its abort listener.
 
-## 3. Scenario truth
+## 3. Signal path
+
+ChatController signal: passed
+AgentSessionBridge signal: passed
+AgentRunner signal: passed
+provider signal: passed
+signal identity/lineage: passed
+AbortController.abort called: yes
+provider abort observed: yes
+
+Expected:
+provider abort observed: yes
+
+## 4. Active-provider cancellation
+
+provider started: yes
+cancel issued: yes
+abortObserved: yes
+AbortError observed: yes
+runner status: CANCELLED
+Chat status: CANCELLED
+late result rendered: no
+active turn cleared: yes
+next healthy turn: PASS
+
+Expected:
+abortObserved: yes
+runner status: CANCELLED
+late result rendered: no
+next healthy turn: PASS
+
+## 5. Other cancellation regressions
+
+cancel before provider start: PASS
+cancel during confirmation: PASS
+stale old turn: PASS
+New Chat: PASS
+old cleanup clears new turn: PASS
+late approval: PASS
+
+## 6. Chat regression
+
+Chat evaluation: PASS
+Chat core E2E: PASS
+recentTurns: PASS
+confirmation lifecycle: PASS
+cancellation: PASS
+protocol validation: PASS
+stale-turn safety: PASS
+
+Expected:
+all PASS
+
+## 7. Diff evaluation truth
 
 meaningful scenarios: 37
-padded scenarios: 0
-hardcoded pass scenarios: 0
-placeholder assertions: 0
-observed scenarios: 37
-
-## 4. Run 1 correctness
-
-scenarios executed: 37
-expected comparisons passed: 37
-expected comparisons failed: 0
-
-## 5. Run 2 correctness
-
-scenarios executed: 37
-expected comparisons passed: 37
-expected comparisons failed: 0
-
-## 6. Determinism
-
-run 1 individually correct: yes
-run 2 individually correct: yes
+padded: 0
+hardcoded pass: 0
+placeholders: 0
+run 1 passed: 37
+run 1 failed: 0
+run 2 passed: 37
+run 2 failed: 0
 deep equality: YES
-normalized fields: none
 
-## 7. Replaced hardcoded cases
+Expected:
+meaningful scenarios: >=35
+padded: 0
+hardcoded pass: 0
+placeholders: 0
+failed: 0
+deep equality: YES
 
-forged URI:
-observed behavior: validates input safely
-expected: safe
-result: PASS
-
-Open Diff twice:
-observed behavior: provider calls remain 0
-expected: consistent
-result: PASS
-
-no auto-save:
-observed behavior: pending confirmation remains until cleared
-expected: blocked
-result: PASS
-
-malicious rendering:
-observed behavior: registry handles large input safely
-expected: safe
-result: PASS
-
-modify card:
-observed behavior: removed
-expected: N/A
-result: N/A
-
-create NEW FILE card:
-observed behavior: removed
-expected: N/A
-result: N/A
-
-native Open Diff:
-observed behavior: removed
-expected: N/A
-result: N/A
-
-failure lifecycle:
-observed behavior: removed
-expected: N/A
-result: N/A
-
-stale confirmation:
-observed behavior: removed
-expected: N/A
-result: N/A
-
-deactivation cleanup:
-observed behavior: removed
-expected: N/A
-result: N/A
-
-registry cleanup:
-observed behavior: removed
-expected: N/A
-result: N/A
-
-## 8. Review lifecycle
-
-declared statuses: PREPARED, REVIEWING, APPLYING, APPLIED, REJECTED, STALE, FAILED, CANCELLED
-actually entered statuses: PREPARED, REVIEWING, APPLYING, APPLIED, REJECTED, STALE, FAILED, CANCELLED
-APPROVING: removed
-APPLYING: implemented
-dead statuses remaining: 0
-
-## 9. Real Diff core E2Es
+## 8. Diff core E2Es
 
 modify approve: PASS
 modify reject: PASS
@@ -116,17 +100,10 @@ stale modify: PASS
 stale create: PASS
 preview/application equality: PASS
 
-## 10. Sprint 3B regression
+Expected:
+all PASS
 
-Chat eval: 36/36
-Chat core E2E: FAIL (res.cancellation.abortObserved expected 'yes', got 'no')
-recentTurns: PASS
-confirmation lifecycle: PASS
-cancellation: FAIL
-protocol validation: PASS
-stale-turn safety: PASS
-
-## 11. Core regressions
+## 9. Core regressions
 
 Core CLI: 12/12
 Skill CLI: 4/4
@@ -136,28 +113,27 @@ Sprint 2B: PASS
 Sprint 2C: PASS
 Sprint 2D: PASS
 Sprint 3A: PASS
-Sprint 3B: FAIL
+Sprint 3B: PASS
 coding eval 1: 30/30
 coding eval 2: 30/30
 
-## 12. Full verification
+## 10. Full verification
 
-Node: >=22
+Node: >=22 (v22.23.2)
 npm ci: PASS
 typecheck: PASS
 lint: PASS
-npm test: FAIL
+npm test: PASS
 build: PASS
 git diff --check: PASS
 git fsck: PASS
-Diff correctness run 1: PASS
-Diff correctness run 2: PASS
-Diff deep equality: PASS
-Diff core E2E: PASS
-Chat regression: FAIL
 extension smoke: PASS
 
-## 13. Model/network hygiene
+Expected:
+Node >=22
+all PASS
+
+## 11. Model/network hygiene
 
 GGUF: 0
 Safetensors: 0
@@ -168,34 +144,35 @@ cloud calls: 0
 paid calls: 0
 webview network calls: 0
 
-## 14. Documentation
+Expected:
+all zero
 
-ADR-019: present
-ARCHITECTURE: updated
-PLAN: updated
-PROJECT: updated
-DECISIONS: updated
-FINAL_REPORT Sprint: 3C
-implementation SHA: HEAD
+## 12. Documentation
 
-## 15. Git checkpoint
+ADR-018 changed: no
+ADR-019: unmodified
+FINAL_REPORT Sprint: Sprint 3C.4
+implementation SHA: ef8e49faf827317df25bbcd8100c198094401782
+
+## 13. Git checkpoint
 
 branch: main
-implementation SHA: HEAD
-final HEAD: clean
-commits: 1
+implementation SHA: ef8e49faf827317df25bbcd8100c198094401782
+final HEAD: ef8e49faf827317df25bbcd8100c198094401782
+commits: test(chat): make active-provider cancellation deterministic
 worktree: clean
 git fsck: PASS
 
-## 16. Remaining limitations
+## 14. Sprint status
 
-- no Controlled Terminal UX
-- no autocomplete
-- no Git staging/commit UX
-- no editable/rebased patch UI
-- dirty editor buffers remain separate from disk mutation authority
-- real OSS model benchmark deferred
+PASS
 
-## 17. Sprint status
+## 15. Exact next sprint
 
-BLOCKED_WITH_EVIDENCE
+SPRINT 3D — CONTROLLED TERMINAL UX
+
+Goal:
+
+Build a safe, user-reviewed terminal execution experience around the existing permission and VerificationEngine boundaries, with exact command previews, explicit approval, bounded subprocess execution/output, cancellation, and no unrestricted shell authority.
+
+SPRINT 3C IS PERMANENTLY CLOSED.
