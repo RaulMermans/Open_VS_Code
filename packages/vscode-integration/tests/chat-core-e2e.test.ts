@@ -188,7 +188,7 @@ export const runChatCoreEvaluation = async (fixtures: ReturnType<typeof freshCor
   await view.webview.send({ type: "chat.newConversation" });
   await view.webview.send({ type: "chat.setMode", mode: "ASK" });
   view.webview.send({ type: "chat.send", text: "cancel test", mode: "ASK" });
-  await new Promise(r => setTimeout(r, 50)); 
+  await new Promise(r => setTimeout(r, 500)); 
   await view.webview.send({ type: "chat.cancel" });
   await waitForTurn();
   

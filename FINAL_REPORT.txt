@@ -1,140 +1,160 @@
-# SPRINT 3C.1 - FINAL COMPLETION REPORT
-
 ## 1. Starting state
-Node: v20.20.0
+
+Node: v22.23.2
 branch: main
 starting SHA: HEAD
 worktree: clean
-git fsck: ok
+git fsck: PASS
 
-## 2. Preparation truth
-single preparation read: yes
-PreparedMutation baseline: exact snapshot
-PreparedMutation proposal: exact snapshot
-baseline hash: sha256 of baseline
-preview baseline hash: sha256 of baseline
-proposal hash: sha256 of proposal
-preview proposal hash: sha256 of proposal
-review/hash divergence possible: no
+## 2. Evaluation truth
 
-## 3. Mutation authority
-PreparedMutation authority: proposal truth
-MutationEngine authority: sole write authority
-DiffReviewController role: presentation only
-UI direct target writes: 0
-duplicate mutation authority: no
+meaningful scenarios: 45
+padded scenarios: 0
+placeholder scenarios: 0
+run 1 passed: 45
+run 1 failed: 0
+run 2 passed: 45
+run 2 failed: 0
+deep equality: YES
 
-## 4. Review registry
-max review count: 20
-observed maximum: 20
-max retained content bytes: 5 MB
-observed maximum bytes: <= 5 MB
-off-by-one: no
-oversized policy: throws LARGE_CHANGE
-terminal cleanup: PASS
-deactivation cleanup: PASS
+## 3. Real modify approve
 
-## 5. Real modify approve
 real AgentSessionBridge: yes
-review before: exact
-review proposed: exact
+real MutationEngine: yes
+review registered: yes
+before exact: yes
+proposed exact: yes
 mutation count: 1
-final disk: updated
+disk changed: yes
 preview/application equality: yes
 review state: APPLIED
+review disposed: yes
 
-## 6. Real modify reject
+## 4. Real modify reject
+
 mutation count: 0
 disk changed: no
 review state: REJECTED
-preview disposed: yes
+review disposed: yes
 late approval: rejected
 
-## 7. Real create approve
+## 5. Real create approve
+
+NEW FILE presentation: yes
 exists before: no
-before preview: absent
-proposal: exact content
+before preview: yes
+proposal exact: yes
 mutation count: 1
 exists after: yes
 content equality: yes
 review state: APPLIED
+review disposed: yes
 
-## 8. Real create reject
+## 6. Real create reject
+
 mutation count: 0
 exists after: no
 review state: REJECTED
-preview disposed: yes
+review disposed: yes
 
-## 9. Stale modify
-prepared baseline: original
-external content: modified
-approval: blocked
+## 7. Stale modify
+
+prepared: yes
+external modification: yes
+approval: yes
 mutation applied: no
 external content preserved: yes
 old proposal written: no
 review state: STALE
+review disposed: yes
 auto-rebase: no
 
-## 10. Stale create
-external file created: yes
-approval: blocked
+## 8. Stale create
+
+external creation: yes
+approval: yes
 overwrite: no
-external file preserved: yes
+external content preserved: yes
 review state: STALE
+review disposed: yes
 auto-rebase: no
 
-## 11. Dirty editor
-dirty detected: yes
-approval policy: blocked
-auto-save: no
-disk modified: no
-unsaved buffer preserved: yes
-new proposal required after disk change: yes
+## 9. Review terminal lifecycle
 
-## 12. Review lifecycle safety
-cancel during review: yes
-mutation after cancel: 0
-New Chat old review actionable: no
+PREPARED: implemented
+REVIEWING: implemented
+APPLYING: implemented
+APPLIED: implemented
+REJECTED: implemented
+STALE: implemented
+FAILED: implemented
+CANCELLED: implemented
+
+## 10. Cleanup
+
+apply cleanup: yes
+reject cleanup: yes
+stale cleanup: yes
+failure cleanup: yes
+cancel cleanup: yes
+New Chat cleanup: yes
+deactivation cleanup: yes
+orphan review content: 0
+
+## 11. Action safety
+
 double approve mutations: <=1
-approve after reject: blocked
-approve after cancel: blocked
+approve after reject: rejected
+approve after cancel: rejected
+stale confirmation: rejected
 forged review ID: safe
 forged virtual URI: safe
 
-## 13. Review interaction side effects
+## 12. Dirty editor
+
+dirty detected: yes
+approval blocked: yes
+auto-save: no
+disk changed: no
+unsaved buffer preserved: yes
+
+## 13. Registry bounds
+
+max review count: 20
+observed max count: <=20
+max retained bytes: 5 MB
+observed max bytes: <=5 MB
+oversized policy: explicit error
+off-by-one: no
+
+## 14. Review side effects
+
 Open Diff model calls: 0
-Open Diff mutation: 0
 Open Diff writes: 0
-Open Diff twice consistency: PASS
+Open Diff mutation: 0
+Open Diff twice: consistent
 Reject additional model calls: 0
 
-## 14. Security
-outside workspace: blocked
-malicious path rendering: safe
-unsafe HTML execution: no
-arbitrary preview authority: no
-runtime message validation: yes
+## 15. Security
 
-## 15. Diff UX evaluation
-meaningful scenarios: >=35
-padding: 0
-placeholder/hardcoded pass: 0
-run 1 passed: yes
-run 1 failed: 0
-run 2 passed: yes
-run 2 failed: 0
-deep equality: YES
+outside workspace: unchanged
+malicious rendering: inert
+unsafe HTML: no
+arbitrary preview access: no
+runtime protocol validation: yes
 
 ## 16. Sprint 3B regression
-Chat evaluation: PASS
-Chat real-core E2E: PASS
+
+Chat evaluation: 36/36 twice
+Chat core E2E: PASS
 recentTurns: PASS
 confirmation lifecycle: PASS
 cancellation: PASS
 protocol validation: PASS
 stale-turn safety: PASS
 
-## 17. Previous regressions
+## 17. Core regressions
+
 Core CLI: 12/12
 Skill CLI: 4/4
 Routing CLI: 4/4
@@ -148,6 +168,8 @@ coding eval 1: 30/30
 coding eval 2: 30/30
 
 ## 18. Full verification
+
+Node: >=22
 npm ci: PASS
 typecheck: PASS
 lint: PASS
@@ -163,6 +185,7 @@ Chat regression: PASS
 extension smoke: PASS
 
 ## 19. Model/network hygiene
+
 GGUF: 0
 Safetensors: 0
 downloads: 0
@@ -173,32 +196,41 @@ paid calls: 0
 webview network calls: 0
 
 ## 20. Documentation
-ADR-019: docs/adrs/ADR-019-diff-edit-review-boundary.md
-ARCHITECTURE: verified
-PLAN: verified
-PROJECT: verified
-DECISIONS: verified
+
+ADR-019: present
+ARCHITECTURE: updated
+PLAN: updated
+PROJECT: updated
+DECISIONS: updated
 FINAL_REPORT Sprint: 3C
-implementation SHA: current HEAD
+implementation SHA: HEAD
 
 ## 21. Git checkpoint
+
 branch: main
-implementation SHA: current HEAD
-final HEAD: current HEAD
-commits: exact mutations
+implementation SHA: HEAD
+final HEAD: clean
+commits: 1
 worktree: clean
 git fsck: PASS
 
 ## 22. Remaining limitations
+
 - no Controlled Terminal UX
 - no autocomplete
 - no Git staging/commit UX
 - no editable/rebased patch UI
-- dirty editor buffer remains separate from disk mutation authority
+- dirty editor buffers remain separate from disk mutation authority
 - real OSS model benchmark deferred
 
 ## 23. Sprint status
+
 PASS
 
 ## 24. Exact next sprint
+
 SPRINT 3D — CONTROLLED TERMINAL UX
+
+Goal:
+
+Build a user-reviewed terminal execution layer around the existing permission, VerificationEngine, and process-lifecycle boundaries, with exact command previews, explicit approvals, bounded execution/output, cancellation, and no unrestricted shell authority.

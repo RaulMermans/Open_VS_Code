@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 
+export type ReviewStatus = 'PREPARED' | 'REVIEWING' | 'APPROVING' | 'APPLYING' | 'APPLIED' | 'REJECTED' | 'STALE' | 'FAILED' | 'CANCELLED';
+
 export class DiffReviewController implements vscode.TextDocumentContentProvider {
-  private registry = new Map<string, { before: string; after: string; size: number }>();
+  private registry = new Map<string, { before: string; after: string; size: number; status: ReviewStatus }>();
   private onDidChangeEmitter = vscode.EventEmitter ? new vscode.EventEmitter<vscode.Uri>() : null;
   onDidChange = this.onDidChangeEmitter?.event;
   
@@ -30,7 +32,10 @@ export class DiffReviewController implements vscode.TextDocumentContentProvider 
   }
 
   registerReview(mutationId: string, beforeContent: string, afterContent: string) {
-    if (this.registry.has(mutationId)) return; // Don't duplicate
+    if (this.registry.has(mutationId)) {
+        this.registry.get(mutationId)!.status = 'PREPARED';
+        return; // Don't duplicate
+    }
 
     const size = Buffer.byteLength(beforeContent) + Buffer.byteLength(afterContent);
     
@@ -49,8 +54,19 @@ export class DiffReviewController implements vscode.TextDocumentContentProvider 
       }
     }
 
-    this.registry.set(mutationId, { before: beforeContent, after: afterContent, size });
+    this.registry.set(mutationId, { before: beforeContent, after: afterContent, size, status: 'PREPARED' });
     this.currentBytes += size;
+  }
+
+  setStatus(mutationId: string, status: ReviewStatus) {
+    const entry = this.registry.get(mutationId);
+    if (entry) {
+        entry.status = status;
+    }
+  }
+
+  getStatus(mutationId: string): ReviewStatus | undefined {
+    return this.registry.get(mutationId)?.status;
   }
 
   clearReview(mutationId: string) {
@@ -67,9 +83,13 @@ export class DiffReviewController implements vscode.TextDocumentContentProvider 
   }
 
   async openDiff(mutationId: string, targetPath: string, isCreate: boolean) {
+    const entry = this.registry.get(mutationId);
+    if (entry && entry.status === 'PREPARED') {
+        entry.status = 'REVIEWING';
+    }
     const beforeUri = vscode.Uri.parse(`open-vs-code-diff:preview?id=${mutationId}&side=before`);
     const afterUri = vscode.Uri.parse(`open-vs-code-diff:preview?id=${mutationId}&side=after`);
-    const title = `Open VS Code: Review ${targetPath}`;
+    const title = isCreate ? `Open VS Code: Review NEW FILE ${targetPath}` : `Open VS Code: Review ${targetPath}`;
 
     await vscode.commands.executeCommand('vscode.diff', beforeUri, afterUri, title, { preview: true });
   }

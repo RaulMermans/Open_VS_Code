@@ -299,9 +299,15 @@ export class ChatController {
     }
     if (this._confirmationResolver) {
       const resolver = this._confirmationResolver;
+      const mutationId = this.state.pendingConfirmation?.mutationId;
       this._confirmationResolver = undefined;
       this.state.pendingConfirmation = undefined;
       this.sendState();
+      
+      if (mutationId) {
+        this.diffReviewController.setStatus(mutationId, 'CANCELLED');
+        this.diffReviewController.clearReview(mutationId);
+      }
       resolver("REJECT");
     }
   }
@@ -321,6 +327,26 @@ export class ChatController {
          this.state.activities[this.state.activities.length - 1].status = 'completed';
       }
       this.sendState();
+    } else if (ev.type === 'mutation.applied') {
+      const payload = ev.payload as any;
+      if (payload?.mutationId) {
+        this.diffReviewController.setStatus(payload.mutationId, 'APPLIED');
+        this.diffReviewController.clearReview(payload.mutationId);
+      }
+    } else if (ev.type === 'mutation.failed') {
+      const payload = ev.payload as any;
+      if (payload?.mutationId) {
+        const error = payload.error;
+        const isStale = error && error.code === 'STALE_BASE';
+        this.diffReviewController.setStatus(payload.mutationId, isStale ? 'STALE' : 'FAILED');
+        this.diffReviewController.clearReview(payload.mutationId);
+      }
+    } else if (ev.type === 'mutation.rejected') {
+      const payload = ev.payload as any;
+      if (payload?.mutationId) {
+        this.diffReviewController.setStatus(payload.mutationId, 'REJECTED');
+        this.diffReviewController.clearReview(payload.mutationId);
+      }
     }
   }
   

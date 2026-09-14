@@ -16,8 +16,8 @@ STATUS: COMPLETE
 Sprint 3B — Chat UX
 STATUS: COMPLETE
 
-Sprint 3C — Diff / Edit UX
+Sprint 3C — Diff / Edit UX ✅ CLOSED
 STATUS: COMPLETE
 
 Next:
-Sprint 3D — Controlled Terminal UX
+Sprint 3D — Controlled Terminal UX → NEXT
