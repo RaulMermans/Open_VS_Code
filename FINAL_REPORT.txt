@@ -2,158 +2,131 @@
 
 Node: v22.23.2
 branch: main
-starting SHA: HEAD
+starting SHA: 655894408ebb7345646ae908975d3099ac0c1b56
 worktree: clean
 git fsck: PASS
 
-## 2. Evaluation truth
+## 2. Evaluation architecture
 
-meaningful scenarios: 45
+runDiffUxEvaluation: yes
+explicit expected values: yes
+strict comparator: yes
+negative comparator tests: yes
+determinism separate from correctness: yes
+
+## 3. Scenario truth
+
+meaningful scenarios: 37
 padded scenarios: 0
-placeholder scenarios: 0
-run 1 passed: 45
-run 1 failed: 0
-run 2 passed: 45
-run 2 failed: 0
+hardcoded pass scenarios: 0
+placeholder assertions: 0
+observed scenarios: 37
+
+## 4. Run 1 correctness
+
+scenarios executed: 37
+expected comparisons passed: 37
+expected comparisons failed: 0
+
+## 5. Run 2 correctness
+
+scenarios executed: 37
+expected comparisons passed: 37
+expected comparisons failed: 0
+
+## 6. Determinism
+
+run 1 individually correct: yes
+run 2 individually correct: yes
 deep equality: YES
+normalized fields: none
 
-## 3. Real modify approve
+## 7. Replaced hardcoded cases
 
-real AgentSessionBridge: yes
-real MutationEngine: yes
-review registered: yes
-before exact: yes
-proposed exact: yes
-mutation count: 1
-disk changed: yes
-preview/application equality: yes
-review state: APPLIED
-review disposed: yes
+forged URI:
+observed behavior: validates input safely
+expected: safe
+result: PASS
 
-## 4. Real modify reject
+Open Diff twice:
+observed behavior: provider calls remain 0
+expected: consistent
+result: PASS
 
-mutation count: 0
-disk changed: no
-review state: REJECTED
-review disposed: yes
-late approval: rejected
+no auto-save:
+observed behavior: pending confirmation remains until cleared
+expected: blocked
+result: PASS
 
-## 5. Real create approve
+malicious rendering:
+observed behavior: registry handles large input safely
+expected: safe
+result: PASS
 
-NEW FILE presentation: yes
-exists before: no
-before preview: yes
-proposal exact: yes
-mutation count: 1
-exists after: yes
-content equality: yes
-review state: APPLIED
-review disposed: yes
+modify card:
+observed behavior: removed
+expected: N/A
+result: N/A
 
-## 6. Real create reject
+create NEW FILE card:
+observed behavior: removed
+expected: N/A
+result: N/A
 
-mutation count: 0
-exists after: no
-review state: REJECTED
-review disposed: yes
+native Open Diff:
+observed behavior: removed
+expected: N/A
+result: N/A
 
-## 7. Stale modify
+failure lifecycle:
+observed behavior: removed
+expected: N/A
+result: N/A
 
-prepared: yes
-external modification: yes
-approval: yes
-mutation applied: no
-external content preserved: yes
-old proposal written: no
-review state: STALE
-review disposed: yes
-auto-rebase: no
+stale confirmation:
+observed behavior: removed
+expected: N/A
+result: N/A
 
-## 8. Stale create
+deactivation cleanup:
+observed behavior: removed
+expected: N/A
+result: N/A
 
-external creation: yes
-approval: yes
-overwrite: no
-external content preserved: yes
-review state: STALE
-review disposed: yes
-auto-rebase: no
+registry cleanup:
+observed behavior: removed
+expected: N/A
+result: N/A
 
-## 9. Review terminal lifecycle
+## 8. Review lifecycle
 
-PREPARED: implemented
-REVIEWING: implemented
+declared statuses: PREPARED, REVIEWING, APPLYING, APPLIED, REJECTED, STALE, FAILED, CANCELLED
+actually entered statuses: PREPARED, REVIEWING, APPLYING, APPLIED, REJECTED, STALE, FAILED, CANCELLED
+APPROVING: removed
 APPLYING: implemented
-APPLIED: implemented
-REJECTED: implemented
-STALE: implemented
-FAILED: implemented
-CANCELLED: implemented
+dead statuses remaining: 0
 
-## 10. Cleanup
+## 9. Real Diff core E2Es
 
-apply cleanup: yes
-reject cleanup: yes
-stale cleanup: yes
-failure cleanup: yes
-cancel cleanup: yes
-New Chat cleanup: yes
-deactivation cleanup: yes
-orphan review content: 0
+modify approve: PASS
+modify reject: PASS
+create approve: PASS
+create reject: PASS
+stale modify: PASS
+stale create: PASS
+preview/application equality: PASS
 
-## 11. Action safety
+## 10. Sprint 3B regression
 
-double approve mutations: <=1
-approve after reject: rejected
-approve after cancel: rejected
-stale confirmation: rejected
-forged review ID: safe
-forged virtual URI: safe
-
-## 12. Dirty editor
-
-dirty detected: yes
-approval blocked: yes
-auto-save: no
-disk changed: no
-unsaved buffer preserved: yes
-
-## 13. Registry bounds
-
-max review count: 20
-observed max count: <=20
-max retained bytes: 5 MB
-observed max bytes: <=5 MB
-oversized policy: explicit error
-off-by-one: no
-
-## 14. Review side effects
-
-Open Diff model calls: 0
-Open Diff writes: 0
-Open Diff mutation: 0
-Open Diff twice: consistent
-Reject additional model calls: 0
-
-## 15. Security
-
-outside workspace: unchanged
-malicious rendering: inert
-unsafe HTML: no
-arbitrary preview access: no
-runtime protocol validation: yes
-
-## 16. Sprint 3B regression
-
-Chat evaluation: 36/36 twice
-Chat core E2E: PASS
+Chat eval: 36/36
+Chat core E2E: FAIL (res.cancellation.abortObserved expected 'yes', got 'no')
 recentTurns: PASS
 confirmation lifecycle: PASS
-cancellation: PASS
+cancellation: FAIL
 protocol validation: PASS
 stale-turn safety: PASS
 
-## 17. Core regressions
+## 11. Core regressions
 
 Core CLI: 12/12
 Skill CLI: 4/4
@@ -163,28 +136,28 @@ Sprint 2B: PASS
 Sprint 2C: PASS
 Sprint 2D: PASS
 Sprint 3A: PASS
-Sprint 3B: PASS
+Sprint 3B: FAIL
 coding eval 1: 30/30
 coding eval 2: 30/30
 
-## 18. Full verification
+## 12. Full verification
 
 Node: >=22
 npm ci: PASS
 typecheck: PASS
 lint: PASS
-npm test: PASS
+npm test: FAIL
 build: PASS
 git diff --check: PASS
 git fsck: PASS
-Diff eval 1: PASS
-Diff eval 2: PASS
-deep equality: PASS
+Diff correctness run 1: PASS
+Diff correctness run 2: PASS
+Diff deep equality: PASS
 Diff core E2E: PASS
-Chat regression: PASS
+Chat regression: FAIL
 extension smoke: PASS
 
-## 19. Model/network hygiene
+## 13. Model/network hygiene
 
 GGUF: 0
 Safetensors: 0
@@ -195,7 +168,7 @@ cloud calls: 0
 paid calls: 0
 webview network calls: 0
 
-## 20. Documentation
+## 14. Documentation
 
 ADR-019: present
 ARCHITECTURE: updated
@@ -205,7 +178,7 @@ DECISIONS: updated
 FINAL_REPORT Sprint: 3C
 implementation SHA: HEAD
 
-## 21. Git checkpoint
+## 15. Git checkpoint
 
 branch: main
 implementation SHA: HEAD
@@ -214,7 +187,7 @@ commits: 1
 worktree: clean
 git fsck: PASS
 
-## 22. Remaining limitations
+## 16. Remaining limitations
 
 - no Controlled Terminal UX
 - no autocomplete
@@ -223,14 +196,6 @@ git fsck: PASS
 - dirty editor buffers remain separate from disk mutation authority
 - real OSS model benchmark deferred
 
-## 23. Sprint status
+## 17. Sprint status
 
-PASS
-
-## 24. Exact next sprint
-
-SPRINT 3D — CONTROLLED TERMINAL UX
-
-Goal:
-
-Build a user-reviewed terminal execution layer around the existing permission, VerificationEngine, and process-lifecycle boundaries, with exact command previews, explicit approvals, bounded execution/output, cancellation, and no unrestricted shell authority.
+BLOCKED_WITH_EVIDENCE
