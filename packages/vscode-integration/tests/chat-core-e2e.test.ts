@@ -74,6 +74,7 @@ const freshCoreFixtures = () => {
   controller = new ChatController(host as any, bridgeFactory);
   const view = { webview: new MockWebview() };
   controller.setWebviewView(view as any);
+  controller.diffReviewController = { setStatus: () => {}, clearReview: () => {} };
   
   return { host, controller, view, provider, tmpRoot };
 };
@@ -172,15 +173,34 @@ export const runChatCoreEvaluation = async (fixtures: ReturnType<typeof freshCor
 
   // 5. REAL CANCELLATION
   let abortObserved = "no";
+  
+  let markProviderStarted: () => void;
+  const providerStarted = new Promise<void>(resolve => {
+    markProviderStarted = resolve;
+  });
+
+  // Clear any leftover steps from previous tests that might have exited early
+  provider.steps = [];
+
+
   provider.steps.push(
     async (messages: any, onEvent: any, signal: any) => {
       return new Promise((resolve, reject) => {
-         signal.addEventListener("abort", () => {
+         if (signal?.aborted) {
            abortObserved = "yes";
            const err = new Error("AbortError");
            err.name = "AbortError";
            reject(err);
-         });
+           return;
+         }
+         signal?.addEventListener("abort", () => {
+           abortObserved = "yes";
+           const err = new Error("AbortError");
+           err.name = "AbortError";
+           reject(err);
+         }, { once: true });
+         
+         markProviderStarted();
       });
     }
   );
@@ -188,7 +208,8 @@ export const runChatCoreEvaluation = async (fixtures: ReturnType<typeof freshCor
   await view.webview.send({ type: "chat.newConversation" });
   await view.webview.send({ type: "chat.setMode", mode: "ASK" });
   view.webview.send({ type: "chat.send", text: "cancel test", mode: "ASK" });
-  await new Promise(r => setTimeout(r, 500)); 
+  
+  await providerStarted; // deterministic wait
   await view.webview.send({ type: "chat.cancel" });
   await waitForTurn();
   
