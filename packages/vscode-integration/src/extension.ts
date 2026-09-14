@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
+import { HaloProvider, capabilityForAgentMode, probeHalo } from '@open-vs-code/agent-core';
 
 class VSCodeIdeHost implements IdeHost {
   private outputChannel: vscode.OutputChannel;
@@ -166,6 +167,22 @@ export const _testSeam = {
   get chatController() { return chatController; }
 };
 
+const HALO_TOKEN_SECRET_KEY = 'halo.appToken';
+const HALO_DEFAULT_URL = 'http://127.0.0.1:4310';
+
+function haloSettings() {
+  const settings = vscode.workspace.getConfiguration('open-vs-code');
+  return {
+    backend: settings.get<'halo' | 'standalone-local'>('inferenceBackend', 'standalone-local'),
+    coreUrl: settings.get<string>('halo.coreUrl', HALO_DEFAULT_URL),
+    timeoutMs: settings.get<number>('halo.timeoutMs', 30_000),
+  };
+}
+
+function haloToken(context: vscode.ExtensionContext): () => Promise<string | undefined> {
+  return async () => await context.secrets.get(HALO_TOKEN_SECRET_KEY) ?? process.env.HALO_APP_TOKEN_OPEN_VSCODE;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   host = new VSCodeIdeHost();
   diffReviewController = new DiffReviewController();
@@ -176,11 +193,20 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
-  chatController = new ChatController(host, diffReviewController, (options: { host: any, workspaceRoot: string }) => {
+  chatController = new ChatController(host, diffReviewController, (options: { host: any, workspaceRoot: string, mode: 'ASK' | 'PLAN' | 'BUILD' | 'DEBUG' | 'REVIEW' }) => {
     if (_testSeam.bridgeFactory) {
       activeBridge = _testSeam.bridgeFactory(options);
     } else {
-      activeBridge = new AgentSessionBridge(options);
+      const settings = haloSettings();
+      const providerOverride = settings.backend === 'halo'
+        ? new HaloProvider({
+          coreUrl: settings.coreUrl,
+          timeoutMs: settings.timeoutMs,
+          capability: capabilityForAgentMode(options.mode),
+          token: haloToken(context),
+        })
+        : undefined;
+      activeBridge = new AgentSessionBridge({ ...options, ...(providerOverride ? { providerOverride } : {}) });
     }
     return activeBridge!;
   });
@@ -212,6 +238,29 @@ export function activate(context: vscode.ExtensionContext) {
     registerAgentCommand('open-vs-code.build', 'BUILD'),
     registerAgentCommand('open-vs-code.debug', 'DEBUG'),
     registerAgentCommand('open-vs-code.review', 'REVIEW'),
+    vscode.commands.registerCommand('open-vs-code.setHaloToken', async () => {
+      const token = await vscode.window.showInputBox({
+        prompt: 'HALO application token for Open VS Code',
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (!token?.trim()) return;
+      await context.secrets.store(HALO_TOKEN_SECRET_KEY, token.trim());
+      await host?.showOutput('HALO application token saved to VS Code SecretStorage.');
+    }),
+    vscode.commands.registerCommand('open-vs-code.checkHaloConnection', async () => {
+      const settings = haloSettings();
+      if (settings.backend !== 'halo') {
+        await host?.showOutput('HALO is not selected. Select the HALO inference backend to use it.');
+        return;
+      }
+      try {
+        const reachable = await probeHalo(settings.coreUrl);
+        await host?.showOutput(reachable ? 'HALO reachable.' : 'HALO Core is unavailable.');
+      } catch {
+        await host?.showOutput('HALO Core is unreachable.');
+      }
+    }),
     { dispose: () => host?.dispose() }
   );
 }

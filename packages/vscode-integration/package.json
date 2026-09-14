@@ -45,8 +45,38 @@
       {
         "command": "open-vs-code.review",
         "title": "Agent: Review"
+      },
+      {
+        "command": "open-vs-code.setHaloToken",
+        "title": "Open VS Code: Set HALO Application Token"
+      },
+      {
+        "command": "open-vs-code.checkHaloConnection",
+        "title": "Open VS Code: Check HALO Connection"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Open VS Code",
+      "properties": {
+        "open-vs-code.inferenceBackend": {
+          "type": "string",
+          "enum": ["standalone-local", "halo"],
+          "default": "standalone-local",
+          "description": "Explicit inference backend. HALO failures never fall back to standalone local inference."
+        },
+        "open-vs-code.halo.coreUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:4310",
+          "description": "Local HALO Core URL."
+        },
+        "open-vs-code.halo.timeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1,
+          "description": "Maximum HALO request duration in milliseconds."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
