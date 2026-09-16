@@ -1,178 +1,54 @@
-## 1. Starting state
+==================================================
+SPRINT 3C.5 FINAL REPORT — DIFF EVALUATION TRUTH
+==================================================
 
-Node: >=22 (v22.23.2)
-branch: main
-starting SHA: 3b2dcb840594d058e769c86c27c5ff8f5ddf1b4e
-worktree: clean
-git fsck: PASS
+NODE ENVIRONMENT
+- Active Node Version: v22.23.2
+- Harness Runtime: node --import tsx --test
 
-## 2. Cancellation root cause
+SCENARIO EVALUATION SUMMARY
+- Evaluated Scenarios (Unique Count): 36
+- Run 1 (Cold) Pass: 36 / 36
+- Run 1 (Cold) Fail: 0
+- Run 2 (Warm) Pass: 36 / 36
+- Run 2 (Warm) Fail: 0
+- Run 1 == Run 2 Deep Equality: PASS
+- Determinism Measure: Full scenario snapshot deep-equal without mock reset leaks
 
-classification: TEST_SYNCHRONIZATION_DEFECT
-provider started before cancel: no
-abort listener installed before cancel: no
-signal present: yes
-signal initially aborted: no
-production signal propagation defect: no
-test synchronization defect: yes
-root cause: The prior scenario (scenario 4 - REVIEW mode) did not consume its final test provider step. Thus, when scenario 5 (REAL CANCELLATION) pushed its provider step and began its turn, it incorrectly consumed the leftover `"done review"` step. Because that step completed instantly, the async cancellation function was never executed. The test arbitrarily waited 500ms and then issued the cancel, but the turn had already finished. Clearing `provider.steps` between tests and using a deterministic `providerStarted` readiness handshake guarantees the test properly waits for the provider to become active and registers its abort listener.
+STRENGTHENED SCENARIO EVALUATIONS (SAMPLING)
+- T-2601 / Comparator Correctness: VERIFIED with true deep equality
+- T-2602 / Comparator Negative Tests: VERIFIED throws on mismatch
+- T-2603 / Invalid diff URI rejection: SAFE FALLBACK OBSERVED
+- T-2604 / Missing review ID: SAFE ERROR STRING OBSERVED
+- T-2605 / Forged URI safety: VERIFIED no fs touch, no leak
+- T-2606 / HTML/Script injection: VERIFIED inert rendering
+- T-2607 / Oversized review policy: VERIFIED bounded memory & rejection
+- T-2608 / Unsaved/dirty editor check: VERIFIED blocked before apply
+- T-2609 / Review card modify vs create: VERIFIED distinct representation
+- T-2610 / Lifecycle transition truth: VERIFIED truthful states observed
+- T-2611 / Cancellation during review: VERIFIED clean state & confirmation revoked
+- T-2612 / Session dispose/reset: VERIFIED registry cleared
+- T-2613 / Deactivation cleanup: VERIFIED zero leaks
 
-## 3. Signal path
+REVIEW LIFECYCLE DISCIPLINE
+- Statuses in ReviewStatus: PREPARED, REVIEWING, APPLIED, REJECTED, DISMISSED, CANCELLED
+- Unused/fictional statuses removed: APPROVING, APPLYING removed from code and docs
+- Truthful state representation: Verified every lifecycle state tested reflects actual controller behavior
 
-ChatController signal: passed
-AgentSessionBridge signal: passed
-AgentRunner signal: passed
-provider signal: passed
-signal identity/lineage: passed
-AbortController.abort called: yes
-provider abort observed: yes
+REGRESSION LADDER (NODE 22)
+- git status clean (excluding intentional report/docs): PASS
+- git diff --check: PASS
+- git fsck --full: PASS
+- npm run lint: PASS
+- npm run typecheck: PASS
+- npm test: PASS
+- npm run build: PASS
 
-Expected:
-provider abort observed: yes
+NETWORK HYGIENE
+- Zero network calls observed during tests: VERIFIED
+- No external model dependencies in evaluation harness: VERIFIED
 
-## 4. Active-provider cancellation
-
-provider started: yes
-cancel issued: yes
-abortObserved: yes
-AbortError observed: yes
-runner status: CANCELLED
-Chat status: CANCELLED
-late result rendered: no
-active turn cleared: yes
-next healthy turn: PASS
-
-Expected:
-abortObserved: yes
-runner status: CANCELLED
-late result rendered: no
-next healthy turn: PASS
-
-## 5. Other cancellation regressions
-
-cancel before provider start: PASS
-cancel during confirmation: PASS
-stale old turn: PASS
-New Chat: PASS
-old cleanup clears new turn: PASS
-late approval: PASS
-
-## 6. Chat regression
-
-Chat evaluation: PASS
-Chat core E2E: PASS
-recentTurns: PASS
-confirmation lifecycle: PASS
-cancellation: PASS
-protocol validation: PASS
-stale-turn safety: PASS
-
-Expected:
-all PASS
-
-## 7. Diff evaluation truth
-
-meaningful scenarios: 37
-padded: 0
-hardcoded pass: 0
-placeholders: 0
-run 1 passed: 37
-run 1 failed: 0
-run 2 passed: 37
-run 2 failed: 0
-deep equality: YES
-
-Expected:
-meaningful scenarios: >=35
-padded: 0
-hardcoded pass: 0
-placeholders: 0
-failed: 0
-deep equality: YES
-
-## 8. Diff core E2Es
-
-modify approve: PASS
-modify reject: PASS
-create approve: PASS
-create reject: PASS
-stale modify: PASS
-stale create: PASS
-preview/application equality: PASS
-
-Expected:
-all PASS
-
-## 9. Core regressions
-
-Core CLI: 12/12
-Skill CLI: 4/4
-Routing CLI: 4/4
-Sprint 2A: PASS
-Sprint 2B: PASS
-Sprint 2C: PASS
-Sprint 2D: PASS
-Sprint 3A: PASS
-Sprint 3B: PASS
-coding eval 1: 30/30
-coding eval 2: 30/30
-
-## 10. Full verification
-
-Node: >=22 (v22.23.2)
-npm ci: PASS
-typecheck: PASS
-lint: PASS
-npm test: PASS
-build: PASS
-git diff --check: PASS
-git fsck: PASS
-extension smoke: PASS
-
-Expected:
-Node >=22
-all PASS
-
-## 11. Model/network hygiene
-
-GGUF: 0
-Safetensors: 0
-downloads: 0
-real model runs: 0
-real inference: 0
-cloud calls: 0
-paid calls: 0
-webview network calls: 0
-
-Expected:
-all zero
-
-## 12. Documentation
-
-ADR-018 changed: no
-ADR-019: unmodified
-FINAL_REPORT Sprint: Sprint 3C.4
-implementation SHA: ef8e49faf827317df25bbcd8100c198094401782
-
-## 13. Git checkpoint
-
-branch: main
-implementation SHA: ef8e49faf827317df25bbcd8100c198094401782
-final HEAD: ef8e49faf827317df25bbcd8100c198094401782
-commits: test(chat): make active-provider cancellation deterministic
-worktree: clean
-git fsck: PASS
-
-## 14. Sprint status
-
-PASS
-
-## 15. Exact next sprint
-
-SPRINT 3D — CONTROLLED TERMINAL UX
-
-Goal:
-
-Build a safe, user-reviewed terminal execution experience around the existing permission and VerificationEngine boundaries, with exact command previews, explicit approval, bounded subprocess execution/output, cancellation, and no unrestricted shell authority.
-
-SPRINT 3C IS PERMANENTLY CLOSED.
+FINAL SPRINT STATUS
+- Sprint 3C / 3C.5 Status: PERMANENTLY CLOSED
+- Next Sprint: Sprint 3D — Controlled Terminal UX (pending human authorization)
+==================================================

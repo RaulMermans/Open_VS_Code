@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-export type ReviewStatus = 'PREPARED' | 'REVIEWING' | 'APPROVING' | 'APPLYING' | 'APPLIED' | 'REJECTED' | 'STALE' | 'FAILED' | 'CANCELLED';
+export type ReviewStatus = 'PREPARED' | 'REVIEWING' | 'APPLIED' | 'REJECTED' | 'STALE' | 'FAILED' | 'CANCELLED';
 
 export class DiffReviewController implements vscode.TextDocumentContentProvider {
   private registry = new Map<string, { before: string; after: string; size: number; status: ReviewStatus }>();
