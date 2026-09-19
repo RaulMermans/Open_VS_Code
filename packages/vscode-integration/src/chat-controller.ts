@@ -44,12 +44,13 @@ export class ChatController {
 
     const isWriteFile = payload?.action === 'write_file' || payload?.operation === 'patch' || payload?.operation === 'create';
     const mutationId = payload?.id || this.generateId();
+    const reviewData = payload?.reviewPayload || payload;
 
-    if (isWriteFile && payload?.reviewPayload) {
-      this.diffReviewController.registerReview(
+    if (isWriteFile && reviewData) {
+      this.diffReviewController?.registerReview?.(
         mutationId,
-        payload.reviewPayload.beforeContent || '',
-        payload.reviewPayload.proposedContent || ''
+        reviewData.beforeContent || '',
+        reviewData.proposedContent || ''
       );
     }
 
@@ -130,6 +131,10 @@ export class ChatController {
             return;
           }
         }
+        if (this.state.pendingConfirmation?.mutationId) {
+          this.diffReviewController.setStatus(this.state.pendingConfirmation.mutationId, 'CANCELLED');
+          this.diffReviewController.clearReview(this.state.pendingConfirmation.mutationId);
+        }
         this.state = {
           conversationId: this.generateId(),
           mode: this.state.mode,
@@ -144,6 +149,7 @@ export class ChatController {
       case 'confirmation.respond':
         if (this.state.pendingConfirmation && this._confirmationResolver) {
           if (message.confirmationId === this.state.pendingConfirmation.id) {
+            const mutId = this.state.pendingConfirmation.mutationId;
             if (message.action === 'APPROVE' && this.state.pendingConfirmation.path) {
               const pendingPath = this.state.pendingConfirmation.path.replace(/\\/g, '/');
               const isDirty = vscode.workspace?.textDocuments?.some(doc => 
@@ -159,6 +165,10 @@ export class ChatController {
             this.sendState();
             const resolver = this._confirmationResolver;
             this._confirmationResolver = undefined;
+            if (message.action === 'REJECT' && mutId) {
+              this.diffReviewController.setStatus(mutId, 'REJECTED');
+              this.diffReviewController.clearReview(mutId);
+            }
             resolver(message.action);
           }
         }
@@ -337,14 +347,16 @@ export class ChatController {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
         const error = payload.error;
-        const isStale = error && error.code === 'STALE_BASE';
+        const isStale = error && (error.code === 'STALE_BASE' || error.message?.includes('STALE_BASE') || error.code === 'FILE_EXISTS' || error.message?.includes('FILE_EXISTS'));
         this.diffReviewController.setStatus(payload.mutationId, isStale ? 'STALE' : 'FAILED');
         this.diffReviewController.clearReview(payload.mutationId);
       }
     } else if (ev.type === 'mutation.rejected') {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
-        this.diffReviewController.setStatus(payload.mutationId, 'REJECTED');
+        if (this.diffReviewController.getStatus(payload.mutationId) !== 'CANCELLED') {
+          this.diffReviewController.setStatus(payload.mutationId, 'REJECTED');
+        }
         this.diffReviewController.clearReview(payload.mutationId);
       }
     }
