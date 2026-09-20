@@ -30,10 +30,11 @@
 
 ## Current sprint
 
-Sprint 3D — Controlled Terminal UX ✅ CLOSED
+Sprint 3D ✅ CLOSED PERMANENTLY (Sprint 3D.1 — Terminal Runtime Truth completed)
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
 - Phase C (Sprint 3C): Diff Review Safety & Closure.
 - Phase D (Sprint 3D): Controlled Terminal UX & Review Boundary. 100% deterministic test evaluations passed.
+- Phase D.1 (Sprint 3D.1): Terminal Runtime Truth. Live output streaming, UTF-8 safety, bounded prefix buffer, PREPARED state removal, fail-closed validation, bounded registry, deterministic process group cleanup proofs. 59 terminal scenarios, 318 total tests pass. ✅ CLOSED.
 - Next: Sprint 3E — Autocomplete → NEXT

@@ -1,49 +1,96 @@
 # ADR-021: Controlled Terminal UX and Presentation Boundary
 
+**Status:** Accepted — Sprint 3D ✅ CLOSED (updated Sprint 3D.1)
+
 ## Context
-In Sprint 3D, we introduce a controlled terminal review and execution experience within the IDE chat interface. The system needs to allow users to review, approve, monitor, and cancel command executions requested by the agent (such as verification, testing, linting, building, and typechecking) without introducing arbitrary code execution vulnerabilities, shell injection, dangling daemon processes, or UI-driven privilege escalation.
+
+In Sprint 3D, we introduced a controlled terminal review and execution experience within the IDE chat interface. In Sprint 3D.1 we completed the runtime truth requirements: live subprocess output streaming, UTF-8 chunk boundary safety, bounded prefix buffers, dead-state removal, fail-closed presentation validation, bounded registry, and deterministic process group cleanup proofs.
 
 Note: `ADR-020` was previously allocated to `ADR-020-halo-capability-provider.md` (Sprint 9 / HALO capability provider).
 
 ## Decision
 
-1. **Sole Execution Authority**:
-   - `VerificationEngine` in `agent-core` remains the exclusive execution authority for subprocesses.
-   - The IDE host, `ChatController`, `TerminalReviewController`, and Webview are strictly **presentation and user review layers**. They possess zero authority to spawn processes directly.
+### 1. Sole Execution Authority
 
-2. **Strict `shell: false` & No Shell Interpolation**:
-   - All executions are performed with `spawn(prepared.executable, prepared.args, { shell: false, detached: true, cwd })`.
-   - Shell strings, shell wrappers (`bash -c`, `sh -c`, `zsh -c`), eval constructs, pipes (`|`), redirections (`>`, `<`), and command chaining (`&&`, `;`, `||`) are strictly rejected.
+- `VerificationEngine` in `agent-core` remains the exclusive execution authority for subprocesses.
+- The IDE host, `ChatController`, `TerminalReviewController`, and Webview are strictly **presentation and user review layers** with zero subprocess spawn authority.
 
-3. **Conservative Default (Explicit Human Approval)**:
-   - Command execution pauses at the `CONFIRM` permission gate.
-   - Execution only proceeds when the user explicitly clicks `[Run]` in the UI or approves via confirmation bridge. No auto-approval exists.
-   - Rejection cancels execution cleanly without running any process.
+### 2. Strict `shell: false` & No Shell Interpolation
 
-4. **Process Tree Containment and Cancellation**:
-   - Subprocesses are spawned detached (`detached: true`) so that termination targets the process group (`-child.pid` on POSIX systems).
-   - Cancellation by user or timeout guarantees that the child and any spawned descendant processes are cleanly terminated with zero orphaned background tasks.
+- All executions: `spawn(prepared.executable, prepared.args, { shell: false, detached: true, cwd })`.
+- Shell wrappers, eval constructs, pipes, redirections, and command chaining are strictly rejected at the preparation layer.
 
-5. **Bounded Ring Buffering and Streaming Presentation**:
-   - Terminal outputs are captured in separate stdout and stderr bounded ring buffers (capped at 16 KB per stream).
-   - Chunk boundaries preserve valid UTF-8 sequences.
-   - When output exceeds the stream budget, earlier bytes are discarded and an explicit truncation notice (`[... output truncated ...]`) is displayed.
+### 3. Conservative Default (Explicit Human Approval)
 
-6. **Stale Script Protection**:
-   - Commands are bound to the `package.json` script content and hash at preparation time.
-   - If the script name or script definition changes in `package.json` between preparation and approval, execution is rejected as stale.
+- Command execution pauses at the `CONFIRM` permission gate.
+- Execution only proceeds on explicit `[Run]` click or confirmation bridge approval.
+- Rejection cancels execution cleanly without running any process.
 
-7. **Prohibited Command Classes**:
-   - Package manager installations (`npm install`, `yarn add`, `pnpm add`, etc.).
-   - Git mutations (`git commit`, `git push`, `git rebase`, `git reset`, etc.).
-   - Long-running daemons or file watchers (`npm start`, `next dev`, `vite`, `nodemon`, etc.).
-   - Interactive REPLs or stdin requirements.
-   - Privilege escalations (`sudo`, `doas`, `su`).
+### 4. Fail-Closed Presentation Validation (Sprint 3D.1)
 
-8. **Zero Model Overhead**:
-   - UI actions on terminal review cards (viewing, toggling output, copying commands, approving, rejecting, or cancelling) trigger zero LLM calls.
+- `ChatController.requestConfirmation` validates every prepared command before showing it to the user:
+  - `executable` must be a non-empty string.
+  - `args` must be an array (not a string or other type).
+  - `cwd` must be a non-empty string.
+- If any field is missing or malformed, the confirmation resolves immediately to `"REJECT"` with no fallback substitution (`"npm"`, `["test"]`, `"."` fallbacks are prohibited).
+
+### 5. Live Subprocess Output Streaming (Sprint 3D.1)
+
+- `VerificationEngine.execute()` accepts an optional `onOutput` callback `(chunk: { stream: "stdout" | "stderr"; chunk: string }) => void`.
+- Stdout and stderr are decoded with `StringDecoder("utf-8")` to prevent split multi-byte character sequences at chunk boundaries.
+- Each decoded chunk is delivered to `onOutput` as it arrives; the decoder is flushed on stream close or settle.
+- `AgentRunner` wires `onOutput` to emit `"verification.output"` events via `eventSink`.
+- `ChatController` handles `"verification.output"` events, validates the payload (executionId string, stream `"stdout"|"stderr"`, chunk string), calls `terminalReviewController.appendOutput`, updates `activeTerminal`, and pushes `terminal.updated` messages to the Webview.
+- The Webview renders output using `textContent` (XSS-immune; no `innerHTML`).
+
+### 6. Bounded Prefix Buffer Policy (Sprint 3D.1)
+
+- Each stream (stdout, stderr) retains the **first `maxOutputBytes` bytes** (default 16 KB) received — a bounded **prefix** buffer, not a ring buffer.
+- When a chunk would exceed the per-stream budget, it is sliced to the remaining capacity using `truncateUtf8Buffer`, which walks back from the byte limit to exclude trailing multi-byte sequence continuations, avoiding `\uFFFD` replacement characters.
+- Once the per-stream budget is full, further chunks are silently discarded; `stdoutTruncated` / `stderrTruncated` flags are set to `true`.
+- Documentation and comments describe this accurately as a "bounded prefix buffer" — not a circular buffer.
+
+### 7. Removed `PREPARED` State (Sprint 3D.1)
+
+- `PREPARED` was a dead lifecycle state never reachable in any valid execution path.
+- It has been removed from `TerminalReviewStatus`, `TerminalReviewDto`, and all tests.
+- The 7 remaining active states are: `WAITING_APPROVAL`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `REJECTED`.
+
+### 8. Bounded Registry (Sprint 3D.1)
+
+- `TerminalReviewController` enforces two budgets:
+  - **`maxReviews`** (default 50): before registering a new entry, evict the oldest completed entry (`SUCCEEDED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `REJECTED`) if at the limit.
+  - **`maxTotalRetainedBytes`** (default 1 MB): after each `appendOutput` or `recordCompletion`, evict the oldest completed entry if the cumulative stdout+stderr bytes of all retained entries exceed the limit.
+- Active entries (`WAITING_APPROVAL`, `RUNNING`) are **never evicted**.
+
+### 9. Process Tree Containment and Deterministic Cleanup (Sprint 3D.1)
+
+- Subprocesses are spawned with `detached: true` so termination targets the process group (`process.kill(-child.pid, "SIGTERM")` then `SIGKILL` after grace period on POSIX).
+- Cancellation via `AbortSignal` and timeout both deterministically terminate the parent and all descendant processes.
+- E2E proof: `terminal-core-e2e.test.ts` scenarios 53 and 54 spawn a real parent that forks a real child, observe both PIDs are alive, then trigger cancellation/timeout and poll until both PIDs are dead.
+- Extension deactivation (`deactivate()`) aborts the active `AbortController` (scenario 55), terminating the subprocess tree.
+
+### 10. Stale Script Protection
+
+- Commands are bound to `package.json` script content and hash at preparation time.
+- If the script name or body changes between preparation and approval, execution is rejected as stale.
+
+### 11. Prohibited Command Classes
+
+- Package manager installations (`npm install`, `yarn add`, etc.).
+- Git mutations (`git commit`, `git push`, etc.).
+- Long-running daemons or file watchers.
+- Interactive REPLs or stdin requirements.
+- Privilege escalations (`sudo`, `doas`, `su`).
+
+### 12. Zero Model Overhead
+
+- UI actions on terminal review cards (view, toggle, copy, approve, reject, cancel) trigger zero LLM calls.
 
 ## Consequences
+
 - Guaranteed protection against prompt injection resulting in arbitrary command execution.
-- Deterministic and auditable command review lifecycle (`PREPARED`, `WAITING_APPROVAL`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `REJECTED`).
-- Complete alignment with editor-independent architecture: `agent-core` contracts drive the execution while `vscode-integration` handles rendering.
+- Deterministic and auditable command review lifecycle (7 active states; `PREPARED` eliminated).
+- Live output visible to the user as execution progresses, without race conditions or XSS risk.
+- Complete alignment with editor-independent architecture: `agent-core` contracts drive execution; `vscode-integration` handles rendering.
+- Memory bounded: no registry growth without limit regardless of session length.

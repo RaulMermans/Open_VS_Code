@@ -72,12 +72,23 @@ export class ChatController {
     let preparedCommandDto: TerminalReviewDto | undefined;
     if (isVerification) {
       const pc = payload?.preparedCommand || payload;
-      const cmdExecutable = pc?.executable || 'npm';
-      const cmdArgs = Array.isArray(pc?.args) ? pc.args : ['test'];
-      const commandPreview = pc?.commandPreview || `${cmdExecutable} ${cmdArgs.join(' ')}`;
-      const timeoutMs = pc?.timeoutMs || 60000;
-      const cwd = pc?.cwd || (await this.host.getSnapshot()).workspaceRoots?.[0]?.fsPath || '.';
-      const provenance = pc?.scriptName ? `package.json [${pc.scriptName}]` : 'Verification Runner';
+      if (
+        !pc ||
+        typeof pc.executable !== 'string' ||
+        !pc.executable.trim() ||
+        !Array.isArray(pc.args) ||
+        typeof pc.cwd !== 'string' ||
+        !pc.cwd.trim()
+      ) {
+        return "REJECT";
+      }
+
+      const cmdExecutable = pc.executable.trim();
+      const cmdArgs = pc.args.map(String);
+      const commandPreview = pc.commandPreview || `${cmdExecutable} ${cmdArgs.join(' ')}`.trim();
+      const timeoutMs = typeof pc.timeoutMs === 'number' && pc.timeoutMs > 0 ? pc.timeoutMs : 60000;
+      const cwd = pc.cwd.trim();
+      const provenance = pc.scriptName ? `package.json [${pc.scriptName}]` : (pc.provenance || 'Verification Runner');
 
       const entry = this.terminalReviewController.registerPreparedCommand({
         confirmationId,
@@ -87,10 +98,10 @@ export class ChatController {
         timeoutMs,
         executable: cmdExecutable,
         args: cmdArgs,
-        packageJsonPath: pc?.packageJsonPath,
-        packageJsonHash: pc?.packageJsonHash,
-        scriptName: pc?.scriptName,
-        scriptBody: pc?.scriptBody,
+        packageJsonPath: pc.packageJsonPath,
+        packageJsonHash: pc.packageJsonHash,
+        scriptName: pc.scriptName,
+        scriptBody: pc.scriptBody,
       });
 
       preparedCommandDto = {
@@ -513,6 +524,28 @@ export class ChatController {
         this.terminalReviewController.setStatus(term.executionId, 'RUNNING');
         term.status = 'RUNNING';
         this.sendState();
+      }
+    } else if (ev.type === 'verification.output') {
+      const payload = ev.payload as any;
+      if (
+        payload &&
+        (payload.stream === 'stdout' || payload.stream === 'stderr') &&
+        typeof payload.chunk === 'string' &&
+        payload.chunk.length > 0
+      ) {
+        const executionId = payload.executionId || this.state.activeTerminal?.executionId;
+        if (executionId) {
+          this.terminalReviewController.appendOutput(executionId, payload.stream, payload.chunk);
+          const tEntry = this.terminalReviewController.getByExecutionId(executionId);
+          if (tEntry) {
+            this.syncTerminalState(tEntry);
+          }
+          this.sendMessage({
+            type: 'terminal.updated',
+            terminal: this.state.activeTerminal,
+            review: this.state.activeTerminal,
+          });
+        }
       }
     } else if (ev.type === 'verification.completed') {
       const payload = ev.payload as any;

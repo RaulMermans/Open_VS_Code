@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
+import { StringDecoder } from 'node:string_decoder';
 
 export type TerminalReviewStatus =
-  | 'PREPARED'
   | 'WAITING_APPROVAL'
   | 'RUNNING'
   | 'SUCCEEDED'
@@ -9,6 +9,33 @@ export type TerminalReviewStatus =
   | 'TIMED_OUT'
   | 'CANCELLED'
   | 'REJECTED';
+
+export function truncateUtf8Buffer(buf: Buffer, maxBytes: number): { buffer: Buffer; truncated: boolean } {
+  if (buf.length <= maxBytes) {
+    return { buffer: buf, truncated: false };
+  }
+  let end = maxBytes;
+  while (end > 0) {
+    const b = buf[end - 1];
+    if (b === undefined || (b & 0xC0) !== 0x80) break;
+    end--;
+  }
+  const lastByte = end > 0 ? buf[end - 1] : undefined;
+  if (lastByte !== undefined && (lastByte & 0x80) !== 0) {
+    const lead = lastByte;
+    let seqLen = 1;
+    if ((lead & 0xE0) === 0xC0) seqLen = 2;
+    else if ((lead & 0xF0) === 0xE0) seqLen = 3;
+    else if ((lead & 0xF8) === 0xF0) seqLen = 4;
+
+    if (end - 1 + seqLen <= maxBytes) {
+      end = end - 1 + seqLen;
+    } else {
+      end = end - 1;
+    }
+  }
+  return { buffer: buf.subarray(0, end), truncated: true };
+}
 
 export interface TerminalReviewEntry {
   readonly executionId: string;
@@ -34,19 +61,39 @@ export interface TerminalReviewEntry {
   isOutputVisible: boolean;
 }
 
+export interface TerminalReviewControllerOptions {
+  readonly maxOutputBytes?: number;
+  readonly maxReviews?: number;
+  readonly maxTotalRetainedBytes?: number;
+}
+
 export class TerminalReviewController {
   private reviews = new Map<string, TerminalReviewEntry>();
   private confirmationToExecution = new Map<string, string>();
+  private stdoutDecoders = new Map<string, StringDecoder>();
+  private stderrDecoders = new Map<string, StringDecoder>();
   private maxOutputBytes: number;
+  private maxReviews: number;
+  private maxTotalRetainedBytes: number;
   private onDidChangeEmitter = vscode.EventEmitter ? new vscode.EventEmitter<string>() : null;
   readonly onDidChange = this.onDidChangeEmitter?.event;
 
-  constructor(options?: { maxOutputBytes?: number }) {
+  constructor(options?: TerminalReviewControllerOptions) {
     this.maxOutputBytes = options?.maxOutputBytes ?? 16 * 1024;
+    this.maxReviews = options?.maxReviews ?? 50;
+    this.maxTotalRetainedBytes = options?.maxTotalRetainedBytes ?? 1024 * 1024;
   }
 
   get totalReviews(): number {
     return this.reviews.size;
+  }
+
+  get totalRetainedBytes(): number {
+    let total = 0;
+    for (const r of this.reviews.values()) {
+      total += Buffer.byteLength(r.stdout, 'utf-8') + Buffer.byteLength(r.stderr, 'utf-8');
+    }
+    return total;
   }
 
   registerPreparedCommand(params: {
@@ -63,6 +110,8 @@ export class TerminalReviewController {
     scriptName?: string;
     scriptBody?: string;
   }): TerminalReviewEntry {
+    this.enforceReviewCountBudget();
+
     const executionId = params.executionId || `term-exec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     
     const entry: TerminalReviewEntry = {
@@ -113,6 +162,24 @@ export class TerminalReviewController {
     return true;
   }
 
+  private getStdoutDecoder(executionId: string): StringDecoder {
+    let decoder = this.stdoutDecoders.get(executionId);
+    if (!decoder) {
+      decoder = new StringDecoder('utf-8');
+      this.stdoutDecoders.set(executionId, decoder);
+    }
+    return decoder;
+  }
+
+  private getStderrDecoder(executionId: string): StringDecoder {
+    let decoder = this.stderrDecoders.get(executionId);
+    if (!decoder) {
+      decoder = new StringDecoder('utf-8');
+      this.stderrDecoders.set(executionId, decoder);
+    }
+    return decoder;
+  }
+
   appendOutput(executionId: string, stream: 'stdout' | 'stderr', chunk: string | Buffer): void {
     const entry = this.reviews.get(executionId);
     if (!entry) return;
@@ -122,22 +189,27 @@ export class TerminalReviewController {
       return;
     }
 
-    const chunkStr = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
     const isStdout = stream === 'stdout';
-    const currentBuf = Buffer.from(isStdout ? entry.stdout : entry.stderr, 'utf-8');
-    const chunkBuf = Buffer.from(chunkStr, 'utf-8');
+    const decoder = isStdout ? this.getStdoutDecoder(executionId) : this.getStderrDecoder(executionId);
+    const chunkStr = typeof chunk === 'string' ? chunk : decoder.write(chunk);
+    if (!chunkStr) return;
 
-    if (currentBuf.length >= this.maxOutputBytes) {
+    const currentText = isStdout ? entry.stdout : entry.stderr;
+    const currentBytes = Buffer.byteLength(currentText, 'utf-8');
+
+    if (currentBytes >= this.maxOutputBytes) {
       if (isStdout) entry.stdoutTruncated = true;
       else entry.stderrTruncated = true;
       this.onDidChangeEmitter?.fire(executionId);
       return;
     }
 
-    const remaining = this.maxOutputBytes - currentBuf.length;
+    const remaining = this.maxOutputBytes - currentBytes;
+    const chunkBuf = Buffer.from(chunkStr, 'utf-8');
+
     if (chunkBuf.length > remaining) {
-      const allowed = chunkBuf.subarray(0, remaining);
-      const appended = allowed.toString('utf-8');
+      const { buffer: safeSlice } = truncateUtf8Buffer(chunkBuf, remaining);
+      const appended = safeSlice.toString('utf-8');
       if (isStdout) {
         entry.stdout += appended;
         entry.stdoutTruncated = true;
@@ -153,6 +225,7 @@ export class TerminalReviewController {
       }
     }
 
+    this.enforceTotalRetainedBytesBudget();
     this.onDidChangeEmitter?.fire(executionId);
   }
 
@@ -172,10 +245,24 @@ export class TerminalReviewController {
     entry.exitSignal = details.exitSignal ?? null;
     entry.durationMs = details.durationMs ?? null;
 
+    const outDecoder = this.stdoutDecoders.get(executionId);
+    if (outDecoder) {
+      const rem = outDecoder.end();
+      if (rem) entry.stdout += rem;
+      this.stdoutDecoders.delete(executionId);
+    }
+    const errDecoder = this.stderrDecoders.get(executionId);
+    if (errDecoder) {
+      const rem = errDecoder.end();
+      if (rem) entry.stderr += rem;
+      this.stderrDecoders.delete(executionId);
+    }
+
     if (details.stdout !== undefined) {
       const buf = Buffer.from(details.stdout, 'utf-8');
       if (buf.length > this.maxOutputBytes) {
-        entry.stdout = buf.subarray(0, this.maxOutputBytes).toString('utf-8');
+        const { buffer: safeSlice } = truncateUtf8Buffer(buf, this.maxOutputBytes);
+        entry.stdout = safeSlice.toString('utf-8');
         entry.stdoutTruncated = true;
       } else {
         entry.stdout = details.stdout;
@@ -185,14 +272,36 @@ export class TerminalReviewController {
     if (details.stderr !== undefined) {
       const buf = Buffer.from(details.stderr, 'utf-8');
       if (buf.length > this.maxOutputBytes) {
-        entry.stderr = buf.subarray(0, this.maxOutputBytes).toString('utf-8');
+        const { buffer: safeSlice } = truncateUtf8Buffer(buf, this.maxOutputBytes);
+        entry.stderr = safeSlice.toString('utf-8');
         entry.stderrTruncated = true;
       } else {
         entry.stderr = details.stderr;
       }
     }
 
+    this.enforceTotalRetainedBytesBudget();
     this.onDidChangeEmitter?.fire(executionId);
+  }
+
+  private enforceReviewCountBudget(): void {
+    if (this.reviews.size < this.maxReviews) return;
+    for (const [id, entry] of this.reviews) {
+      if (['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'REJECTED'].includes(entry.status)) {
+        this.clearReview(id);
+        if (this.reviews.size < this.maxReviews) break;
+      }
+    }
+  }
+
+  private enforceTotalRetainedBytesBudget(): void {
+    if (this.totalRetainedBytes <= this.maxTotalRetainedBytes) return;
+    for (const [id, entry] of this.reviews) {
+      if (['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'REJECTED'].includes(entry.status)) {
+        this.clearReview(id);
+        if (this.totalRetainedBytes <= this.maxTotalRetainedBytes) break;
+      }
+    }
   }
 
   toggleOutput(executionId: string): boolean {
@@ -219,11 +328,15 @@ export class TerminalReviewController {
     if (entry) {
       this.confirmationToExecution.delete(entry.confirmationId);
       this.reviews.delete(executionId);
+      this.stdoutDecoders.delete(executionId);
+      this.stderrDecoders.delete(executionId);
     }
   }
 
   clearAll(): void {
     this.reviews.clear();
     this.confirmationToExecution.clear();
+    this.stdoutDecoders.clear();
+    this.stderrDecoders.clear();
   }
 }

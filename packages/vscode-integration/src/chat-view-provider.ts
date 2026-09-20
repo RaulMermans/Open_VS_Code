@@ -249,6 +249,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'chat.state':
                     updateState(message.state);
                     break;
+                case 'terminal.updated':
+                    const updatedTerm = message.terminal || message.review;
+                    if (updatedTerm) {
+                        if (currentState) currentState.activeTerminal = updatedTerm;
+                        renderTerminal(updatedTerm);
+                    }
+                    break;
                 case 'conversation.reset':
                     transcript.innerHTML = '';
                     activities.innerHTML = '';
@@ -272,86 +279,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             });
             
             // Render terminal review card if present
-            terminalContainer.innerHTML = '';
-            if (state.activeTerminal) {
-                const term = state.activeTerminal;
-                const card = document.createElement('div');
-                card.className = 'terminal-card';
-
-                const title = document.createElement('div');
-                title.style.fontWeight = 'bold';
-                title.style.marginBottom = '5px';
-                title.textContent = 'Controlled Terminal Execution (' + term.status + ')';
-                card.appendChild(title);
-
-                const meta = document.createElement('div');
-                meta.className = 'terminal-meta';
-                meta.textContent = 'CWD: ' + term.cwd + ' | Provenance: ' + term.provenance + ' | Timeout: ' + (term.timeoutMs / 1000) + 's';
-                card.appendChild(meta);
-
-                const cmdBox = document.createElement('div');
-                cmdBox.className = 'terminal-command-box';
-                cmdBox.textContent = term.command;
-                card.appendChild(cmdBox);
-
-                // If finished with exitCode
-                if (term.exitCode !== undefined && term.exitCode !== null) {
-                    const resultLine = document.createElement('div');
-                    resultLine.className = 'terminal-meta';
-                    resultLine.textContent = 'Finished with code ' + term.exitCode + (term.durationMs ? ' (' + term.durationMs + 'ms)' : '');
-                    card.appendChild(resultLine);
-                }
-
-                // Output section if visible
-                if (term.isOutputVisible) {
-                    const outBox = document.createElement('div');
-                    outBox.className = 'terminal-output-box';
-                    let text = '';
-                    if (term.stdout) text += term.stdout;
-                    if (term.stderr) text += (text ? '\n--- STDERR ---\n' : '') + term.stderr;
-                    outBox.textContent = text || '(No output)';
-                    card.appendChild(outBox);
-
-                    if (term.stdoutTruncated || term.stderrTruncated) {
-                        const truncWarn = document.createElement('div');
-                        truncWarn.className = 'truncation-warning';
-                        truncWarn.textContent = '[Output bounded and truncated at limit]';
-                        card.appendChild(truncWarn);
-                    }
-                }
-
-                const actions = document.createElement('div');
-                actions.className = 'confirmation-actions';
-
-                const btnToggle = document.createElement('button');
-                btnToggle.className = 'btn-reject';
-                btnToggle.textContent = term.isOutputVisible ? 'Hide Output' : 'Show Output';
-                btnToggle.addEventListener('click', () => {
-                    vscode.postMessage({ type: 'terminal.toggleOutput', executionId: term.executionId });
-                });
-                actions.appendChild(btnToggle);
-
-                const btnCopy = document.createElement('button');
-                btnCopy.className = 'btn-reject';
-                btnCopy.textContent = 'Copy Command';
-                btnCopy.addEventListener('click', () => {
-                    vscode.postMessage({ type: 'terminal.copyCommand', executionId: term.executionId });
-                });
-                actions.appendChild(btnCopy);
-
-                if (term.status === 'RUNNING') {
-                    const btnCancel = document.createElement('button');
-                    btnCancel.className = 'btn-reject';
-                    btnCancel.textContent = 'Cancel';
-                    btnCancel.addEventListener('click', () => {
-                        vscode.postMessage({ type: 'terminal.cancel', executionId: term.executionId });
-                    });
-                    actions.appendChild(btnCancel);
-                }
-
-                card.appendChild(actions);
-                terminalContainer.appendChild(card);
-            }
+            renderTerminal(state.activeTerminal);
 
             // Render confirmation
             confirmationContainer.innerHTML = '';
@@ -445,6 +373,88 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 cancelBtn.style.display = 'none';
                 composer.disabled = false;
             }
+        }
+
+        function renderTerminal(term) {
+            terminalContainer.innerHTML = '';
+            if (!term) return;
+
+            const card = document.createElement('div');
+            card.className = 'terminal-card';
+
+            const title = document.createElement('div');
+            title.style.fontWeight = 'bold';
+            title.style.marginBottom = '5px';
+            title.textContent = 'Controlled Terminal Execution (' + term.status + ')';
+            card.appendChild(title);
+
+            const meta = document.createElement('div');
+            meta.className = 'terminal-meta';
+            meta.textContent = 'CWD: ' + term.cwd + ' | Provenance: ' + term.provenance + ' | Timeout: ' + (term.timeoutMs / 1000) + 's';
+            card.appendChild(meta);
+
+            const cmdBox = document.createElement('div');
+            cmdBox.className = 'terminal-command-box';
+            cmdBox.textContent = term.command;
+            card.appendChild(cmdBox);
+
+            // If finished with exitCode
+            if (term.exitCode !== undefined && term.exitCode !== null) {
+                const resultLine = document.createElement('div');
+                resultLine.className = 'terminal-meta';
+                resultLine.textContent = 'Finished with code ' + term.exitCode + (term.durationMs ? ' (' + term.durationMs + 'ms)' : '');
+                card.appendChild(resultLine);
+            }
+
+            // Output section if visible
+            if (term.isOutputVisible) {
+                const outBox = document.createElement('div');
+                outBox.className = 'terminal-output-box';
+                let text = '';
+                if (term.stdout) text += term.stdout;
+                if (term.stderr) text += (text ? '\n--- STDERR ---\n' : '') + term.stderr;
+                outBox.textContent = text || '(No output)';
+                card.appendChild(outBox);
+
+                if (term.stdoutTruncated || term.stderrTruncated) {
+                    const truncWarn = document.createElement('div');
+                    truncWarn.className = 'truncation-warning';
+                    truncWarn.textContent = '[Output bounded and truncated at limit]';
+                    card.appendChild(truncWarn);
+                }
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'confirmation-actions';
+
+            const btnToggle = document.createElement('button');
+            btnToggle.className = 'btn-reject';
+            btnToggle.textContent = term.isOutputVisible ? 'Hide Output' : 'Show Output';
+            btnToggle.addEventListener('click', () => {
+                vscode.postMessage({ type: 'terminal.toggleOutput', executionId: term.executionId });
+            });
+            actions.appendChild(btnToggle);
+
+            const btnCopy = document.createElement('button');
+            btnCopy.className = 'btn-reject';
+            btnCopy.textContent = 'Copy Command';
+            btnCopy.addEventListener('click', () => {
+                vscode.postMessage({ type: 'terminal.copyCommand', executionId: term.executionId });
+            });
+            actions.appendChild(btnCopy);
+
+            if (term.status === 'RUNNING') {
+                const btnCancel = document.createElement('button');
+                btnCancel.className = 'btn-reject';
+                btnCancel.textContent = 'Cancel';
+                btnCancel.addEventListener('click', () => {
+                    vscode.postMessage({ type: 'terminal.cancel', executionId: term.executionId });
+                });
+                actions.appendChild(btnCancel);
+            }
+
+            card.appendChild(actions);
+            terminalContainer.appendChild(card);
         }
         
         sendBtn.addEventListener('click', () => {

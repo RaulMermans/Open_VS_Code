@@ -3,6 +3,7 @@ import type { ToolCall, ToolDefinition } from "../contracts/tools.ts"
 export interface ToolExecutionContext {
   readonly workspaceRoot: string
   readonly signal: AbortSignal
+  readonly onOutput?: ((chunk: { stream: "stdout" | "stderr"; chunk: string }) => void) | undefined
 }
 
 export interface ReviewableExecution {

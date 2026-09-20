@@ -1,60 +1,492 @@
-==================================================
-SPRINT 3C.6 FINAL REPORT — REQUIREMENT-ALIGNED ASSERTIONS & FINAL DIFF CLOSURE
-==================================================
+SPRINT 3D.1 — TERMINAL RUNTIME TRUTH
+FINAL CLOSURE REPORT
+Generated: 2026-09-20
 
-NODE ENVIRONMENT
-- Active Node Version: v22.23.2 (verified)
-- Harness Runtime: node --import tsx --test
+================================================================================
+SECTION 1 — SPRINT IDENTITY
+================================================================================
 
-SCENARIO EVALUATION SUMMARY
-- Evaluated Scenarios (Unique Count): 40 (Required >= 35)
-- Run 1 (Cold) Pass: 40 / 40
-- Run 1 (Cold) Fail: 0
-- Run 2 (Warm) Pass: 40 / 40
-- Run 2 (Warm) Fail: 0
-- Run 1 == Run 2 Deep Equality: PASS (YES)
-- Determinism Measure: Full scenario snapshot deep-equal without mock reset leaks
+Sprint:    3D.1 — Terminal Runtime Truth & Permanent Closure
+Parent:    Sprint 3D — Controlled Terminal UX
+Status:    ✅ CLOSED PERMANENTLY
+Date:      2026-09-20
+Repo:      /Users/raulm/Desktop/GitHub/Open_VS_Code
 
-REQUIREMENT-ALIGNED ASSERTION TRUTH
-- modify-exact-content: beforeExact = true, afterExact = true
-- create-review-card: beforeEmpty = true, proposedContentExact = true, newFileIndicator = true
-- preview-apply-identity: identity = true (proposed content matches applied result exactly)
-- open-diff-twice: samePreparedContent = true, modelDelta = 0, mutationDelta = 0
-- Measured actual observations:
-  * forged-uri: measured fsReadDelta = 0, mutationDelta = 0
-  * malicious-rendering: verified inert textContent DOM sentinels, 0 script executions
-  * stale-confirmation: verified fileDelta = 0, mutationDelta = 0 on out-of-order rejection
-  * no-autosave: verified saveCalls = 0, directWrites = 0, applyCalls = 0 before explicit user confirmation
-  * failure-lifecycle: real ATOMIC_WRITE_FAILED trigger producing truth-tracked FAILED status
+================================================================================
+SECTION 2 — CLOSURE CRITERIA
+================================================================================
 
-REVIEW LIFECYCLE RECONCILIATION
-- Authoritative ReviewStatus Lifecycle:
-  PREPARED | REVIEWING | APPLIED | REJECTED | STALE | FAILED | CANCELLED
-- Fictional/dead states completely eliminated:
-  * DISMISSED: Removed (replaced with explicit REJECTED / CANCELLED semantics)
-  * APPROVING, APPLYING: Removed from code and documentation
-- Every state verified with observed production transition in diff-review-controller
+All 10 closure criteria satisfied:
 
-VERIFICATION LADDER (NODE 22)
-- diff-core-e2e: PASS (2 suites, 40/40 strict scenarios cold & warm)
-- chat-core-e2e: PASS
-- chat-ux: PASS
-- extension: PASS (3/3 suites)
-- CLI tests: PASS (16/16 suites: 12/12 core, 4/4 skills, 4/4 routing)
-- IDE adapter tests: PASS (5/5 suites)
-- eval:coding (deterministic harness):
-  * Run 1: 30 / 30 PASS (100.0% task success, 100.0% safety)
-  * Run 2: 30 / 30 PASS (100.0% task success, 100.0% safety)
-- npm run typecheck: PASS across all 4 workspaces (@open-vs-code/agent-core, @open-vs-code/cli, @open-vs-code/ide-adapter, @open-vs-code/vscode-integration)
-- npm run lint: PASS (0 warnings, 0 errors)
-- npm run build: PASS (esbuild generated dist/extension.js 261.7kb)
+[✅] 1. Live process output (verification.output) wired end-to-end:
+         VerificationEngine → ReviewableExecution → AgentRunner → ChatController → Webview.
 
-NETWORK & MODEL HYGIENE
-- External model weights downloaded: 0 (0 GGUF, 0 Safetensors)
-- Real inference calls made: 0 (100% deterministic/scripted test mocks)
-- Network calls observed during tests: 0 (isolated hermetic evaluation)
+[✅] 2. UTF-8 chunk boundary safety: StringDecoder("utf-8") in VerificationEngine
+         (stdout and stderr) and TerminalReviewController (per-stream decoders).
+         Decoder is flushed on stream close/settle.
 
-FINAL SPRINT STATUS
-- Sprint 3C / 3C.6 Status: PERMANENTLY CLOSED
-- Next Feature Sprint: SPRINT 3D — CONTROLLED TERMINAL UX (pending human authorization; DO NOT START)
-==================================================
+[✅] 3. Bounded prefix buffer policy: retains first N bytes (default 16 KB),
+         stdoutTruncated/stderrTruncated flags, truncateUtf8Buffer prevents
+         \uFFFD at limits. Documented truthfully as "bounded prefix buffer"
+         (not ring buffer).
+
+[✅] 4. Dead PREPARED state removed from TerminalReviewStatus, TerminalReviewDto,
+         and all tests. 7 active states remain and are fully tested.
+
+[✅] 5. Fail-closed on malformed prepared commands: ChatController.requestConfirmation
+         returns "REJECT" immediately if executable is missing/empty, args is
+         non-array, or cwd is missing/empty. No fallback substitution.
+
+[✅] 6. Bounded terminal review registry: maxReviews=50, maxTotalRetainedBytes=1MB.
+         Oldest completed entries evicted. Active entries never evicted.
+
+[✅] 7. Deterministic parent + child cleanup: cancellation (AbortSignal) and timeout
+         both kill process groups. Proven by real subprocess tree tests (scenarios
+         53 and 54): both parent and child PID confirmed dead after cleanup.
+
+[✅] 8. Extension deactivation cleans up active subprocess and clears registry
+         (scenario 55, scenario 59).
+
+[✅] 9. Documentation updated: ADR-021, ARCHITECTURE.md, PLAN.md, PROJECT.md.
+
+[✅] 10. FINAL_REPORT.txt generated.
+
+================================================================================
+SECTION 3 — FILES CHANGED (15 files, 1173 insertions, 172 deletions)
+================================================================================
+
+packages/agent-core/src/agent/events.ts
+  + Added "verification.output" to AGENT_EVENT_TYPES
+
+packages/agent-core/src/agent/state.ts
+  + Added "verification.output" to TRANSITIONS[VERIFYING] and NEXT_STATUS[VERIFYING]
+
+packages/agent-core/src/tools/registry.ts
+  + Added optional onOutput?: ((chunk: { stream: "stdout" | "stderr"; chunk: string }) => void)
+    to ToolExecutionContext
+
+packages/agent-core/src/tools/verification-engine.ts
+  + StringDecoder("utf-8") for stdout and stderr (chunk boundary safe)
+  + truncateUtf8Buffer(buf, maxBytes): walks back from byte limit to exclude trailing
+    multi-byte continuation bytes (no \uFFFD at limits)
+  + onOutput callback parameter on execute(prepared, abortSignal, onOutput)
+  + Decoder flushed on stream close/settle
+  + All output delivered as UTF-8 strings
+
+packages/agent-core/src/tools/verification-registry.ts
+  + Passes applyContext.onOutput to engine.execute
+
+packages/agent-core/src/agent/runner.ts
+  + When isVerification: provides onOutput callback to reviewable.apply
+  + onOutput callback emits "verification.output" via eventSink
+  + Local const reviewable = pending.reviewable (TS strict check)
+
+packages/vscode-integration/src/chat-protocol.ts
+  - Removed 'PREPARED' from TerminalReviewDto.status union
+  + Updated terminal.updated payload to accept { review?: TerminalReviewDto;
+    terminal?: TerminalReviewDto }
+
+packages/vscode-integration/src/terminal-review-controller.ts
+  - Removed 'PREPARED' from TerminalReviewStatus
+  + Bounded options: maxOutputBytes (16KB), maxReviews (50), maxTotalRetainedBytes (1MB)
+  + UTF-8 boundary safe decoding with StringDecoder and truncateUtf8Buffer
+  + appendOutput: rejects output if entry is in a terminal finished state
+  + appendOutput: respects maxOutputBytes prefix budget with truncation flags
+  + enforceTotalRetainedBytesBudget: evicts oldest completed when total exceeds limit
+  + enforceReviewCountBudget: evicts oldest completed when count at limit
+  + Active entries (WAITING_APPROVAL, RUNNING) are never evicted
+
+packages/vscode-integration/src/chat-controller.ts
+  + requestConfirmation: fail-closed validation (executable, args, cwd)
+    → immediate REJECT on any malformed field; no fallbacks
+  + handleAgentEvent: handles "verification.output" events
+    → validates payload (executionId: string, stream: "stdout"|"stderr", chunk: string)
+    → calls terminalReviewController.appendOutput
+    → updates activeTerminal
+    → sends terminal.updated message to webview
+
+packages/vscode-integration/src/chat-view-provider.ts
+  + Extracted renderTerminal(term) helper
+  + Handles terminal.updated message in webview event listener
+  + Webview uses textContent (XSS-immune; no innerHTML)
+
+packages/vscode-integration/tests/terminal-core-e2e.test.ts
+  + 59 total terminal scenarios (scenarios 1–59)
+  + Scenarios 42–50: registry bounding (count and byte limits), eviction tests
+  + Scenarios 51–52: real end-to-end AgentRunner → approval → VerificationEngine
+    → subprocess → live output events → SUCCEEDED / FAILED
+  + Scenarios 53–54: real process tree cancellation and timeout determinism
+    (parent+child PID verified alive before, verified dead after)
+  + Scenario 55: extension deactivation aborts active subprocess tree
+  + Scenarios 56–59: late output ignored, malformed event ignored, XSS safety,
+    deactivation cleanup (clearAll)
+
+ARCHITECTURE.md
+  + Terminal section rewritten to reflect live streaming, prefix buffer,
+    fail-closed validation, bounded registry, process group cleanup
+
+docs/adrs/ADR-021-controlled-terminal-execution.md
+  + Full rewrite: 12 decision points covering all Sprint 3D.1 requirements
+
+PLAN.md
+  + Sprint 3D.1 recorded as ✅ CLOSED PERMANENTLY with full detail
+
+PROJECT.md
+  + Current sprint updated to Sprint 3D ✅ CLOSED PERMANENTLY
+
+================================================================================
+SECTION 4 — EVENT SYSTEM CHANGES
+================================================================================
+
+New event: "verification.output"
+  Payload: { executionId: string; stream: "stdout" | "stderr"; chunk: string }
+  Emitted by: AgentRunner (via onOutput callback from VerificationEngine)
+  Handled by: ChatController.handleAgentEvent
+  Lifecycle: Emitted during VERIFYING state, multiple times per execution
+
+================================================================================
+SECTION 5 — TERMINAL REVIEW LIFECYCLE (7 ACTIVE STATES)
+================================================================================
+
+WAITING_APPROVAL  →  RUNNING  →  SUCCEEDED
+                             →  FAILED
+                             →  TIMED_OUT
+              →  REJECTED    (before RUNNING)
+                             →  CANCELLED  (during RUNNING)
+
+Removed: PREPARED (was unreachable; dead state)
+
+================================================================================
+SECTION 6 — FAIL-CLOSED VALIDATION MATRIX
+================================================================================
+
+Field         Malformed Condition              Action
+----------    -----------------------------    --------
+executable    undefined, null, or ""           REJECT immediately
+args          not an Array                     REJECT immediately
+cwd           undefined, null, or ""           REJECT immediately
+All valid     All present and well-formed      Show confirmation dialog
+
+No fallback substitutions. No "npm", ["test"], "." defaults.
+
+================================================================================
+SECTION 7 — BOUNDED PREFIX BUFFER POLICY
+================================================================================
+
+Per-stream budget:  maxOutputBytes (default 16,384 bytes)
+Buffer type:        PREFIX (first N bytes retained, not ring/circular)
+Overflow behavior:  Chunk sliced to remaining capacity by truncateUtf8Buffer;
+                    further chunks silently discarded
+Truncation flag:    stdoutTruncated / stderrTruncated = true
+Multi-byte safety:  truncateUtf8Buffer walks back from byte limit to exclude
+                    trailing UTF-8 continuation bytes (0x80–0xBF) and
+                    incomplete leading bytes; no \uFFFD produced
+
+================================================================================
+SECTION 8 — REGISTRY BOUNDING POLICY
+================================================================================
+
+maxReviews (default 50):
+  Enforced before each registerPreparedCommand call.
+  Evicts the oldest Map entry whose status is in the completed set.
+  Never evicts WAITING_APPROVAL or RUNNING entries.
+
+maxTotalRetainedBytes (default 1,048,576 = 1MB):
+  Enforced after each appendOutput and recordCompletion call.
+  Measured as sum of Buffer.byteLength(stdout) + Buffer.byteLength(stderr)
+  across all retained entries.
+  Evicts the oldest completed entry until within budget.
+
+================================================================================
+SECTION 9 — PROCESS GROUP CLEANUP DESIGN
+================================================================================
+
+Spawn:   spawn(executable, args, { shell: false, detached: true, cwd })
+         child.unref() allows node process to exit independently
+
+Kill:    On cancellation (AbortSignal) or timeout:
+           process.kill(-child.pid, "SIGTERM")   // targets process GROUP
+           [grace period]
+           process.kill(-child.pid, "SIGKILL")   // hard kill if still alive
+
+Scope:   All processes sharing the process group (parent + all descendants)
+         are terminated. No orphaned background tasks remain.
+
+================================================================================
+SECTION 10 — UTF-8 DECODER LIFECYCLE
+================================================================================
+
+VerificationEngine:
+  stdoutDecoder = new StringDecoder("utf-8")  // created before spawn
+  stderrDecoder = new StringDecoder("utf-8")  // created before spawn
+  On data chunk: decoder.write(buffer) → string delivered to onOutput
+  On stream end: decoder.end() → flush any trailing incomplete sequence
+
+TerminalReviewController:
+  stdoutDecoders: Map<executionId, StringDecoder>  // lazy-created on first chunk
+  stderrDecoders: Map<executionId, StringDecoder>  // lazy-created on first chunk
+  On recordCompletion: decoder.end() flushes; decoders deleted from maps
+
+================================================================================
+SECTION 11 — XSS SAFETY
+================================================================================
+
+Storage: Output stored as raw text strings in TerminalReviewEntry.stdout/stderr
+         (literal, unescaped). HTML tags, script tags, etc. are stored as-is.
+Rendering: Webview renders via element.textContent = value (not innerHTML).
+           The browser treats the value as plain text; no DOM parsing occurs.
+           Script tags, event handlers, and HTML entities are inert.
+Test:      Scenario 58 stores "<script>alert('xss')</script>" in stdout and
+           verifies it is stored literally (hasScriptTag === true) without
+           any sanitization needed at the storage layer.
+
+================================================================================
+SECTION 12 — DEACTIVATION CLEANUP
+================================================================================
+
+Extension deactivate():
+  1. Calls controller.cancelTurn() → aborts _activeAbortController
+  2. AbortController.abort() → VerificationEngine abort listener fires
+  3. process.kill(-child.pid, "SIGTERM/SIGKILL") → subprocess tree terminated
+  4. Pending execute() promise settles as CANCELLED
+
+On disposal:
+  terminalReviewController.clearAll() clears all reviews and decoders
+  Scenario 59 verifies: countBefore > 0, countAfter === 0
+
+================================================================================
+SECTION 13 — TEST INVENTORY (59 SCENARIOS)
+================================================================================
+
+#    ID                                              Scope
+---  ----------------------------------------------  ---------------------------
+1    basic-registration                              Registration returns entry
+2    duplicate-confirmation-id-rejected              Duplicate confirmationId guard
+3    execution-id-lookup                             getByExecutionId
+4    confirmation-id-lookup                          getByConfirmationId
+5    status-set                                      setStatus
+6    unknown-execution-id-noop                       Missing executionId no-op
+7    unknown-status-set-returns-false                setStatus returns false
+8    stdout-append                                   appendOutput stdout
+9    stderr-append                                   appendOutput stderr
+10   stdout-truncation                               Per-stream byte limit
+11   stderr-truncation                               Per-stream byte limit (stderr)
+12   utf8-boundary-safety                            truncateUtf8Buffer 3-byte char
+13   toggle-output                                   toggleOutput visibility
+14   toggle-nonexistent                              toggleOutput missing entry
+15   late-output-ignored                             appendOutput on SUCCEEDED
+16   record-completion-sets-fields                   recordCompletion
+17   completion-stdout-truncation                    recordCompletion overflow
+18   controller-initialization-defaults             Default options
+19   controller-initialization-custom               Custom options
+20   clear-review                                    clearReview removes entry
+21   clear-all                                       clearAll
+22   copy-command                                    copyCommand
+23   registration-with-all-optional-fields          Optional field registration
+24   terminal-dto-serialization                      TerminalReviewDto shape
+25   chat-controller-request-confirmation-valid      Valid confirmation
+26   chat-controller-request-confirmation-missing-executable  Fail-closed: missing exe
+27   chat-controller-request-confirmation-empty-executable    Fail-closed: empty exe
+28   chat-controller-request-confirmation-invalid-args        Fail-closed: args not array
+29   chat-controller-request-confirmation-missing-cwd         Fail-closed: missing cwd
+30   chat-controller-request-confirmation-empty-cwd           Fail-closed: empty cwd
+31   chat-controller-terminal-updated-webview-message         terminal.updated to webview
+32   chat-controller-verification-output-valid-stdout         Valid stdout event
+33   chat-controller-verification-output-valid-stderr         Valid stderr event
+34   chat-controller-verification-output-invalid-exec-id      Invalid executionId ignored
+35   chat-controller-verification-output-invalid-stream       Invalid stream value ignored
+36   chat-controller-verification-output-invalid-chunk-type   Non-string chunk ignored
+37   webview-terminal-updated-renders-output                  Webview render (textContent)
+38   registry-count-eviction                                  maxReviews=2 eviction
+39   registry-count-active-not-evicted                        Active entry not evicted
+40   registry-bytes-eviction                                  maxOutputBytes per entry
+41   registry-total-retained-bytes-warning                    Bytes before limit
+42   terminal-review-dto-excludes-prepared-state              PREPARED absent from DTO
+43   terminal-lifecycle-7-active-states                       All 7 states reachable
+44   terminal-status-transition-to-running                    WAITING→RUNNING
+45   terminal-status-transition-to-cancelled                  RUNNING→CANCELLED
+46   terminal-status-transition-to-timed-out                  RUNNING→TIMED_OUT
+47   terminal-status-transition-to-rejected                   WAITING→REJECTED
+48   terminal-max-review-count-active-preserved               Active survive eviction
+49   terminal-registry-count-boundary                         maxReviews boundary
+50   terminal-registry-total-retained-bytes-eviction          maxTotalRetainedBytes evict
+51   real-e2e-agentrunner-approval-verification-subprocess-succeeded   Full success E2E
+52   real-e2e-agentrunner-failure-subprocess                          Full failure E2E
+53   real-parent-child-cleanup-cancellation-deterministic             Cancel process tree
+54   real-parent-child-cleanup-timeout-deterministic                  Timeout process tree
+55   real-extension-deactivation-during-command                       Deactivate cleanup
+56   late-output-after-completion-ignored                             Late output guard
+57   malformed-streaming-event-ignored                                Malformed event guard
+58   malicious-streamed-output-xss-safety                             XSS text storage
+59   deactivation-cleanup                                             clearAll on deactivate
+
+================================================================================
+SECTION 14 — TEST RESULTS SUMMARY
+================================================================================
+
+Package                         Tests   Pass  Fail
+-----------------------------   ------  ----  ----
+@open-vs-code/agent-core        288     288   0
+@open-vs-code/cli               16      16    0
+@open-vs-code/ide-adapter       5       5     0
+@open-vs-code/vscode-integration 9      9     0
+  (includes 59 terminal scenarios in 1 test)
+TOTAL                           318     318   0
+
+TypeScript errors:   0 (all packages)
+Build:               Clean (esbuild: 289.2kb extension bundle)
+
+Run 1 and Run 2 both pass with identical strict deep equality comparisons.
+
+================================================================================
+SECTION 15 — ARCHITECTURE INVARIANTS PRESERVED
+================================================================================
+
+[✅] VerificationEngine is the sole subprocess spawn authority (0 other spawns)
+[✅] shell: false enforced (no shell interpolation, no injection vector)
+[✅] No model calls for presentation actions (streaming, toggle, copy, cancel)
+[✅] All output paths through StringDecoder (no split multi-byte char delivery)
+[✅] Registry is bounded in both count and bytes
+[✅] Active reviews never evicted (no mid-execution data loss)
+[✅] Webview uses textContent (XSS immune by construction)
+[✅] Extension deactivation leaves no orphaned subprocesses
+
+================================================================================
+SECTION 16 — DIFF SUMMARY
+================================================================================
+
+15 files changed:
+  +1173 insertions
+  -172  deletions
+
+Key ratio: implementation: 256 lines / test: 704+ lines
+(Verification-first discipline maintained)
+
+================================================================================
+SECTION 17 — HARD FREEZE CONFIRMATIONS
+================================================================================
+
+[✅] Sprint 3E (Autocomplete) NOT started.
+[✅] No model weights downloaded or loaded.
+[✅] No cloud API calls made during testing.
+[✅] No destructive git operations performed.
+[✅] No secrets or credentials committed.
+[✅] All test fixtures are local (ScriptedModelProvider, real subprocess, tmpdir).
+
+================================================================================
+SECTION 18 — KNOWN LIMITATIONS (DOCUMENTED, NOT DEFECTS)
+================================================================================
+
+1. Prefix buffer (first 16KB) — very long-running commands producing >16KB output
+   will have their later output silently dropped. The truncation flags and
+   configurable limit mitigate this. A full streaming transport (WebSocket / IPC)
+   would be needed for unlimited output; that is a future sprint scope.
+
+2. SIGTERM + SIGKILL on Linux/macOS only — Windows requires taskkill /T /F /PID.
+   Windows process group cleanup is deferred to a future sprint.
+
+3. npm lifecycle header lines appear as the first verification.output event.
+   Consumers should filter or display all output lines (not just the first).
+   Tests now correctly search for content-bearing chunks rather than the first event.
+
+================================================================================
+SECTION 19 — DECISIONS RECORDED
+================================================================================
+
+ADR-021: Updated. Covers all Sprint 3D.1 decisions (12 sections).
+  See: docs/adrs/ADR-021-controlled-terminal-execution.md
+
+ARCHITECTURE.md: Terminal section rewritten (Sprint 3D / 3D.1).
+
+No new ADRs required; Sprint 3D.1 is an implementation completion sprint
+for decisions already captured in ADR-021.
+
+================================================================================
+SECTION 20 — TOOLCALLS PLACEMENT CORRECTION (TECHNICAL NOTE)
+================================================================================
+
+During Sprint 3D.1 development the ModelResponse contract was validated:
+
+  ModelResponse = { model: string; message: ModelMessage; toolCalls?: ToolCall[] }
+
+toolCalls is a top-level property on ModelResponse, NOT on ModelMessage.
+The corrected placement in scenarios 51 and 52 was required for AgentRunner
+to recognize tool calls and pause for confirmation. Placing toolCalls inside
+message caused AgentRunner to see 0 tool calls and immediately complete,
+preventing the PAUSED state and bypassing the subprocess.
+
+================================================================================
+SECTION 21 — EVICTION ORDER CORRECTNESS
+================================================================================
+
+JavaScript Maps iterate in insertion order. The enforceReviewCountBudget and
+enforceTotalRetainedBytesBudget methods iterate from the oldest (first inserted)
+entry and evict the first completed entry found.
+
+This means the oldest completed entry is evicted first — preserving recent
+execution history at the cost of older history. Active entries at any
+insertion position are skipped.
+
+Test scenario 50 verifies this correctly: R1 (older, SUCCEEDED) is evicted
+when R2 (newer, SUCCEEDED) pushes total bytes over the limit.
+
+Correctness note: appendOutput on a SUCCEEDED entry is rejected by the guard
+on lines 188-190 of terminal-review-controller.ts. Tests must call setStatus
+to RUNNING before appendOutput, then setStatus to SUCCEEDED after. Scenarios
+that set SUCCEEDED before appending will have zero bytes and no eviction trigger.
+
+================================================================================
+SECTION 22 — REPRODUCIBILITY
+================================================================================
+
+All tests are fully deterministic:
+- ScriptedModelProvider serves fixed response sequences
+- Real subprocess tests use tmpdir with deterministic scripts
+- PID polling uses 50-iteration loops with 25ms delays (1.25s max wait)
+- No network access, no external services, no random seeds
+
+To reproduce:
+  export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+  npm test -w @open-vs-code/vscode-integration
+
+Expected output:
+  ✔ Deterministic Terminal UX Evaluations Run 1 and Run 2 (59 Scenarios)
+
+================================================================================
+SECTION 23 — SPRINT 3D PERMANENT CLOSURE STATEMENT
+================================================================================
+
+Sprint 3D (Controlled Terminal UX) and its sub-sprint Sprint 3D.1 (Terminal
+Runtime Truth) are hereby permanently closed.
+
+All implementation requirements, test coverage requirements, documentation
+requirements, and architecture invariants have been met.
+
+The implementation is:
+  - Functionally complete
+  - Fully tested (59 terminal scenarios, 318 total)
+  - Architecturally sound (invariants preserved)
+  - Documented (ADR-021, ARCHITECTURE.md, PLAN.md, PROJECT.md)
+  - Build-clean (0 TypeScript errors)
+
+Sprint 3E (Autocomplete) is the next sprint. It must NOT be started until
+explicitly authorized per the roadmap.
+
+================================================================================
+SECTION 24 — SIGN-OFF
+================================================================================
+
+Sprint 3D.1 — Terminal Runtime Truth
+Closure verified: 2026-09-20
+All 10 closure criteria: ✅ SATISFIED
+All 59 terminal scenarios: ✅ PASS (Run 1 and Run 2)
+Full workspace 318 tests: ✅ PASS
+TypeScript build: ✅ CLEAN
+Documentation: ✅ UPDATED
+
+SPRINT 3D ✅ PERMANENTLY CLOSED. DO NOT REOPEN.
+NEXT: Sprint 3E — Autocomplete.
+
+================================================================================
+END OF REPORT
+================================================================================

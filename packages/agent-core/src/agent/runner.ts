@@ -181,19 +181,37 @@ export class AgentRunner {
       this.#addErrorObservation(pending.prepared, "PERMISSION_REJECTED", "Caller rejected this tool request", "REJECTED")
     } else {
       if (pending.reviewable) {
+        const reviewable = pending.reviewable
         const isVerification = pending.prepared.definition.action === "run_known_test"
-        this.#emit(isVerification ? "verification.approved" : "mutation.approved", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+        this.#emit(isVerification ? "verification.approved" : "mutation.approved", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
         let observation: ToolObservation
         try {
-          if (isVerification) this.#emit("verification.started", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
-          const result = await pending.reviewable.apply({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal }) as any
+          if (isVerification) this.#emit("verification.started", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
+          const reviewableId = reviewable.id
+          const onOutput = isVerification
+            ? (chunk: { stream: "stdout" | "stderr"; chunk: string }) => {
+                this.#emit("verification.output", {
+                  callId: pending.prepared.id,
+                  name: pending.prepared.name,
+                  mutationId: reviewableId,
+                  executionId: reviewableId,
+                  stream: chunk.stream,
+                  chunk: chunk.chunk,
+                })
+              }
+            : undefined
+          const result = await reviewable.apply({
+            workspaceRoot: session.input.workspaceRoot,
+            signal: session.input.signal ?? new AbortController().signal,
+            onOutput,
+          }) as any
           if (isVerification) {
-            this.#emit("verification.completed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, result })
+            this.#emit("verification.completed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, result })
           } else {
             if (result.status === "APPLIED") {
-              this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+              this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
             } else {
-              this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, error: result.error })
+              this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, error: result.error })
             }
           }
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })

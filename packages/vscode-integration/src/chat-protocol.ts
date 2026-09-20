@@ -25,7 +25,7 @@ export interface TerminalReviewDto {
   cwd: string;
   provenance: string;
   timeoutMs: number;
-  status: 'PREPARED' | 'WAITING_APPROVAL' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED' | 'REJECTED';
+  status: 'WAITING_APPROVAL' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED' | 'REJECTED';
   exitCode?: number | null;
   exitSignal?: string | null;
   durationMs?: number | null;
@@ -85,7 +85,7 @@ export type HostToWebviewMessage =
   | { type: "confirmation.resolved"; action: "APPROVE" | "REJECT" }
   | { type: "context.updated"; context: ChatContextChip[] }
   | { type: "conversation.reset" }
-  | { type: "terminal.updated"; review: TerminalReviewDto };
+  | { type: "terminal.updated"; review?: TerminalReviewDto; terminal?: TerminalReviewDto };
 
 export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
   if (!raw || typeof raw !== 'object' || typeof raw.type !== 'string') return null;

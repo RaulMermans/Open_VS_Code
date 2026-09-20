@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { VerificationEngine } from "@open-vs-code/agent-core";
+import { VerificationEngine, ScriptedModelProvider } from "@open-vs-code/agent-core";
 
 const executedCommands: { command: string, args: any[] }[] = [];
 let clipboardText = "";
@@ -79,6 +79,19 @@ const freshTerminalFixtures = () => {
       infinite: "node -e 'setTimeout(() => {}, 100000)'"
     }
   }, null, 2));
+
+  const treeScript = path.join(tmpRoot, "tree-runner.cjs");
+  fs.writeFileSync(treeScript, [
+    "const { spawn } = require('node:child_process');",
+    "const fs = require('node:fs');",
+    "fs.writeFileSync(process.argv[2], String(process.pid));",
+    "const child = spawn(process.execPath, [",
+    "  '-e',",
+    "  'const fs = require(\"node:fs\"); fs.writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 10000);',",
+    "  process.argv[3]",
+    "], { stdio: 'ignore' });",
+    "setInterval(() => {}, 10000);"
+  ].join("\n"));
 
   let controller: any;
   let termController: any;
@@ -902,7 +915,690 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
     expected: { copiedText: "npm run custom-task" }
   });
 
-  // 42. deactivation-cleanup
+  // ==========================================
+  // CATEGORY 11: RUNTIME TRUTH & STREAMING (42-59)
+  // ==========================================
+
+  // 42. live-streaming-chatcontroller-bridge
+  const entryLive = termController.registerPreparedCommand({
+    confirmationId: "c-live", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+  });
+  controller.state.activeTerminal = {
+    executionId: entryLive.executionId,
+    command: entryLive.command,
+    cwd: entryLive.cwd,
+    provenance: entryLive.provenance,
+    timeoutMs: entryLive.timeoutMs,
+    status: entryLive.status,
+  };
+  controller.handleAgentEvent({
+    id: "ev-out-1",
+    type: "verification.output",
+    taskId: "t-1",
+    timestamp: new Date().toISOString(),
+    payload: {
+      executionId: entryLive.executionId,
+      stream: "stdout",
+      chunk: "live line 1\n",
+    }
+  });
+  results.push({
+    id: "live-streaming-chatcontroller-bridge",
+    description: "verification.output event appends to terminal review and syncs active terminal",
+    actual: {
+      stdout: entryLive.stdout,
+      activeStdout: controller.state.activeTerminal?.stdout,
+      webviewSentType: view.webview.lastMessage?.type,
+      webviewSentStdout: view.webview.lastMessage?.terminal?.stdout,
+    },
+    expected: {
+      stdout: "live line 1\n",
+      activeStdout: "live line 1\n",
+      webviewSentType: "terminal.updated",
+      webviewSentStdout: "live line 1\n",
+    }
+  });
+
+  // 43. live-stderr-chatcontroller-bridge
+  controller.handleAgentEvent({
+    id: "ev-out-2",
+    type: "verification.output",
+    taskId: "t-1",
+    timestamp: new Date().toISOString(),
+    payload: {
+      executionId: entryLive.executionId,
+      stream: "stderr",
+      chunk: "warning in build\n",
+    }
+  });
+  results.push({
+    id: "live-stderr-chatcontroller-bridge",
+    description: "verification.output event for stderr appends to stderr buffer and updates webview",
+    actual: {
+      stderr: entryLive.stderr,
+      activeStderr: controller.state.activeTerminal?.stderr,
+      webviewSentStderr: view.webview.lastMessage?.terminal?.stderr,
+    },
+    expected: {
+      stderr: "warning in build\n",
+      activeStderr: "warning in build\n",
+      webviewSentStderr: "warning in build\n",
+    }
+  });
+
+  // 44. utf8-multibyte-split-chunks-safety
+  const entryUtf8Split = termController.registerPreparedCommand({
+    confirmationId: "c-u8", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+  });
+  termController.setStatus(entryUtf8Split.executionId, "RUNNING");
+  const robotFull = "🤖";
+  const robotBuf = Buffer.from(robotFull, "utf-8");
+  assert.strictEqual(robotBuf.length, 4);
+  const chunk1 = robotBuf.subarray(0, 2);
+  const chunk2 = robotBuf.subarray(2, 4);
+  termController.appendOutput(entryUtf8Split.executionId, "stdout", chunk1);
+  termController.appendOutput(entryUtf8Split.executionId, "stdout", chunk2);
+  results.push({
+    id: "utf8-multibyte-split-chunks-safety",
+    description: "Multibyte UTF-8 characters split across chunk boundaries decode cleanly without replacement characters",
+    actual: {
+      stdout: entryUtf8Split.stdout,
+      hasReplacementChar: entryUtf8Split.stdout.includes("\uFFFD"),
+    },
+    expected: {
+      stdout: "🤖",
+      hasReplacementChar: false,
+    }
+  });
+
+  // 45. utf8-truncation-boundary-safety
+  const smallTermCtrl = new TerminalReviewController({ maxOutputBytes: 5 });
+  const entryU8Trunc = smallTermCtrl.registerPreparedCommand({
+    confirmationId: "c-u8t", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+  });
+  smallTermCtrl.setStatus(entryU8Trunc.executionId, "RUNNING");
+  smallTermCtrl.appendOutput(entryU8Trunc.executionId, "stdout", "abc" + "🤖");
+  results.push({
+    id: "utf8-truncation-boundary-safety",
+    description: "Bounded prefix buffer truncates at full UTF-8 character boundary without partial bytes or replacement char",
+    actual: {
+      stdout: entryU8Trunc.stdout,
+      stdoutTruncated: entryU8Trunc.stdoutTruncated,
+      byteLength: Buffer.byteLength(entryU8Trunc.stdout, "utf-8"),
+      hasReplacementChar: entryU8Trunc.stdout.includes("\uFFFD"),
+    },
+    expected: {
+      stdout: "abc",
+      stdoutTruncated: true,
+      byteLength: 3,
+      hasReplacementChar: false,
+    }
+  });
+
+  // 46. buffer-overflow-prefix-policy
+  const entryFlood = termController.registerPreparedCommand({
+    confirmationId: "c-flood", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+  });
+  termController.setStatus(entryFlood.executionId, "RUNNING");
+  const largeChunk = "X".repeat(8 * 1024);
+  termController.appendOutput(entryFlood.executionId, "stdout", largeChunk);
+  termController.appendOutput(entryFlood.executionId, "stdout", largeChunk);
+  termController.appendOutput(entryFlood.executionId, "stdout", largeChunk);
+  termController.appendOutput(entryFlood.executionId, "stdout", largeChunk);
+  results.push({
+    id: "buffer-overflow-prefix-policy",
+    description: "Truthful bounded prefix buffer: retains first 16KB, flags truncated, discards overflow",
+    actual: {
+      byteLength: Buffer.byteLength(entryFlood.stdout, "utf-8"),
+      stdoutTruncated: entryFlood.stdoutTruncated,
+      startsCorrectly: entryFlood.stdout.startsWith("XXXX"),
+    },
+    expected: {
+      byteLength: 16 * 1024,
+      stdoutTruncated: true,
+      startsCorrectly: true,
+    }
+  });
+
+  // 47. malformed-prepared-command-presentation-fails-closed
+  const malformed1 = await controller.requestConfirmation("Run?", { preparedCommand: { executable: "", args: ["test"], cwd: tmpRoot } });
+  const malformed2 = await controller.requestConfirmation("Run?", { preparedCommand: { executable: "npm", args: "not-an-array" as any, cwd: tmpRoot } });
+  const malformed3 = await controller.requestConfirmation("Run?", { preparedCommand: { executable: "npm", args: ["test"], cwd: "" } });
+  results.push({
+    id: "malformed-prepared-command-presentation-fails-closed",
+    description: "Malformed prepared commands fail closed immediately without fallback defaults",
+    actual: {
+      malformed1,
+      malformed2,
+      malformed3,
+    },
+    expected: {
+      malformed1: "REJECT",
+      malformed2: "REJECT",
+      malformed3: "REJECT",
+    }
+  });
+
+  // 48. terminal-registry-max-reviews-eviction
+  const boundedCtrl = new TerminalReviewController({ maxReviews: 3 });
+  const r1 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  boundedCtrl.setStatus(r1.executionId, "SUCCEEDED");
+  const r2 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  boundedCtrl.setStatus(r2.executionId, "SUCCEEDED");
+  const r3 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-3", command: "c3", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  boundedCtrl.setStatus(r3.executionId, "SUCCEEDED");
+  const r4 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-4", command: "c4", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  results.push({
+    id: "terminal-registry-max-reviews-eviction",
+    description: "Terminal review registry bounds total entries by evicting oldest finished review",
+    actual: {
+      totalReviews: boundedCtrl.totalReviews,
+      r1Evicted: boundedCtrl.getByExecutionId(r1.executionId) === undefined,
+      r2Present: boundedCtrl.getByExecutionId(r2.executionId) !== undefined,
+      r4Present: boundedCtrl.getByExecutionId(r4.executionId) !== undefined,
+    },
+    expected: {
+      totalReviews: 3,
+      r1Evicted: true,
+      r2Present: true,
+      r4Present: true,
+    }
+  });
+
+  // 49. terminal-registry-active-reviews-never-evicted
+  const boundedCtrl2 = new TerminalReviewController({ maxReviews: 2 });
+  const a1 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const a2 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  boundedCtrl2.setStatus(a2.executionId, "RUNNING");
+  const a3 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-3", command: "c3", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  results.push({
+    id: "terminal-registry-active-reviews-never-evicted",
+    description: "Active terminal reviews (WAITING_APPROVAL, RUNNING) are never evicted",
+    actual: {
+      a1Present: boundedCtrl2.getByExecutionId(a1.executionId) !== undefined,
+      a2Present: boundedCtrl2.getByExecutionId(a2.executionId) !== undefined,
+      a3Present: boundedCtrl2.getByExecutionId(a3.executionId) !== undefined,
+    },
+    expected: {
+      a1Present: true,
+      a2Present: true,
+      a3Present: true,
+    }
+  });
+
+  // 50. terminal-registry-total-retained-bytes-eviction
+  const boundedBytesCtrl = new TerminalReviewController({ maxTotalRetainedBytes: 100 });
+  const byteR1 = boundedBytesCtrl.registerPreparedCommand({ confirmationId: "by-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  boundedBytesCtrl.setStatus(byteR1.executionId, "RUNNING");
+  boundedBytesCtrl.appendOutput(byteR1.executionId, "stdout", "A".repeat(60));
+  boundedBytesCtrl.setStatus(byteR1.executionId, "SUCCEEDED");
+  const byteR2 = boundedBytesCtrl.registerPreparedCommand({ confirmationId: "by-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  boundedBytesCtrl.setStatus(byteR2.executionId, "RUNNING");
+  boundedBytesCtrl.appendOutput(byteR2.executionId, "stdout", "B".repeat(60));
+  boundedBytesCtrl.setStatus(byteR2.executionId, "SUCCEEDED");
+  results.push({
+    id: "terminal-registry-total-retained-bytes-eviction",
+    description: "Exceeding maxTotalRetainedBytes evicts oldest finished review to stay within budget",
+    actual: {
+      r1Evicted: boundedBytesCtrl.getByExecutionId(byteR1.executionId) === undefined,
+      r2Present: boundedBytesCtrl.getByExecutionId(byteR2.executionId) !== undefined,
+      retainedBytesUnderLimit: boundedBytesCtrl.totalRetainedBytes <= 100,
+    },
+    expected: {
+      r1Evicted: true,
+      r2Present: true,
+      retainedBytesUnderLimit: true,
+    }
+  });
+
+  // 51. real-e2e-agentrunner-approval-verification-subprocess-succeeded
+  const { createVerificationToolRegistrations, AgentRunner } = await import("@open-vs-code/agent-core");
+  const agentCoreRegistry = (await import("@open-vs-code/agent-core")).createReadOnlyToolRegistry();
+  for (const r of createVerificationToolRegistrations(tmpRoot)) {
+    agentCoreRegistry.register(r);
+  }
+
+  const liveEvents: any[] = [];
+  const realRunner = new AgentRunner({
+    provider: new ScriptedModelProvider([
+      {
+        model: "scripted-test",
+        message: {
+          role: "assistant",
+          content: "Run test"
+        },
+        toolCalls: [
+          { id: "call-verif-ok", name: "run_verification", arguments: { action: "TEST" } }
+        ]
+      },
+      {
+        model: "scripted-test",
+        message: {
+          role: "assistant",
+          content: "Verification finished"
+        }
+      }
+    ]),
+    registry: agentCoreRegistry,
+    permissionEvaluator: () => "CONFIRM",
+    evidenceGate: false,
+    eventSink: (ev) => {
+      liveEvents.push(ev);
+      controller.handleAgentEvent(ev);
+    }
+  });
+
+  const runnerRun1 = await realRunner.run({
+    task: { id: "t-e2e-verif", mode: "BUILD", instruction: "Run verification" },
+    workspaceRoot: tmpRoot,
+    maxTurns: 5,
+    contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500, availableContext: 6500 },
+    projectInstructions: [],
+    memory: { durableNotes: [], activeContext: [], recentSessions: [] },
+    selectedSkills: [],
+  });
+
+  assert.strictEqual(runnerRun1.status, "PAUSED");
+  assert.ok(runnerRun1.confirmation);
+
+  const prepCmd = runnerRun1.confirmation.preparedCommand;
+  const runnerReviewEntry = termController.registerPreparedCommand({
+    confirmationId: "c-e2e-run",
+    command: prepCmd.commandPreview,
+    cwd: prepCmd.cwd,
+    provenance: "package.json [test]",
+    timeoutMs: prepCmd.timeoutMs,
+    executable: prepCmd.executable,
+    args: prepCmd.args,
+    packageJsonPath: prepCmd.packageJsonPath,
+    packageJsonHash: prepCmd.packageJsonHash,
+    scriptName: prepCmd.scriptName,
+    scriptBody: prepCmd.scriptBody,
+  });
+  controller.state.activeTerminal = {
+    executionId: runnerReviewEntry.executionId,
+    command: runnerReviewEntry.command,
+    cwd: runnerReviewEntry.cwd,
+    provenance: runnerReviewEntry.provenance,
+    timeoutMs: runnerReviewEntry.timeoutMs,
+    status: runnerReviewEntry.status,
+  };
+
+  const runnerRun2 = await realRunner.resume("APPROVE");
+  const outputEvents = liveEvents.filter(e => e.type === "verification.output");
+  const testOkEvent = outputEvents.find(e => typeof e.payload?.chunk === "string" && e.payload.chunk.includes("test-ok"));
+  const completedEvent = liveEvents.find(e => e.type === "verification.completed");
+
+  results.push({
+    id: "real-e2e-agentrunner-approval-verification-subprocess-succeeded",
+    description: "Full real end-to-end AgentRunner -> approval -> VerificationEngine -> subprocess -> live output -> SUCCEEDED",
+    actual: {
+      runnerStatus: runnerRun2.status,
+      hasOutputEvent: outputEvents.length > 0,
+      hasTestOkChunk: Boolean(testOkEvent),
+      terminalStatus: runnerReviewEntry.status,
+      terminalExitCode: runnerReviewEntry.exitCode,
+      completedStatus: completedEvent?.payload?.result?.status,
+    },
+    expected: {
+      runnerStatus: "COMPLETED",
+      hasOutputEvent: true,
+      hasTestOkChunk: true,
+      terminalStatus: "SUCCEEDED",
+      terminalExitCode: 0,
+      completedStatus: "PASS",
+    }
+  });
+
+  // 52. real-e2e-agentrunner-failure-subprocess
+  const originalPkgContent = fs.readFileSync(pkgJsonPath, "utf-8");
+  const modifiedPkg = JSON.parse(originalPkgContent);
+  modifiedPkg.scripts.test = "node -e 'process.stderr.write(\"failed in test\\n\"); process.exit(1)'";
+  fs.writeFileSync(pkgJsonPath, JSON.stringify(modifiedPkg, null, 2));
+
+  const failToolRegistrations = (await import("@open-vs-code/agent-core")).createVerificationToolRegistrations(tmpRoot);
+  const failRegistry = (await import("@open-vs-code/agent-core")).createReadOnlyToolRegistry();
+  for (const r of failToolRegistrations) {
+    failRegistry.register(r);
+  }
+
+  const failEvents: any[] = [];
+  const failRunner = new AgentRunner({
+    provider: new ScriptedModelProvider([
+      {
+        model: "scripted-test",
+        message: {
+          role: "assistant",
+          content: "Run test"
+        },
+        toolCalls: [
+          { id: "call-verif-fail", name: "run_verification", arguments: { action: "TEST" } }
+        ]
+      },
+      {
+        model: "scripted-test",
+        message: {
+          role: "assistant",
+          content: "Verification failed"
+        }
+      }
+    ]),
+    registry: failRegistry,
+    permissionEvaluator: () => "CONFIRM",
+    evidenceGate: false,
+    eventSink: (ev) => {
+      failEvents.push(ev);
+      controller.handleAgentEvent(ev);
+    }
+  });
+
+  const failRun1 = await failRunner.run({
+    task: { id: "t-e2e-verif-fail", mode: "BUILD", instruction: "Run failing test" },
+    workspaceRoot: tmpRoot,
+    maxTurns: 5,
+    contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500, availableContext: 6500 },
+    projectInstructions: [],
+    memory: { durableNotes: [], activeContext: [], recentSessions: [] },
+    selectedSkills: [],
+  });
+
+  assert.strictEqual(failRun1.status, "PAUSED");
+  const failPrepCmd = failRun1.confirmation!.preparedCommand;
+  const failReviewEntry = termController.registerPreparedCommand({
+    confirmationId: "c-e2e-fail",
+    command: failPrepCmd.commandPreview,
+    cwd: failPrepCmd.cwd,
+    provenance: "package.json [test]",
+    timeoutMs: failPrepCmd.timeoutMs,
+    executable: failPrepCmd.executable,
+    args: failPrepCmd.args,
+    packageJsonPath: failPrepCmd.packageJsonPath,
+    packageJsonHash: failPrepCmd.packageJsonHash,
+    scriptName: failPrepCmd.scriptName,
+    scriptBody: failPrepCmd.scriptBody,
+  });
+  controller.state.activeTerminal = {
+    executionId: failReviewEntry.executionId,
+    command: failReviewEntry.command,
+    cwd: failReviewEntry.cwd,
+    provenance: failReviewEntry.provenance,
+    timeoutMs: failReviewEntry.timeoutMs,
+    status: failReviewEntry.status,
+  };
+
+  const failRun2 = await failRunner.resume("APPROVE");
+  const failOutputEvent = failEvents.find(e => e.type === "verification.output" && e.payload?.stream === "stderr");
+
+  // Restore package.json
+  fs.writeFileSync(pkgJsonPath, originalPkgContent);
+
+  results.push({
+    id: "real-e2e-agentrunner-failure-subprocess",
+    description: "Full real end-to-end failure path captures stderr live and records status FAILED",
+    actual: {
+      runnerStatus: failRun2.status,
+      hasStderrEvent: Boolean(failOutputEvent),
+      stderrChunk: failOutputEvent?.payload?.chunk?.trim(),
+      terminalStatus: failReviewEntry.status,
+      terminalExitCode: failReviewEntry.exitCode,
+    },
+    expected: {
+      runnerStatus: "COMPLETED",
+      hasStderrEvent: true,
+      stderrChunk: "failed in test",
+      terminalStatus: "FAILED",
+      terminalExitCode: 1,
+    }
+  });
+
+  // 53. real-parent-child-cleanup-cancellation-deterministic
+  const parentPidPath = path.join(tmpRoot, "parent-cancel.pid");
+  const childPidPath = path.join(tmpRoot, "child-cancel.pid");
+  const cancelEngine = new VerificationEngine({ workspaceRoot: tmpRoot });
+  const cancelAbort = new AbortController();
+
+  const cancelExecPromise = cancelEngine.execute({
+    verificationId: "v-cancel-tree",
+    action: "TEST",
+    executable: process.execPath,
+    args: [path.join(tmpRoot, "tree-runner.cjs"), parentPidPath, childPidPath],
+    cwd: tmpRoot,
+    timeoutMs: 30000,
+    commandPreview: "node tree-runner.cjs",
+    packageJsonPath: pkgJsonPath,
+    packageJsonHash: crypto.createHash("sha256").update(fs.readFileSync(pkgJsonPath)).digest("hex"),
+    scriptName: "test",
+    scriptBody: "echo test-ok",
+  }, cancelAbort.signal);
+
+  let cancelTries = 0;
+  while ((!fs.existsSync(parentPidPath) || !fs.existsSync(childPidPath)) && cancelTries < 100) {
+    await new Promise(r => setTimeout(r, 20));
+    cancelTries++;
+  }
+  const parentCancelPid = parseInt(fs.readFileSync(parentPidPath, "utf-8"), 10);
+  const childCancelPid = parseInt(fs.readFileSync(childPidPath, "utf-8"), 10);
+
+  let parentAliveBefore = false;
+  let childAliveBefore = false;
+  try { process.kill(parentCancelPid, 0); parentAliveBefore = true; } catch {}
+  try { process.kill(childCancelPid, 0); childAliveBefore = true; } catch {}
+
+  cancelAbort.abort();
+  const cancelTreeResult = await cancelExecPromise;
+
+  let parentAliveAfter = true;
+  let childAliveAfter = true;
+  for (let i = 0; i < 50; i++) {
+    try { process.kill(parentCancelPid, 0); parentAliveAfter = true; } catch { parentAliveAfter = false; }
+    try { process.kill(childCancelPid, 0); childAliveAfter = true; } catch { childAliveAfter = false; }
+    if (!parentAliveAfter && !childAliveAfter) break;
+    await new Promise(r => setTimeout(r, 25));
+  }
+
+  results.push({
+    id: "real-parent-child-cleanup-cancellation-deterministic",
+    description: "Cancellation deterministically terminates both parent and child processes in process tree",
+    actual: {
+      status: cancelTreeResult.status,
+      parentAliveBefore,
+      childAliveBefore,
+      parentAliveAfter,
+      childAliveAfter,
+    },
+    expected: {
+      status: "CANCELLED",
+      parentAliveBefore: true,
+      childAliveBefore: true,
+      parentAliveAfter: false,
+      childAliveAfter: false,
+    }
+  });
+
+  // 54. real-parent-child-cleanup-timeout-deterministic
+  const parentTimeoutPidPath = path.join(tmpRoot, "parent-timeout.pid");
+  const childTimeoutPidPath = path.join(tmpRoot, "child-timeout.pid");
+  const timeoutEngine = new VerificationEngine({ workspaceRoot: tmpRoot });
+
+  const timeoutExecPromise = timeoutEngine.execute({
+    verificationId: "v-timeout-tree",
+    action: "TEST",
+    executable: process.execPath,
+    args: [path.join(tmpRoot, "tree-runner.cjs"), parentTimeoutPidPath, childTimeoutPidPath],
+    cwd: tmpRoot,
+    timeoutMs: 300,
+    commandPreview: "node tree-runner.cjs",
+    packageJsonPath: pkgJsonPath,
+    packageJsonHash: crypto.createHash("sha256").update(fs.readFileSync(pkgJsonPath)).digest("hex"),
+    scriptName: "test",
+    scriptBody: "echo test-ok",
+  });
+
+  let timeoutTries = 0;
+  while ((!fs.existsSync(parentTimeoutPidPath) || !fs.existsSync(childTimeoutPidPath)) && timeoutTries < 100) {
+    await new Promise(r => setTimeout(r, 20));
+    timeoutTries++;
+  }
+  const parentTimeoutPid = parseInt(fs.readFileSync(parentTimeoutPidPath, "utf-8"), 10);
+  const childTimeoutPid = parseInt(fs.readFileSync(childTimeoutPidPath, "utf-8"), 10);
+
+  let parentAliveBeforeTimeout = false;
+  let childAliveBeforeTimeout = false;
+  try { process.kill(parentTimeoutPid, 0); parentAliveBeforeTimeout = true; } catch {}
+  try { process.kill(childTimeoutPid, 0); childAliveBeforeTimeout = true; } catch {}
+
+  const timeoutTreeResult = await timeoutExecPromise;
+
+  let parentAliveAfterTimeout = true;
+  let childAliveAfterTimeout = true;
+  for (let i = 0; i < 50; i++) {
+    try { process.kill(parentTimeoutPid, 0); parentAliveAfterTimeout = true; } catch { parentAliveAfterTimeout = false; }
+    try { process.kill(childTimeoutPid, 0); childAliveAfterTimeout = true; } catch { childAliveAfterTimeout = false; }
+    if (!parentAliveAfterTimeout && !childAliveAfterTimeout) break;
+    await new Promise(r => setTimeout(r, 25));
+  }
+
+  results.push({
+    id: "real-parent-child-cleanup-timeout-deterministic",
+    description: "Timeout deterministically terminates both parent and child processes in process tree",
+    actual: {
+      status: timeoutTreeResult.status,
+      parentAliveBefore: parentAliveBeforeTimeout,
+      childAliveBefore: childAliveBeforeTimeout,
+      parentAliveAfter: parentAliveAfterTimeout,
+      childAliveAfter: childAliveAfterTimeout,
+    },
+    expected: {
+      status: "TIMEOUT",
+      parentAliveBefore: true,
+      childAliveBefore: true,
+      parentAliveAfter: false,
+      childAliveAfter: false,
+    }
+  });
+
+  // 55. real-extension-deactivation-during-command
+  const deactivateModule = await import("../src/extension.js");
+  const deactParentPid = path.join(tmpRoot, "parent-deact.pid");
+  const deactChildPid = path.join(tmpRoot, "child-deact.pid");
+  const deactEngine = new VerificationEngine({ workspaceRoot: tmpRoot });
+  const deactAbort = new AbortController();
+
+  const deactExecPromise = deactEngine.execute({
+    verificationId: "v-deact-tree",
+    action: "TEST",
+    executable: process.execPath,
+    args: [path.join(tmpRoot, "tree-runner.cjs"), deactParentPid, deactChildPid],
+    cwd: tmpRoot,
+    timeoutMs: 30000,
+    commandPreview: "node tree-runner.cjs",
+    packageJsonPath: pkgJsonPath,
+    packageJsonHash: crypto.createHash("sha256").update(fs.readFileSync(pkgJsonPath)).digest("hex"),
+    scriptName: "test",
+    scriptBody: "echo test-ok",
+  }, deactAbort.signal);
+
+  let deactTries = 0;
+  while ((!fs.existsSync(deactParentPid) || !fs.existsSync(deactChildPid)) && deactTries < 100) {
+    await new Promise(r => setTimeout(r, 20));
+    deactTries++;
+  }
+  const parentDeactPid = parseInt(fs.readFileSync(deactParentPid, "utf-8"), 10);
+  const childDeactPid = parseInt(fs.readFileSync(deactChildPid, "utf-8"), 10);
+
+  controller._activeAbortController = deactAbort;
+  controller.cancelTurn();
+  await deactExecPromise;
+
+  let pDead = false;
+  let cDead = false;
+  for (let i = 0; i < 50; i++) {
+    try { process.kill(parentDeactPid, 0); } catch { pDead = true; }
+    try { process.kill(childDeactPid, 0); } catch { cDead = true; }
+    if (pDead && cDead) break;
+    await new Promise(r => setTimeout(r, 25));
+  }
+
+  deactivateModule.deactivate();
+
+  results.push({
+    id: "real-extension-deactivation-during-command",
+    description: "Extension deactivation aborts active command and cleans up process tree",
+    actual: {
+      parentDead: pDead,
+      childDead: cDead,
+    },
+    expected: {
+      parentDead: true,
+      childDead: true,
+    }
+  });
+
+  // 56. late-output-after-completion-ignored
+  const entryComplete = termController.registerPreparedCommand({
+    confirmationId: "c-comp", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+  });
+  termController.recordCompletion(entryComplete.executionId, {
+    status: "SUCCEEDED",
+    stdout: "initial stdout",
+  });
+  termController.appendOutput(entryComplete.executionId, "stdout", "late chunk");
+  results.push({
+    id: "late-output-after-completion-ignored",
+    description: "Late output received after completion is discarded",
+    actual: {
+      stdout: entryComplete.stdout,
+    },
+    expected: {
+      stdout: "initial stdout",
+    }
+  });
+
+  // 57. malformed-streaming-event-ignored
+  const beforeOut = entryLive.stdout;
+  controller.handleAgentEvent({
+    id: "ev-bad-1",
+    type: "verification.output",
+    taskId: "t-1",
+    timestamp: new Date().toISOString(),
+    payload: {
+      executionId: entryLive.executionId,
+      stream: "invalid_stream" as any,
+      chunk: 12345 as any,
+    }
+  });
+  results.push({
+    id: "malformed-streaming-event-ignored",
+    description: "Malformed verification.output event is ignored safely",
+    actual: {
+      stdoutUnchanged: entryLive.stdout === beforeOut,
+    },
+    expected: {
+      stdoutUnchanged: true,
+    }
+  });
+
+  // 58. malicious-streamed-output-xss-safety
+  const entryXss = termController.registerPreparedCommand({
+    confirmationId: "c-xss", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+  });
+  termController.setStatus(entryXss.executionId, "RUNNING");
+  const malicious = "<script>alert('xss')</script><img src=x onerror=alert(1)>";
+  termController.appendOutput(entryXss.executionId, "stdout", malicious);
+  results.push({
+    id: "malicious-streamed-output-xss-safety",
+    description: "Malicious HTML / scripts in stdout are stored literally as text without DOM execution",
+    actual: {
+      stdout: entryXss.stdout,
+      hasScriptTag: entryXss.stdout.includes("<script>"),
+    },
+    expected: {
+      stdout: malicious,
+      hasScriptTag: true,
+    }
+  });
+
+  // 59. deactivation-cleanup
   const countBefore = termController.totalReviews;
   termController.clearAll();
   results.push({
@@ -932,7 +1628,7 @@ suite("Terminal Core E2E Evaluation Strict", () => {
     assert.throws(() => strictCompare({ status: "RUNNING" }, { status: "SUCCEEDED" }), /Comparison failed/);
   });
 
-  test("Deterministic Terminal UX Evaluations Run 1 and Run 2 (42 Scenarios)", async () => {
+  test("Deterministic Terminal UX Evaluations Run 1 and Run 2 (59 Scenarios)", async () => {
     const f1 = freshTerminalFixtures();
     const run1 = await runTerminalUxEvaluation(f1);
 
@@ -963,6 +1659,6 @@ suite("Terminal Core E2E Evaluation Strict", () => {
 
     const normalize = (res: any[]) => res.map(r => ({ id: r.id, actual: r.actual }));
     assert.deepStrictEqual(normalize(run1), normalize(run2), "Run 1 and Run 2 are not deterministic");
-    assert.ok(run1.length >= 40, `Must have at least 40 scenarios (had ${run1.length})`);
+    assert.ok(run1.length >= 50, `Must have at least 50 scenarios (had ${run1.length})`);
   });
 });

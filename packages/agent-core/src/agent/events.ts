@@ -19,6 +19,7 @@ export const AGENT_EVENT_TYPES = [
   "verification.confirmation_requested",
   "verification.approved",
   "verification.started",
+  "verification.output",
   "verification.completed",
   "verification.failed",
   "verification.timeout",

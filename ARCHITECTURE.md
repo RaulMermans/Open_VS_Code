@@ -153,32 +153,37 @@ The audited Kilo baseline remains in repository history for provenance and possi
 ## Model Routing
 Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `RoutedModelGateway` in production. Routing is based dynamically on `AgentMode` with no LLM dependency in the routing decision.
 
-## Controlled Terminal UX & Review Boundary (Sprint 3D)
+## Controlled Terminal UX & Review Boundary (Sprint 3D / 3D.1)
 
 ```text
- IDE Webview (Presentation Only)
-   │
-   │ (terminal.respond / cancel / toggle / copy)
+ VerificationEngine (SOLE Execution Authority)
+   │  spawn(executable, args, { shell: false, detached: true })
+   │  onOutput(chunk) ──────────────────────────────────────────┐
+   │  StringDecoder(utf-8) — chunk boundary safe               │
+   ▼                                                            │
+ AgentRunner                                                    │
+   │  verification.output event ◄───────────────────────────────┘
    ▼
  ChatController
-   │
+   │  handleAgentEvent("verification.output") → appendOutput
+   │  requestConfirmation — fail-closed validation (no fallbacks)
    ▼
- TerminalReviewController (Presentation Lifecycle & Ring Buffer)
-   │
-   │ (confirm / reject via host bridge)
+ TerminalReviewController (Bounded Prefix Buffer, Registry)
+   │  maxOutputBytes: 16 KB / stream (prefix, not ring)
+   │  maxReviews: 50, maxTotalRetainedBytes: 1 MB
+   │  Evicts oldest completed entries; never evicts active
    ▼
- IDE Adapter Bridge
-   │
-   ▼
- AgentRunner / VerificationEngine (SOLE Execution Authority)
-   │
-   ├─► spawn(executable, args, { shell: false, detached: true, cwd })
-   └─► Process tree termination on cancel/timeout (-child.pid)
+ IDE Webview (Presentation Only — textContent, XSS-immune)
+   │ (terminal.respond / cancel / toggle / copy)
 ```
 
-- **Execution Authority**: Subprocess spawning remains strictly in `VerificationEngine`. The UI layer cannot spawn processes.
-- **Safety Invariant**: Strictly `shell: false`. No arbitrary command execution, no command chaining or pipelines, no bash/sh `-c` evaluation.
-- **Human Approval**: Mandatory explicit confirmation gate (`CONFIRM`). No auto-approval.
-- **Bounded Buffering**: UTF-8 aware ring buffers capped at 16 KB per stream with explicit truncation indicator.
-- **Zero Model Calls**: Presentation actions (expand, toggle output, copy command, cancel, reject) trigger zero LLM calls.
+- **Execution Authority**: Subprocess spawning remains strictly in `VerificationEngine`. The IDE host, `ChatController`, `TerminalReviewController`, and Webview have zero spawn authority.
+- **Safety Invariant**: Strictly `shell: false`. No arbitrary command execution, no command chaining, no `bash -c` evaluation.
+- **Human Approval**: Mandatory explicit confirmation gate (`CONFIRM`). No auto-approval. Fail-closed: malformed prepared commands resolve immediately to `REJECT` with no fallback substitution.
+- **Live Output Streaming**: `VerificationEngine` delivers stdout/stderr chunks via `onOutput` callback; `AgentRunner` emits `verification.output` events; `ChatController` pipes them into `TerminalReviewController.appendOutput`. Webview renders with `textContent` (XSS-immune).
+- **Bounded Prefix Buffer**: Each stream retains the first 16 KB (configurable). `truncateUtf8Buffer` prevents split multi-byte sequences at limits. `stdoutTruncated` / `stderrTruncated` flags signal overflow. This is a **prefix** buffer, not a ring buffer.
+- **7 Active Lifecycle States**: `WAITING_APPROVAL`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `REJECTED`. The dead `PREPARED` state has been removed.
+- **Bounded Registry**: `TerminalReviewController` enforces `maxReviews` and `maxTotalRetainedBytes` limits by evicting the oldest completed entry when either limit is exceeded.
+- **Deterministic Process Tree Cleanup**: Cancellation and timeout both kill parent and all descendants via `process.kill(-child.pid, ...)` on POSIX. Proof by real E2E scenarios 53–55.
+- **Zero Model Calls**: Presentation actions (expand, toggle, copy, cancel, reject) trigger zero LLM calls.
 

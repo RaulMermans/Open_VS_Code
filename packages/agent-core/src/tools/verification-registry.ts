@@ -61,7 +61,7 @@ export function createVerificationToolRegistrations(workspaceRoot: string): Tool
         id: verificationId,
         reviewPayload: prepared as any,
         apply: async (applyContext: ToolExecutionContext): Promise<VerificationResult> => {
-          return engine.execute(prepared, applyContext.signal)
+          return engine.execute(prepared, applyContext.signal, applyContext.onOutput)
         },
       }
     },
