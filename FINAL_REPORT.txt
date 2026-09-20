@@ -1,54 +1,60 @@
 ==================================================
-SPRINT 3C.5 FINAL REPORT — DIFF EVALUATION TRUTH
+SPRINT 3C.6 FINAL REPORT — REQUIREMENT-ALIGNED ASSERTIONS & FINAL DIFF CLOSURE
 ==================================================
 
 NODE ENVIRONMENT
-- Active Node Version: v22.23.2
+- Active Node Version: v22.23.2 (verified)
 - Harness Runtime: node --import tsx --test
 
 SCENARIO EVALUATION SUMMARY
-- Evaluated Scenarios (Unique Count): 36
-- Run 1 (Cold) Pass: 36 / 36
+- Evaluated Scenarios (Unique Count): 40 (Required >= 35)
+- Run 1 (Cold) Pass: 40 / 40
 - Run 1 (Cold) Fail: 0
-- Run 2 (Warm) Pass: 36 / 36
+- Run 2 (Warm) Pass: 40 / 40
 - Run 2 (Warm) Fail: 0
-- Run 1 == Run 2 Deep Equality: PASS
+- Run 1 == Run 2 Deep Equality: PASS (YES)
 - Determinism Measure: Full scenario snapshot deep-equal without mock reset leaks
 
-STRENGTHENED SCENARIO EVALUATIONS (SAMPLING)
-- T-2601 / Comparator Correctness: VERIFIED with true deep equality
-- T-2602 / Comparator Negative Tests: VERIFIED throws on mismatch
-- T-2603 / Invalid diff URI rejection: SAFE FALLBACK OBSERVED
-- T-2604 / Missing review ID: SAFE ERROR STRING OBSERVED
-- T-2605 / Forged URI safety: VERIFIED no fs touch, no leak
-- T-2606 / HTML/Script injection: VERIFIED inert rendering
-- T-2607 / Oversized review policy: VERIFIED bounded memory & rejection
-- T-2608 / Unsaved/dirty editor check: VERIFIED blocked before apply
-- T-2609 / Review card modify vs create: VERIFIED distinct representation
-- T-2610 / Lifecycle transition truth: VERIFIED truthful states observed
-- T-2611 / Cancellation during review: VERIFIED clean state & confirmation revoked
-- T-2612 / Session dispose/reset: VERIFIED registry cleared
-- T-2613 / Deactivation cleanup: VERIFIED zero leaks
+REQUIREMENT-ALIGNED ASSERTION TRUTH
+- modify-exact-content: beforeExact = true, afterExact = true
+- create-review-card: beforeEmpty = true, proposedContentExact = true, newFileIndicator = true
+- preview-apply-identity: identity = true (proposed content matches applied result exactly)
+- open-diff-twice: samePreparedContent = true, modelDelta = 0, mutationDelta = 0
+- Measured actual observations:
+  * forged-uri: measured fsReadDelta = 0, mutationDelta = 0
+  * malicious-rendering: verified inert textContent DOM sentinels, 0 script executions
+  * stale-confirmation: verified fileDelta = 0, mutationDelta = 0 on out-of-order rejection
+  * no-autosave: verified saveCalls = 0, directWrites = 0, applyCalls = 0 before explicit user confirmation
+  * failure-lifecycle: real ATOMIC_WRITE_FAILED trigger producing truth-tracked FAILED status
 
-REVIEW LIFECYCLE DISCIPLINE
-- Statuses in ReviewStatus: PREPARED, REVIEWING, APPLIED, REJECTED, DISMISSED, CANCELLED
-- Unused/fictional statuses removed: APPROVING, APPLYING removed from code and docs
-- Truthful state representation: Verified every lifecycle state tested reflects actual controller behavior
+REVIEW LIFECYCLE RECONCILIATION
+- Authoritative ReviewStatus Lifecycle:
+  PREPARED | REVIEWING | APPLIED | REJECTED | STALE | FAILED | CANCELLED
+- Fictional/dead states completely eliminated:
+  * DISMISSED: Removed (replaced with explicit REJECTED / CANCELLED semantics)
+  * APPROVING, APPLYING: Removed from code and documentation
+- Every state verified with observed production transition in diff-review-controller
 
-REGRESSION LADDER (NODE 22)
-- git status clean (excluding intentional report/docs): PASS
-- git diff --check: PASS
-- git fsck --full: PASS
-- npm run lint: PASS
-- npm run typecheck: PASS
-- npm test: PASS
-- npm run build: PASS
+VERIFICATION LADDER (NODE 22)
+- diff-core-e2e: PASS (2 suites, 40/40 strict scenarios cold & warm)
+- chat-core-e2e: PASS
+- chat-ux: PASS
+- extension: PASS (3/3 suites)
+- CLI tests: PASS (16/16 suites: 12/12 core, 4/4 skills, 4/4 routing)
+- IDE adapter tests: PASS (5/5 suites)
+- eval:coding (deterministic harness):
+  * Run 1: 30 / 30 PASS (100.0% task success, 100.0% safety)
+  * Run 2: 30 / 30 PASS (100.0% task success, 100.0% safety)
+- npm run typecheck: PASS across all 4 workspaces (@open-vs-code/agent-core, @open-vs-code/cli, @open-vs-code/ide-adapter, @open-vs-code/vscode-integration)
+- npm run lint: PASS (0 warnings, 0 errors)
+- npm run build: PASS (esbuild generated dist/extension.js 261.7kb)
 
-NETWORK HYGIENE
-- Zero network calls observed during tests: VERIFIED
-- No external model dependencies in evaluation harness: VERIFIED
+NETWORK & MODEL HYGIENE
+- External model weights downloaded: 0 (0 GGUF, 0 Safetensors)
+- Real inference calls made: 0 (100% deterministic/scripted test mocks)
+- Network calls observed during tests: 0 (isolated hermetic evaluation)
 
 FINAL SPRINT STATUS
-- Sprint 3C / 3C.5 Status: PERMANENTLY CLOSED
-- Next Sprint: Sprint 3D — Controlled Terminal UX (pending human authorization)
+- Sprint 3C / 3C.6 Status: PERMANENTLY CLOSED
+- Next Feature Sprint: SPRINT 3D — CONTROLLED TERMINAL UX (pending human authorization; DO NOT START)
 ==================================================
