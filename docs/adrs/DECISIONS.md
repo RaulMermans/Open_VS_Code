@@ -6,3 +6,4 @@
 - [ADR-019: Diff / Edit Review Boundary](ADR-019-diff-edit-review-boundary.md)
 - [ADR-020: HALO Capability Provider](ADR-020-halo-capability-provider.md)
 - [ADR-021: Controlled Terminal UX and Presentation Boundary](ADR-021-controlled-terminal-execution.md)
+- [ADR-022: Editor-Native Autocomplete](ADR-022-editor-native-autocomplete.md)

@@ -198,3 +198,49 @@ Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `Rout
 - **Extension Deactivation Closure (Sprint 3D.2)**: Extension `deactivate()` triggers `chatController.cancelTurn()`, cleanly propagating the `AbortSignal` to kill the subprocess tree, clearing the terminal review registry to 0 entries, and preventing post-deactivation events or resurrection.
 - **Zero Model Calls**: Presentation actions (expand, toggle, copy, cancel, reject) trigger zero LLM calls.
 
+## Editor-Native Autocomplete Architecture (Sprint 3E ✅ CLOSED)
+
+```text
+VS Code Inline Completion API (registerInlineCompletionItemProvider)
+  │
+  ▼
+AutocompleteController (packages/vscode-integration)
+  │  - Captures live unsaved editor buffer (snapshot)
+  │  - Maps VS Code CancellationToken to AbortSignal
+  │  - Returns native vscode.InlineCompletionItem
+  │  - Binds acceptance telemetry command (open-vs-code.autocompleteAccepted)
+  ▼
+AutocompleteService (packages/agent-core)
+  │  - Injectable debounce scheduler (100ms default)
+  │  - Request superseding (typing cancels pending debounce)
+  │  - In-flight cancellation (propagates AbortSignal to provider)
+  │  - Request deduplication & inference timeout (3,000ms cap)
+  │  - Stale-result guards (document URI, document version, latest request ID)
+  │  - Output sanitization (code fences, prefix echo, suffix overlap, char ceiling)
+  │  - Session-bounded local telemetry (zero source text)
+  ▼
+AutocompleteContextBuilder (packages/agent-core)
+  │  - Editor-local context only (zero ProjectMemory / RAG / Markdown brain reads)
+  │  - Bounded prefix (~2,000 tokens / 8,000 chars, nearest-to-cursor preserved)
+  │  - Bounded suffix (~1,000 tokens / 4,000 chars, earliest preserved)
+  │  - Total ceiling: 3,500 tokens / 14,000 chars; max output: 256 tokens / 1,024 chars
+  │  - Sensitive file protection (.env, *.pem, *.key skipped without model invocation)
+  │  - UTF-16 surrogate-pair boundary safety
+  ▼
+AutocompleteGateway (packages/agent-core)
+  │  - Separate from RoutedModelGateway / AgentRunner
+  │  - Uses ModelRouter with taskClass: "autocomplete" and requiredCapabilities: ["autocomplete"]
+  ▼
+ModelRouter (Deterministic capability-based candidate selection)
+  │  - Rejects chat-only deployments lacking "autocomplete" capability
+  │  - Zero cloud fallback; quiet empty completion on NO_COMPATIBLE_ROUTE
+  ▼
+AutocompleteProvider (packages/agent-core)
+  │  - Local FIM-capable model provider (ScriptedAutocompleteProvider in tests)
+  │  - Provider-specific FIM token formatting isolated inside provider adapter
+```
+
+- **Architectural Isolation**: Autocomplete has **zero** dependency on `AgentRunner`, `ToolRuntime`, `MutationEngine`, `VerificationEngine`, `MCP`, or `ProjectMemory`.
+- **Insertion Authority**: The user's editor acceptance action is the sole insertion authority; suggestions are rendered exclusively via native VS Code ghost text.
+- **Zero Cloud Fallback**: If no compatible local route exists, autocomplete yields an empty result silently without user-facing errors.
+

@@ -18,6 +18,11 @@
 | [ADR-014](docs/adrs/ADR-014-metadata-first-skills.md) | Metadata-First Skills & Prompt Primitives | Accepted |
 | [ADR-016](docs/adrs/ADR-016-deterministic-model-provider-routing.md) | Deterministic Model / Provider Routing Architecture | Accepted |
 | [ADR-017](docs/adrs/ADR-017-ide-host-adapter-boundary.md) | IDE Host Adapter Boundary | Accepted |
+| [ADR-018](docs/adrs/ADR-018-chat-ux-layer.md) | Chat UX Layer | Accepted |
+| [ADR-019](docs/adrs/ADR-019-diff-edit-review-boundary.md) | Diff / Edit Review Boundary | Accepted |
+| [ADR-020](docs/adrs/ADR-020-halo-capability-provider.md) | HALO Capability Provider | Accepted |
+| [ADR-021](docs/adrs/ADR-021-controlled-terminal-execution.md) | Controlled Terminal UX and Presentation Boundary | Accepted |
+| [ADR-022](docs/adrs/ADR-022-editor-native-autocomplete.md) | Editor-Native Autocomplete | Accepted |
 
 Decision status changes belong in the ADR and this index.
 
@@ -26,3 +31,7 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 
 - **Sprint 2D.1**: ADR-016 integrated into production execution path via `RoutedModelGateway`.
 - **Sprint 3A**: IDE Adapter / Code-OSS Integration Foundation complete.
+- **Sprint 3B**: Chat UX Layer complete (ADR-018).
+- **Sprint 3C**: Diff / Edit UX Review Boundary complete (ADR-019).
+- **Sprint 3D**: Controlled Terminal UX & Presentation Boundary complete (ADR-021).
+- **Sprint 3E**: Editor-Native Autocomplete complete (ADR-022).
