@@ -92,6 +92,9 @@ export class ChatController {
 
       const entry = this.terminalReviewController.registerPreparedCommand({
         confirmationId,
+        // Preserve canonical verificationId as executionId so identity survives
+        // PreparedVerification → TerminalReview → verification.output → verification.completed
+        executionId: pc.verificationId,
         command: commandPreview,
         cwd,
         provenance,
@@ -533,18 +536,21 @@ export class ChatController {
         typeof payload.chunk === 'string' &&
         payload.chunk.length > 0
       ) {
-        const executionId = payload.executionId || this.state.activeTerminal?.executionId;
+        // Route output by exact executionId from event — no fallback to activeTerminal.
+        // A forged/wrong executionId will find no entry and appendOutput is a no-op.
+        // terminal.updated is only sent when the entry exists under the exact ID.
+        const executionId = payload.executionId as string | undefined;
         if (executionId) {
           this.terminalReviewController.appendOutput(executionId, payload.stream, payload.chunk);
           const tEntry = this.terminalReviewController.getByExecutionId(executionId);
           if (tEntry) {
             this.syncTerminalState(tEntry);
+            this.sendMessage({
+              type: 'terminal.updated',
+              terminal: this.state.activeTerminal,
+              review: this.state.activeTerminal,
+            });
           }
-          this.sendMessage({
-            type: 'terminal.updated',
-            terminal: this.state.activeTerminal,
-            review: this.state.activeTerminal,
-          });
         }
       }
     } else if (ev.type === 'verification.completed') {
