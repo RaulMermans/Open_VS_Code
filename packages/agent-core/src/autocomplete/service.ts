@@ -61,6 +61,14 @@ export interface RequestIdentity {
   readonly cursorCharacter: number
 }
 
+export interface LiveEditorState {
+  readonly documentUri: string
+  readonly documentVersion: number
+  readonly cursorLine: number
+  readonly cursorCharacter: number
+}
+
+
 // ---------------------------------------------------------------------------
 // Telemetry (session-local, no source text)
 // ---------------------------------------------------------------------------
@@ -136,11 +144,11 @@ export class AutocompleteService {
   // Bounded acceptance registry (opaque IDs + char counts only)
   readonly #acceptanceRegistry: AcceptanceEntry[] = []
 
-  // Current pending debounce handle and resolver (may be cancelled by next trigger)
+  // Current pending debounce handle and resolver
   #pendingHandle: { cancel(): void } | null = null
   #pendingResolver: ((res: CompletionResult | null) => void) | null = null
 
-  // Current in-flight request identity + abort controller
+  // Current in-flight request identity and abort controller
   #inflightId: string | null = null
   #inflightAbort: AbortController | null = null
 
@@ -172,12 +180,14 @@ export class AutocompleteService {
    * request was superseded/cancelled/stale.
    *
    * This is called by the VS Code InlineCompletionItemProvider.
-   * The provider passes a vsCodeToken for VS Code lifecycle cancellation.
+   * The provider passes a vsCodeToken for VS Code lifecycle cancellation
+   * and an optional liveEditorSupplier to check live editor state upon completion.
    */
   async trigger(
     snapshot: EditorSnapshot,
     documentUri: string,
     vsCodeAbortSignal?: AbortSignal,
+    liveEditorSupplier?: () => LiveEditorState | null,
   ): Promise<CompletionResult | null> {
     if (this.#disposed || !this.#enabled) return null
 
@@ -200,12 +210,11 @@ export class AutocompleteService {
       cursorCharacter: snapshot.cursorCharacter,
     }
 
-    // Supersede any pending debounce
+    // Supersede any pending debounce for different request
     this.#cancelPending()
 
     // Register this as the latest request
     this.#latestRequestId = requestId
-
     // Debounce: wait before actually invoking
     const result = await new Promise<CompletionResult | null>((resolve) => {
       if (this.#disposed) { resolve(null); return }
@@ -220,12 +229,6 @@ export class AutocompleteService {
 
         // After debounce: check still latest
         if (this.#latestRequestId !== requestId) {
-          resolve(null)
-          return
-        }
-
-        // Deduplication: if the same request is already in-flight, skip
-        if (this.#inflightId === requestId) {
           resolve(null)
           return
         }
@@ -264,8 +267,9 @@ export class AutocompleteService {
           const response = await this.#gateway.complete(request)
           clearTimeout(timeoutHandle)
 
-          // Stale-result checks
-          if (this.#isStale(identity, documentUri)) {
+          // Stale-result checks against live editor state
+          const isStaleResult = this.#isStale(identity, liveEditorSupplier, documentUri)
+          if (isStaleResult) {
             this.#telemetry.staleDiscarded++
             resolve(null)
             return
@@ -344,7 +348,9 @@ export class AutocompleteService {
    * Does NOT call AgentRunner, does NOT call tools, does NOT write to disk.
    * Does NOT store source text — only counts and char aggregates.
    *
-   * Unknown / stale IDs are silently ignored.
+   * Single-use: once accepted, entry is consumed and subsequent calls with
+   * the same requestId are safe no-ops (delta = 0).
+   * Unknown / stale / evicted IDs are silently ignored.
    */
   recordAccepted(requestId: string): void {
     const entry = this.#acceptanceRegistry.find(e => e.requestId === requestId)
@@ -400,14 +406,34 @@ export class AutocompleteService {
    *
    * A result is stale if:
    *   (a) A newer request ID has been registered (superseded)
-   *   (b) The request URI doesn't match the current document URI context
-   *       (caller-supplied current document URI)
+   *   (b) The active document URI changed
+   *   (c) The document version changed
+   *   (d) The cursor moved (line or character)
    */
-  #isStale(identity: RequestIdentity, currentDocumentUri: string): boolean {
-    // Superseded by newer request
+  #isStale(
+    identity: RequestIdentity,
+    liveEditorSupplier?: () => LiveEditorState | null,
+    fallbackDocumentUri?: string,
+  ): boolean {
+    // 1. Superseded by newer request
     if (this.#latestRequestId !== identity.requestId) return true
-    // Active document changed
-    if (identity.documentUri !== currentDocumentUri) return true
+
+    // 2. Real live editor checks
+    if (liveEditorSupplier) {
+      const current = liveEditorSupplier()
+      if (!current) return true
+      if (current.documentUri !== identity.documentUri) return true
+      if (current.documentVersion !== identity.documentVersion) return true
+      if (
+        current.cursorLine !== identity.cursorLine ||
+        current.cursorCharacter !== identity.cursorCharacter
+      ) {
+        return true
+      }
+    } else if (fallbackDocumentUri && identity.documentUri !== fallbackDocumentUri) {
+      return true
+    }
+
     return false
   }
 
