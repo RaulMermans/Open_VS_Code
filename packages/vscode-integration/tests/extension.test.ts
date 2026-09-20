@@ -25,9 +25,16 @@ const mockVscode = {
     asRelativePath: () => "f.ts",
     onDidChangeWorkspaceFolders: () => ({ dispose: () => {} })
   },
-  languages: { onDidChangeDiagnostics: () => ({ dispose: () => {} }),
-    getDiagnostics: () => []
+  languages: {
+    onDidChangeDiagnostics: () => ({ dispose: () => {} }),
+    getDiagnostics: () => [],
+    registerInlineCompletionItemProvider: (selector: any, provider: any) => {
+      mockVscode.languages.registeredProviders.push({ selector, provider });
+      return { dispose: () => {} };
+    },
+    registeredProviders: [] as any[],
   },
+
   commands: {
     registerCommand: (id: string, callback: any) => {
       mockVscode.commands.registered[id] = callback;

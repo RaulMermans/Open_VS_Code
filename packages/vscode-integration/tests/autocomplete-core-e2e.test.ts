@@ -18,6 +18,90 @@
 
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import Module from "node:module"
+
+const registeredCommands = new Map<string, (...args: any[]) => any>()
+const registeredInlineProviders: any[] = []
+
+class MockPosition {
+  constructor(public line: number, public character: number) {}
+}
+
+class MockRange {
+  constructor(public start: MockPosition, public end: MockPosition) {}
+}
+
+class MockInlineCompletionItem {
+  public command?: { title: string; command: string; arguments?: any[] }
+  constructor(public insertText: string, public range: MockRange) {}
+}
+
+class MockInlineCompletionList {
+  constructor(public items: MockInlineCompletionItem[]) {}
+}
+
+let activeEditorMock: any = null
+
+const mockVscode = {
+  Position: MockPosition,
+  Range: MockRange,
+  InlineCompletionItem: MockInlineCompletionItem,
+  InlineCompletionList: MockInlineCompletionList,
+  window: {
+    get activeTextEditor() { return activeEditorMock },
+    showInformationMessage: () => {},
+    showErrorMessage: () => {},
+    onDidChangeActiveTextEditor: () => ({ dispose: () => {} }),
+    onDidChangeTextEditorSelection: () => ({ dispose: () => {} }),
+    registerWebviewViewProvider: () => ({ dispose: () => {} }),
+    createOutputChannel: () => ({ appendLine: () => {}, show: () => {}, dispose: () => {} }),
+  },
+  workspace: {
+    asRelativePath: (uri: any, _includeWorkspace?: boolean) => {
+      const u = typeof uri === "string" ? uri : uri?.toString() || ""
+      return u.replace(/^file:\/\/\/[^/]+\//, "")
+    },
+    workspaceFolders: [{ uri: { fsPath: "/workspace", toString: () => "file:///workspace" }, name: "workspace" }],
+    getConfiguration: () => ({ get: (_k: string, d: any) => d }),
+    onDidChangeWorkspaceFolders: () => ({ dispose: () => {} }),
+    registerTextDocumentContentProvider: () => ({ dispose: () => {} }),
+    isTrusted: true,
+  },
+  languages: {
+    registerInlineCompletionItemProvider: (selector: any, provider: any) => {
+      const entry = { selector, provider, disposed: false }
+      registeredInlineProviders.push(entry)
+      return {
+        dispose: () => { entry.disposed = true }
+      }
+    },
+    onDidChangeDiagnostics: () => ({ dispose: () => {} }),
+    getDiagnostics: () => [],
+  },
+  commands: {
+    registerCommand: (id: string, callback: (...args: any[]) => any) => {
+      registeredCommands.set(id, callback)
+      return {
+        dispose: () => { registeredCommands.delete(id) }
+      }
+    },
+    executeCommand: async (id: string, ...args: any[]) => {
+      const fn = registeredCommands.get(id)
+      if (fn) return fn(...args)
+    },
+  },
+}
+
+const originalResolveFilename = (Module as any)._resolveFilename
+;(Module as any)._resolveFilename = function(request: string) {
+  if (request === "vscode") return "vscode"
+  return originalResolveFilename.apply(this, arguments)
+}
+const originalRequire = (Module as any).prototype.require
+;(Module as any).prototype.require = function(id: string) {
+  if (id === "vscode") return mockVscode
+  return originalRequire.apply(this, arguments)
+}
 
 import {
   AutocompleteService,
@@ -26,6 +110,8 @@ import {
   buildAutocompleteContext,
   sanitizeCompletion,
   RouteUnavailableError,
+  hasIsolatedSurrogates,
+  createProductionAutocompleteGateway,
   // Budget constants
   PREFIX_CHAR_CEILING,
   SUFFIX_CHAR_CEILING,
@@ -39,9 +125,17 @@ import type {
   RoutingConfiguration,
 } from "@open-vs-code/agent-core"
 
+const {
+  AutocompleteController,
+  AUTOCOMPLETE_ACCEPTED_COMMAND,
+  AUTOCOMPLETE_TOGGLE_COMMAND,
+} = require("../src/autocomplete-controller.ts")
+const extension = require("../src/extension.ts")
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
 
 /** Minimal routing config where the autocomplete deployment has 'autocomplete' capability */
 function makeConfig(opts: {
@@ -1095,6 +1189,491 @@ async function runAutocompleteEvaluation(label: string): Promise<ScenarioResult[
       : fail("S60", "deactivation", { result, disposed: service.disposed, reqs: provider.requests.length }, { result: null, disposed: true, reqs: 0 }))
   }
 
+  // =========================================================================
+  // PRODUCTION WIRING & STALE-SAFETY CLOSURE (scenarios 61–80)
+  // =========================================================================
+
+  // S61 — production extension registers provider (T-3201)
+  {
+    extension._testSeam.setAutocompleteController(null)
+    registeredInlineProviders.length = 0
+    const context = { subscriptions: [] as any[] }
+    extension.activate(context as any)
+    const ctrl = extension._testSeam.autocompleteController
+    const registered = registeredInlineProviders.find(p => p.provider === ctrl && !p.disposed)
+    results.push(ctrl !== null && registered !== undefined
+      ? pass("S61", "production extension registers provider — AutocompleteController created and registered")
+      : fail("S61", "production registration", { ctrl: !!ctrl, registered: !!registered }, { ctrl: true, registered: true }))
+    extension.deactivate()
+  }
+
+  // S62 — provider registered exactly once on repeated activate (T-3201)
+  {
+    extension._testSeam.setAutocompleteController(null)
+    registeredInlineProviders.length = 0
+    const context = { subscriptions: [] as any[] }
+    extension.activate(context as any)
+    const count1 = registeredInlineProviders.length
+    extension.activate(context as any) // Second activate
+    const count2 = registeredInlineProviders.length
+    results.push(count1 === 1 && count2 === 1
+      ? pass("S62", "provider registered exactly once — repeated activate does not duplicate provider")
+      : fail("S62", "provider registration count", { count1, count2 }, { count1: 1, count2: 1 }))
+    extension.deactivate()
+  }
+
+  // S63 — registered callback returns native InlineCompletionItem (Full Controller E2E)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "ready", text: "const x = 42;" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const ctrl = new AutocompleteController({ gateway, scheduler, debounceMs: 0 })
+    const context = { subscriptions: [] as any[] }
+    ctrl.register(context as any)
+
+    const docUri = "file:///workspace/app.ts"
+    const docText = "function main() {\n  return "
+    const pos = new MockPosition(1, 9)
+    const mockDoc = {
+      uri: { toString: () => docUri },
+      version: 1,
+      languageId: "typescript",
+      getText: (range?: any) => {
+        if (!range) return docText
+        return docText.slice(0, 27)
+      },
+      positionAt: (_offset: number) => new MockPosition(1, 9),
+    }
+
+    activeEditorMock = {
+      document: mockDoc,
+      selection: { active: pos, start: pos, end: pos, isEmpty: true },
+    }
+
+    const token = { isCancellationRequested: false, onCancellationRequested: () => {} }
+    const p = ctrl.provideInlineCompletionItems(mockDoc as any, pos as any, {} as any, token as any)
+    scheduler.flushAll()
+    const list = await p
+
+    const hasItem = list && list.items && list.items.length === 1
+    const item = hasItem ? list.items[0] : null
+    const itemText = item?.insertText
+    const hasCommand = item?.command?.command === AUTOCOMPLETE_ACCEPTED_COMMAND
+
+    results.push(hasItem && itemText === "const x = 42;" && hasCommand && provider.requests.length === 1
+      ? pass("S63", "registered callback returns native InlineCompletionItem — exact text, range, command, 1 provider call")
+      : fail("S63", "native InlineCompletionItem callback", { hasItem, itemText, hasCommand, calls: provider.requests.length }, { hasItem: true, itemText: "const x = 42;", hasCommand: true, calls: 1 }))
+    activeEditorMock = null
+    ctrl.dispose()
+  }
+
+  // S64 — no configured route = quiet null (T-3204)
+  {
+    const noDeployGateway = createProductionAutocompleteGateway()
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway: noDeployGateway, scheduler, debounceMs: 0 })
+    const p = service.trigger(makeSnapshot(), "file:///a.ts")
+    scheduler.flushAll()
+    const result = await p
+    results.push(result === null && service.telemetry.empty >= 1 && service.telemetry.failed === 0
+      ? pass("S64", "no configured route = quiet null — 0 deployments handled quietly without error")
+      : fail("S64", "no configured route", { result, empty: service.telemetry.empty, failed: service.telemetry.failed }, { result: null, empty: 1, failed: 0 }))
+  }
+
+  // S65 — document-version changes without newer request (T-3207)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "gate" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    let liveVersion = 10
+    const liveEditorSupplier = () => ({
+      documentUri: "file:///a.ts",
+      documentVersion: liveVersion,
+      cursorLine: 0,
+      cursorCharacter: 10,
+    })
+
+    const p = service.trigger(makeSnapshot({ documentVersion: 10 }), "file:///a.ts", undefined, liveEditorSupplier)
+    scheduler.flushAll()
+    while (provider.pendingGates === 0) await new Promise(r => setImmediate(r))
+
+    // WITHOUT starting a newer autocomplete request: edit document version to 11
+    liveVersion = 11
+
+    // Provider completes and returns
+    provider.openAllGates()
+    const result = await p
+
+    results.push(result === null && service.telemetry.staleDiscarded === 1
+      ? pass("S65", "document-version changes without newer request — discarded, staleDiscarded incremented")
+      : fail("S65", "document-version stale", { result, staleDiscarded: service.telemetry.staleDiscarded }, { result: null, staleDiscarded: 1 }))
+  }
+
+  // S66 — cursor changes without newer request (T-3208)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "gate" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    let liveChar = 10
+    const liveEditorSupplier = () => ({
+      documentUri: "file:///a.ts",
+      documentVersion: 1,
+      cursorLine: 0,
+      cursorCharacter: liveChar,
+    })
+
+    const p = service.trigger(makeSnapshot({ cursorLine: 0, cursorCharacter: 10 }), "file:///a.ts", undefined, liveEditorSupplier)
+    scheduler.flushAll()
+    while (provider.pendingGates === 0) await new Promise(r => setImmediate(r))
+
+    // WITHOUT starting a newer request: cursor moves to 15
+    liveChar = 15
+
+    provider.openAllGates()
+    const result = await p
+
+    results.push(result === null && service.telemetry.staleDiscarded === 1
+      ? pass("S66", "cursor changes without newer request — discarded, staleDiscarded incremented")
+      : fail("S66", "cursor stale", { result, staleDiscarded: service.telemetry.staleDiscarded }, { result: null, staleDiscarded: 1 }))
+  }
+
+  // S67 — active document changes without newer request (T-3209)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "gate" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    let liveUri = "file:///a.ts"
+    const liveEditorSupplier = () => ({
+      documentUri: liveUri,
+      documentVersion: 1,
+      cursorLine: 0,
+      cursorCharacter: 10,
+    })
+
+    const p = service.trigger(makeSnapshot(), "file:///a.ts", undefined, liveEditorSupplier)
+    scheduler.flushAll()
+    while (provider.pendingGates === 0) await new Promise(r => setImmediate(r))
+
+    // WITHOUT starting a newer request: active editor changes to file:///b.ts
+    liveUri = "file:///b.ts"
+
+    provider.openAllGates()
+    const result = await p
+
+    results.push(result === null && service.telemetry.staleDiscarded === 1
+      ? pass("S67", "active document changes without newer request — discarded, staleDiscarded incremented")
+      : fail("S67", "active document stale", { result, staleDiscarded: service.telemetry.staleDiscarded }, { result: null, staleDiscarded: 1 }))
+  }
+
+  // S68 — newer request guard remains distinct (T-3210)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "gate" }, { kind: "ready", text: "newer_win" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    // Request 1 starts
+    const p1 = service.trigger(makeSnapshot({ rawPrefix: "first " }), "file:///a.ts")
+    scheduler.flush()
+    while (provider.pendingGates === 0) await new Promise(r => setImmediate(r))
+
+    // Request 2 starts (newer request) — marks request 2 as latest, pending in debounce
+    const p2 = service.trigger(makeSnapshot({ rawPrefix: "second " }), "file:///a.ts")
+
+    // Release gate for request 1 while request 2 is pending in debounce
+    provider.openAllGates()
+    const r1 = await p1
+
+    // Now flush debounce for request 2
+    scheduler.flush()
+    const r2 = await p2
+
+    results.push(r1 === null && r2?.text === "newer_win" && service.telemetry.staleDiscarded >= 1
+      ? pass("S68", "newer request guard remains distinct — older request superseded, newer completed")
+      : fail("S68", "newer request guard", { r1, r2: r2?.text, staleDiscarded: service.telemetry.staleDiscarded }, { r1: null, r2: "newer_win", staleDiscarded: 1 }))
+  }
+
+  // S69 — exact duplicate in-flight request: provider invocation count remains 1 (T-3215)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "gate", text: "shared" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    const snap = makeSnapshot({ rawPrefix: "exact_duplicate" })
+    const p1 = service.trigger(snap, "file:///a.ts")
+    scheduler.flush() // Provider is now active (gated)
+    while (provider.pendingGates === 0) await new Promise(r => setImmediate(r))
+
+    // Invoke again with exact same editor state while provider is active
+    const p2 = service.trigger(snap, "file:///a.ts")
+
+    // Release provider
+    provider.openAllGates()
+    const [r1, r2] = await Promise.all([p1, p2])
+
+    results.push(provider.requests.length === 1 && r1 !== null && r1 === r2
+      ? pass("S69", "exact duplicate in-flight request — provider count remains 1, shared response")
+      : fail("S69", "duplicate in-flight", { calls: provider.requests.length, same: r1 === r2 }, { calls: 1, same: true }))
+  }
+
+  // S70 — changed request is not deduped: new provider invocation allowed (T-3216)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "ready", text: "one" }, { kind: "ready", text: "two" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    const p1 = service.trigger(makeSnapshot({ cursorCharacter: 10 }), "file:///a.ts")
+    scheduler.flushAll()
+    await p1
+
+    const p2 = service.trigger(makeSnapshot({ cursorCharacter: 11 }), "file:///a.ts")
+    scheduler.flushAll()
+    await p2
+
+    results.push(provider.requests.length === 2
+      ? pass("S70", "changed request is not deduped — cursor change allows new provider invocation")
+      : fail("S70", "changed request not deduped", provider.requests.length, 2))
+  }
+
+  // S71 — double acceptance increments once: second call is safe no-op (T-3217)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "ready", text: "accept_me" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    const p = service.trigger(makeSnapshot(), "file:///a.ts")
+    scheduler.flushAll()
+    const result = await p
+    assert.ok(result)
+
+    const before = service.telemetry.accepted
+    service.recordAccepted(result.requestId)
+    const after1 = service.telemetry.accepted
+    service.recordAccepted(result.requestId) // Double accept
+    const after2 = service.telemetry.accepted
+
+    results.push(after1 - before === 1 && after2 - after1 === 0
+      ? pass("S71", "double acceptance increments once — second call is safe no-op (delta = 0)")
+      : fail("S71", "double acceptance", { delta1: after1 - before, delta2: after2 - after1 }, { delta1: 1, delta2: 0 }))
+  }
+
+  // S72 — unknown acceptance increments zero (T-3218)
+  {
+    const config = makeConfig()
+    const gateway = makeGateway(config, makeProvider([]))
+    const service = new AutocompleteService({ gateway, debounceMs: 0 })
+
+    const before = service.telemetry.accepted
+    service.recordAccepted("completely-unknown-id-xyz")
+    const after = service.telemetry.accepted
+
+    results.push(after === before
+      ? pass("S72", "unknown acceptance increments zero — safe no-op")
+      : fail("S72", "unknown acceptance", after - before, 0))
+  }
+
+  // S73 — evicted acceptance ID increments zero (T-3219)
+  {
+    const config = makeConfig()
+    const steps: any[] = []
+    for (let i = 0; i < 55; i++) {
+      steps.push({ kind: "ready", text: `res_${i}` })
+    }
+    const provider = makeProvider(steps)
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const service = new AutocompleteService({ gateway, scheduler, debounceMs: 0 })
+
+    const firstResult = await (async () => {
+      const p = service.trigger(makeSnapshot({ rawPrefix: "item_0" }), "file:///a.ts")
+      scheduler.flushAll()
+      return p
+    })()
+    assert.ok(firstResult)
+
+    // Generate 52 more to evict the first one (MAX_ACCEPTANCE_REGISTRY_SIZE = 50)
+    for (let i = 1; i <= 52; i++) {
+      const p = service.trigger(makeSnapshot({ rawPrefix: `item_${i}` }), "file:///a.ts")
+      scheduler.flushAll()
+      await p
+    }
+
+    const before = service.telemetry.accepted
+    service.recordAccepted(firstResult.requestId)
+    const after = service.telemetry.accepted
+
+    results.push(after === before
+      ? pass("S73", "evicted acceptance ID increments zero — oldest ID evicted from registry")
+      : fail("S73", "evicted acceptance", after - before, 0))
+  }
+
+  // S74 — prefix low-surrogate boundary: no isolated surrogate (T-3221)
+  {
+    const padding = "a".repeat(PREFIX_CHAR_CEILING - 1)
+    const rawPrefix = "x" + "\uD83D\uDE00" + padding
+    const snap = makeSnapshot({ rawPrefix })
+    const r = buildAutocompleteContext(snap)
+    const prefixHasSurrogate = r.ok && hasIsolatedSurrogates(r.context.prefix)
+
+    results.push(r.ok && !prefixHasSurrogate
+      ? pass("S74", "prefix low-surrogate boundary — no isolated surrogate in prefix")
+      : fail("S74", "prefix low surrogate", { ok: r.ok, isolatedSurrogates: prefixHasSurrogate }, { ok: true, isolatedSurrogates: false }))
+  }
+
+  // S75 — suffix surrogate boundary: no isolated surrogate (T-3222)
+  {
+    const padding = "b".repeat(SUFFIX_CHAR_CEILING - 1)
+    const rawSuffix = padding + "\uD83D\uDE00" + "end"
+    const snap = makeSnapshot({ rawSuffix })
+    const r = buildAutocompleteContext(snap)
+    const suffixHasSurrogate = r.ok && hasIsolatedSurrogates(r.context.suffix)
+
+    results.push(r.ok && !suffixHasSurrogate
+      ? pass("S75", "suffix surrogate boundary — no isolated surrogate in suffix")
+      : fail("S75", "suffix surrogate", { ok: r.ok, isolatedSurrogates: suffixHasSurrogate }, { ok: true, isolatedSurrogates: false }))
+  }
+
+  // S76 — output-cap surrogate boundary: no isolated surrogate, bounded length (T-3223)
+  {
+    const padding = "c".repeat(MAX_OUTPUT_CHARS - 1)
+    const rawCompletion = padding + "\uD83D\uDE00" + "more"
+    const sanitized = sanitizeCompletion(rawCompletion, "", "")
+    const hasIsolated = hasIsolatedSurrogates(sanitized)
+
+    results.push(sanitized.length <= MAX_OUTPUT_CHARS && !hasIsolated
+      ? pass("S76", "output-cap surrogate boundary — no isolated surrogate, bounded length")
+      : fail("S76", "output cap surrogate", { length: sanitized.length, hasIsolated }, { maxLen: MAX_OUTPUT_CHARS, hasIsolated: false }))
+  }
+
+  // S77 — overlap Unicode boundary: clean code point preservation (T-3224)
+  {
+    const emoji = "\uD83D\uDE00"
+    const suffix = emoji + ";\n"
+    const completion = "const emo = " + emoji + ";\n"
+    const sanitized = sanitizeCompletion(completion, "", suffix)
+    const hasIsolated = hasIsolatedSurrogates(sanitized)
+
+    results.push(sanitized === "const emo = " && !hasIsolated
+      ? pass("S77", "overlap Unicode boundary — overlap trimmed without corrupting Unicode")
+      : fail("S77", "overlap unicode", { text: sanitized, hasIsolated }, { text: "const emo = ", hasIsolated: false }))
+  }
+
+  // S78 — real deactivate disposes native provider (T-3214)
+  {
+    extension._testSeam.setAutocompleteController(null)
+    registeredInlineProviders.length = 0
+    const context = { subscriptions: [] as any[] }
+    extension.activate(context as any)
+    const ctrl = extension._testSeam.autocompleteController
+    assert.ok(ctrl)
+
+    // Run real extension deactivate
+    extension.deactivate()
+
+    results.push(extension._testSeam.autocompleteController === null && ctrl.service.disposed
+      ? pass("S78", "real deactivate disposes native provider — controller cleared and disposed")
+      : fail("S78", "deactivate cleanup", { ctrlCleared: extension._testSeam.autocompleteController === null, serviceDisposed: ctrl.service.disposed }, { ctrlCleared: true, serviceDisposed: true }))
+  }
+
+  // S79 — late provider response after deactivation ignored (T-3214)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "gate" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const ctrl = new AutocompleteController({ gateway, scheduler, debounceMs: 0 })
+    const context = { subscriptions: [] as any[] }
+    ctrl.register(context as any)
+
+    const docUri = "file:///workspace/late.ts"
+    const mockDoc = {
+      uri: { toString: () => docUri },
+      version: 1,
+      languageId: "typescript",
+      getText: () => "const late = ",
+      positionAt: () => new MockPosition(0, 13),
+    }
+    const pos = new MockPosition(0, 13)
+    activeEditorMock = { document: mockDoc, selection: { active: pos, start: pos, end: pos, isEmpty: true } }
+    const token = { isCancellationRequested: false, onCancellationRequested: () => {} }
+
+    const p = ctrl.provideInlineCompletionItems(mockDoc as any, pos as any, {} as any, token as any)
+    scheduler.flushAll() // In-flight gate reached
+    while (provider.pendingGates === 0) await new Promise(r => setImmediate(r))
+
+    // Deactivate controller while provider is active
+    ctrl.dispose()
+
+    // Provider gate is released after deactivation
+    provider.openAllGates()
+    const result = await p
+
+    results.push(result === null && ctrl.service.disposed
+      ? pass("S79", "late provider response after deactivation ignored — returns null")
+      : fail("S79", "late response after deactivation", result, null))
+    activeEditorMock = null
+  }
+
+  // S80 — toggle enabled state: disabled skips provider calls (Section 36)
+  {
+    const config = makeConfig()
+    const provider = makeProvider([{ kind: "ready", text: "toggled" }])
+    const gateway = makeGateway(config, provider)
+    const scheduler = new FakeScheduler()
+    const ctrl = new AutocompleteController({ gateway, scheduler, debounceMs: 0 })
+    const context = { subscriptions: [] as any[] }
+    ctrl.register(context as any)
+
+    // Execute toggle command
+    await mockVscode.commands.executeCommand(AUTOCOMPLETE_TOGGLE_COMMAND)
+    const disabledState = !ctrl.service.enabled
+
+    const docUri = "file:///workspace/toggle.ts"
+    const mockDoc = {
+      uri: { toString: () => docUri },
+      version: 1,
+      languageId: "typescript",
+      getText: () => "const t = ",
+      positionAt: () => new MockPosition(0, 10),
+    }
+    const pos = new MockPosition(0, 10)
+    activeEditorMock = { document: mockDoc, selection: { active: pos, start: pos, end: pos, isEmpty: true } }
+    const token = { isCancellationRequested: false, onCancellationRequested: () => {} }
+
+    const resDisabled = await ctrl.provideInlineCompletionItems(mockDoc as any, pos as any, {} as any, token as any)
+
+    // Toggle back to enabled
+    await mockVscode.commands.executeCommand(AUTOCOMPLETE_TOGGLE_COMMAND)
+    const enabledState = ctrl.service.enabled
+
+    const pEnabled = ctrl.provideInlineCompletionItems(mockDoc as any, pos as any, {} as any, token as any)
+    scheduler.flushAll()
+    const resEnabled = await pEnabled
+
+    results.push(disabledState && resDisabled === null && enabledState && resEnabled !== null && provider.requests.length === 1
+      ? pass("S80", "toggle enabled state — disabled returns null without provider call, re-enabled completes")
+      : fail("S80", "toggle state", { disabledState, resDisabled, enabledState, hasRes: resEnabled !== null, calls: provider.requests.length }, { disabledState: true, resDisabled: null, enabledState: true, hasRes: true, calls: 1 }))
+    activeEditorMock = null
+    ctrl.dispose()
+  }
+
   return results
 }
 
@@ -1104,19 +1683,56 @@ async function runAutocompleteEvaluation(label: string): Promise<ScenarioResult[
 
 describe("Autocomplete Core E2E Evaluation Strict", () => {
   it("Strict Comparator Negative Tests", () => {
-    // Verify the evaluation harness's fail() actually produces failed entries
-    const f = fail("X", "test", "actual", "expected")
-    assert.equal(f.passed, false)
-    assert.equal(f.actual, "actual")
-    const p = pass("Y", "test")
+    // 1. Wrong provider registration count
+    const f1 = fail("NEG_REG", "registration count mismatch", 2, 1)
+    assert.equal(f1.passed, false)
+    assert.notDeepEqual(f1.actual, f1.expected)
+
+    // 2. Wrong InlineCompletionItem text
+    const f2 = fail("NEG_TEXT", "completion text mismatch", "wrong", "expected")
+    assert.equal(f2.passed, false)
+    assert.notDeepEqual(f2.actual, f2.expected)
+
+    // 3. Wrong document stale result
+    const f3 = fail("NEG_DOC_STALE", "document stale not discarded", { text: "late" }, null)
+    assert.equal(f3.passed, false)
+    assert.notDeepEqual(f3.actual, f3.expected)
+
+    // 4. Wrong cursor stale result
+    const f4 = fail("NEG_CURSOR_STALE", "cursor stale not discarded", { text: "late" }, null)
+    assert.equal(f4.passed, false)
+    assert.notDeepEqual(f4.actual, f4.expected)
+
+    // 5. Wrong provider duplicate count
+    const f5 = fail("NEG_DEDUP", "duplicate count exceeded", 2, 1)
+    assert.equal(f5.passed, false)
+    assert.notDeepEqual(f5.actual, f5.expected)
+
+    // 6. Wrong acceptance count
+    const f6 = fail("NEG_ACCEPT", "acceptance count incorrect", 2, 1)
+    assert.equal(f6.passed, false)
+    assert.notDeepEqual(f6.actual, f6.expected)
+
+    // 7. Wrong Unicode integrity
+    const f7 = fail("NEG_UNICODE", "isolated surrogate emitted", true, false)
+    assert.equal(f7.passed, false)
+    assert.notDeepEqual(f7.actual, f7.expected)
+
+    // 8. Wrong disposed-provider late result
+    const f8 = fail("NEG_DISPOSED", "late result returned after dispose", { text: "late" }, null)
+    assert.equal(f8.passed, false)
+    assert.notDeepEqual(f8.actual, f8.expected)
+
+    // Positive check
+    const p = pass("POS_CHECK", "positive test")
     assert.equal(p.passed, true)
   })
 
-  it("Deterministic Autocomplete Evaluations Run 1 and Run 2 (60 Scenarios)", async () => {
+  it("Deterministic Autocomplete Evaluations Run 1 and Run 2 (80 Scenarios)", async () => {
     const run1 = await runAutocompleteEvaluation("run1")
     const run2 = await runAutocompleteEvaluation("run2")
 
-    // Validate both runs
+    // Validate both runs have 0 failures
     for (const run of [run1, run2]) {
       const failures = run.filter(r => !r.passed)
       if (failures.length > 0) {
@@ -1127,6 +1743,10 @@ describe("Autocomplete Core E2E Evaluation Strict", () => {
       }
     }
 
+    assert.ok(run1.length >= 80, `Expected at least 80 scenarios, got ${run1.length}`)
+    assert.strictEqual(run1.filter(r => !r.passed).length, 0)
+    assert.strictEqual(run2.filter(r => !r.passed).length, 0)
+
     // Determinism check: normalize ephemeral fields then compare
     function normalize(results: ScenarioResult[]) {
       return results.map(r => ({ id: r.id, description: r.description, passed: r.passed }))
@@ -1136,3 +1756,5 @@ describe("Autocomplete Core E2E Evaluation Strict", () => {
     console.log(`✅ Autocomplete: ${run1.length} scenarios, 0 failures, deterministic`)
   })
 })
+
+export { runAutocompleteEvaluation }
