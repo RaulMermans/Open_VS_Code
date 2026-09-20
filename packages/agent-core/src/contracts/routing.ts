@@ -6,7 +6,7 @@ export interface ProviderDescriptor {
   readonly protocol?: string
 }
 
-export type RoutingModelCapability = "toolUse" | "structuredOutput" | "coding" | "reasoning" | "longContext" | "vision"
+export type RoutingModelCapability = "toolUse" | "structuredOutput" | "coding" | "reasoning" | "longContext" | "vision" | "fim" | "autocomplete"
 export type ModelSpecialization = "general" | "coding" | "reasoning"
 
 export interface ModelDescriptor {
@@ -31,7 +31,7 @@ export interface ModelDeployment {
   readonly tags?: readonly string[]
 }
 
-export type TaskClass = "general" | "planning" | "coding" | "debugging" | "review" | "structured_generation" | "tool_using"
+export type TaskClass = "general" | "planning" | "coding" | "debugging" | "review" | "structured_generation" | "tool_using" | "autocomplete"
 
 export interface ModelRouteRequirements {
   readonly mode?: string
@@ -41,6 +41,8 @@ export interface ModelRouteRequirements {
   readonly estimatedInputTokens: number
   readonly requiredContextWindow: number
   readonly specialization?: ModelSpecialization
+  /** If set, ALL listed capabilities must appear in model.capabilities. */
+  readonly requiredCapabilities?: readonly RoutingModelCapability[]
 }
 
 export type RouteReasonCode = 
@@ -49,6 +51,7 @@ export type RouteReasonCode =
   | "insufficient_context" 
   | "missing_tool_use" 
   | "missing_structured_output" 
+  | "missing_required_capability"
   | "provider_unavailable"
   | "coding_specialization"
   | "tool_use_required"

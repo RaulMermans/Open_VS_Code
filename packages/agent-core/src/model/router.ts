@@ -102,6 +102,11 @@ export class ModelRouter {
         rejectReason = "missing_tool_use"
       } else if (requirements.needsStructuredOutput && !model.capabilities.includes("structuredOutput")) {
         rejectReason = "missing_structured_output"
+      } else if (requirements.requiredCapabilities && requirements.requiredCapabilities.length > 0) {
+        const missing = requirements.requiredCapabilities.find(cap => !model.capabilities.includes(cap))
+        if (missing) {
+          rejectReason = "missing_required_capability"
+        }
       }
 
       if (rejectReason) {
