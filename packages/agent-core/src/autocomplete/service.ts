@@ -144,13 +144,17 @@ export class AutocompleteService {
   // Bounded acceptance registry (opaque IDs + char counts only)
   readonly #acceptanceRegistry: AcceptanceEntry[] = []
 
-  // Current pending debounce handle and resolver
+  // Current pending debounce handle, resolver, duplicate key, and promise
   #pendingHandle: { cancel(): void } | null = null
   #pendingResolver: ((res: CompletionResult | null) => void) | null = null
+  #pendingKey: string | null = null
+  #pendingPromise: Promise<CompletionResult | null> | null = null
 
-  // Current in-flight request identity and abort controller
+  // Current in-flight request identity, abort controller, duplicate key, and promise
   #inflightId: string | null = null
   #inflightAbort: AbortController | null = null
+  #inflightKey: string | null = null
+  #inflightPromise: Promise<CompletionResult | null> | null = null
 
   // Latest scheduled request identity (for superseding)
   #latestRequestId: string | null = null
@@ -199,6 +203,23 @@ export class AutocompleteService {
       return null
     }
 
+    // Compute deterministic duplicate key from editor state and context (no random request ID)
+    const duplicateKey = computeDuplicateKey(
+      documentUri,
+      snapshot,
+      ctxResult.context.prefix,
+      ctxResult.context.suffix,
+    )
+
+    // Deduplication: if the exact same editor state is already in-flight or waiting in debounce,
+    // share the existing promise without invoking the provider a second time.
+    if (this.#inflightKey === duplicateKey && this.#inflightPromise) {
+      return this.#inflightPromise
+    }
+    if (this.#pendingKey === duplicateKey && this.#pendingPromise) {
+      return this.#pendingPromise
+    }
+
     const requestId = generateId()
 
     // Create request identity for staleness checks
@@ -215,8 +236,10 @@ export class AutocompleteService {
 
     // Register this as the latest request
     this.#latestRequestId = requestId
+    this.#pendingKey = duplicateKey
+
     // Debounce: wait before actually invoking
-    const result = await new Promise<CompletionResult | null>((resolve) => {
+    const resultPromise = new Promise<CompletionResult | null>((resolve) => {
       if (this.#disposed) { resolve(null); return }
 
       this.#pendingResolver = resolve
@@ -224,6 +247,10 @@ export class AutocompleteService {
       const handle = this.#scheduler.schedule(async () => {
         if (this.#pendingResolver === resolve) {
           this.#pendingResolver = null
+        }
+        if (this.#pendingKey === duplicateKey) {
+          this.#pendingKey = null
+          this.#pendingPromise = null
         }
         if (this.#disposed) { resolve(null); return }
 
@@ -239,7 +266,9 @@ export class AutocompleteService {
         // Set up abort signal combining VS Code token + our timeout + our cancel
         const ourAbort = new AbortController()
         this.#inflightId = requestId
+        this.#inflightKey = duplicateKey
         this.#inflightAbort = ourAbort
+        this.#inflightPromise = resultPromise
 
         // Merge VS Code's cancellation token into our abort signal
         if (vsCodeAbortSignal?.aborted) {
@@ -322,6 +351,8 @@ export class AutocompleteService {
           if (this.#inflightId === requestId) {
             this.#inflightId = null
             this.#inflightAbort = null
+            this.#inflightKey = null
+            this.#inflightPromise = null
           }
         }
       }, this.#debounceMs)
@@ -338,7 +369,8 @@ export class AutocompleteService {
       }
     })
 
-    return result
+    this.#pendingPromise = resultPromise
+    return resultPromise
   }
 
   /**
@@ -382,6 +414,8 @@ export class AutocompleteService {
   // -------------------------------------------------------------------------
 
   #cancelPending(): void {
+    this.#pendingKey = null
+    this.#pendingPromise = null
     if (this.#pendingHandle) {
       this.#pendingHandle.cancel()
       this.#pendingHandle = null
@@ -399,6 +433,8 @@ export class AutocompleteService {
       this.#inflightAbort = null
     }
     this.#inflightId = null
+    this.#inflightKey = null
+    this.#inflightPromise = null
   }
 
   /**
@@ -449,6 +485,24 @@ export class AutocompleteService {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function computeDuplicateKey(
+  documentUri: string,
+  snapshot: EditorSnapshot,
+  prefix: string,
+  suffix: string,
+): string {
+  return `${documentUri}:${snapshot.documentVersion}:${snapshot.cursorLine}:${snapshot.cursorCharacter}:${snapshot.languageId}:${prefix.length}:${suffix.length}:${hashDjb2(prefix)}:${hashDjb2(suffix)}`
+}
+
+function hashDjb2(str: string): string {
+  let hash = 5381
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i)
+    hash |= 0
+  }
+  return (hash >>> 0).toString(36)
+}
 
 let idCounter = 0
 function generateId(): string {
