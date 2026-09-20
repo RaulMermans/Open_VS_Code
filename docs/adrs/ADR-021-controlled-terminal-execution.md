@@ -87,6 +87,21 @@ Note: `ADR-020` was previously allocated to `ADR-020-halo-capability-provider.md
 
 - UI actions on terminal review cards (view, toggle, copy, approve, reject, cancel) trigger zero LLM calls.
 
+### 13. Canonical Execution Identity (Sprint 3D.2)
+
+- One canonical process execution identifier survives end-to-end:
+  `PreparedVerification.verificationId` == `confirmation.preparedCommand.executionId` == `TerminalReviewEntry.executionId` == `verification.output.executionId` == `verification.completed.executionId` == `terminal.updated.terminal.executionId`.
+- No ID regeneration occurs in production when registering an existing prepared command.
+- Output events (`verification.output`) route strictly by exact `executionId`. Events with unknown or forged IDs never fall back to `activeTerminal` or mutate other reviews.
+- Approval identity (`confirmationId`) remains semantically separate from `executionId`. `confirmationId` represents the interaction token, whereas `executionId` represents the process/review lifecycle identity.
+
+### 14. Real Extension Deactivation Closure (Sprint 3D.2)
+
+- `deactivate()` is the sole entry point that triggers cancellation during shutdown without manual pre-cancellation.
+- `deactivate()` invokes `chatController.cancelTurn()`, propagating the `AbortSignal` to `VerificationEngine`.
+- `VerificationEngine` kills the process group (`-child.pid`), cleanly destroying both parent and child processes.
+- Deactivation clears the terminal registry (`clearAll()`), reducing retained bytes to 0 and preventing late events from resurrecting review state or emitting UI updates.
+
 ## Consequences
 
 - Guaranteed protection against prompt injection resulting in arbitrary command execution.
@@ -94,3 +109,5 @@ Note: `ADR-020` was previously allocated to `ADR-020-halo-capability-provider.md
 - Live output visible to the user as execution progresses, without race conditions or XSS risk.
 - Complete alignment with editor-independent architecture: `agent-core` contracts drive execution; `vscode-integration` handles rendering.
 - Memory bounded: no registry growth without limit regardless of session length.
+- Strict execution identity preservation end-to-end with verified isolation.
+- Complete process group termination on extension deactivation with zero orphaned processes.

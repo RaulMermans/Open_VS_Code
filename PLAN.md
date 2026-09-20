@@ -32,6 +32,15 @@ STATUS: COMPLETE
     - Extension deactivation cleans up active subprocess: scenario 55
     - 59 terminal scenarios pass deterministically on Run 1 and Run 2
     - Full workspace: 318 tests pass, 0 TypeScript errors, build clean
+  Sprint 3D.2 — Execution Identity & Deactivation Closure ✅ CLOSED
+    - Canonical execution identity: PreparedVerification.verificationId passed directly end-to-end
+    - No ID regeneration in production prepared verification workflow
+    - Exact ID routing for verification.output without activeTerminal fallback
+    - ConfirmationId remains distinct approval identity
+    - Real extension deactivation kills active parent+child process tree without prior manual cancellation
+    - Deactivation flushes terminal review registry to 0 reviews and 0 retained bytes
+    - 79 terminal scenarios pass deterministically on Run 1 and Run 2
+    - Full workspace: 318 tests pass, 0 TypeScript errors, build clean
 
 Next:
 Sprint 3E — Autocomplete → NEXT

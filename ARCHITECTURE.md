@@ -185,5 +185,7 @@ Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `Rout
 - **7 Active Lifecycle States**: `WAITING_APPROVAL`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `REJECTED`. The dead `PREPARED` state has been removed.
 - **Bounded Registry**: `TerminalReviewController` enforces `maxReviews` and `maxTotalRetainedBytes` limits by evicting the oldest completed entry when either limit is exceeded.
 - **Deterministic Process Tree Cleanup**: Cancellation and timeout both kill parent and all descendants via `process.kill(-child.pid, ...)` on POSIX. Proof by real E2E scenarios 53–55.
+- **Canonical Execution Identity (Sprint 3D.2)**: `PreparedVerification.verificationId` is passed directly as `executionId` across all stages (`confirmation` → `TerminalReview` → `verification.output` → `verification.completed` → `terminal.updated`). Output events route strictly by execution identity with zero fallback to `activeTerminal`.
+- **Extension Deactivation Closure (Sprint 3D.2)**: Extension `deactivate()` triggers `chatController.cancelTurn()`, cleanly propagating the `AbortSignal` to kill the subprocess tree, clearing the terminal review registry, and preventing post-deactivation events or resurrection.
 - **Zero Model Calls**: Presentation actions (expand, toggle, copy, cancel, reject) trigger zero LLM calls.
 
