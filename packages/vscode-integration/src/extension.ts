@@ -168,7 +168,11 @@ export const _testSeam = {
   get activeBridge() { return activeBridge; },
   bridgeFactory: null as any,
   get chatController() { return chatController; },
-  get terminalReviewController() { return terminalReviewController; }
+  get terminalReviewController() { return terminalReviewController; },
+  /** For tests only: inject a ChatController so deactivate() exercises the real path. */
+  setChatController(c: ChatController | null) { chatController = c; },
+  /** For tests only: inject a TerminalReviewController so deactivate() clears it. */
+  setTerminalReviewController(c: TerminalReviewController | null) { terminalReviewController = c; },
 };
 
 const HALO_TOKEN_SECRET_KEY = 'halo.appToken';
