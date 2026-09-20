@@ -30,9 +30,10 @@
 
 ## Current sprint
 
-Sprint 3C — Diff / Edit UX ✅ CLOSED
+Sprint 3D — Controlled Terminal UX ✅ CLOSED
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
-- Phase C (Sprint 3C): Diff Review Safety & Closure. 100% deterministic test evaluations passed.
-- Next: Sprint 3D — Controlled Terminal UX → NEXT
+- Phase C (Sprint 3C): Diff Review Safety & Closure.
+- Phase D (Sprint 3D): Controlled Terminal UX & Review Boundary. 100% deterministic test evaluations passed.
+- Next: Sprint 3E — Autocomplete → NEXT

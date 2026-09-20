@@ -89,16 +89,51 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             color: var(--vscode-errorForeground);
             font-style: italic;
         }
-        .confirmation-card {
+        .confirmation-card, .terminal-card {
             background: var(--vscode-editorWidget-background);
             border: 1px solid var(--vscode-editorWidget-border);
             padding: 10px;
             margin: 10px 0;
             border-radius: 4px;
         }
+        .terminal-command-box {
+            background: var(--vscode-terminal-background, #1e1e1e);
+            color: var(--vscode-terminal-foreground, #cccccc);
+            font-family: var(--vscode-editor-font-family, monospace);
+            font-size: 0.9em;
+            padding: 8px;
+            border-radius: 3px;
+            margin: 8px 0;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .terminal-meta {
+            font-size: 0.85em;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 6px;
+        }
+        .terminal-output-box {
+            background: var(--vscode-terminal-background, #1e1e1e);
+            color: var(--vscode-terminal-foreground, #cccccc);
+            font-family: var(--vscode-editor-font-family, monospace);
+            font-size: 0.85em;
+            padding: 8px;
+            border-radius: 3px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin-top: 8px;
+        }
+        .truncation-warning {
+            color: var(--vscode-editorWarning-foreground, #e5a50a);
+            font-size: 0.8em;
+            margin-top: 4px;
+        }
         .confirmation-actions {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             margin-top: 10px;
         }
         .confirmation-actions button {
@@ -180,6 +215,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div id="transcript"></div>
     
     <div id="activities"></div>
+    <div id="terminal-container"></div>
     <div id="confirmation-container"></div>
     
     <div id="composer-container">
@@ -198,6 +234,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const newChatBtn = document.getElementById('new-chat-btn');
         const transcript = document.getElementById('transcript');
         const activities = document.getElementById('activities');
+        const terminalContainer = document.getElementById('terminal-container');
         const confirmationContainer = document.getElementById('confirmation-container');
         const contextChips = document.getElementById('context-chips');
         const composer = document.getElementById('composer');
@@ -215,6 +252,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'conversation.reset':
                     transcript.innerHTML = '';
                     activities.innerHTML = '';
+                    terminalContainer.innerHTML = '';
                     confirmationContainer.innerHTML = '';
                     break;
             }
@@ -224,7 +262,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             currentState = state;
             modeSelector.value = state.mode;
             
-            // Render messages (simple re-render for now)
+            // Render messages (simple re-render)
             transcript.innerHTML = '';
             state.messages.forEach(msg => {
                 const div = document.createElement('div');
@@ -233,7 +271,88 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 transcript.appendChild(div);
             });
             
-            // Render confirmation
+            // Render terminal review card if present
+            terminalContainer.innerHTML = '';
+            if (state.activeTerminal) {
+                const term = state.activeTerminal;
+                const card = document.createElement('div');
+                card.className = 'terminal-card';
+
+                const title = document.createElement('div');
+                title.style.fontWeight = 'bold';
+                title.style.marginBottom = '5px';
+                title.textContent = 'Controlled Terminal Execution (' + term.status + ')';
+                card.appendChild(title);
+
+                const meta = document.createElement('div');
+                meta.className = 'terminal-meta';
+                meta.textContent = 'CWD: ' + term.cwd + ' | Provenance: ' + term.provenance + ' | Timeout: ' + (term.timeoutMs / 1000) + 's';
+                card.appendChild(meta);
+
+                const cmdBox = document.createElement('div');
+                cmdBox.className = 'terminal-command-box';
+                cmdBox.textContent = term.command;
+                card.appendChild(cmdBox);
+
+                // If finished with exitCode
+                if (term.exitCode !== undefined && term.exitCode !== null) {
+                    const resultLine = document.createElement('div');
+                    resultLine.className = 'terminal-meta';
+                    resultLine.textContent = 'Finished with code ' + term.exitCode + (term.durationMs ? ' (' + term.durationMs + 'ms)' : '');
+                    card.appendChild(resultLine);
+                }
+
+                // Output section if visible
+                if (term.isOutputVisible) {
+                    const outBox = document.createElement('div');
+                    outBox.className = 'terminal-output-box';
+                    let text = '';
+                    if (term.stdout) text += term.stdout;
+                    if (term.stderr) text += (text ? '\n--- STDERR ---\n' : '') + term.stderr;
+                    outBox.textContent = text || '(No output)';
+                    card.appendChild(outBox);
+
+                    if (term.stdoutTruncated || term.stderrTruncated) {
+                        const truncWarn = document.createElement('div');
+                        truncWarn.className = 'truncation-warning';
+                        truncWarn.textContent = '[Output bounded and truncated at limit]';
+                        card.appendChild(truncWarn);
+                    }
+                }
+
+                const actions = document.createElement('div');
+                actions.className = 'confirmation-actions';
+
+                const btnToggle = document.createElement('button');
+                btnToggle.className = 'btn-reject';
+                btnToggle.textContent = term.isOutputVisible ? 'Hide Output' : 'Show Output';
+                btnToggle.addEventListener('click', () => {
+                    vscode.postMessage({ type: 'terminal.toggleOutput', executionId: term.executionId });
+                });
+                actions.appendChild(btnToggle);
+
+                const btnCopy = document.createElement('button');
+                btnCopy.className = 'btn-reject';
+                btnCopy.textContent = 'Copy Command';
+                btnCopy.addEventListener('click', () => {
+                    vscode.postMessage({ type: 'terminal.copyCommand', executionId: term.executionId });
+                });
+                actions.appendChild(btnCopy);
+
+                if (term.status === 'RUNNING') {
+                    const btnCancel = document.createElement('button');
+                    btnCancel.className = 'btn-reject';
+                    btnCancel.textContent = 'Cancel';
+                    btnCancel.addEventListener('click', () => {
+                        vscode.postMessage({ type: 'terminal.cancel', executionId: term.executionId });
+                    });
+                    actions.appendChild(btnCancel);
+                }
+
+                card.appendChild(actions);
+                terminalContainer.appendChild(card);
+            }
+
             // Render confirmation
             confirmationContainer.innerHTML = '';
             if (state.pendingConfirmation) {
@@ -262,7 +381,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 const btnApprove = document.createElement('button');
                 btnApprove.className = 'btn-approve';
                 btnApprove.id = 'btn-approve';
-                btnApprove.textContent = 'Approve';
+                btnApprove.textContent = conf.preparedCommand ? 'Run' : 'Approve';
                 
                 if (conf.mutationId) {
                     const btnDiff = document.createElement('button');
@@ -287,12 +406,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                 }
 
-                
                 document.getElementById('btn-approve').addEventListener('click', () => {
-                    vscode.postMessage({ type: 'confirmation.respond', confirmationId: conf.id, action: 'APPROVE' });
+                    const msgType = conf.preparedCommand ? 'terminal.respond' : 'confirmation.respond';
+                    vscode.postMessage({ type: msgType, confirmationId: conf.id, action: 'APPROVE' });
                 });
                 document.getElementById('btn-reject').addEventListener('click', () => {
-                    vscode.postMessage({ type: 'confirmation.respond', confirmationId: conf.id, action: 'REJECT' });
+                    const msgType = conf.preparedCommand ? 'terminal.respond' : 'confirmation.respond';
+                    vscode.postMessage({ type: msgType, confirmationId: conf.id, action: 'REJECT' });
                 });
             }
             

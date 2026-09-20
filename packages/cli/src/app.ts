@@ -159,7 +159,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
         const approved = await confirm("\nRun this verification? [y/N] ");
         if (approved) {
           if (options.mode === "DEBUG" || options.mode === "BUILD") {
-            let repairResult = await repairOrchestrator.run(runnerInput as any, conf.preparedMutation as any);
+            let repairResult = await repairOrchestrator.run(runnerInput as any, (conf.preparedCommand || conf.preparedMutation) as any);
             
             while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
               if (repairResult.status === "AWAITING_MUTATION_APPROVAL") {

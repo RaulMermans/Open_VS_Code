@@ -1,1 +1,8 @@
 - [ADR-014: Metadata-First Skills & Prompt Primitives](ADR-014-metadata-first-skills.md)
+- [ADR-015: Bounded MCP Integration](ADR-015-bounded-mcp-integration.md)
+- [ADR-016: Deterministic Model Provider Routing](ADR-016-deterministic-model-provider-routing.md)
+- [ADR-017: IDE Host Adapter Boundary](ADR-017-ide-host-adapter-boundary.md)
+- [ADR-018: Chat UX Layer](ADR-018-chat-ux-layer.md)
+- [ADR-019: Diff / Edit Review Boundary](ADR-019-diff-edit-review-boundary.md)
+- [ADR-020: HALO Capability Provider](ADR-020-halo-capability-provider.md)
+- [ADR-021: Controlled Terminal UX and Presentation Boundary](ADR-021-controlled-terminal-execution.md)

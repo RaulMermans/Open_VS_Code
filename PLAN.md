@@ -19,5 +19,8 @@ STATUS: COMPLETE
 Sprint 3C — Diff / Edit UX ✅ CLOSED
 STATUS: COMPLETE
 
+Sprint 3D — Controlled Terminal UX ✅ CLOSED
+STATUS: COMPLETE
+
 Next:
-Sprint 3D — Controlled Terminal UX → NEXT
+Sprint 3E — Autocomplete → NEXT

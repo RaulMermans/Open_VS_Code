@@ -101,8 +101,15 @@ export class AgentSessionBridge {
           const res = await this.host.requestConfirmation(prompt, pm);
           approved = (res === "APPROVE");
         } else if (conf.action === "run_known_test") {
-          const prompt = `Run verification ${conf.arguments.action}?`;
-          const res = await this.host.requestConfirmation(prompt, conf.arguments);
+          const pv = conf.preparedCommand;
+          const actionName = pv?.action || (conf.arguments as any)?.action || "TEST";
+          const prompt = `Run verification ${actionName}?`;
+          const payload = {
+            action: conf.action,
+            arguments: conf.arguments,
+            preparedCommand: pv,
+          };
+          const res = await this.host.requestConfirmation(prompt, payload);
           approved = (res === "APPROVE");
         } else if (conf.action.startsWith("mcp_external")) {
           const prompt = `Approve MCP tool execution? (${conf.action})`;
@@ -112,7 +119,7 @@ export class AgentSessionBridge {
         
         if (approved) {
           if (conf.action === "run_known_test" && (mode === "DEBUG" || mode === "BUILD")) {
-            let repairResult = await repairOrchestrator.run(runnerInput as any, conf.preparedMutation as any);
+            let repairResult = await repairOrchestrator.run(runnerInput as any, (conf.preparedCommand || conf.preparedMutation) as any);
             while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
               if (signal.aborted) {
                 repairResult = await repairOrchestrator.resume("REJECT");
@@ -126,8 +133,14 @@ export class AgentSessionBridge {
                 repApproved = (res === "APPROVE");
               } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
                 const pv = repairResult.pendingReview as any;
-                const prompt = `Run verification ${pv.arguments?.action || "TEST"}?`;
-                const res = await this.host.requestConfirmation(prompt, pv.arguments);
+                const actionName = pv?.action || pv?.arguments?.action || "TEST";
+                const prompt = `Run verification ${actionName}?`;
+                const payload = {
+                  action: "run_known_test",
+                  arguments: pv?.arguments || { action: actionName },
+                  preparedCommand: pv,
+                };
+                const res = await this.host.requestConfirmation(prompt, payload);
                 repApproved = (res === "APPROVE");
               }
               repairResult = await repairOrchestrator.resume(repApproved ? "APPROVE" : "REJECT");

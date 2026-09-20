@@ -19,6 +19,23 @@ export interface ChatContextChip {
   label: string;
 }
 
+export interface TerminalReviewDto {
+  executionId: string;
+  command: string;
+  cwd: string;
+  provenance: string;
+  timeoutMs: number;
+  status: 'PREPARED' | 'WAITING_APPROVAL' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED' | 'REJECTED';
+  exitCode?: number | null;
+  exitSignal?: string | null;
+  durationMs?: number | null;
+  stdout?: string;
+  stderr?: string;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+  isOutputVisible?: boolean;
+}
+
 export interface ConfirmationRequestPayload {
   id: string;
   type: string;
@@ -26,6 +43,7 @@ export interface ConfirmationRequestPayload {
   riskLabel: string;
   mutationId?: string;
   path?: string;
+  preparedCommand?: TerminalReviewDto;
 }
 
 export interface WebviewState {
@@ -36,6 +54,7 @@ export interface WebviewState {
   context: ChatContextChip[];
   activeTurn: boolean;
   pendingConfirmation?: ConfirmationRequestPayload;
+  activeTerminal?: TerminalReviewDto;
   error?: string;
 }
 
@@ -48,7 +67,11 @@ export type WebviewToHostMessage =
   | { type: "chat.newConversation" }
   | { type: "confirmation.respond"; confirmationId: string; action: "APPROVE" | "REJECT" }
   | { type: "ui.openDiff"; mutationId: string; path: string; isCreate: boolean }
-  | { type: "ui.copyCode"; text: string };
+  | { type: "ui.copyCode"; text: string }
+  | { type: "terminal.respond"; confirmationId: string; action: "APPROVE" | "REJECT" }
+  | { type: "terminal.cancel"; executionId: string }
+  | { type: "terminal.toggleOutput"; executionId: string }
+  | { type: "terminal.copyCommand"; executionId: string };
 
 // Host -> Webview
 export type HostToWebviewMessage =
@@ -61,7 +84,8 @@ export type HostToWebviewMessage =
   | { type: "confirmation.requested"; request: ConfirmationRequestPayload }
   | { type: "confirmation.resolved"; action: "APPROVE" | "REJECT" }
   | { type: "context.updated"; context: ChatContextChip[] }
-  | { type: "conversation.reset" };
+  | { type: "conversation.reset" }
+  | { type: "terminal.updated"; review: TerminalReviewDto };
 
 export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
   if (!raw || typeof raw !== 'object' || typeof raw.type !== 'string') return null;
@@ -95,6 +119,27 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
       if (typeof raw.confirmationId !== 'string' || !raw.confirmationId || raw.confirmationId.length > 100) return null;
       if (raw.action !== "APPROVE" && raw.action !== "REJECT") return null;
       return { type: "confirmation.respond", confirmationId: raw.confirmationId, action: raw.action };
+    }
+
+    case "terminal.respond": {
+      if (typeof raw.confirmationId !== 'string' || !raw.confirmationId || raw.confirmationId.length > 100) return null;
+      if (raw.action !== "APPROVE" && raw.action !== "REJECT") return null;
+      return { type: "terminal.respond", confirmationId: raw.confirmationId, action: raw.action };
+    }
+
+    case "terminal.cancel": {
+      if (typeof raw.executionId !== 'string' || !raw.executionId || raw.executionId.length > 100) return null;
+      return { type: "terminal.cancel", executionId: raw.executionId };
+    }
+
+    case "terminal.toggleOutput": {
+      if (typeof raw.executionId !== 'string' || !raw.executionId || raw.executionId.length > 100) return null;
+      return { type: "terminal.toggleOutput", executionId: raw.executionId };
+    }
+
+    case "terminal.copyCommand": {
+      if (typeof raw.executionId !== 'string' || !raw.executionId || raw.executionId.length > 100) return null;
+      return { type: "terminal.copyCommand", executionId: raw.executionId };
     }
       
     case "ui.openDiff": {

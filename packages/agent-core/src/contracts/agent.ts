@@ -69,6 +69,7 @@ export interface AgentConfirmationRequest {
   readonly arguments: Readonly<Record<string, unknown>>
   readonly action: ToolAction
   readonly preparedMutation?: MutationReviewPayload
+  readonly preparedCommand?: import("../tools/verification-contracts.ts").PreparedVerification
 }
 
 export interface AgentResult {

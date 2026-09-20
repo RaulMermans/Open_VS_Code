@@ -155,16 +155,20 @@ import { ChatController } from './chat-controller.js';
 import { ChatViewProvider } from './chat-view-provider.js';
 import { DiffReviewController } from './diff-review-controller.js';
 
+import { TerminalReviewController } from './terminal-review-controller.js';
+
 let activeBridge: AgentSessionBridge | null = null;
 let currentAbortController: AbortController | null = null;
 let host: VSCodeIdeHost | null = null;
 let chatController: ChatController | null = null;
 let diffReviewController: DiffReviewController | null = null;
+let terminalReviewController: TerminalReviewController | null = null;
 
 export const _testSeam = {
   get activeBridge() { return activeBridge; },
   bridgeFactory: null as any,
-  get chatController() { return chatController; }
+  get chatController() { return chatController; },
+  get terminalReviewController() { return terminalReviewController; }
 };
 
 const HALO_TOKEN_SECRET_KEY = 'halo.appToken';
@@ -186,6 +190,7 @@ function haloToken(context: vscode.ExtensionContext): () => Promise<string | und
 export function activate(context: vscode.ExtensionContext) {
   host = new VSCodeIdeHost();
   diffReviewController = new DiffReviewController();
+  terminalReviewController = new TerminalReviewController();
   
   if (vscode.workspace.registerTextDocumentContentProvider) {
     context.subscriptions.push(
@@ -193,7 +198,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
-  chatController = new ChatController(host, diffReviewController, (options: { host: any, workspaceRoot: string, mode: 'ASK' | 'PLAN' | 'BUILD' | 'DEBUG' | 'REVIEW' }) => {
+  chatController = new ChatController(host, diffReviewController, terminalReviewController, (options: { host: any, workspaceRoot: string, mode: 'ASK' | 'PLAN' | 'BUILD' | 'DEBUG' | 'REVIEW' }) => {
     if (_testSeam.bridgeFactory) {
       activeBridge = _testSeam.bridgeFactory(options);
     } else {
@@ -277,6 +282,10 @@ export function deactivate() {
   if (diffReviewController) {
     diffReviewController.clearAll();
     diffReviewController = null;
+  }
+  if (terminalReviewController) {
+    terminalReviewController.clearAll();
+    terminalReviewController = null;
   }
   if (host) {
     host.dispose();

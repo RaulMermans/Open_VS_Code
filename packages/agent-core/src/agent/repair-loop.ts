@@ -194,7 +194,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
         this.#emitEvent("repair.mutation_prepared", result.confirmation.preparedMutation)
         return this.#buildResult("AWAITING_MUTATION_APPROVAL", result.confirmation.preparedMutation)
       } else if (result.confirmation?.action === "run_known_test") {
-        const preparedVerif = result.confirmation.preparedMutation as unknown as PreparedVerification
+        const preparedVerif = (result.confirmation.preparedCommand || result.confirmation.preparedMutation) as unknown as PreparedVerification
         this.#state = { type: "AWAITING_VERIFICATION_APPROVAL", prepared: preparedVerif }
         this.#emitEvent("repair.verification_prepared", preparedVerif)
         return this.#buildResult("AWAITING_VERIFICATION_APPROVAL", preparedVerif)

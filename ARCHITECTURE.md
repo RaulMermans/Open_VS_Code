@@ -87,7 +87,6 @@ mutation flow (apply_patch / create_file):
      -> permission gate (CONFIRM) -> PAUSE FOR APPROVAL
      -> apply atomically (temp + rename)
      -> verify result hash -> record snapshot -> return bounded observation
-     -> verify result hash -> record snapshot -> return bounded observation
      -> rollback available if file unchanged since mutation
 
 verification flow (run_verification):
@@ -153,3 +152,33 @@ The audited Kilo baseline remains in repository history for provenance and possi
 
 ## Model Routing
 Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `RoutedModelGateway` in production. Routing is based dynamically on `AgentMode` with no LLM dependency in the routing decision.
+
+## Controlled Terminal UX & Review Boundary (Sprint 3D)
+
+```text
+ IDE Webview (Presentation Only)
+   │
+   │ (terminal.respond / cancel / toggle / copy)
+   ▼
+ ChatController
+   │
+   ▼
+ TerminalReviewController (Presentation Lifecycle & Ring Buffer)
+   │
+   │ (confirm / reject via host bridge)
+   ▼
+ IDE Adapter Bridge
+   │
+   ▼
+ AgentRunner / VerificationEngine (SOLE Execution Authority)
+   │
+   ├─► spawn(executable, args, { shell: false, detached: true, cwd })
+   └─► Process tree termination on cancel/timeout (-child.pid)
+```
+
+- **Execution Authority**: Subprocess spawning remains strictly in `VerificationEngine`. The UI layer cannot spawn processes.
+- **Safety Invariant**: Strictly `shell: false`. No arbitrary command execution, no command chaining or pipelines, no bash/sh `-c` evaluation.
+- **Human Approval**: Mandatory explicit confirmation gate (`CONFIRM`). No auto-approval.
+- **Bounded Buffering**: UTF-8 aware ring buffers capped at 16 KB per stream with explicit truncation indicator.
+- **Zero Model Calls**: Presentation actions (expand, toggle output, copy command, cancel, reject) trigger zero LLM calls.
+

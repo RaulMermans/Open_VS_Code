@@ -52,7 +52,23 @@ export class VerificationEngine {
         status: "STALE_VERIFICATION",
         exitCode: null,
         stdout: "",
-        stderr: "Verification script or package.json has changed since preparation",
+        stderr: "Verification script or package.json has changed since preparation (package.json modified)",
+        durationMs: Date.now() - startTime,
+      }
+    }
+
+    let parsedPkg: any
+    try {
+      parsedPkg = JSON.parse(currentPackageJsonContent)
+    } catch {
+      // Ignored here; hash already matched
+    }
+    if (prepared.scriptName && prepared.scriptBody && parsedPkg?.scripts && prepared.scriptName in parsedPkg.scripts && parsedPkg.scripts[prepared.scriptName] !== prepared.scriptBody) {
+      return {
+        status: "STALE_VERIFICATION",
+        exitCode: null,
+        stdout: "",
+        stderr: `Script '${prepared.scriptName}' was modified since preparation`,
         durationMs: Date.now() - startTime,
       }
     }

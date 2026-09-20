@@ -188,7 +188,7 @@ export class AgentRunner {
           if (isVerification) this.#emit("verification.started", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
           const result = await pending.reviewable.apply({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal }) as any
           if (isVerification) {
-            this.#emit("verification.completed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+            this.#emit("verification.completed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, result })
           } else {
             if (result.status === "APPLIED") {
               this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
@@ -498,7 +498,11 @@ export class AgentRunner {
           toolName: session.pending.prepared.name,
           arguments: session.pending.prepared.arguments,
           action: session.pending.prepared.definition.action,
-          ...(session.pending.reviewable ? { preparedMutation: session.pending.reviewable.reviewPayload as any } : {})
+          ...(session.pending.reviewable
+            ? (session.pending.prepared.definition.action === "run_known_test"
+                ? { preparedCommand: session.pending.reviewable.reviewPayload as any }
+                : { preparedMutation: session.pending.reviewable.reviewPayload as any })
+            : {})
         },
       } : {}),
     }
