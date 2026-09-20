@@ -72,6 +72,67 @@ export interface AgentConfirmationRequest {
   readonly preparedCommand?: import("../tools/verification-contracts.ts").PreparedVerification
 }
 
+export interface VerificationPreparedEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+  readonly path?: string
+}
+
+export interface VerificationConfirmationRequestedEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+}
+
+export interface VerificationApprovedEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+}
+
+export interface VerificationStartedEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+}
+
+export interface VerificationOutputEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+  readonly stream: "stdout" | "stderr"
+  readonly chunk: string
+}
+
+export interface VerificationCompletedEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+  readonly result: import("../tools/verification-contracts.ts").VerificationResult
+}
+
+export interface VerificationFailedEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+  readonly message?: string
+}
+
+export interface VerificationRejectedEventPayload {
+  readonly callId: string
+  readonly name: string
+  readonly mutationId: string
+  readonly executionId: string
+}
+
 export interface AgentResult {
   readonly status: AgentResultStatus
   readonly finalAnswer?: string

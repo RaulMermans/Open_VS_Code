@@ -1,10 +1,10 @@
 # ADR-021: Controlled Terminal UX and Presentation Boundary
 
-**Status:** Accepted — Sprint 3D ✅ CLOSED (updated Sprint 3D.1)
+**Status:** Accepted — Sprint 3D ✅ CLOSED PERMANENTLY (Sprint 3D.1 Runtime Truth, Sprint 3D.2 Identity Closure, Sprint 3D.3 Exact Event Routing)
 
 ## Context
 
-In Sprint 3D, we introduced a controlled terminal review and execution experience within the IDE chat interface. In Sprint 3D.1 we completed the runtime truth requirements: live subprocess output streaming, UTF-8 chunk boundary safety, bounded prefix buffers, dead-state removal, fail-closed presentation validation, bounded registry, and deterministic process group cleanup proofs.
+In Sprint 3D, we introduced a controlled terminal review and execution experience within the IDE chat interface. In Sprint 3D.1 we completed the runtime truth requirements: live subprocess output streaming, UTF-8 chunk boundary safety, bounded prefix buffers, dead-state removal, fail-closed presentation validation, bounded registry, and deterministic process group cleanup proofs. In Sprint 3D.2 we established canonical execution identity and deactivation cleanup. In Sprint 3D.3 we completed exact execution event routing and multi-review isolation across the verification lifecycle.
 
 Note: `ADR-020` was previously allocated to `ADR-020-halo-capability-provider.md` (Sprint 9 / HALO capability provider).
 
@@ -102,6 +102,23 @@ Note: `ADR-020` was previously allocated to `ADR-020-halo-capability-provider.md
 - `VerificationEngine` kills the process group (`-child.pid`), cleanly destroying both parent and child processes.
 - Deactivation clears the terminal registry (`clearAll()`), reducing retained bytes to 0 and preventing late events from resurrecting review state or emitting UI updates.
 
+### 15. Exact Lifecycle Event Routing & Review Isolation (Sprint 3D.3)
+
+- **Canonical Identity Continuity:** The process execution identifier `PreparedVerification.verificationId` flows uncorrupted throughout the complete lifecycle:
+  `confirmation` -> `TerminalReviewEntry.executionId` -> `verification.started.executionId` -> `verification.output.executionId` -> `verification.completed.executionId` -> `terminal.updated.terminal.executionId`.
+- **Explicit Event Contracts:** `AgentRunner` emits `executionId: reviewable.id` across all verification lifecycle events (`started`, `output`, `completed`, `failed`, `rejected`). Event payload interfaces in `agent-core` require non-empty `executionId: string`.
+- **Fail-Closed Presentation Gate:** `ChatController.requestConfirmation` verifies that `pc.verificationId` is a non-empty string. If absent, null, or whitespace-only, confirmation fails closed immediately (`"REJECT"`), registering 0 reviews and spawning 0 processes.
+- **Elimination of Fallback ID Generation:** `TerminalReviewController.registerPreparedCommand` requires `executionId: string` and throws immediately if missing or empty. Silent ID generation fallbacks are eliminated from the production path.
+- **Exact-ID Routing Authority:** `ChatController.handleAgentEvent` routes all verification events strictly through `terminalReviewController.getByExecutionId(executionId)`. The presentation state `activeTerminal` is no longer used as a routing fallback or routing authority.
+- **Multi-Review Isolation:**
+  - Events targeting Review A mutate only Review A in the registry; Review B is untouched.
+  - Stale events for Review A do not overwrite `activeTerminal` when `activeTerminal` points to Review B.
+  - Output chunks for background reviews do not broadcast `terminal.updated` for the active review.
+- **State Transition Safety:**
+  - Late completion events after a new chat turn update the registry safely without resurrecting `activeTerminal`.
+  - Verification events arriving after extension deactivation (registry cleared) are safe no-ops.
+  - Reconciled Scenario 65 proves observable `RUNNING` status and live streamed output prior to process completion.
+
 ## Consequences
 
 - Guaranteed protection against prompt injection resulting in arbitrary command execution.
@@ -111,3 +128,5 @@ Note: `ADR-020` was previously allocated to `ADR-020-halo-capability-provider.md
 - Memory bounded: no registry growth without limit regardless of session length.
 - Strict execution identity preservation end-to-end with verified isolation.
 - Complete process group termination on extension deactivation with zero orphaned processes.
+- Zero reliance on `activeTerminal` for event routing; full multi-review concurrency and isolation.
+- 97 deterministic terminal UX E2E scenarios pass on Run 1 and Run 2.

@@ -1,4 +1,4 @@
-SPRINT 3D.2 — EXECUTION IDENTITY & DEACTIVATION CLOSURE
+SPRINT 3D.3 — EXACT EXECUTION EVENT ROUTING & PERMANENT TERMINAL CLOSURE
 FINAL CLOSURE REPORT
 Generated: 2026-09-20
 
@@ -6,7 +6,7 @@ Generated: 2026-09-20
 SECTION 1 — SPRINT IDENTITY
 ================================================================================
 
-Sprint:    3D.2 — Execution Identity & Deactivation Closure
+Sprint:    3D.3 — Exact Execution Event Routing & Permanent Terminal Closure
 Parent:    Sprint 3D — Controlled Terminal UX
 Status:    ✅ CLOSED PERMANENTLY
 Date:      2026-09-20
@@ -18,50 +18,96 @@ npm:       v10.9.8
 SECTION 2 — CLOSURE GAPS ADDRESSED & VERIFIED
 ================================================================================
 
-Gap 1: Terminal review execution identity canonical matching end-to-end
-  - PreparedVerification.verificationId passed directly to registerPreparedCommand
-  - ChatController registers entry with executionId = pc.verificationId (0 alternate IDs generated)
-  - verification.output routes strictly by event executionId (no fallback to activeTerminal)
-  - terminal.updated emits matching executionId (only when entry is found under exact ID)
-  - Forged IDs and mismatched IDs ignored with zero state mutation and zero UI events
+Gap 1: Canonical Execution Identity Across Full Lifecycle (T-3001, T-3002, T-3003, T-3004)
+  - PreparedVerification.verificationId flows uncorrupted through:
+    confirmation -> TerminalReview.executionId -> verification.started.executionId ->
+    verification.output.executionId -> verification.completed.executionId ->
+    terminal.updated.terminal.executionId
+  - AgentRunner.#emit explicitly emits executionId: reviewable.id on:
+    verification.started, verification.output, verification.completed,
+    verification.failed, and verification.rejected
+  - Event payload interfaces in agent-core (VerificationStartedEventPayload,
+    VerificationOutputEventPayload, VerificationCompletedEventPayload,
+    VerificationFailedEventPayload, VerificationRejectedEventPayload)
+    explicitly require executionId: string
 
-Gap 2: Extension deactivation process tree termination & registry flush
-  - deactivate() acts as the sole trigger while parent + child are confirmed running
-  - No manual cancelTurn() or clearAll() prior to deactivate()
-  - deactivate() initiates chatController.cancelTurn() → propagates AbortSignal to VerificationEngine
-  - Process group (-child.pid) terminated cleanly (parent dead = yes, child dead = yes, orphans = 0)
-  - TerminalReviewController registry cleared (reviews = 0, retained bytes = 0)
-  - Late output events after deactivation safely discarded with no resurrection
+Gap 2: Fail-Closed Confirmation Presentation Gate (T-3005, T-3006)
+  - ChatController.requestConfirmation strictly validates pc.verificationId
+  - Missing or whitespace-only verificationId fails closed immediately with "REJECT"
+  - 0 reviews registered in TerminalReviewController, 0 subprocesses spawned
+
+Gap 3: Elimination of Silent Fallback ID Generation (T-3007, T-3008)
+  - TerminalReviewController.registerPreparedCommand enforces required executionId: string
+  - Missing, undefined, or empty/whitespace executionId throws immediately
+  - Production path has zero fallback ID generation
+
+Gap 4: Exact-ID Routing Authority & Elimination of activeTerminal Routing (T-3009 - T-3014)
+  - ChatController.handleAgentEvent routes verification.started, output, completed,
+    failed, and rejected strictly through terminalReviewController.getByExecutionId(executionId)
+  - Active terminal is never used as an event routing authority or fallback
+  - Events with missing, empty, or nonexistent executionIds are safe no-ops with zero mutations
+
+Gap 5: Strict Multi-Review Isolation (T-3015, T-3016, T-3017)
+  - Lifecycle events targeting Review A never mutate Review B in any field
+  - Stale completion events for Review A do not overwrite active terminal pointing to Review B
+  - Stream output chunks for background review C do not broadcast terminal.updated for active review B
+
+Gap 6: Lifecycle State Transition Safety (T-3018, T-3019)
+  - Stale completion events arriving after a new chat turn (activeTerminal undefined) update
+    the registry safely without resurrecting activeTerminal
+  - Events arriving after extension deactivation (registry cleared to 0) are safe no-ops
+    with zero state recreation or exceptions
+
+Gap 7: Scenario 65 Reconciliation (T-2905 / T-3016)
+  - Scenario 65 updated with real VerificationEngine.execute wiring onOutput callback
+  - Proves observable RUNNING status and live streamed output chunk ("STARTED") before completion
 
 ================================================================================
 SECTION 3 — FILES CHANGED
 ================================================================================
 
-packages/vscode-integration/src/chat-controller.ts
-  - Passed pc.verificationId as executionId in requestConfirmation
-  - Removed fallback to activeTerminal?.executionId in verification.output event handling
-  - Ensured terminal.updated message is dispatched strictly when entry exists for exact executionId
+packages/agent-core/src/contracts/agent.ts
+  - Added typed payload interfaces requiring executionId: string for verification lifecycle events:
+    VerificationPreparedEventPayload, VerificationConfirmationRequestedEventPayload,
+    VerificationApprovedEventPayload, VerificationStartedEventPayload,
+    VerificationOutputEventPayload, VerificationCompletedEventPayload,
+    VerificationFailedEventPayload, VerificationRejectedEventPayload
 
-packages/vscode-integration/src/extension.ts
-  - Added test seam hooks (_testSeam.setChatController, _testSeam.setTerminalReviewController)
+packages/agent-core/src/agent/runner.ts
+  - Added executionId: reviewable.id to verification.started, verification.completed,
+    verification.failed, verification.rejected, verification.approved,
+    verification.prepared, and verification.confirmation_requested emissions
+
+packages/vscode-integration/src/chat-controller.ts
+  - requestConfirmation fails closed immediately (returns "REJECT") if pc.verificationId
+    is missing, not a string, or whitespace-only
+  - handleAgentEvent routes verification.started, verification.output, verification.completed,
+    verification.failed, and verification.rejected strictly by exact executionId via registry lookup
+  - Eliminated activeTerminal fallback routing; state.activeTerminal is only synchronized
+    if its executionId matches the incoming event
+
+packages/vscode-integration/src/terminal-review-controller.ts
+  - registerPreparedCommand requires executionId: string and throws if missing or empty
+  - Removed fallback ID generation from registerPreparedCommand
 
 packages/vscode-integration/tests/terminal-core-e2e.test.ts
-  - Fixed scenario 51 & 52 to preserve canonical verificationId
-  - Rewrote scenario 55 to execute real deactivate() while process tree is running
-  - Added 20 new scenarios (scenarios 60–79) verifying T-2900 through T-2919 requirements
-  - Total terminal scenarios: 79 (all passing deterministically across Run 1 and Run 2)
+  - Reconciled Scenario 65 with live streaming and observable RUNNING status before completion
+  - Updated all earlier scenarios with explicit executionId
+  - Added 18 new evaluation scenarios (scenarios 80-97) for T-3001 through T-3019
+  - Added strict comparator negative tests for executionId, reviewsRegistered, and canonicalAllEqual
+  - Total scenarios: 97 (all passing deterministically across Run 1 and Run 2)
 
 docs/adrs/ADR-021-controlled-terminal-execution.md
-  - Documented Section 13 (Canonical Execution Identity) and Section 14 (Real Extension Deactivation Closure)
+  - Added Section 15 documenting Exact Lifecycle Event Routing & Review Isolation
 
 ARCHITECTURE.md
-  - Updated Controlled Terminal UX section with execution identity and deactivation closure invariants
+  - Updated Controlled Terminal UX section with exact execution routing and review isolation invariants
 
 PLAN.md & PROJECT.md
-  - Marked Sprint 3D / 3D.1 / 3D.2 as CLOSED PERMANENTLY, Next: Sprint 3E (Autocomplete)
+  - Marked Sprint 3D / 3D.1 / 3D.2 / 3D.3 as CLOSED PERMANENTLY, Next: Sprint 3E (Autocomplete)
 
 ================================================================================
-SECTION 4 — TEST INVENTORY (79 TERMINAL SCENARIOS)
+SECTION 4 — TEST INVENTORY (97 TERMINAL SCENARIOS)
 ================================================================================
 
 Categories 1–11: Scenarios 1–59 (Sprint 3D & 3D.1 baseline)
@@ -71,7 +117,7 @@ Category 12: Scenarios 60–79 (Sprint 3D.2 Execution Identity & Deactivation Cl
   62. canonical-id-immutable-through-running-and-output (T-2902)
   63. output-event-routed-by-exact-id (T-2903)
   64. completion-routed-by-exact-id (T-2902 completion)
-  65. live-output-visible-before-completion (T-2905)
+  65. live-output-visible-before-completion (T-2905 / T-3016 reconciled)
   66. forged-output-id-ignored (T-2906)
   67. output-a-cannot-mutate-review-b (T-2907)
   68. output-b-cannot-mutate-review-a (T-2907)
@@ -87,6 +133,26 @@ Category 12: Scenarios 60–79 (Sprint 3D.2 Execution Identity & Deactivation Cl
   78. reactivation-safety-no-crash-on-double-deactivate (T-2918)
   79. sprint3d2-summary-canonical-id-end-to-end (Summary verification)
 
+Category 13: Scenarios 80–97 (Sprint 3D.3 Exact Event Routing & Review Isolation)
+  80. canonical-started-event-execution-id (T-3001)
+  81. canonical-completed-event-execution-id (T-3002)
+  82. canonical-identity-end-to-end-all-equal (T-3004)
+  83. request-confirmation-rejects-missing-verification-id (T-3005)
+  84. request-confirmation-rejects-empty-verification-id (T-3006)
+  85. register-prepared-command-throws-on-missing-execution-id (T-3007)
+  86. register-prepared-command-throws-on-empty-execution-id (T-3008)
+  87. chat-controller-started-routes-strictly-by-execution-id (T-3009)
+  88. chat-controller-started-wrong-id-safe-noop (T-3010)
+  89. chat-controller-started-missing-id-safe-noop (T-3011)
+  90. chat-controller-completed-routes-strictly-by-execution-id (T-3012)
+  91. chat-controller-completed-wrong-id-safe-noop (T-3013)
+  92. chat-controller-completed-missing-id-safe-noop (T-3014)
+  93. review-isolation-two-reviews-independent (T-3015)
+  94. stale-completion-for-review-a-does-not-mutate-active-review-b (T-3016)
+  95. other-review-output-does-not-broadcast-terminal-updated-for-b (T-3017)
+  96. late-completion-after-new-chat-safe (T-3018)
+  97. late-event-after-deactivation-safe-noop (T-3019)
+
 ================================================================================
 SECTION 5 — TEST & VERIFICATION RESULTS
 ================================================================================
@@ -95,8 +161,20 @@ Workspace Test Suite:
   @open-vs-code/agent-core:        288/288 PASS
   @open-vs-code/cli:               16/16 PASS
   @open-vs-code/ide-adapter:       5/5 PASS
-  @open-vs-code/vscode-integration: 9/9 PASS (including 79 terminal scenarios twice)
+  @open-vs-code/vscode-integration: 9/9 PASS (including 97 terminal scenarios twice)
   TOTAL:                           318/318 PASS
+
+Terminal UX Evaluations:
+  Run 1: 97/97 PASS (strict comparator: 0 failures)
+  Run 2: 97/97 PASS (strict comparator: 0 failures)
+  Deterministic comparison (Run 1 deepStrictEqual Run 2): PASS
+
+Diff UX Regression:
+  Strict Comparator Negative Tests: PASS
+  Real diff integration tests Run 1 & 2: PASS
+
+Chat UX Regression:
+  Evaluations deterministic and all pass: PASS
 
 Coding Evaluation Suite:
   Run 1: 30/30 PASS (100.0% task success, 100.0% safety)
@@ -113,7 +191,7 @@ Quality Gates:
 SECTION 6 — PERMANENT CLOSURE STATEMENT
 ================================================================================
 
-Sprint 3D (Controlled Terminal UX), including Sprint 3D.1 and Sprint 3D.2,
+Sprint 3D (Controlled Terminal UX), including Sprint 3D.1, Sprint 3D.2, and Sprint 3D.3,
 is hereby PERMANENTLY CLOSED.
 
 NEXT OBJECTIVE: Sprint 3E — Autocomplete.

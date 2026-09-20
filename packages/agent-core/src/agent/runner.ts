@@ -174,7 +174,12 @@ export class AgentRunner {
     if (decision === "REJECT") {
       if (pending.reviewable) {
         const isVerification = pending.prepared.definition.action === "run_known_test"
-        this.#emit(isVerification ? "verification.rejected" : "mutation.rejected", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id })
+        this.#emit(isVerification ? "verification.rejected" : "mutation.rejected", {
+          callId: pending.prepared.id,
+          name: pending.prepared.name,
+          mutationId: pending.reviewable.id,
+          ...(isVerification ? { executionId: pending.reviewable.id } : {}),
+        })
       } else {
         this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
       }
@@ -183,10 +188,22 @@ export class AgentRunner {
       if (pending.reviewable) {
         const reviewable = pending.reviewable
         const isVerification = pending.prepared.definition.action === "run_known_test"
-        this.#emit(isVerification ? "verification.approved" : "mutation.approved", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
+        this.#emit(isVerification ? "verification.approved" : "mutation.approved", {
+          callId: pending.prepared.id,
+          name: pending.prepared.name,
+          mutationId: reviewable.id,
+          ...(isVerification ? { executionId: reviewable.id } : {}),
+        })
         let observation: ToolObservation
         try {
-          if (isVerification) this.#emit("verification.started", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
+          if (isVerification) {
+            this.#emit("verification.started", {
+              callId: pending.prepared.id,
+              name: pending.prepared.name,
+              mutationId: reviewable.id,
+              executionId: reviewable.id,
+            })
+          }
           const reviewableId = reviewable.id
           const onOutput = isVerification
             ? (chunk: { stream: "stdout" | "stderr"; chunk: string }) => {
@@ -206,7 +223,13 @@ export class AgentRunner {
             onOutput,
           }) as any
           if (isVerification) {
-            this.#emit("verification.completed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, result })
+            this.#emit("verification.completed", {
+              callId: pending.prepared.id,
+              name: pending.prepared.name,
+              mutationId: reviewable.id,
+              executionId: reviewable.id,
+              result,
+            })
           } else {
             if (result.status === "APPLIED") {
               this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
@@ -229,7 +252,13 @@ export class AgentRunner {
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, error: { category: isVerification ? "VERIFICATION_ERROR" : "MUTATION_ERROR", message }, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
           session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: "FAILED", truncated: observation.truncated })
-          this.#emit(isVerification ? "verification.failed" : "mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: pending.reviewable.id, message })
+          this.#emit(isVerification ? "verification.failed" : "mutation.failed", {
+            callId: pending.prepared.id,
+            name: pending.prepared.name,
+            mutationId: pending.reviewable.id,
+            ...(isVerification ? { executionId: pending.reviewable.id } : {}),
+            message,
+          })
         }
 
         const progressKey = `${pending.signature}\0${observation.ok}\0${observation.content}`
@@ -406,12 +435,23 @@ export class AgentRunner {
         try {
           reviewable = await prepared.prepareForReview({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
           const isVerification = prepared.definition.action === "run_known_test"
-          this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id, path: (prepared.arguments as any).path || (prepared.arguments as any).targetFile || (prepared.arguments as any).file })
+          this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", {
+            callId: prepared.id,
+            name: prepared.name,
+            mutationId: reviewable.id,
+            ...(isVerification ? { executionId: reviewable.id } : {}),
+            path: (prepared.arguments as any).path || (prepared.arguments as any).targetFile || (prepared.arguments as any).file,
+          })
           if (reviewable.reviewPayload.truncated === true) {
             throw new Error("Diff is truncated and cannot be reviewed safely")
           }
           session.pending = { prepared, signature, reviewable }
-          this.#emit(isVerification ? "verification.confirmation_requested" : "mutation.confirmation_requested", { callId: prepared.id, name: prepared.name, mutationId: reviewable.id })
+          this.#emit(isVerification ? "verification.confirmation_requested" : "mutation.confirmation_requested", {
+            callId: prepared.id,
+            name: prepared.name,
+            mutationId: reviewable.id,
+            ...(isVerification ? { executionId: reviewable.id } : {}),
+          })
           return true
         } catch (error) {
           const message = error instanceof Error ? error.message : "Tool preparation failed"

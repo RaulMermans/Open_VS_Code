@@ -98,7 +98,7 @@ export class TerminalReviewController {
 
   registerPreparedCommand(params: {
     confirmationId: string;
-    executionId?: string;
+    executionId: string;
     command: string;
     cwd: string;
     provenance: string;
@@ -110,9 +110,12 @@ export class TerminalReviewController {
     scriptName?: string;
     scriptBody?: string;
   }): TerminalReviewEntry {
+    if (!params.executionId || typeof params.executionId !== 'string' || !params.executionId.trim()) {
+      throw new Error("TerminalReviewController.registerPreparedCommand: executionId is required and cannot be empty");
+    }
     this.enforceReviewCountBudget();
 
-    const executionId = params.executionId || `term-exec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const executionId = params.executionId.trim();
     
     const entry: TerminalReviewEntry = {
       executionId,

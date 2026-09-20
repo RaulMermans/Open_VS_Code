@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 3D ✅ CLOSED PERMANENTLY (Sprint 3D.1 — Terminal Runtime Truth, Sprint 3D.2 — Execution Identity & Deactivation Closure completed)
+Sprint 3D ✅ CLOSED PERMANENTLY (Sprint 3D.1 — Terminal Runtime Truth, Sprint 3D.2 — Execution Identity & Deactivation Closure, Sprint 3D.3 — Exact Lifecycle Event Routing & Review Isolation completed)
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
@@ -38,4 +38,5 @@ Sprint 3D ✅ CLOSED PERMANENTLY (Sprint 3D.1 — Terminal Runtime Truth, Sprint
 - Phase D (Sprint 3D): Controlled Terminal UX & Review Boundary. 100% deterministic test evaluations passed.
 - Phase D.1 (Sprint 3D.1): Terminal Runtime Truth. Live output streaming, UTF-8 safety, bounded prefix buffer, PREPARED state removal, fail-closed validation, bounded registry, deterministic process group cleanup proofs. 59 terminal scenarios, 318 total tests pass. ✅ CLOSED.
 - Phase D.2 (Sprint 3D.2): Execution Identity & Deactivation Closure. Canonical execution identity preserved end-to-end (verificationId = executionId), exact ID routing without fallback, real deactivation process tree termination without prior manual cancel, post-deactivation registry flush. 79 terminal scenarios, 318 total tests pass. ✅ CLOSED PERMANENTLY.
+- Phase D.3 (Sprint 3D.3): Exact Lifecycle Event Routing & Review Isolation. Canonical verificationId emitted across all verification lifecycle events (started, output, completed, failed, rejected), ChatController fail-closed validation requiring non-empty verificationId, zero fallback ID generation in registerPreparedCommand, exact-ID routing via registry lookup with zero activeTerminal routing authority, complete multi-review isolation. 97 terminal scenarios pass deterministically on Run 1 and Run 2. Full workspace clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals twice. Sprint 3D ✅ CLOSED PERMANENTLY.
 - Next: Sprint 3E — Autocomplete → NEXT

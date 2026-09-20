@@ -74,6 +74,8 @@ export class ChatController {
       const pc = payload?.preparedCommand || payload;
       if (
         !pc ||
+        typeof pc.verificationId !== 'string' ||
+        !pc.verificationId.trim() ||
         typeof pc.executable !== 'string' ||
         !pc.executable.trim() ||
         !Array.isArray(pc.args) ||
@@ -94,7 +96,7 @@ export class ChatController {
         confirmationId,
         // Preserve canonical verificationId as executionId so identity survives
         // PreparedVerification → TerminalReview → verification.output → verification.completed
-        executionId: pc.verificationId,
+        executionId: pc.verificationId.trim(),
         command: commandPreview,
         cwd,
         provenance,
@@ -522,11 +524,17 @@ export class ChatController {
       }
     } else if (ev.type === 'verification.started') {
       const payload = ev.payload as any;
-      const term = this.state.activeTerminal;
-      if (term) {
-        this.terminalReviewController.setStatus(term.executionId, 'RUNNING');
-        term.status = 'RUNNING';
-        this.sendState();
+      const executionId = payload?.executionId;
+      if (typeof executionId === 'string' && executionId.trim()) {
+        const cleanExecId = executionId.trim();
+        const tEntry = this.terminalReviewController.getByExecutionId(cleanExecId);
+        if (tEntry) {
+          this.terminalReviewController.setStatus(cleanExecId, 'RUNNING');
+          if (this.state.activeTerminal?.executionId === cleanExecId) {
+            this.syncTerminalState(tEntry);
+          }
+          this.sendState();
+        }
       }
     } else if (ev.type === 'verification.output') {
       const payload = ev.payload as any;
@@ -538,12 +546,13 @@ export class ChatController {
       ) {
         // Route output by exact executionId from event — no fallback to activeTerminal.
         // A forged/wrong executionId will find no entry and appendOutput is a no-op.
-        // terminal.updated is only sent when the entry exists under the exact ID.
+        // terminal.updated is only sent when the entry exists under the exact ID and matches activeTerminal.
         const executionId = payload.executionId as string | undefined;
-        if (executionId) {
-          this.terminalReviewController.appendOutput(executionId, payload.stream, payload.chunk);
-          const tEntry = this.terminalReviewController.getByExecutionId(executionId);
-          if (tEntry) {
+        if (typeof executionId === 'string' && executionId.trim()) {
+          const cleanExecId = executionId.trim();
+          this.terminalReviewController.appendOutput(cleanExecId, payload.stream, payload.chunk);
+          const tEntry = this.terminalReviewController.getByExecutionId(cleanExecId);
+          if (tEntry && this.state.activeTerminal?.executionId === cleanExecId) {
             this.syncTerminalState(tEntry);
             this.sendMessage({
               type: 'terminal.updated',
@@ -555,45 +564,58 @@ export class ChatController {
       }
     } else if (ev.type === 'verification.completed') {
       const payload = ev.payload as any;
-      const res = payload?.result;
-      const term = this.state.activeTerminal;
-      if (term) {
-        const status = res?.status === 'PASS' ? 'SUCCEEDED' :
-                       res?.status === 'TIMEOUT' ? 'TIMED_OUT' :
-                       res?.status === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
-        this.terminalReviewController.recordCompletion(term.executionId, {
-          status,
-          exitCode: res?.exitCode,
-          durationMs: res?.durationMs,
-          stdout: res?.stdout,
-          stderr: res?.stderr,
-        });
-        const tEntry = this.terminalReviewController.getByExecutionId(term.executionId);
+      const executionId = payload?.executionId;
+      if (typeof executionId === 'string' && executionId.trim()) {
+        const cleanExecId = executionId.trim();
+        const tEntry = this.terminalReviewController.getByExecutionId(cleanExecId);
         if (tEntry) {
-          this.syncTerminalState(tEntry);
+          const res = payload?.result;
+          const status = res?.status === 'PASS' ? 'SUCCEEDED' :
+                         res?.status === 'TIMEOUT' ? 'TIMED_OUT' :
+                         res?.status === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+          this.terminalReviewController.recordCompletion(cleanExecId, {
+            status,
+            exitCode: res?.exitCode,
+            durationMs: res?.durationMs,
+            stdout: res?.stdout,
+            stderr: res?.stderr,
+          });
+          if (this.state.activeTerminal?.executionId === cleanExecId) {
+            this.syncTerminalState(tEntry);
+          }
+          this.sendState();
         }
-        this.sendState();
       }
     } else if (ev.type === 'verification.failed') {
       const payload = ev.payload as any;
-      const term = this.state.activeTerminal;
-      if (term) {
-        this.terminalReviewController.recordCompletion(term.executionId, {
-          status: 'FAILED',
-          stderr: payload?.message || 'Verification failed',
-        });
-        const tEntry = this.terminalReviewController.getByExecutionId(term.executionId);
+      const executionId = payload?.executionId;
+      if (typeof executionId === 'string' && executionId.trim()) {
+        const cleanExecId = executionId.trim();
+        const tEntry = this.terminalReviewController.getByExecutionId(cleanExecId);
         if (tEntry) {
-          this.syncTerminalState(tEntry);
+          this.terminalReviewController.recordCompletion(cleanExecId, {
+            status: 'FAILED',
+            stderr: payload?.message || 'Verification failed',
+          });
+          if (this.state.activeTerminal?.executionId === cleanExecId) {
+            this.syncTerminalState(tEntry);
+          }
+          this.sendState();
         }
-        this.sendState();
       }
     } else if (ev.type === 'verification.rejected') {
-      const term = this.state.activeTerminal;
-      if (term) {
-        this.terminalReviewController.setStatus(term.executionId, 'REJECTED');
-        term.status = 'REJECTED';
-        this.sendState();
+      const payload = ev.payload as any;
+      const executionId = payload?.executionId;
+      if (typeof executionId === 'string' && executionId.trim()) {
+        const cleanExecId = executionId.trim();
+        const tEntry = this.terminalReviewController.getByExecutionId(cleanExecId);
+        if (tEntry) {
+          this.terminalReviewController.setStatus(cleanExecId, 'REJECTED');
+          if (this.state.activeTerminal?.executionId === cleanExecId) {
+            this.syncTerminalState(tEntry);
+          }
+          this.sendState();
+        }
       }
     }
   }

@@ -42,5 +42,20 @@ STATUS: COMPLETE
     - 79 terminal scenarios pass deterministically on Run 1 and Run 2
     - Full workspace: 318 tests pass, 0 TypeScript errors, build clean
 
+  Sprint 3D.3 — Exact Lifecycle Event Routing & Review Isolation ✅ CLOSED PERMANENTLY
+    - Canonical execution identity verificationId emitted across all verification lifecycle events: started, output, completed, failed, rejected
+    - AgentRunner.#emit explicitly carries executionId: reviewable.id on all verification lifecycle events
+    - Verification lifecycle payload interfaces in agent-core enforce required executionId: string
+    - ChatController.requestConfirmation fails closed with REJECT when pc.verificationId is absent or empty whitespace (0 reviews, 0 spawns)
+    - TerminalReviewController.registerPreparedCommand enforces required executionId: string (throws on missing/empty; zero fallback generation)
+    - ChatController.handleAgentEvent routes verification.started, output, completed, failed, rejected strictly by executionId via registry lookup
+    - Presentation state activeTerminal is never used as an event routing authority or fallback
+    - Multi-review isolation: events for Review A cannot mutate Review B; background reviews cannot mutate or broadcast over activeTerminal
+    - Safe lifecycle edge transitions: late completion after new chat turn does not resurrect activeTerminal; events after deactivation are safe no-ops
+    - Reconciled Scenario 65 with live streaming and observable RUNNING status before subprocess completion
+    - 97 terminal scenarios pass deterministically on Run 1 and Run 2
+    - Full workspace: all tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice
+    - Sprint 3D is PERMANENTLY CLOSED.
+
 Next:
 Sprint 3E — Autocomplete → NEXT

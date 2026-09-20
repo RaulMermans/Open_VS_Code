@@ -189,6 +189,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   // 1. prepare-registered-verification
   const entry1 = termController.registerPreparedCommand({
     confirmationId: "conf-1",
+    executionId: "exec-1",
     command: "npm run test",
     cwd: tmpRoot,
     provenance: "package.json [test]",
@@ -293,6 +294,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   // 7. rejection-transitions-to-rejected
   const entryReject = termController.registerPreparedCommand({
     confirmationId: "conf-rej-1",
+    executionId: "exec-rej-1",
     command: "npm run test",
     cwd: tmpRoot,
     provenance: "package.json [test]",
@@ -393,6 +395,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   // 12. approve-after-cancel-ignored
   const entryCancelTest = termController.registerPreparedCommand({
     confirmationId: "conf-cancel-pre",
+    executionId: "exec-cancel-pre",
     command: "npm run test",
     cwd: tmpRoot,
     provenance: "package.json [test]",
@@ -417,7 +420,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 13. execution-exit-0-succeeded
   const entryExit0 = termController.registerPreparedCommand({
-    confirmationId: "c-e0", command: "npm run test", cwd: tmpRoot, provenance: "package.json", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-e0", executionId: "exec-e0", command: "npm run test", cwd: tmpRoot, provenance: "package.json", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.recordCompletion(entryExit0.executionId, {
     status: "SUCCEEDED",
@@ -434,7 +437,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 14. execution-exit-nonzero-failed
   const entryNonZero = termController.registerPreparedCommand({
-    confirmationId: "c-nz", command: "npm run failing", cwd: tmpRoot, provenance: "package.json", timeoutMs: 1000, executable: "npm", args: ["failing"]
+    confirmationId: "c-nz", executionId: "exec-nz", command: "npm run failing", cwd: tmpRoot, provenance: "package.json", timeoutMs: 1000, executable: "npm", args: ["failing"]
   });
   termController.recordCompletion(entryNonZero.executionId, {
     status: "FAILED",
@@ -451,7 +454,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 15. execution-streamed-stdout
   const entryStream = termController.registerPreparedCommand({
-    confirmationId: "c-str", command: "npm run test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-str", executionId: "exec-str", command: "npm run test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryStream.executionId, "RUNNING");
   termController.appendOutput(entryStream.executionId, "stdout", "chunk 1\n");
@@ -489,7 +492,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 18. execution-signal-recorded
   const entrySig = termController.registerPreparedCommand({
-    confirmationId: "c-sig", command: "npm run test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-sig", executionId: "exec-sig", command: "npm run test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.recordCompletion(entrySig.executionId, {
     status: "CANCELLED",
@@ -517,7 +520,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 20. cancel-before-spawn
   const entryCancelPre = termController.registerPreparedCommand({
-    confirmationId: "c-can-pre", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-can-pre", executionId: "exec-can-pre", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryCancelPre.executionId, "CANCELLED");
   results.push({
@@ -555,7 +558,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 22. late-output-after-cancel-ignored
   const entryLate = termController.registerPreparedCommand({
-    confirmationId: "c-late", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-late", executionId: "exec-late", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryLate.executionId, "CANCELLED");
   termController.appendOutput(entryLate.executionId, "stdout", "late output");
@@ -568,7 +571,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 23. webview-cancel-message-handling
   const entryWebCancel = termController.registerPreparedCommand({
-    confirmationId: "c-web-can", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-web-can", executionId: "exec-web-can", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryWebCancel.executionId, "RUNNING");
   await view.webview.send({ type: "terminal.cancel", executionId: entryWebCancel.executionId });
@@ -581,7 +584,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 24. next-command-usable-after-cancel
   const nextCommandEntry = termController.registerPreparedCommand({
-    confirmationId: "c-next", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-next", executionId: "exec-next", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   results.push({
     id: "next-command-usable-after-cancel",
@@ -617,7 +620,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 26. timeout-recorded-in-terminal-card
   const entryTimeout = termController.registerPreparedCommand({
-    confirmationId: "c-to-card", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 100, executable: "npm", args: ["test"]
+    confirmationId: "c-to-card", executionId: "exec-to-card", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 100, executable: "npm", args: ["test"]
   });
   termController.recordCompletion(entryTimeout.executionId, { status: "TIMED_OUT", durationMs: 105 });
   results.push({
@@ -629,7 +632,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 27. next-command-usable-after-timeout
   const entryAfterTimeout = termController.registerPreparedCommand({
-    confirmationId: "c-after-to", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-after-to", executionId: "exec-after-to", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   results.push({
     id: "next-command-usable-after-timeout",
@@ -645,7 +648,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   // 28. output-bounded-at-16kb
   const smallBoundController = new TerminalReviewController({ maxOutputBytes: 100 });
   const entryBound = smallBoundController.registerPreparedCommand({
-    confirmationId: "c-bnd", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-bnd", executionId: "exec-bnd", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   smallBoundController.setStatus(entryBound.executionId, "RUNNING");
   const hugeChunk = "A".repeat(500);
@@ -688,7 +691,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 31. utf8-multibyte-split-safety
   const entryUtf8 = termController.registerPreparedCommand({
-    confirmationId: "c-utf8", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-utf8", executionId: "exec-utf8", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryUtf8.executionId, "RUNNING");
   // Multi-byte character: emoji or CJK (e.g. '🚀' = 4 bytes)
@@ -879,7 +882,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 40. new-chat-cancels-pending-terminal
   const entryNewChat = termController.registerPreparedCommand({
-    confirmationId: "c-nc", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-nc", executionId: "exec-nc", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   controller.state.pendingConfirmation = {
     id: "c-nc",
@@ -905,7 +908,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 41. copy-command-clipboard-bound
   const entryCopy = termController.registerPreparedCommand({
-    confirmationId: "c-copy", command: "npm run custom-task", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["run", "custom-task"]
+    confirmationId: "c-copy", executionId: "exec-copy", command: "npm run custom-task", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["run", "custom-task"]
   });
   await view.webview.send({ type: "terminal.copyCommand", executionId: entryCopy.executionId });
   results.push({
@@ -921,7 +924,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 42. live-streaming-chatcontroller-bridge
   const entryLive = termController.registerPreparedCommand({
-    confirmationId: "c-live", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-live", executionId: "exec-live", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   controller.state.activeTerminal = {
     executionId: entryLive.executionId,
@@ -988,7 +991,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 44. utf8-multibyte-split-chunks-safety
   const entryUtf8Split = termController.registerPreparedCommand({
-    confirmationId: "c-u8", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-u8", executionId: "exec-u8", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryUtf8Split.executionId, "RUNNING");
   const robotFull = "🤖";
@@ -1014,7 +1017,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   // 45. utf8-truncation-boundary-safety
   const smallTermCtrl = new TerminalReviewController({ maxOutputBytes: 5 });
   const entryU8Trunc = smallTermCtrl.registerPreparedCommand({
-    confirmationId: "c-u8t", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-u8t", executionId: "exec-u8t", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   smallTermCtrl.setStatus(entryU8Trunc.executionId, "RUNNING");
   smallTermCtrl.appendOutput(entryU8Trunc.executionId, "stdout", "abc" + "🤖");
@@ -1037,7 +1040,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 46. buffer-overflow-prefix-policy
   const entryFlood = termController.registerPreparedCommand({
-    confirmationId: "c-flood", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-flood", executionId: "exec-flood", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryFlood.executionId, "RUNNING");
   const largeChunk = "X".repeat(8 * 1024);
@@ -1081,13 +1084,13 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 48. terminal-registry-max-reviews-eviction
   const boundedCtrl = new TerminalReviewController({ maxReviews: 3 });
-  const r1 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const r1 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-1", executionId: "exec-b-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   boundedCtrl.setStatus(r1.executionId, "SUCCEEDED");
-  const r2 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const r2 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-2", executionId: "exec-b-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   boundedCtrl.setStatus(r2.executionId, "SUCCEEDED");
-  const r3 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-3", command: "c3", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const r3 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-3", executionId: "exec-b-3", command: "c3", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   boundedCtrl.setStatus(r3.executionId, "SUCCEEDED");
-  const r4 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-4", command: "c4", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const r4 = boundedCtrl.registerPreparedCommand({ confirmationId: "b-4", executionId: "exec-b-4", command: "c4", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   results.push({
     id: "terminal-registry-max-reviews-eviction",
     description: "Terminal review registry bounds total entries by evicting oldest finished review",
@@ -1107,10 +1110,10 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 49. terminal-registry-active-reviews-never-evicted
   const boundedCtrl2 = new TerminalReviewController({ maxReviews: 2 });
-  const a1 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
-  const a2 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const a1 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-1", executionId: "exec-act-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const a2 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-2", executionId: "exec-act-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   boundedCtrl2.setStatus(a2.executionId, "RUNNING");
-  const a3 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-3", command: "c3", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const a3 = boundedCtrl2.registerPreparedCommand({ confirmationId: "act-3", executionId: "exec-act-3", command: "c3", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   results.push({
     id: "terminal-registry-active-reviews-never-evicted",
     description: "Active terminal reviews (WAITING_APPROVAL, RUNNING) are never evicted",
@@ -1128,11 +1131,11 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 50. terminal-registry-total-retained-bytes-eviction
   const boundedBytesCtrl = new TerminalReviewController({ maxTotalRetainedBytes: 100 });
-  const byteR1 = boundedBytesCtrl.registerPreparedCommand({ confirmationId: "by-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const byteR1 = boundedBytesCtrl.registerPreparedCommand({ confirmationId: "by-1", executionId: "exec-by-1", command: "c1", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   boundedBytesCtrl.setStatus(byteR1.executionId, "RUNNING");
   boundedBytesCtrl.appendOutput(byteR1.executionId, "stdout", "A".repeat(60));
   boundedBytesCtrl.setStatus(byteR1.executionId, "SUCCEEDED");
-  const byteR2 = boundedBytesCtrl.registerPreparedCommand({ confirmationId: "by-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
+  const byteR2 = boundedBytesCtrl.registerPreparedCommand({ confirmationId: "by-2", executionId: "exec-by-2", command: "c2", cwd: tmpRoot, provenance: "p", timeoutMs: 1000, executable: "node", args: [] });
   boundedBytesCtrl.setStatus(byteR2.executionId, "RUNNING");
   boundedBytesCtrl.appendOutput(byteR2.executionId, "stdout", "B".repeat(60));
   boundedBytesCtrl.setStatus(byteR2.executionId, "SUCCEEDED");
@@ -1578,7 +1581,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 56. late-output-after-completion-ignored
   const entryComplete = termController.registerPreparedCommand({
-    confirmationId: "c-comp", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-comp", executionId: "exec-comp", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.recordCompletion(entryComplete.executionId, {
     status: "SUCCEEDED",
@@ -1622,7 +1625,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // 58. malicious-streamed-output-xss-safety
   const entryXss = termController.registerPreparedCommand({
-    confirmationId: "c-xss", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
+    confirmationId: "c-xss", executionId: "exec-xss", command: "npm test", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "npm", args: ["test"]
   });
   termController.setStatus(entryXss.executionId, "RUNNING");
   const malicious = "<script>alert('xss')</script><img src=x onerror=alert(1)>";
@@ -1789,6 +1792,19 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   const livePathAbort = new AbortController();
   const liveOutputChunks: string[] = [];
 
+  // Register a terminal review for this live execution using canonical ID
+  const liveEntry65 = termController.registerPreparedCommand({
+    confirmationId: "conf-live-65",
+    executionId: "v-live-path-65",
+    command: "node staged-fixture.cjs", cwd: tmpRoot, provenance: "pkg", timeoutMs: 10000, executable: "node", args: [stagePath, stageReadyPath]
+  });
+  termController.setStatus("v-live-path-65", "RUNNING");
+
+  const onOutputLive = (chunk: { stream: "stdout" | "stderr"; chunk: string }) => {
+    liveOutputChunks.push(chunk.chunk);
+    termController.appendOutput("v-live-path-65", chunk.stream, chunk.chunk);
+  };
+
   const livePathExec = livePathEngine.execute({
     verificationId: "v-live-path-65",
     action: "TEST",
@@ -1801,53 +1817,40 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
     packageJsonHash: crypto.createHash("sha256").update(fs.readFileSync(pkgJsonPath)).digest("hex"),
     scriptName: "test",
     scriptBody: "echo test-ok",
-  }, livePathAbort.signal);
+  }, livePathAbort.signal, onOutputLive);
 
-  // Register a terminal review for this live execution using canonical ID
-  const liveEntry65 = termController.registerPreparedCommand({
-    confirmationId: "conf-live-65",
-    executionId: "v-live-path-65",
-    command: "node staged-fixture.cjs", cwd: tmpRoot, provenance: "pkg", timeoutMs: 10000, executable: "node", args: [stagePath, stageReadyPath]
-  });
-  termController.setStatus("v-live-path-65", "RUNNING");
-
-  // Simulate ChatController event routing for live output
-  const liveFakeController = { handleAgentEvent: (ev: any) => {
-    if (ev.type === "verification.output" && ev.payload?.executionId === "v-live-path-65") {
-      liveOutputChunks.push(ev.payload.chunk);
-      termController.appendOutput("v-live-path-65", ev.payload.stream, ev.payload.chunk);
-    }
-  }};
-
-  // Wait for STARTED to appear
+  // Wait for STARTED to appear and ready marker to be written
   let liveWaitTries = 0;
   while (!fs.existsSync(stageReadyPath) && liveWaitTries < 100) {
     await new Promise(r => setTimeout(r, 10));
     liveWaitTries++;
   }
-  // Probe the running entry before process completes
+  // Probe the running entry and live output buffer before process completes
   const statusBeforeCompletion = liveEntry65.status;
+  const liveOutputBeforeCompletion = liveEntry65.stdout;
+
   // Wait for completion
   const livePathResult = await livePathExec;
-  // Apply final output to entry
-  if (livePathResult.stdout) {
-    termController.appendOutput("v-live-path-65", "stdout", livePathResult.stdout);
-    termController.recordCompletion("v-live-path-65", {
-      status: livePathResult.status === "PASS" ? "SUCCEEDED" : "FAILED",
-      exitCode: livePathResult.exitCode,
-      durationMs: livePathResult.durationMs,
-    });
-  }
+  termController.recordCompletion("v-live-path-65", {
+    status: livePathResult.status === "PASS" ? "SUCCEEDED" : "FAILED",
+    exitCode: livePathResult.exitCode,
+    durationMs: livePathResult.durationMs,
+  });
+
   results.push({
     id: "live-output-visible-before-completion",
-    description: "T-2905: Terminal entry RUNNING status is observable while process is alive",
+    description: "T-2905: Terminal entry RUNNING status and live streamed output are observable before process completes",
     actual: {
+      statusBeforeCompletion,
+      liveOutputBeforeCompletionHasStarted: liveOutputBeforeCompletion.includes("STARTED"),
       processStatus: livePathResult.status,
       finalEntryStatus: liveEntry65.status,
       entryIdMatchesVerificationId: liveEntry65.executionId === "v-live-path-65",
-      hasTestOkInOutput: liveEntry65.stdout.includes("TEST_OK") || livePathResult.stdout.includes("TEST_OK"),
+      hasTestOkInOutput: liveEntry65.stdout.includes("TEST_OK"),
     },
     expected: {
+      statusBeforeCompletion: "RUNNING",
+      liveOutputBeforeCompletionHasStarted: true,
       processStatus: "PASS",
       finalEntryStatus: "SUCCEEDED",
       entryIdMatchesVerificationId: true,
@@ -2357,6 +2360,549 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
     }
   });
 
+  // 80. sprint3d3-agentrunner-started-event-execution-id (T-3001)
+  const startedEvent = liveEvents.find(e => e.type === "verification.started");
+  results.push({
+    id: "canonical-started-event-execution-id",
+    description: "T-3001: AgentRunner emits verification.started with canonical executionId matching PreparedVerification.verificationId",
+    actual: {
+      hasStartedEvent: Boolean(startedEvent),
+      matchesPrepared: startedEvent?.payload?.executionId === prepCmd.verificationId,
+      hasValidIdPrefix: typeof startedEvent?.payload?.executionId === "string" && startedEvent.payload.executionId.startsWith("verification-"),
+    },
+    expected: {
+      hasStartedEvent: true,
+      matchesPrepared: true,
+      hasValidIdPrefix: true,
+    }
+  });
+
+  // 81. sprint3d3-agentrunner-completed-event-execution-id (T-3002)
+  results.push({
+    id: "canonical-completed-event-execution-id",
+    description: "T-3002: AgentRunner emits verification.completed with canonical executionId matching PreparedVerification.verificationId",
+    actual: {
+      hasCompletedEvent: Boolean(completedEvent),
+      matchesPrepared: completedEvent?.payload?.executionId === prepCmd.verificationId,
+      hasValidIdPrefix: typeof completedEvent?.payload?.executionId === "string" && completedEvent.payload.executionId.startsWith("verification-"),
+    },
+    expected: {
+      hasCompletedEvent: true,
+      matchesPrepared: true,
+      hasValidIdPrefix: true,
+    }
+  });
+
+  // 82. sprint3d3-all-lifecycle-ids-strictly-equal (T-3004)
+  // Flow: PreparedVerification.verificationId === confirmation.preparedCommand.verificationId
+  // === TerminalReview.executionId === verification.started.executionId === verification.output.executionId
+  // === verification.completed.executionId
+  const canonicalAllEqual = (
+    prepCmd.verificationId === runnerReviewEntry.executionId &&
+    runnerReviewEntry.executionId === startedEvent?.payload?.executionId &&
+    startedEvent?.payload?.executionId === outputEvents[0]?.payload?.executionId &&
+    outputEvents[0]?.payload?.executionId === completedEvent?.payload?.executionId
+  );
+  results.push({
+    id: "canonical-identity-end-to-end-all-equal",
+    description: "T-3004: All verification lifecycle events preserve and emit the exact same canonical executionId",
+    actual: {
+      canonicalAllEqual,
+      hasValidIdPrefix: typeof prepCmd.verificationId === "string" && prepCmd.verificationId.startsWith("verification-"),
+    },
+    expected: {
+      canonicalAllEqual: true,
+      hasValidIdPrefix: true,
+    }
+  });
+
+  // 83. request-confirmation-rejects-missing-verification-id (T-3005)
+  const tcReqReject = new TerminalReviewController();
+  const { ChatController: CCReq } = await import("../src/chat-controller.js");
+  const ctrlReqReject = new CCReq(
+    host as any,
+    { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => 'PENDING' } as any,
+    tcReqReject,
+    () => ({} as any)
+  );
+  const rejectResMissing = await ctrlReqReject.requestConfirmation("Run without ID", {
+    action: "run_known_test",
+    preparedCommand: {
+      // verificationId intentionally missing
+      executable: "node",
+      args: ["-v"],
+      cwd: tmpRoot,
+    } as any,
+  });
+  results.push({
+    id: "request-confirmation-rejects-missing-verification-id",
+    description: "T-3005: ChatController.requestConfirmation fails closed with REJECT when verificationId is missing",
+    actual: {
+      decision: rejectResMissing,
+      reviewsRegistered: tcReqReject.totalReviews,
+      activeTerminalSet: ctrlReqReject.state.activeTerminal !== undefined,
+      pendingConfirmationSet: ctrlReqReject.state.pendingConfirmation !== undefined,
+    },
+    expected: {
+      decision: "REJECT",
+      reviewsRegistered: 0,
+      activeTerminalSet: false,
+      pendingConfirmationSet: false,
+    }
+  });
+
+  // 84. request-confirmation-rejects-empty-verification-id (T-3006)
+  const tcReqEmpty = new TerminalReviewController();
+  const ctrlReqEmpty = new CCReq(
+    host as any,
+    { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => 'PENDING' } as any,
+    tcReqEmpty,
+    () => ({} as any)
+  );
+  const rejectResEmpty = await ctrlReqEmpty.requestConfirmation("Run with whitespace ID", {
+    action: "run_known_test",
+    preparedCommand: {
+      verificationId: "   ",
+      executable: "node",
+      args: ["-v"],
+      cwd: tmpRoot,
+    } as any,
+  });
+  results.push({
+    id: "request-confirmation-rejects-empty-verification-id",
+    description: "T-3006: ChatController.requestConfirmation fails closed with REJECT when verificationId is whitespace-only",
+    actual: {
+      decision: rejectResEmpty,
+      reviewsRegistered: tcReqEmpty.totalReviews,
+    },
+    expected: {
+      decision: "REJECT",
+      reviewsRegistered: 0,
+    }
+  });
+
+  // 85. register-prepared-command-throws-on-missing-execution-id (T-3007)
+  const tcRegDirect = new TerminalReviewController();
+  let threwMissingExecId = false;
+  try {
+    tcRegDirect.registerPreparedCommand({
+      confirmationId: "conf-bad-85",
+      executionId: undefined as any,
+      command: "node -v",
+      cwd: tmpRoot,
+      provenance: "pkg",
+      timeoutMs: 1000,
+      executable: "node",
+      args: ["-v"],
+    });
+  } catch (e: any) {
+    threwMissingExecId = e.message.includes("executionId is required");
+  }
+  results.push({
+    id: "register-prepared-command-throws-on-missing-execution-id",
+    description: "T-3007: TerminalReviewController.registerPreparedCommand throws if executionId is missing (no fallback ID)",
+    actual: {
+      threwMissingExecId,
+      reviewsRegistered: tcRegDirect.totalReviews,
+    },
+    expected: {
+      threwMissingExecId: true,
+      reviewsRegistered: 0,
+    }
+  });
+
+  // 86. register-prepared-command-throws-on-empty-execution-id (T-3008)
+  let threwEmptyExecId = false;
+  try {
+    tcRegDirect.registerPreparedCommand({
+      confirmationId: "conf-bad-86",
+      executionId: "   ",
+      command: "node -v",
+      cwd: tmpRoot,
+      provenance: "pkg",
+      timeoutMs: 1000,
+      executable: "node",
+      args: ["-v"],
+    });
+  } catch (e: any) {
+    threwEmptyExecId = e.message.includes("executionId is required and cannot be empty");
+  }
+  results.push({
+    id: "register-prepared-command-throws-on-empty-execution-id",
+    description: "T-3008: TerminalReviewController.registerPreparedCommand throws if executionId is empty whitespace",
+    actual: {
+      threwEmptyExecId,
+      reviewsRegistered: tcRegDirect.totalReviews,
+    },
+    expected: {
+      threwEmptyExecId: true,
+      reviewsRegistered: 0,
+    }
+  });
+
+  // 87. chat-controller-started-routes-strictly-by-execution-id (T-3009)
+  const tcRoute = new TerminalReviewController();
+  const ctrlRoute = new CCReq(
+    host as any,
+    { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => 'PENDING' } as any,
+    tcRoute,
+    () => ({} as any)
+  );
+  const routeEntry87 = tcRoute.registerPreparedCommand({
+    confirmationId: "conf-route-87",
+    executionId: "exec-route-87",
+    command: "node -v", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "node", args: ["-v"]
+  });
+  ctrlRoute.state.activeTerminal = {
+    executionId: "exec-route-87",
+    command: "node -v", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, status: "WAITING_APPROVAL"
+  };
+  ctrlRoute.handleAgentEvent({
+    id: "ev-started-87",
+    type: "verification.started",
+    taskId: "t-87",
+    timestamp: new Date().toISOString(),
+    payload: { executionId: "exec-route-87" }
+  });
+  results.push({
+    id: "chat-controller-started-routes-strictly-by-execution-id",
+    description: "T-3009: ChatController.handleAgentEvent verification.started routes strictly by executionId",
+    actual: {
+      registryStatus: routeEntry87.status,
+      activeTerminalStatus: ctrlRoute.state.activeTerminal?.status,
+    },
+    expected: {
+      registryStatus: "RUNNING",
+      activeTerminalStatus: "RUNNING",
+    }
+  });
+
+  // 88. chat-controller-started-wrong-id-safe-noop (T-3010)
+  ctrlRoute.handleAgentEvent({
+    id: "ev-started-wrong-88",
+    type: "verification.started",
+    taskId: "t-88",
+    timestamp: new Date().toISOString(),
+    payload: { executionId: "nonexistent-exec-id" }
+  });
+  results.push({
+    id: "chat-controller-started-wrong-id-safe-noop",
+    description: "T-3010: verification.started with nonexistent executionId is safe no-op and does not touch activeTerminal",
+    actual: {
+      registryStatus: routeEntry87.status,
+      activeTerminalStatus: ctrlRoute.state.activeTerminal?.status,
+    },
+    expected: {
+      registryStatus: "RUNNING",
+      activeTerminalStatus: "RUNNING",
+    }
+  });
+
+  // 89. chat-controller-started-missing-id-safe-noop (T-3011)
+  const tcStartedMiss = new TerminalReviewController();
+  const ctrlStartedMiss = new CCReq(
+    host as any,
+    { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => 'PENDING' } as any,
+    tcStartedMiss,
+    () => ({} as any)
+  );
+  const entryMiss89 = tcStartedMiss.registerPreparedCommand({
+    confirmationId: "conf-miss-89",
+    executionId: "exec-miss-89",
+    command: "node -v", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "node", args: ["-v"]
+  });
+  ctrlStartedMiss.state.activeTerminal = {
+    executionId: "exec-miss-89",
+    command: "node -v", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, status: "WAITING_APPROVAL"
+  };
+  ctrlStartedMiss.handleAgentEvent({
+    id: "ev-started-miss-89",
+    type: "verification.started",
+    taskId: "t-89",
+    timestamp: new Date().toISOString(),
+    payload: {} // missing executionId
+  });
+  results.push({
+    id: "chat-controller-started-missing-id-safe-noop",
+    description: "T-3011: verification.started with missing executionId does not mutate activeTerminal",
+    actual: {
+      registryStatus: entryMiss89.status,
+      activeTerminalStatus: ctrlStartedMiss.state.activeTerminal?.status,
+    },
+    expected: {
+      registryStatus: "WAITING_APPROVAL",
+      activeTerminalStatus: "WAITING_APPROVAL",
+    }
+  });
+
+  // 90. chat-controller-completed-routes-strictly-by-execution-id (T-3012)
+  ctrlRoute.handleAgentEvent({
+    id: "ev-comp-90",
+    type: "verification.completed",
+    taskId: "t-90",
+    timestamp: new Date().toISOString(),
+    payload: {
+      executionId: "exec-route-87",
+      result: { status: "PASS", exitCode: 0, durationMs: 50, stdout: "OUTPUT_OK", stderr: "" }
+    }
+  });
+  results.push({
+    id: "chat-controller-completed-routes-strictly-by-execution-id",
+    description: "T-3012: ChatController.handleAgentEvent verification.completed routes strictly by executionId",
+    actual: {
+      registryStatus: routeEntry87.status,
+      registryExitCode: routeEntry87.exitCode,
+      activeTerminalStatus: ctrlRoute.state.activeTerminal?.status,
+      activeTerminalExitCode: ctrlRoute.state.activeTerminal?.exitCode,
+    },
+    expected: {
+      registryStatus: "SUCCEEDED",
+      registryExitCode: 0,
+      activeTerminalStatus: "SUCCEEDED",
+      activeTerminalExitCode: 0,
+    }
+  });
+
+  // 91. chat-controller-completed-wrong-id-safe-noop (T-3013)
+  const tcCompWrong = new TerminalReviewController();
+  const ctrlCompWrong = new CCReq(
+    host as any,
+    { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => 'PENDING' } as any,
+    tcCompWrong,
+    () => ({} as any)
+  );
+  const entryComp91 = tcCompWrong.registerPreparedCommand({
+    confirmationId: "conf-comp-91",
+    executionId: "exec-comp-91",
+    command: "node -v", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "node", args: ["-v"]
+  });
+  tcCompWrong.setStatus("exec-comp-91", "RUNNING");
+  ctrlCompWrong.state.activeTerminal = {
+    executionId: "exec-comp-91",
+    command: "node -v", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, status: "RUNNING"
+  };
+  ctrlCompWrong.handleAgentEvent({
+    id: "ev-comp-wrong-91",
+    type: "verification.completed",
+    taskId: "t-91",
+    timestamp: new Date().toISOString(),
+    payload: {
+      executionId: "wrong-exec-id",
+      result: { status: "PASS", exitCode: 0 }
+    }
+  });
+  results.push({
+    id: "chat-controller-completed-wrong-id-safe-noop",
+    description: "T-3013: verification.completed with wrong executionId is safe no-op and does not touch activeTerminal",
+    actual: {
+      registryStatus: entryComp91.status,
+      activeTerminalStatus: ctrlCompWrong.state.activeTerminal?.status,
+    },
+    expected: {
+      registryStatus: "RUNNING",
+      activeTerminalStatus: "RUNNING",
+    }
+  });
+
+  // 92. chat-controller-completed-missing-id-safe-noop (T-3014)
+  ctrlCompWrong.handleAgentEvent({
+    id: "ev-comp-miss-92",
+    type: "verification.completed",
+    taskId: "t-92",
+    timestamp: new Date().toISOString(),
+    payload: {
+      result: { status: "PASS", exitCode: 0 }
+    }
+  });
+  results.push({
+    id: "chat-controller-completed-missing-id-safe-noop",
+    description: "T-3014: verification.completed with missing executionId does not mutate activeTerminal",
+    actual: {
+      registryStatus: entryComp91.status,
+      activeTerminalStatus: ctrlCompWrong.state.activeTerminal?.status,
+    },
+    expected: {
+      registryStatus: "RUNNING",
+      activeTerminalStatus: "RUNNING",
+    }
+  });
+
+  // 93. review-isolation-two-reviews-independent (T-3015)
+  const tcIso = new TerminalReviewController();
+  const ctrlIso = new CCReq(
+    host as any,
+    { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => 'PENDING' } as any,
+    tcIso,
+    () => ({} as any)
+  );
+  const rA = tcIso.registerPreparedCommand({
+    confirmationId: "conf-iso-A", executionId: "exec-iso-A",
+    command: "cmdA", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "node", args: []
+  });
+  const rB = tcIso.registerPreparedCommand({
+    confirmationId: "conf-iso-B", executionId: "exec-iso-B",
+    command: "cmdB", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "node", args: []
+  });
+  ctrlIso.state.activeTerminal = {
+    executionId: "exec-iso-A", command: "cmdA", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, status: "WAITING_APPROVAL"
+  };
+
+  // Events for A
+  ctrlIso.handleAgentEvent({ id: "ev-iso-start-A", type: "verification.started", taskId: "t-iso", timestamp: new Date().toISOString(), payload: { executionId: "exec-iso-A" } });
+  ctrlIso.handleAgentEvent({ id: "ev-iso-out-A", type: "verification.output", taskId: "t-iso", timestamp: new Date().toISOString(), payload: { executionId: "exec-iso-A", stream: "stdout", chunk: "CHUNK_A\n" } });
+  ctrlIso.handleAgentEvent({ id: "ev-iso-comp-A", type: "verification.completed", taskId: "t-iso", timestamp: new Date().toISOString(), payload: { executionId: "exec-iso-A", result: { status: "PASS", exitCode: 0, durationMs: 10 } } });
+
+  results.push({
+    id: "review-isolation-two-reviews-independent",
+    description: "T-3015: Events targeting review A do not mutate review B in any field",
+    actual: {
+      rAStatus: rA.status,
+      rAStdout: rA.stdout,
+      rAExitCode: rA.exitCode,
+      rBStatus: rB.status,
+      rBStdout: rB.stdout,
+      rBExitCode: rB.exitCode,
+    },
+    expected: {
+      rAStatus: "SUCCEEDED",
+      rAStdout: "CHUNK_A\n",
+      rAExitCode: 0,
+      rBStatus: "WAITING_APPROVAL",
+      rBStdout: "",
+      rBExitCode: null,
+    }
+  });
+
+  // 94. stale-completion-for-review-a-does-not-mutate-active-review-b (T-3016)
+  tcIso.setStatus("exec-iso-B", "RUNNING");
+  ctrlIso.state.activeTerminal = {
+    executionId: "exec-iso-B", command: "cmdB", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, status: "RUNNING"
+  };
+  // Stale completion arrives for A while active terminal is B
+  ctrlIso.handleAgentEvent({
+    id: "ev-iso-stale-A",
+    type: "verification.completed",
+    taskId: "t-iso-stale",
+    timestamp: new Date().toISOString(),
+    payload: {
+      executionId: "exec-iso-A",
+      result: { status: "PASS", exitCode: 0, durationMs: 99 }
+    }
+  });
+  results.push({
+    id: "stale-completion-for-review-a-does-not-mutate-active-review-b",
+    description: "T-3016: Stale completion for review A does not overwrite active review B",
+    actual: {
+      activeTerminalExecutionId: ctrlIso.state.activeTerminal?.executionId,
+      activeTerminalStatus: ctrlIso.state.activeTerminal?.status,
+      activeTerminalCommand: ctrlIso.state.activeTerminal?.command,
+    },
+    expected: {
+      activeTerminalExecutionId: "exec-iso-B",
+      activeTerminalStatus: "RUNNING",
+      activeTerminalCommand: "cmdB",
+    }
+  });
+
+  // 95. other-review-output-does-not-broadcast-terminal-updated-for-b (T-3017)
+  const rC = tcIso.registerPreparedCommand({
+    confirmationId: "conf-iso-C", executionId: "exec-iso-C",
+    command: "cmdC", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "node", args: []
+  });
+  tcIso.setStatus("exec-iso-C", "RUNNING");
+
+  const viewIso = { webview: new MockWebview() };
+  ctrlIso.setWebviewView(viewIso as any);
+  viewIso.webview.lastMessage = undefined; // clear initial message
+
+  // Output for C arrives while active terminal is B
+  ctrlIso.handleAgentEvent({
+    id: "ev-iso-out-C",
+    type: "verification.output",
+    taskId: "t-iso-out",
+    timestamp: new Date().toISOString(),
+    payload: { executionId: "exec-iso-C", stream: "stdout", chunk: "OUTPUT_FOR_C\n" }
+  });
+  results.push({
+    id: "other-review-output-does-not-broadcast-terminal-updated-for-b",
+    description: "T-3017: Output for running review C does not broadcast terminal.updated for active review B",
+    actual: {
+      activeTerminalStdout: ctrlIso.state.activeTerminal?.stdout ?? "",
+      lastBroadcastMessageType: (viewIso.webview as MockWebview).lastMessage?.type,
+      reviewCOutputAppended: rC.stdout.includes("OUTPUT_FOR_C"),
+    },
+    expected: {
+      activeTerminalStdout: "",
+      lastBroadcastMessageType: undefined,
+      reviewCOutputAppended: true,
+    }
+  });
+
+  // 96. late-completion-after-new-chat-safe (T-3018)
+  ctrlIso.state.activeTerminal = undefined; // simulate new chat clearing active terminal
+  let lateChatThrew = false;
+  try {
+    ctrlIso.handleAgentEvent({
+      id: "ev-late-chat",
+      type: "verification.completed",
+      taskId: "t-late-chat",
+      timestamp: new Date().toISOString(),
+      payload: { executionId: "exec-iso-A", result: { status: "PASS", exitCode: 0 } }
+    });
+  } catch {
+    lateChatThrew = true;
+  }
+  results.push({
+    id: "late-completion-after-new-chat-safe",
+    description: "T-3018: Late completion after new chat turn does not crash and does not resurrect activeTerminal",
+    actual: {
+      lateChatThrew,
+      activeTerminalIsUndefined: ctrlIso.state.activeTerminal === undefined,
+    },
+    expected: {
+      lateChatThrew: false,
+      activeTerminalIsUndefined: true,
+    }
+  });
+
+  // 97. late-event-after-deactivation-safe-noop (T-3019)
+  const tcDeactLate = new TerminalReviewController();
+  const ctrlDeactLate = new CCReq(
+    host as any,
+    { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => 'PENDING' } as any,
+    tcDeactLate,
+    () => ({} as any)
+  );
+  tcDeactLate.registerPreparedCommand({
+    confirmationId: "c-deact-97", executionId: "exec-deact-97",
+    command: "cmd", cwd: tmpRoot, provenance: "pkg", timeoutMs: 1000, executable: "node", args: []
+  });
+  tcDeactLate.clearAll(); // deactivation flushes all reviews
+  ctrlDeactLate.state.activeTerminal = undefined;
+
+  let lateDeactThrew = false;
+  try {
+    ctrlDeactLate.handleAgentEvent({ id: "ev-late-s", type: "verification.started", taskId: "t-d", timestamp: new Date().toISOString(), payload: { executionId: "exec-deact-97" } });
+    ctrlDeactLate.handleAgentEvent({ id: "ev-late-o", type: "verification.output", taskId: "t-d", timestamp: new Date().toISOString(), payload: { executionId: "exec-deact-97", stream: "stdout", chunk: "LOST\n" } });
+    ctrlDeactLate.handleAgentEvent({ id: "ev-late-c", type: "verification.completed", taskId: "t-d", timestamp: new Date().toISOString(), payload: { executionId: "exec-deact-97", result: { status: "PASS", exitCode: 0 } } });
+  } catch {
+    lateDeactThrew = true;
+  }
+  results.push({
+    id: "late-event-after-deactivation-safe-noop",
+    description: "T-3019: Verification events arriving after extension deactivation are safe no-ops without resurrection",
+    actual: {
+      lateDeactThrew,
+      totalReviews: tcDeactLate.totalReviews,
+      activeTerminalUndefined: ctrlDeactLate.state.activeTerminal === undefined,
+    },
+    expected: {
+      lateDeactThrew: false,
+      totalReviews: 0,
+      activeTerminalUndefined: true,
+    }
+  });
+
   // 59. deactivation-cleanup (moved to be last)
 
   const countBefore = termController.totalReviews;
@@ -2386,9 +2932,12 @@ suite("Terminal Core E2E Evaluation Strict", () => {
     assert.throws(() => strictCompare({ a: 1 }, { a: 2 }), /Comparison failed/);
     assert.throws(() => strictCompare({ missing: true }, { missing: true, other: true }), /Comparison failed/);
     assert.throws(() => strictCompare({ status: "RUNNING" }, { status: "SUCCEEDED" }), /Comparison failed/);
+    assert.throws(() => strictCompare({ executionId: "exec-1" }, { executionId: "exec-2" }), /Comparison failed/);
+    assert.throws(() => strictCompare({ reviewsRegistered: 0 }, { reviewsRegistered: 1 }), /Comparison failed/);
+    assert.throws(() => strictCompare({ canonicalAllEqual: true }, { canonicalAllEqual: false }), /Comparison failed/);
   });
 
-  test("Deterministic Terminal UX Evaluations Run 1 and Run 2 (79 Scenarios)", async () => {
+  test("Deterministic Terminal UX Evaluations Run 1 and Run 2 (97 Scenarios)", async () => {
     const f1 = freshTerminalFixtures();
     const run1 = await runTerminalUxEvaluation(f1);
 
@@ -2419,6 +2968,6 @@ suite("Terminal Core E2E Evaluation Strict", () => {
 
     const normalize = (res: any[]) => res.map(r => ({ id: r.id, actual: r.actual }));
     assert.deepStrictEqual(normalize(run1), normalize(run2), "Run 1 and Run 2 are not deterministic");
-    assert.ok(run1.length >= 79, `Must have at least 79 scenarios (had ${run1.length})`);
+    assert.ok(run1.length >= 97, `Must have at least 97 scenarios (had ${run1.length})`);
   });
 });

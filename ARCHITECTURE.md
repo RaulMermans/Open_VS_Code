@@ -153,7 +153,7 @@ The audited Kilo baseline remains in repository history for provenance and possi
 ## Model Routing
 Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `RoutedModelGateway` in production. Routing is based dynamically on `AgentMode` with no LLM dependency in the routing decision.
 
-## Controlled Terminal UX & Review Boundary (Sprint 3D / 3D.1)
+## Controlled Terminal UX & Review Boundary (Sprint 3D / 3D.1 / 3D.2 / 3D.3 ✅ CLOSED PERMANENTLY)
 
 ```text
  VerificationEngine (SOLE Execution Authority)
@@ -162,16 +162,19 @@ Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `Rout
    │  StringDecoder(utf-8) — chunk boundary safe               │
    ▼                                                            │
  AgentRunner                                                    │
-   │  verification.output event ◄───────────────────────────────┘
+   │  verification.started (executionId)                        │
+   │  verification.output event (executionId) ◄─────────────────┘
+   │  verification.completed (executionId)
    ▼
  ChatController
-   │  handleAgentEvent("verification.output") → appendOutput
+   │  handleAgentEvent(exact executionId routing) → appendOutput
    │  requestConfirmation — fail-closed validation (no fallbacks)
    ▼
  TerminalReviewController (Bounded Prefix Buffer, Registry)
    │  maxOutputBytes: 16 KB / stream (prefix, not ring)
    │  maxReviews: 50, maxTotalRetainedBytes: 1 MB
    │  Evicts oldest completed entries; never evicts active
+   │  Enforces executionId: string (zero fallback generation)
    ▼
  IDE Webview (Presentation Only — textContent, XSS-immune)
    │ (terminal.respond / cancel / toggle / copy)
@@ -179,13 +182,19 @@ Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `Rout
 
 - **Execution Authority**: Subprocess spawning remains strictly in `VerificationEngine`. The IDE host, `ChatController`, `TerminalReviewController`, and Webview have zero spawn authority.
 - **Safety Invariant**: Strictly `shell: false`. No arbitrary command execution, no command chaining, no `bash -c` evaluation.
-- **Human Approval**: Mandatory explicit confirmation gate (`CONFIRM`). No auto-approval. Fail-closed: malformed prepared commands resolve immediately to `REJECT` with no fallback substitution.
-- **Live Output Streaming**: `VerificationEngine` delivers stdout/stderr chunks via `onOutput` callback; `AgentRunner` emits `verification.output` events; `ChatController` pipes them into `TerminalReviewController.appendOutput`. Webview renders with `textContent` (XSS-immune).
+- **Human Approval**: Mandatory explicit confirmation gate (`CONFIRM`). No auto-approval. Fail-closed: malformed prepared commands (including missing or empty `verificationId`) resolve immediately to `REJECT` with no fallback substitution.
+- **Live Output Streaming**: `VerificationEngine` delivers stdout/stderr chunks via `onOutput` callback; `AgentRunner` emits `verification.output` events with explicit `executionId`; `ChatController` routes them strictly by exact ID into `TerminalReviewController.appendOutput`. Webview renders with `textContent` (XSS-immune).
 - **Bounded Prefix Buffer**: Each stream retains the first 16 KB (configurable). `truncateUtf8Buffer` prevents split multi-byte sequences at limits. `stdoutTruncated` / `stderrTruncated` flags signal overflow. This is a **prefix** buffer, not a ring buffer.
 - **7 Active Lifecycle States**: `WAITING_APPROVAL`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `REJECTED`. The dead `PREPARED` state has been removed.
 - **Bounded Registry**: `TerminalReviewController` enforces `maxReviews` and `maxTotalRetainedBytes` limits by evicting the oldest completed entry when either limit is exceeded.
 - **Deterministic Process Tree Cleanup**: Cancellation and timeout both kill parent and all descendants via `process.kill(-child.pid, ...)` on POSIX. Proof by real E2E scenarios 53–55.
-- **Canonical Execution Identity (Sprint 3D.2)**: `PreparedVerification.verificationId` is passed directly as `executionId` across all stages (`confirmation` → `TerminalReview` → `verification.output` → `verification.completed` → `terminal.updated`). Output events route strictly by execution identity with zero fallback to `activeTerminal`.
-- **Extension Deactivation Closure (Sprint 3D.2)**: Extension `deactivate()` triggers `chatController.cancelTurn()`, cleanly propagating the `AbortSignal` to kill the subprocess tree, clearing the terminal review registry, and preventing post-deactivation events or resurrection.
+- **Canonical Execution Identity (Sprint 3D.2 & 3D.3)**: `PreparedVerification.verificationId` is passed directly as `executionId` across all stages (`confirmation` → `TerminalReview` → `verification.started` → `verification.output` → `verification.completed` → `terminal.updated`). Output and lifecycle events route strictly by execution identity with zero fallback to `activeTerminal`.
+- **Exact Lifecycle Event Routing & Review Isolation (Sprint 3D.3)**:
+  - `verification.started`, `verification.output`, `verification.completed`, `verification.failed`, and `verification.rejected` route strictly by `payload.executionId`.
+  - `TerminalReviewController.registerPreparedCommand` requires explicit, non-empty `executionId` (no silent ID generation).
+  - Multi-review isolation: events for Review A never mutate Review B. Mismatched or forged IDs are safe no-ops.
+  - Active review protection: `state.activeTerminal` is only synchronized when its `executionId` matches the incoming event. Background review output does not trigger `terminal.updated` broadcasts for the active review.
+  - Turn & deactivation safety: stale completion events after a new chat turn do not resurrect `activeTerminal`; late events after extension deactivation are safe no-ops.
+- **Extension Deactivation Closure (Sprint 3D.2)**: Extension `deactivate()` triggers `chatController.cancelTurn()`, cleanly propagating the `AbortSignal` to kill the subprocess tree, clearing the terminal review registry to 0 entries, and preventing post-deactivation events or resurrection.
 - **Zero Model Calls**: Presentation actions (expand, toggle, copy, cancel, reject) trigger zero LLM calls.
 
