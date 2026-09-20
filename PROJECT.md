@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 3E ✅ CLOSED (Editor-Native Autocomplete)
+Sprint 3E & 3E.1 ✅ PERMANENTLY CLOSED (Editor-Native Autocomplete & Production Wiring)
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
@@ -39,5 +39,5 @@ Sprint 3E ✅ CLOSED (Editor-Native Autocomplete)
 - Phase D.1 (Sprint 3D.1): Terminal Runtime Truth. Live output streaming, UTF-8 safety, bounded prefix buffer, PREPARED state removal, fail-closed validation, bounded registry, deterministic process group cleanup proofs. 59 terminal scenarios, 318 total tests pass. ✅ CLOSED.
 - Phase D.2 (Sprint 3D.2): Execution Identity & Deactivation Closure. Canonical execution identity preserved end-to-end (verificationId = executionId), exact ID routing without fallback, real deactivation process tree termination without prior manual cancel, post-deactivation registry flush. 79 terminal scenarios, 318 total tests pass. ✅ CLOSED PERMANENTLY.
 - Phase D.3 (Sprint 3D.3): Exact Lifecycle Event Routing & Review Isolation. Canonical verificationId emitted across all verification lifecycle events (started, output, completed, failed, rejected), ChatController fail-closed validation requiring non-empty verificationId, zero fallback ID generation in registerPreparedCommand, exact-ID routing via registry lookup with zero activeTerminal routing authority, complete multi-review isolation. 97 terminal scenarios pass deterministically on Run 1 and Run 2. Full workspace clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals twice. Sprint 3D ✅ CLOSED PERMANENTLY.
-- Phase E (Sprint 3E): Editor-Native Autocomplete. Isolated non-AgentRunner execution path, editor-local bounded context, ModelRouter capability filtering (FIM / autocomplete), injectable debounce scheduler, cancellation, stale-result rejection, output sanitization, native InlineCompletionItem integration, zero cloud fallback. 70 deterministic evaluation scenarios pass Run 1 and Run 2. Full workspace clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals twice. ✅ CLOSED.
+- Phase E (Sprint 3E & 3E.1): Editor-Native Autocomplete & Production Wiring. Isolated non-AgentRunner execution path, editor-local bounded context, ModelRouter capability filtering (FIM / autocomplete), native InlineCompletionItem registration on onStartupFinished, safe zero-deployment default, real live editor stale guards (URI, version, line, character, supersession), deterministic in-flight request deduplication, single-use acceptance telemetry, strict UTF-16 surrogate safety, full deactivation cleanup. 90 deterministic evaluation scenarios pass Run 1 and Run 2 with deep strict equality. Full workspace clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals twice. ✅ PERMANENTLY CLOSED.
 - Next: Sprint 4A — Security Hardening → NEXT

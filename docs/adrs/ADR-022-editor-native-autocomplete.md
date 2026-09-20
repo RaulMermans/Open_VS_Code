@@ -171,6 +171,37 @@ Autocomplete is skipped for files matching sensitive patterns (`.env`, `.env.*`,
 
 Sprint 3E validates architecture, contracts, routing, IDE lifecycle, cancellation, stale guards, sanitization, and telemetry. **No real FIM model is downloaded or run on the development machine.** Real model quality benchmarking is deferred to Sprint 4D on the target inference machine.
 
+### Sprint 3E.1 — Production Wiring & Stale-Safety Closure
+
+1. **Native Extension Activation:**
+   - `packages/vscode-integration/package.json` activates on `onStartupFinished`.
+   - `activate()` initializes `AutocompleteController` and registers native `vscode.languages.registerInlineCompletionItemProvider` for all documents (`*`).
+   - `open-vs-code.toggleAutocomplete` command is contributed and registered to dynamically enable/disable the provider.
+
+2. **Safe Zero-Deployment Default:**
+   - When no routes or deployments are configured (`.open-vs-code/models.json` absent or empty), `createProductionAutocompleteGateway` defaults to a safe zero-deployment configuration.
+   - Provider requests catch `RouteUnavailableError` quietly and return `null` (`telemetry.empty++`, `telemetry.failed == 0`).
+   - Zero error dialogs, zero crashes, zero cloud/network/download fallback.
+
+3. **Live Editor Stale-Result Guards:**
+   - Completion results are validated against live editor state via `LiveEditorState` supplier (`documentUri`, `documentVersion`, `cursorLine`, `cursorCharacter`).
+   - Each state change alone triggers immediate stale discard (`staleDiscarded++`, returns `null`).
+   - Newer request supersession is tracked via `#latestRequestId`; superseded older results increment `staleDiscarded++`.
+
+4. **In-Flight Request Deduplication:**
+   - Deterministic duplicate key computed from `documentUri`, `documentVersion`, `cursorLine`, `cursorCharacter`, and bounded `prefix`/`suffix` hash (no random IDs).
+   - Identical in-flight or pending requests share the active promise; provider invocations remain strictly 1.
+   - Distinct requests (e.g. cursor moved or text changed) bypass deduplication and execute independently.
+
+5. **Single-Use Acceptance Telemetry:**
+   - Acceptance registry entries are consumed and removed upon first acceptance invocation.
+   - Subsequent double-accept calls, unknown IDs, or evicted entries produce a delta of 0 (`telemetry.accepted` unchanged).
+
+6. **UTF-16 Surrogate Safety:**
+   - Comprehensive unicode surrogate-pair boundaries handled via `truncateStartSafe`, `truncateEndSafe`, and `cleanIsolatedSurrogates`.
+   - Prefix, suffix, total char ceiling, output token caps, and overlap sanitization never slice between high and low surrogate pairs.
+
+
 ## Consequences
 
 ### Positive

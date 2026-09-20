@@ -57,18 +57,21 @@ STATUS: COMPLETE
     - Full workspace: all tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice
     - Sprint 3D is PERMANENTLY CLOSED.
 
-Sprint 3E — Editor-Native Autocomplete ✅ CLOSED
+Sprint 3E & 3E.1 — Editor-Native Autocomplete & Production Wiring ✅ PERMANENTLY CLOSED
   - Autonomous separate execution path: zero dependency on AgentRunner, ToolRuntime, MutationEngine, VerificationEngine, MCP, or ProjectMemory
+  - Production extension activation: registered on onStartupFinished, contributed toggle command, native registerInlineCompletionItemProvider for all documents ("*")
+  - Safe zero-deployment behavior: defaults to safe empty routing configuration; unconfigured deployments yield quiet null without errors, popups, or cloud fallback
   - Dedicated AutocompleteService orchestrating context assembly, debounce, cancellation, stale safety, sanitization, and bounded telemetry
+  - Real live editor stale guards: document version change alone, cursor movement alone, active document URI change alone, and newer request supersession each trigger stale discarded
+  - In-flight request deduplication: deterministic editor and context hash key shares active promise without invoking provider a second time
+  - Single-use acceptance telemetry: registry entries consumed upon first accept; double-accept and unknown IDs produce zero delta
+  - Strict UTF-16 surrogate safety: prefix, suffix, total budget, output cap, and overlap sanitizer never produce orphaned surrogates
   - Editor-local context only: unsaved live editor buffer captured; zero Markdown brain or RAG disk reads; bounded budgets (prefix ~2,000 tokens, suffix ~1,000 tokens, total ceiling 3,500 tokens)
   - Sensitive file suppression: .env, *.pem, *.key skipped immediately with 0 provider calls
   - ModelRouter reused with dedicated taskClass: "autocomplete" and requiredCapabilities: ["autocomplete"]; chat-only models strictly rejected; zero cloud fallback
-  - Injectable debounce scheduler (100ms default), in-flight cancellation via AbortSignal, and inference timeout (3,000ms cap)
-  - Stale-result guards rejecting outdated document versions, moved cursors, changed document URIs, and superseded request IDs
-  - Output sanitization removing code fences, exact prefix echo, and exact suffix overlap
-  - Native VS Code InlineCompletionItem integration with insertion text beginning at cursor and internal acceptance command telemetry hook
-  - 70 deterministic evaluation scenarios pass Run 1 and Run 2 with deep equality (zero failures)
-  - Full workspace clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice
+  - Full deactivation cleanup: disposes native provider, cancels in-flight tasks, and discards late results
+  - 90 deterministic evaluation scenarios pass Run 1 and Run 2 with deep strict equality (zero failures)
+  - Full workspace clean: all unit and E2E tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice
 
 Next:
 Sprint 4A — Security Hardening → NEXT

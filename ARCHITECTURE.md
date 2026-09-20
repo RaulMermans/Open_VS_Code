@@ -198,25 +198,31 @@ Uses a `models.json` config and a deterministic `ModelRouter` wrapped by a `Rout
 - **Extension Deactivation Closure (Sprint 3D.2)**: Extension `deactivate()` triggers `chatController.cancelTurn()`, cleanly propagating the `AbortSignal` to kill the subprocess tree, clearing the terminal review registry to 0 entries, and preventing post-deactivation events or resurrection.
 - **Zero Model Calls**: Presentation actions (expand, toggle, copy, cancel, reject) trigger zero LLM calls.
 
-## Editor-Native Autocomplete Architecture (Sprint 3E ✅ CLOSED)
+### Editor-Native Autocomplete Architecture (Sprint 3E & 3E.1 ✅ PERMANENTLY CLOSED)
 
 ```text
-VS Code Inline Completion API (registerInlineCompletionItemProvider)
+VS Code Native Inline Completion API (registerInlineCompletionItemProvider)
+  │  - Activated on onStartupFinished in production extension
+  │  - Registered unconditionally for all documents ("*")
+  │  - Contributes toggle command (open-vs-code.toggleAutocomplete)
   │
   ▼
 AutocompleteController (packages/vscode-integration)
   │  - Captures live unsaved editor buffer (snapshot)
   │  - Maps VS Code CancellationToken to AbortSignal
+  │  - Evaluates live editor state supplier (URI, version, line, character)
   │  - Returns native vscode.InlineCompletionItem
-  │  - Binds acceptance telemetry command (open-vs-code.autocompleteAccepted)
+  │  - Attaches single-use acceptance telemetry command (open-vs-code.autocompleteAccepted)
+  │  - Full disposal cleanup on extension deactivation
   ▼
 AutocompleteService (packages/agent-core)
   │  - Injectable debounce scheduler (100ms default)
   │  - Request superseding (typing cancels pending debounce)
   │  - In-flight cancellation (propagates AbortSignal to provider)
-  │  - Request deduplication & inference timeout (3,000ms cap)
-  │  - Stale-result guards (document URI, document version, latest request ID)
-  │  - Output sanitization (code fences, prefix echo, suffix overlap, char ceiling)
+  │  - Deterministic in-flight request deduplication via editor context hash (shares promise)
+  │  - Live editor stale-result guards (document URI, version, cursor line/char, supersession)
+  │  - Single-use acceptance registry (consumed upon first accept)
+  │  - Output sanitization (code fences, prefix echo, suffix overlap, output cap)
   │  - Session-bounded local telemetry (zero source text)
   ▼
 AutocompleteContextBuilder (packages/agent-core)
@@ -225,11 +231,13 @@ AutocompleteContextBuilder (packages/agent-core)
   │  - Bounded suffix (~1,000 tokens / 4,000 chars, earliest preserved)
   │  - Total ceiling: 3,500 tokens / 14,000 chars; max output: 256 tokens / 1,024 chars
   │  - Sensitive file protection (.env, *.pem, *.key skipped without model invocation)
-  │  - UTF-16 surrogate-pair boundary safety
+  │  - Strict UTF-16 surrogate-pair boundary safety (no orphaned surrogates)
   ▼
 AutocompleteGateway (packages/agent-core)
   │  - Separate from RoutedModelGateway / AgentRunner
+  │  - Safe zero-deployment production factory (createProductionAutocompleteGateway)
   │  - Uses ModelRouter with taskClass: "autocomplete" and requiredCapabilities: ["autocomplete"]
+  │  - Quiet empty completion on RouteUnavailableError (zero error popups / crashes)
   ▼
 ModelRouter (Deterministic capability-based candidate selection)
   │  - Rejects chat-only deployments lacking "autocomplete" capability
@@ -242,5 +250,6 @@ AutocompleteProvider (packages/agent-core)
 
 - **Architectural Isolation**: Autocomplete has **zero** dependency on `AgentRunner`, `ToolRuntime`, `MutationEngine`, `VerificationEngine`, `MCP`, or `ProjectMemory`.
 - **Insertion Authority**: The user's editor acceptance action is the sole insertion authority; suggestions are rendered exclusively via native VS Code ghost text.
-- **Zero Cloud Fallback**: If no compatible local route exists, autocomplete yields an empty result silently without user-facing errors.
-
+- **Zero Cloud Fallback**: If no compatible local route exists, autocomplete yields an empty result silently without user-facing errors or cloud requests.
+- **Stale-Result Resilience**: Independent live editor guards verify document URI, document version, cursor line, and cursor character before displaying suggestions.
+- **Deduplication**: Identical editor contexts during debounce or in-flight inference share execution, bounding provider calls to exactly 1.
