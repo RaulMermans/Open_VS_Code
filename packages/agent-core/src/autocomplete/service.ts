@@ -385,8 +385,10 @@ export class AutocompleteService {
    * Unknown / stale / evicted IDs are silently ignored.
    */
   recordAccepted(requestId: string): void {
-    const entry = this.#acceptanceRegistry.find(e => e.requestId === requestId)
-    if (!entry) return  // Unknown / stale — safe no-op
+    const entryIndex = this.#acceptanceRegistry.findIndex(e => e.requestId === requestId)
+    if (entryIndex === -1) return  // Unknown / stale / evicted / already accepted — safe no-op
+    const entry = this.#acceptanceRegistry[entryIndex]!
+    this.#acceptanceRegistry.splice(entryIndex, 1)
     this.#telemetry.accepted++
     this.#telemetry.acceptedChars += entry.generatedChars
   }

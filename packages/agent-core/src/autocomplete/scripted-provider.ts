@@ -32,7 +32,7 @@ import type { AutocompleteProvider, AutocompleteRequest, AutocompleteResponse } 
  */
 export type ScriptedAutocompleteStep =
   | { kind: "ready"; text: string; delayMs?: number }
-  | { kind: "gate" }              // waits for external gate signal (for cancellation tests)
+  | { kind: "gate"; text?: string }              // waits for external gate signal (for cancellation tests)
   | { kind: "error"; error: Error }
   | { kind: "empty" }
 
@@ -121,7 +121,7 @@ export class ScriptedAutocompleteProvider implements AutocompleteProvider {
         if (request.signal.aborted) {
           throw new Error("ScriptedAutocompleteProvider: aborted after gate")
         }
-        return buildResponse("", this)
+        return buildResponse(step.text ?? "", this)
       }
 
       case "error": {

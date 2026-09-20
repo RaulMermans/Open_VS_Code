@@ -22,6 +22,8 @@ import {
   MIN_PREFIX_NON_WS_CHARS,
   estimateTokensFromChars,
 } from "./budget.ts"
+import { truncateStartSafe, truncateEndSafe } from "./unicode.ts"
+
 
 /**
  * Raw input from the live editor buffer.
@@ -117,16 +119,7 @@ const SUPPORTED_LANGUAGES = new Set([
  * Avoids splitting inside a Unicode surrogate pair at the trim boundary.
  */
 function budgetPrefix(raw: string): { text: string; truncated: boolean } {
-  if (raw.length <= PREFIX_CHAR_CEILING) {
-    return { text: raw, truncated: false }
-  }
-  // Keep right-most portion
-  let start = raw.length - PREFIX_CHAR_CEILING
-  // Advance past any high-surrogate at the boundary
-  while (start < raw.length && isHighSurrogate(raw.charCodeAt(start))) {
-    start++
-  }
-  return { text: raw.slice(start), truncated: true }
+  return truncateStartSafe(raw, PREFIX_CHAR_CEILING)
 }
 
 /**
@@ -134,20 +127,9 @@ function budgetPrefix(raw: string): { text: string; truncated: boolean } {
  * Avoids splitting inside a Unicode surrogate pair at the trim boundary.
  */
 function budgetSuffix(raw: string): { text: string; truncated: boolean } {
-  if (raw.length <= SUFFIX_CHAR_CEILING) {
-    return { text: raw, truncated: false }
-  }
-  let end = SUFFIX_CHAR_CEILING
-  // Back up past any high-surrogate at the boundary
-  while (end > 0 && isHighSurrogate(raw.charCodeAt(end - 1))) {
-    end--
-  }
-  return { text: raw.slice(0, end), truncated: true }
+  return truncateEndSafe(raw, SUFFIX_CHAR_CEILING)
 }
 
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff
-}
 
 /**
  * Check whether a relative path matches a sensitive file pattern.
@@ -204,7 +186,7 @@ export function buildAutocompleteContext(snapshot: EditorSnapshot): ContextResul
   let finalSuffixTruncated = suffixTruncated
   if (prefix.length + suffix.length > TOTAL_CHAR_CEILING) {
     const remainingForSuffix = Math.max(0, TOTAL_CHAR_CEILING - prefix.length)
-    finalSuffix = suffix.slice(0, remainingForSuffix)
+    finalSuffix = truncateEndSafe(suffix, remainingForSuffix).text
     finalSuffixTruncated = true
   }
 

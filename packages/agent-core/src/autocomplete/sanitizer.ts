@@ -14,6 +14,13 @@
  */
 
 import { MAX_OUTPUT_CHARS } from "./budget.ts"
+import {
+  truncateEndSafe,
+  isHighSurrogate,
+  isLowSurrogate,
+  cleanIsolatedSurrogates,
+} from "./unicode.ts"
+
 
 /**
  * Maximum exact-overlap suffix to check for prefix-echo and suffix-overlap.
@@ -63,6 +70,10 @@ function stripCodeFence(text: string): string {
 function removePrefixEcho(generated: string, prefix: string): string {
   const checkLen = Math.min(MAX_OVERLAP_CHECK, prefix.length, generated.length)
   for (let len = checkLen; len > 0; len--) {
+    // Avoid splitting surrogate pairs at the cut points
+    if (isLowSurrogate(prefix.charCodeAt(prefix.length - len))) continue
+    if (len < generated.length && isLowSurrogate(generated.charCodeAt(len))) continue
+
     const prefixTail = prefix.slice(prefix.length - len)
     if (generated.startsWith(prefixTail)) {
       return generated.slice(len)
@@ -87,6 +98,11 @@ function removeSuffixOverlap(generated: string, suffix: string): string {
   if (!suffix) return generated
   const checkLen = Math.min(MAX_OVERLAP_CHECK, suffix.length, generated.length)
   for (let len = checkLen; len > 0; len--) {
+    // Avoid splitting surrogate pairs at the cut points
+    if (isHighSurrogate(suffix.charCodeAt(len - 1))) continue
+    const cutInGen = generated.length - len
+    if (cutInGen > 0 && isHighSurrogate(generated.charCodeAt(cutInGen - 1))) continue
+
     const suffixHead = suffix.slice(0, len)
     if (generated.endsWith(suffixHead)) {
       return generated.slice(0, generated.length - len)
@@ -121,8 +137,8 @@ function trimTrailingBlankLines(text: string): string {
 export function sanitizeCompletion(raw: string, prefix: string, suffix: string): string {
   if (!raw) return ""
 
-  // 1. Hard character ceiling
-  let text = raw.length > MAX_OUTPUT_CHARS ? raw.slice(0, MAX_OUTPUT_CHARS) : raw
+  // 1. Hard character ceiling (safe against splitting surrogate pairs)
+  let text = truncateEndSafe(raw, MAX_OUTPUT_CHARS).text
 
   // 2. Code-fence stripping
   text = stripCodeFence(text)
@@ -136,7 +152,10 @@ export function sanitizeCompletion(raw: string, prefix: string, suffix: string):
   // 5. Trim trailing blank lines
   text = trimTrailingBlankLines(text)
 
-  // 6. Empty/whitespace guard
+  // 6. Clean any isolated surrogates
+  text = cleanIsolatedSurrogates(text)
+
+  // 7. Empty/whitespace guard
   if (!text || /^\s*$/.test(text)) return ""
 
   return text
