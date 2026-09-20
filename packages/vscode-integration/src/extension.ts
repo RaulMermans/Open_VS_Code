@@ -154,8 +154,8 @@ class VSCodeIdeHost implements IdeHost {
 import { ChatController } from './chat-controller.js';
 import { ChatViewProvider } from './chat-view-provider.js';
 import { DiffReviewController } from './diff-review-controller.js';
-
 import { TerminalReviewController } from './terminal-review-controller.js';
+import { AutocompleteController } from './autocomplete-controller.js';
 
 let activeBridge: AgentSessionBridge | null = null;
 let currentAbortController: AbortController | null = null;
@@ -163,16 +163,20 @@ let host: VSCodeIdeHost | null = null;
 let chatController: ChatController | null = null;
 let diffReviewController: DiffReviewController | null = null;
 let terminalReviewController: TerminalReviewController | null = null;
+let autocompleteController: AutocompleteController | null = null;
 
 export const _testSeam = {
   get activeBridge() { return activeBridge; },
   bridgeFactory: null as any,
   get chatController() { return chatController; },
   get terminalReviewController() { return terminalReviewController; },
+  get autocompleteController() { return autocompleteController; },
   /** For tests only: inject a ChatController so deactivate() exercises the real path. */
   setChatController(c: ChatController | null) { chatController = c; },
   /** For tests only: inject a TerminalReviewController so deactivate() clears it. */
   setTerminalReviewController(c: TerminalReviewController | null) { terminalReviewController = c; },
+  /** For tests only: inject an AutocompleteController so deactivate() exercises the real path. */
+  setAutocompleteController(c: AutocompleteController | null) { autocompleteController = c; },
 };
 
 const HALO_TOKEN_SECRET_KEY = 'halo.appToken';
@@ -278,6 +282,10 @@ export function deactivate() {
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
+  }
+  if (autocompleteController) {
+    autocompleteController.dispose();
+    autocompleteController = null;
   }
   if (chatController) {
     chatController.cancelTurn();
