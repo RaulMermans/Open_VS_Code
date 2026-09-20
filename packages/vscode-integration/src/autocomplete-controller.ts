@@ -38,6 +38,7 @@ export interface AutocompleteControllerOptions {
 export class AutocompleteController implements vscode.InlineCompletionItemProvider {
   readonly service: AutocompleteService;
   readonly #disposables: vscode.Disposable[] = [];
+  #registered = false;
 
   constructor(options: AutocompleteControllerOptions) {
     this.service = new AutocompleteService({
@@ -52,8 +53,14 @@ export class AutocompleteController implements vscode.InlineCompletionItemProvid
    * Register this provider and commands with VS Code.
    * Call from extension activate().
    * The returned disposables should be pushed to context.subscriptions.
+   * Idempotent: repeated calls do not register duplicate providers.
    */
   register(context: vscode.ExtensionContext): vscode.Disposable[] {
+    if (this.#registered) {
+      return this.#disposables;
+    }
+    this.#registered = true;
+
     const providerDisposable = vscode.languages.registerInlineCompletionItemProvider(
       { pattern: '**' },
       this,
@@ -115,6 +122,18 @@ export class AutocompleteController implements vscode.InlineCompletionItemProvid
       cursorCharacter: position.character,
     };
 
+    // Live editor state supplier that inspects the active editor upon completion
+    const liveEditorSupplier = () => {
+      const active = vscode.window.activeTextEditor;
+      if (!active) return null;
+      return {
+        documentUri: active.document.uri.toString(),
+        documentVersion: active.document.version,
+        cursorLine: active.selection.active.line,
+        cursorCharacter: active.selection.active.character,
+      };
+    };
+
     // Map VS Code CancellationToken to AbortSignal
     const abortController = new AbortController();
     if (token.isCancellationRequested) {
@@ -127,9 +146,22 @@ export class AutocompleteController implements vscode.InlineCompletionItemProvid
       snapshot,
       document.uri.toString(),
       abortController.signal,
+      liveEditorSupplier,
     );
 
     if (!result || !result.text) {
+      return null;
+    }
+
+    // Final live editor check before returning completion item
+    const live = liveEditorSupplier();
+    if (
+      !live ||
+      live.documentUri !== document.uri.toString() ||
+      live.documentVersion !== document.version ||
+      live.cursorLine !== position.line ||
+      live.cursorCharacter !== position.character
+    ) {
       return null;
     }
 
@@ -159,5 +191,6 @@ export class AutocompleteController implements vscode.InlineCompletionItemProvid
       d.dispose();
     }
     this.#disposables.length = 0;
+    this.#registered = false;
   }
 }

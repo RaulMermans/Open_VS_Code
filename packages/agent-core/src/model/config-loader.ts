@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
+
 import { join } from "node:path"
 import type {
   RoutingConfiguration,
@@ -22,7 +24,18 @@ export class ConfigValidationError extends Error {
 }
 
 const VALID_PROVIDER_KINDS: readonly ProviderKind[] = ["scripted", "openai_compatible_local", "fake"]
-const VALID_CAPABILITIES: readonly RoutingModelCapability[] = ["toolUse", "structuredOutput", "coding", "reasoning", "longContext", "vision"]
+const VALID_CAPABILITIES: readonly RoutingModelCapability[] = [
+
+  "toolUse",
+  "structuredOutput",
+  "coding",
+  "reasoning",
+  "longContext",
+  "vision",
+  "fim",
+  "autocomplete",
+]
+
 const VALID_SPECIALIZATIONS: readonly ModelSpecialization[] = ["general", "coding", "reasoning"]
 
 /**
@@ -167,6 +180,31 @@ export async function loadRoutingConfig(workspaceRoot: string): Promise<RoutingC
   let raw: string
   try {
     raw = await readFile(configPath, "utf-8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+    throw error
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new ConfigValidationError(["models.json is not valid JSON"])
+  }
+
+  return validateRoutingConfig(parsed)
+}
+
+/**
+ * Synchronous version of loadRoutingConfig for extension startup.
+ * Returns null if no config file exists (routing is optional).
+ * Throws ConfigValidationError for malformed config.
+ */
+export function loadRoutingConfigSync(workspaceRoot: string): RoutingConfiguration | null {
+  const configPath = join(workspaceRoot, ".open-vs-code", "models.json")
+  let raw: string
+  try {
+    raw = readFileSync(configPath, "utf-8")
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     throw error

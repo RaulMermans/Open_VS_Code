@@ -29,8 +29,10 @@ import type { RoutingConfiguration } from "../contracts/routing.ts"
 import { ModelRouter, RouteUnavailableError, type HealthChecker } from "../model/router.ts"
 import { StaticHealthChecker } from "../model/routed-gateway.ts"
 import { MAX_OUTPUT_TOKENS, estimateTokensFromChars } from "./budget.ts"
+import { loadRoutingConfigSync } from "../model/config-loader.ts"
 
 export type AutocompleteProviderRegistry = ReadonlyMap<string, AutocompleteProvider>
+
 
 export interface AutocompleteGatewayOptions {
   readonly config: RoutingConfiguration
@@ -103,3 +105,50 @@ export class AutocompleteGateway {
 }
 
 export { RouteUnavailableError }
+
+const EMPTY_ROUTING_CONFIG: RoutingConfiguration = {
+  providers: [],
+  models: [],
+  deployments: [],
+  routes: {},
+}
+
+/**
+ * Construct a production AutocompleteGateway from workspace routing config.
+ *
+ * If workspaceRoot is provided and contains a valid .open-vs-code/models.json,
+ * that routing configuration is loaded. Otherwise, a safe empty configuration
+ * (0 autocomplete deployments) is used.
+ *
+ * In production:
+ *   - ScriptedAutocompleteProvider is NEVER instantiated
+ *   - Real models are NEVER downloaded or eagerly invoked
+ *   - If no compatible autocomplete route exists, queries throw RouteUnavailableError,
+ *     which AutocompleteService quietly swallows without UI error or crash.
+ */
+export function createProductionAutocompleteGateway(
+  workspaceRoot?: string,
+  customProviders?: AutocompleteProviderRegistry,
+): AutocompleteGateway {
+  let config: RoutingConfiguration = EMPTY_ROUTING_CONFIG
+  if (workspaceRoot) {
+    try {
+      const loaded = loadRoutingConfigSync(workspaceRoot)
+      if (loaded) {
+        config = loaded
+      }
+    } catch {
+      // Malformed or missing models.json falls back safely to empty config
+      config = EMPTY_ROUTING_CONFIG
+    }
+  }
+
+  // In production with 0 configured autocomplete deployments or no provider instances,
+  // the provider registry is empty.
+  const providers = customProviders ?? new Map<string, AutocompleteProvider>()
+
+  return new AutocompleteGateway({
+    config,
+    providers,
+  })
+}

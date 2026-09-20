@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, type AutocompleteGateway } from '@open-vs-code/agent-core';
+
 
 class VSCodeIdeHost implements IdeHost {
   private outputChannel: vscode.OutputChannel;
@@ -36,7 +37,7 @@ class VSCodeIdeHost implements IdeHost {
     const active = vscode.window.activeTextEditor;
     if (!active) return null;
     const selection = active.selection;
-    if (selection.isEmpty) return null;
+    if (!selection || selection.isEmpty || !selection.start || !selection.end) return null;
     
     // Bound the selected text if it's too large
     let text = active.document.getText(selection);
@@ -177,6 +178,7 @@ export const _testSeam = {
   setTerminalReviewController(c: TerminalReviewController | null) { terminalReviewController = c; },
   /** For tests only: inject an AutocompleteController so deactivate() exercises the real path. */
   setAutocompleteController(c: AutocompleteController | null) { autocompleteController = c; },
+  autocompleteGatewayFactory: null as ((workspaceRoot?: string) => AutocompleteGateway) | null,
 };
 
 const HALO_TOKEN_SECRET_KEY = 'halo.appToken';
@@ -206,7 +208,18 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
+  // Wire production AutocompleteController into extension activation
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!autocompleteController) {
+    const gateway = _testSeam.autocompleteGatewayFactory
+      ? _testSeam.autocompleteGatewayFactory(workspaceRoot)
+      : createProductionAutocompleteGateway(workspaceRoot);
+    autocompleteController = new AutocompleteController({ gateway });
+  }
+  autocompleteController.register(context);
+
   chatController = new ChatController(host, diffReviewController, terminalReviewController, (options: { host: any, workspaceRoot: string, mode: 'ASK' | 'PLAN' | 'BUILD' | 'DEBUG' | 'REVIEW' }) => {
+
     if (_testSeam.bridgeFactory) {
       activeBridge = _testSeam.bridgeFactory(options);
     } else {
@@ -231,8 +244,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
   
   const updateContext = async () => {
-    if (chatController) {
-      chatController.refreshContext(await host!.getSnapshot());
+    if (chatController && host) {
+      try {
+        chatController.refreshContext(await host.getSnapshot());
+      } catch {
+        // Safe context refresh ignore
+      }
     }
   };
   

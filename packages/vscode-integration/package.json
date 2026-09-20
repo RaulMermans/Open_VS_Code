@@ -9,6 +9,7 @@
   "type": "commonjs",
   "main": "dist/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:open-vs-code.ask",
     "onCommand:open-vs-code.plan",
     "onCommand:open-vs-code.build",
@@ -47,6 +48,10 @@
         "title": "Agent: Review"
       },
       {
+        "command": "open-vs-code.toggleAutocomplete",
+        "title": "Open VS Code: Toggle Autocomplete"
+      },
+      {
         "command": "open-vs-code.setHaloToken",
         "title": "Open VS Code: Set HALO Application Token"
       },
@@ -55,6 +60,7 @@
         "title": "Open VS Code: Check HALO Connection"
       }
     ],
+
     "configuration": {
       "title": "Open VS Code",
       "properties": {
