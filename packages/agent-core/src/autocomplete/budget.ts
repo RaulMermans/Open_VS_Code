@@ -99,6 +99,10 @@ export const SENSITIVE_FILE_PATTERNS: readonly RegExp[] = [
   /\.env\./i,
   /\.(pem|key|p12|pfx|crt|cert|der)$/i,
   /\.(jks|keystore)$/i,
+  // SSH private key filenames (id_rsa, id_ed25519, id_ecdsa, id_dsa, etc.)
+  /\bid_[a-z0-9]+$/i,
+  // credentials files
+  /^credentials$/i,
 ]
 
 /**

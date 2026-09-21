@@ -7,3 +7,4 @@
 - [ADR-020: HALO Capability Provider](ADR-020-halo-capability-provider.md)
 - [ADR-021: Controlled Terminal UX and Presentation Boundary](ADR-021-controlled-terminal-execution.md)
 - [ADR-022: Editor-Native Autocomplete](ADR-022-editor-native-autocomplete.md)
+- [ADR-023: System Security Boundaries](ADR-023-system-security-boundaries.md)

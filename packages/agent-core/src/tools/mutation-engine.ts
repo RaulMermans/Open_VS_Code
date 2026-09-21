@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, unlink, mkdir, realpath, access } from "node:fs/promises"
+import { readFile, writeFile, rename, unlink, mkdir, realpath, access, lstat } from "node:fs/promises"
 import { resolve, relative, dirname, isAbsolute, join } from "node:path"
 import { createHash } from "node:crypto"
 import {
@@ -478,6 +478,37 @@ export class MutationEngine {
     }
     if (!prepared.valid) {
       return this.#failureResult(prepared, "INVALID_PATCH", "Prepared mutation is not valid")
+    }
+
+    // Re-verify path safety and containment at apply time to prevent TOCTOU symlink races
+    let currentResolvedPath: string
+    try {
+      currentResolvedPath = await resolveWritePath(this.#workspaceRoot, prepared.path, {
+        mustExist: prepared.operation === "patch",
+      })
+    } catch (err) {
+      if (err instanceof MutationFailure) {
+        return this.#failureResult(prepared, err.code, err.message)
+      }
+      return this.#failureResult(prepared, "PATH_ESCAPE", (err as Error).message)
+    }
+
+    if (currentResolvedPath !== prepared.resolvedPath) {
+      return this.#failureResult(prepared, "STALE_BASE", "Resolved target path changed since preparation")
+    }
+
+    // Disallow patching symlinks directly
+    if (prepared.operation === "patch") {
+      try {
+        const root = await realpath(this.#workspaceRoot)
+        const candidate = resolve(root, prepared.path)
+        const fileStat = await lstat(candidate)
+        if (fileStat.isSymbolicLink()) {
+          return this.#failureResult(prepared, "SYMLINK_ESCAPE", "Target path is a symlink")
+        }
+      } catch (err) {
+        return this.#failureResult(prepared, "FILE_NOT_FOUND", (err as Error).message)
+      }
     }
 
     let result: MutationResult

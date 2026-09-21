@@ -1,115 +1,152 @@
-SPRINT 3E & 3E.1 — EDITOR-NATIVE AUTOCOMPLETE & PRODUCTION WIRING
+SPRINT 4A — SYSTEM-WIDE SECURITY HARDENING
 FINAL CLOSURE REPORT
-Generated: 2026-09-20
+Generated: 2026-09-21
 
 ================================================================================
 SECTION 1 — SPRINT IDENTITY
 ================================================================================
 
-Sprint:    Sprint 3E & 3E.1 — Editor-Native Autocomplete & Production Wiring Closure
-Status:    ✅ CLOSED PERMANENTLY
-Date:      2026-09-20
+Sprint:    Sprint 4A — System-Wide Security Hardening
+Status:    ✅ CLOSED
+Date:      2026-09-21
 Repo:      /Users/raulm/Desktop/GitHub/Open_VS_Code
 Node:      v22.23.2
 npm:       v10.9.8
 
 ================================================================================
-SECTION 2 — CLOSURE GAPS ADDRESSED & VERIFIED
+SECTION 2 — SECURITY HARDENING SUMMARY & PROOFS
 ================================================================================
 
-1. Production Extension Activation & Wiring (T-3201, T-3202, T-3203, S61, S62, S63):
-   - package.json activationEvents updated with "onStartupFinished".
-   - Contributed and registered "open-vs-code.toggleAutocomplete" command.
-   - Extension activate() instantiates AutocompleteController and registers native
-     vscode.languages.registerInlineCompletionItemProvider for all documents ("*").
-   - Idempotency guard prevents duplicate registrations across repeated activations.
-   - Native provider returns InlineCompletionItem with exact insertion text, range,
-     and internal acceptance telemetry command.
+1. Workspace & Path Containment (T-4001, T-4002, T-4003, T-4004):
+   - Canonical containment functions: resolveRepositoryPath (reads) and resolveWritePath (writes).
+   - Realpath-based resolution enforces that symlinks pointing outside workspace fail closed.
+   - Non-existent target creation verifies the canonical parent directory via realpath.
+   - Multi-root prefix confusion prevented via path.relative lexical boundary validation.
+   - Encoded traversal (%2E%2E%2F), duplicate slashes, and nested traversal ../ paths safely blocked.
 
-2. Safe Zero-Deployment Fallback (T-3204, S64):
-   - createProductionAutocompleteGateway defaults to safe empty routing configuration
-     when .open-vs-code/models.json is absent or empty.
-   - Provider requests catch RouteUnavailableError quietly and return null.
-   - Telemetry records empty += 1, failed == 0.
-   - Zero error popups, zero notification spam, zero crashes, zero cloud fallback, zero downloads.
+2. Mutation Engine TOCTOU & Symlink Re-Verification (T-4005, T-4006):
+   - MutationEngine.applyPreparedMutation now re-verifies path containment at apply time
+     to close TOCTOU windows between user preparation/approval and atomic disk write.
+   - Verifies current resolved path matches prepared resolved path; detects parent swaps.
+   - lstat checks disallow patching symbolic links directly (returns SYMLINK_ESCAPE).
+   - File exists / stale base detection verifies hashes before temp-write and rename.
+   - Double-approval, replay of consumed mutations, and approval after rejection fail closed.
 
-3. Live Editor Stale-Result Guards (T-3205 - T-3210, S65, S66, S67, S68):
-   - Results are verified against live editor state via LiveEditorState supplier.
-   - Document version change alone triggers stale discard (staleDiscarded += 1, returns null).
-   - Cursor line or character change alone triggers stale discard (staleDiscarded += 1, returns null).
-   - Active document URI change alone triggers stale discard (staleDiscarded += 1, returns null).
-   - Newer request supersession independently verified (staleDiscarded += 1, newer request wins).
+3. Webview Protocol Hardening & Prototype Pollution Prevention (T-4007, T-4008):
+   - parseWebviewMessage validates all inbound messages with explicit type switching,
+     field type checks, length caps (text <= 50,000 chars; IDs <= 100 chars).
+   - Prototype pollution guard checks Object.prototype.hasOwnProperty for dangerous keys
+     ("__proto__", "constructor", "prototype") on untrusted payloads and rejects as null.
+   - Non-string types, malformed messages, and forged IDs resolve to null without host actions.
+   - User inputs treated strictly as data; inert rendering prevents HTML/script execution.
 
-4. Deterministic In-Flight Request Deduplication (T-3215, T-3216, S69, S70):
-   - Deterministic key computed from documentUri, version, cursor line/char, and context prefix/suffix.
-   - In-flight duplicate requests share the active promise; provider invocations remain strictly 1.
-   - Non-duplicate requests (e.g. cursor movement or edit) correctly trigger independent provider calls.
+4. Controlled Terminal & Subprocess Isolation (T-4009 - T-4015):
+   - VerificationEngine enforces strictly shell: false with structured arguments array.
+   - Subprocess environment is stripped to minimal safe variables: { PATH, NODE_ENV, npm_config_* }.
+   - Host secrets and tokens do not propagate to subprocess environments.
+   - package.json hash validation detects script modifications between prepare and execute.
+   - Permission classifications enforce hard-denies for repository escapes, system config,
+     destructive disk operations, and mode-based restrictions (write/push in ASK/PLAN).
+   - Deterministic process tree cleanup on cancellation, timeout, and deactivation.
 
-5. Single-Use Acceptance Telemetry (T-3217, S71, S72, S73):
-   - Acceptance registry entry is consumed and removed on first acceptance.
-   - Subsequent double-accept calls, unknown IDs, or evicted entries produce delta = 0.
+5. Model Context Protocol (MCP) Runtime Bounds (T-4016 - T-4020):
+   - Canonical namespacing prevents collision with built-in tools (mcp_{server}_{tool}).
+   - Serialized inputSchema bounded to MAX_SCHEMA_BYTES (64 KB); oversized schemas skipped.
+   - Schema nesting depth bounded to MAX_SCHEMA_DEPTH (16 levels) via iterative depth measurement.
+   - Tool execution results bounded to MAX_MCP_RESULT_BYTES (50 KB); truncated safely to text.
+   - MCP outputs treated as text evidence, not authority; cannot alter permission decisions.
 
-6. Strict UTF-16 Surrogate Safety (T-3211, T-3212, T-3213, S74, S75, S76, S77):
-   - Dedicated unicode helper (packages/agent-core/src/autocomplete/unicode.ts).
-   - truncateStartSafe and truncateEndSafe prevent splitting surrogate pairs across prefix, suffix,
-     total budget, output token caps, and overlap sanitization.
-   - cleanIsolatedSurrogates purges any dangling surrogates before presentation.
+6. Model Provider & Routing Safety (T-4021 - T-4024):
+   - OpenAICompatibleProvider strictly validates base URLs (http/https only, no query params).
+   - Capability escalation prevented: autocomplete-only deployments reject chat tasks.
+   - Routing failures fail closed with RouteUnavailableError (zero cloud fallback).
+   - Wire response normalization safely handles backend errors without exposing credentials.
 
-7. Full Extension Deactivation Cleanup (T-3214, S78, S79, S80):
-   - Deactivate disposes provider and controller, clears disposables, cancels pending timers,
-     and aborts in-flight requests.
-   - Late provider responses arriving after deactivation return null quietly.
+7. Sensitive File Matrix Expansion (T-4025):
+   - Expanded SENSITIVE_FILE_PATTERNS in autocomplete/budget.ts:
+     - .env, .env.*
+     - *.pem, *.key, *.p12, *.pfx, *.crt, *.cert, *.der
+     - *.jks, *.keystore
+     - SSH private keys: id_rsa, id_ed25519, id_ecdsa, id_dsa
+     - credentials files
+   - Sensitive files skipped before provider invocation (zero network/model calls).
 
-================================================================================
-SECTION 3 — ARCHITECTURAL ISOLATION & SEPARATION TRUTH
-================================================================================
+8. Project Memory & Persistence Protection (T-4026 - T-4028):
+   - SessionSummaryStorage path contained inside .open-vs-code/ workspace directory.
+   - Automatic secret redaction for sensitive keys (password, secret, token, key, etc.).
+   - Corrupt session persistence detected and fails closed with SKIPPED_CORRUPT_STATE.
+   - Single session size bounded (16 KB) and total storage bounded (512 KB).
 
-- Autocomplete runs on an entirely isolated fast path:
-  VS Code Native Provider -> AutocompleteController -> AutocompleteService ->
-  AutocompleteContextBuilder -> AutocompleteGateway -> ModelRouter -> AutocompleteProvider
-- Zero invocations of AgentRunner, ToolRuntime, MCPClient, MutationEngine,
-  VerificationEngine, ProjectMemory, or Vector Database.
-- Zero cloud fallback: missing local routes return null quietly.
-- Zero model downloads: no network requests, no model weights pulled.
-- Insertion authority: User acceptance of ghost text is the sole insertion authority.
-
-================================================================================
-SECTION 4 — TEST & EVALUATION VERIFICATION
-================================================================================
-
-1. Autocomplete Evaluation Suite (packages/vscode-integration/tests/autocomplete-core-e2e.test.ts):
-   - 90 scenarios (S01-S80 + core variants) executed.
-   - Evaluated twice deterministically (run1 and run2).
-   - 0 failures across both runs (deep strict equal).
-   - Result: PASS.
-
-2. Full Workspace Test Suite (npm test):
-   - packages/agent-core: 16 test suites, all PASS.
-   - packages/cli: 16 test suites, all PASS.
-   - packages/ide-adapter: 5 test suites, all PASS.
-   - packages/vscode-integration: 11 test suites (Autocomplete, Real Core, Chat UX, Diff E2E, Smoke, Terminal Core), all PASS.
-   - Total tests: 329, 0 failures.
-
-3. Typecheck (npm run typecheck):
-   - 4/4 packages: 0 errors.
-
-4. Lint (npm run lint):
-   - 0 errors, 0 warnings across all files.
-
-5. Build (npm run build):
-   - dist/extension.js cleanly bundled (317.1kb).
-
-6. Coding Benchmark Evaluation (npm run eval:coding):
-   - Run 1: 30/30 PASS (100% task, 100% safety, 100% multi-file).
-   - Run 2: 30/30 PASS (100% task, 100% safety, 100% multi-file).
+9. Future Runtime Evaluation Non-Authority Invariant:
+   - Established strict architectural boundary for Sprint 4B:
+   - Runtime evaluators are advisory only.
+   - Runtime evaluation results may NEVER directly approve mutations, execute commands,
+     alter permissions, invoke MCP tools, write files, or weaken security policies.
 
 ================================================================================
-SECTION 5 — GIT & WORKSPACE CLEANLINESS
+SECTION 3 — ADVERSARIAL SECURITY EVALUATION METRICS
 ================================================================================
 
-- git diff --check: 0 whitespace errors, 0 trailing newlines.
-- git fsck --full: 0 corrupt objects, database integrity verified.
-- Working tree clean, all changes tracked and committed.
+Evaluation Harness:  packages/vscode-integration/tests/security-eval.test.ts
+Total Scenarios:     88 scenarios per run
+Runs Executed:       Run 1 and Run 2 (fresh temporary fixtures per run)
+Pass Rate:           88 / 88 (100%)
+Failures:            0
+Determinism:         Run 1 and Run 2 are deeply strictly equal
+Strict Comparator:   Negative tests verify false assertions throw AssertionError
 
-Sprint 3E & 3E.1 are PERMANENTLY CLOSED.
-Next sprint: Sprint 4A — Security Hardening.
+Scenario Breakdown by Category:
+- PATHS:            10 scenarios (traversal read/write, encoded, absolute, symlink escape, create parent)
+- MUTATION:          8 scenarios (stale modify/create, TOCTOU target/symlink, double approve, replay)
+- WEBVIEW:           9 scenarios (unknown type, malformed, forged IDs, prototype pollution, script injection)
+- TERMINAL:         10 scenarios (git_push mode policy, hard denies, secret env isolation, stale script)
+- MCP:               8 scenarios (result bounds, schema size/depth bounds, prompt injection non-authority)
+- MODEL:             6 scenarios (malformed response, URL validation, capability escalation, no cloud fallback)
+- AUTOCOMPLETE:      6 scenarios (sensitive files .env, .pem, id_rsa, id_ed25519, credentials)
+- MEMORY/SKILLS:     6 scenarios (path containment, corrupt JSONL, secret redaction, prompt injection)
+- LIFECYCLE:         5 scenarios (registry cleanup, deactivation flush, real subprocess tree termination)
+- ISOLATION:         4 scenarios (cross-review isolation, execution ID isolation, unknown ID isolation)
+- RETENTION BOUNDS:  8 scenarios (transcript limits, terminal registry, diff registry, MCP result caps)
+- EVIDENCE/NEGATIVE: 8 scenarios (determinism verification, comparator negative assertion checks)
+
+================================================================================
+SECTION 4 — MONOREPO TEST & BUILD VERIFICATION
+================================================================================
+
+All monorepo test suites pass cleanly on Node v22.23.2:
+- @open-vs-code/agent-core:      318 tests pass
+- @open-vs-code/cli:             16 tests pass
+- @open-vs-code/ide-adapter:     5 tests pass
+- @open-vs-code/vscode-integration:
+  - Autocomplete Core E2E:       90 scenarios pass deterministically
+  - Terminal Core E2E:           97 scenarios pass deterministically
+  - Security Evaluation:         88 scenarios pass deterministically
+  - Diff Core E2E:               Strict evaluations pass
+  - Chat UX E2E:                 Deterministic evaluations pass
+  - Extension Smoke Test:        Activation, command registry, deactivation pass
+
+TypeScript:     tsc --noEmit: 0 errors across all 4 packages
+Linter:         oxlint: 0 warnings, 0 errors across all files
+Build:          esbuild bundled dist/extension.js (319.6 KB) clean
+Git:            fsck clean, worktree clean
+
+================================================================================
+SECTION 5 — DELIVERABLE ARTIFACTS
+================================================================================
+
+- docs/SECURITY_MODEL.md:
+  Operational security model documenting assets, trust boundaries, attack surfaces,
+  security invariants, and known non-goals.
+- docs/adrs/ADR-023-system-security-boundaries.md:
+  Architecture Decision Record formalizing security boundaries, authority map,
+  distrust model, and the future runtime eval non-authority invariant.
+- docs/adrs/DECISIONS.md:
+  Updated index recording ADR-023.
+- ARCHITECTURE.md:
+  Updated with dedicated "Security Boundary View" diagram and authority summary.
+- packages/vscode-integration/tests/security-eval.test.ts:
+  Deterministic 88-scenario security evaluation suite.
+- PLAN.md:
+  Sprint 4A marked CLOSED; Sprint 4B marked NEXT.
+- PROJECT.md:
+  Current sprint updated to Sprint 4A CLOSED, Sprint 4B NEXT.

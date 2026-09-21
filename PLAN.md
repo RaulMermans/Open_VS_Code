@@ -73,5 +73,21 @@ Sprint 3E & 3E.1 — Editor-Native Autocomplete & Production Wiring ✅ PERMANEN
   - 90 deterministic evaluation scenarios pass Run 1 and Run 2 with deep strict equality (zero failures)
   - Full workspace clean: all unit and E2E tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice
 
+Sprint 4A — Security Hardening ✅ CLOSED
+  - Adversarial threat model, authority map, and security model documented in docs/SECURITY_MODEL.md and ADR-023 (docs/adrs/ADR-023-system-security-boundaries.md)
+  - Architecture updated with dedicated Security Boundary View in ARCHITECTURE.md
+  - 88 adversarial security evaluation scenarios in packages/vscode-integration/tests/security-eval.test.ts
+  - Determinism proven: two fresh runs compared for deep equality with zero failures
+  - Strict comparator negative tests prove false assertions are caught
+  - Symlink escape and path containment hardened: realpath-based containment across reads, writes, and non-existent create targets
+  - Mutation TOCTOU hardening: applyPreparedMutation re-verifies path containment and rejects symlink targets at apply time
+  - Webview protocol hardening: prototype pollution guard rejecting __proto__, constructor, and prototype own keys
+  - Sensitive file matrix expanded: SSH private keys (id_rsa, id_ed25519) and credentials files added to suppression patterns
+  - MCP runtime bounded: 64 KB maximum schema bytes and 16-level maximum nesting depth enforced
+  - Subprocess isolation: shell:false enforced, minimal environment (PATH, NODE_ENV, npm_config_*), secrets isolated
+  - Future Runtime Evals non-authority invariant established: evaluators are advisory only and cannot gain direct execution, mutation, or permission authority
+  - All monorepo regressions pass: 18 test suites / 88 security / 90 autocomplete / 97 terminal, 0 failures, 0 TypeScript errors, 0 linter errors, clean build
+
 Next:
-Sprint 4A — Security Hardening → NEXT
+Sprint 4B — Runtime Evals & Adaptive Control → NEXT
+

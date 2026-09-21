@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 3E & 3E.1 ✅ PERMANENTLY CLOSED (Editor-Native Autocomplete & Production Wiring)
+Sprint 4A ✅ CLOSED (System-Wide Security Hardening)
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
@@ -40,4 +40,5 @@ Sprint 3E & 3E.1 ✅ PERMANENTLY CLOSED (Editor-Native Autocomplete & Production
 - Phase D.2 (Sprint 3D.2): Execution Identity & Deactivation Closure. Canonical execution identity preserved end-to-end (verificationId = executionId), exact ID routing without fallback, real deactivation process tree termination without prior manual cancel, post-deactivation registry flush. 79 terminal scenarios, 318 total tests pass. ✅ CLOSED PERMANENTLY.
 - Phase D.3 (Sprint 3D.3): Exact Lifecycle Event Routing & Review Isolation. Canonical verificationId emitted across all verification lifecycle events (started, output, completed, failed, rejected), ChatController fail-closed validation requiring non-empty verificationId, zero fallback ID generation in registerPreparedCommand, exact-ID routing via registry lookup with zero activeTerminal routing authority, complete multi-review isolation. 97 terminal scenarios pass deterministically on Run 1 and Run 2. Full workspace clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals twice. Sprint 3D ✅ CLOSED PERMANENTLY.
 - Phase E (Sprint 3E & 3E.1): Editor-Native Autocomplete & Production Wiring. Isolated non-AgentRunner execution path, editor-local bounded context, ModelRouter capability filtering (FIM / autocomplete), native InlineCompletionItem registration on onStartupFinished, safe zero-deployment default, real live editor stale guards (URI, version, line, character, supersession), deterministic in-flight request deduplication, single-use acceptance telemetry, strict UTF-16 surrogate safety, full deactivation cleanup. 90 deterministic evaluation scenarios pass Run 1 and Run 2 with deep strict equality. Full workspace clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals twice. ✅ PERMANENTLY CLOSED.
-- Next: Sprint 4A — Security Hardening → NEXT
+- Phase F (Sprint 4A): System-Wide Security Hardening. Threat model & authority map documented (docs/SECURITY_MODEL.md, ADR-023), architectural security boundaries (ARCHITECTURE.md), 88 adversarial security evaluation scenarios in security-eval.test.ts passing Run 1 and Run 2 with deep strict equality and zero failures, strict comparator negative tests, realpath-based containment across reads/writes/creates, MutationEngine apply-time TOCTOU path/symlink re-verification, chat protocol prototype pollution guard, expanded sensitive file patterns (SSH private keys, credentials), bounded MCP schema size (64 KB) and depth (16 levels), subprocess isolation (shell:false, minimal env), future runtime evals non-authority rule established. ✅ CLOSED.
+- Next: Sprint 4B — Runtime Evals & Adaptive Control → NEXT

@@ -3,6 +3,37 @@ import { StdioMcpTransport } from "./mcp-transport.ts";
 import { TestMcpTransport } from "./mcp-test-transport.ts";
 import type { McpTransport } from "./mcp-transport.ts";
 
+/** Maximum serialized schema bytes before rejection (64 KB). */
+export const MAX_SCHEMA_BYTES = 64 * 1024;
+
+/** Maximum JSON nesting depth allowed in an MCP schema. */
+export const MAX_SCHEMA_DEPTH = 16;
+
+/** Measure the maximum nesting depth of a parsed JSON value (without recursion beyond limit). */
+function measureDepth(value: unknown, depth: number): number {
+  if (depth >= MAX_SCHEMA_DEPTH) return depth;
+  if (Array.isArray(value)) {
+    let max = depth;
+    for (const item of value) {
+      const d = measureDepth(item, depth + 1);
+      if (d >= MAX_SCHEMA_DEPTH) return d;
+      if (d > max) max = d;
+    }
+    return max;
+  }
+  if (value !== null && typeof value === "object") {
+    let max = depth;
+    for (const v of Object.values(value as Record<string, unknown>)) {
+      const d = measureDepth(v, depth + 1);
+      if (d >= MAX_SCHEMA_DEPTH) return d;
+      if (d > max) max = d;
+    }
+    return max;
+  }
+  return depth;
+}
+
+
 export interface McpToolMetadata {
   serverId: string;
   toolName: string;
@@ -94,7 +125,19 @@ export class McpCatalog {
           try {
             schemaString = JSON.stringify(tool.inputSchema || {});
           } catch {
-            console.warn(`Malformed schema for MCP tool ${canonicalName}`);
+            console.warn(`Malformed schema for MCP tool ${canonicalName}: schema is not JSON-serializable`);
+            continue;
+          }
+
+          // Size bound: reject schemas that are too large to be legitimate
+          if (schemaString.length > MAX_SCHEMA_BYTES) {
+            console.warn(`MCP tool ${canonicalName} schema exceeds size limit (${schemaString.length} bytes > ${MAX_SCHEMA_BYTES}): skipping`);
+            continue;
+          }
+
+          // Depth bound: reject schemas that are too deeply nested (schema-bomb / stack-overflow protection)
+          if (measureDepth(tool.inputSchema || {}, 0) >= MAX_SCHEMA_DEPTH) {
+            console.warn(`MCP tool ${canonicalName} schema exceeds depth limit (${MAX_SCHEMA_DEPTH}): skipping`);
             continue;
           }
           

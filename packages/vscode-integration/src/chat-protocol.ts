@@ -90,6 +90,14 @@ export type HostToWebviewMessage =
 export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
   if (!raw || typeof raw !== 'object' || typeof raw.type !== 'string') return null;
 
+  // Prototype pollution guard: reject payloads that carry dangerous prototype-mutation keys.
+  // We check own-property names because JSON.parse never sets non-own properties, but a
+  // crafted Uint8Array or structuredClone result could include these as own keys.
+  const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
+  for (const key of dangerousKeys) {
+    if (Object.prototype.hasOwnProperty.call(raw, key)) return null;
+  }
+
   const validModes = ["ASK", "PLAN", "BUILD", "DEBUG", "REVIEW"];
 
   switch (raw.type) {

@@ -253,3 +253,72 @@ AutocompleteProvider (packages/agent-core)
 - **Zero Cloud Fallback**: If no compatible local route exists, autocomplete yields an empty result silently without user-facing errors or cloud requests.
 - **Stale-Result Resilience**: Independent live editor guards verify document URI, document version, cursor line, and cursor character before displaying suggestions.
 - **Deduplication**: Identical editor contexts during debounce or in-flight inference share execution, bounding provider calls to exactly 1.
+
+---
+
+## Security Boundary View (Sprint 4A ✅ CLOSED)
+
+All untrusted inputs flow through a validation/policy layer before reaching canonical authority owners.
+**UI and future Runtime Evals have no direct write, process, or permission authority.**
+
+```text
+UNTRUSTED INPUTS
+  │  model responses • MCP results • workspace files • webview messages
+  │  provider HTTP payloads • persisted state • environment values
+  │  relative paths from tools/models • filenames • URIs
+  │
+  ▼
+VALIDATION / POLICY LAYER
+  │  parseWebviewMessage   — runtime validation + prototype-pollution guard
+  │  classifyPermission    — HARD_DENIES non-overridable; mode-aware policy
+  │  resolveRepositoryPath — realpath-based symlink + traversal containment
+  │  resolveWritePath      — realpath parent check for non-existent targets
+  │  normalizeWireResponse — provider response schema validation
+  │  redactSecrets         — session persistence secret scrubbing
+  │  MCP schema bounds     — 64 KB size limit; 16-level depth limit
+  │  confirmation ID check — length limits; single-use consumed-set
+  │
+  ├─ reads   → read-only tools   (path-contained via resolveRepositoryPath)
+  │
+  ├─ writes  → MutationEngine    (consumed-set + base-hash TOCTOU + realpath)
+  │
+  ├─ process → VerificationEngine (consumed-set + shell:false + cwd-contained
+  │                                + minimal env + killProcessTree on exit)
+  │
+  ├─ MCP    → McpCatalog +        (namespaced canonical names; schema bounds;
+  │           createMcpTool        result 50 KB cap; text evidence only;
+  │           Registration         shell:false; minimal env; process cleanup)
+  │
+  └─ model  → provider adapters   (OpenAI-compatible / Halo / scripted;
+                                   validated responses; no cloud fallback;
+                                   credential not logged)
+
+UI (WebviewViewProvider / ChatViewProvider):
+  → PRESENTATION AND INPUT ONLY
+  → No direct write, process, MCP, or permission authority
+  → All inbound messages through parseWebviewMessage
+
+Future RuntimeEvalEngine (Sprint 4B — NOT YET IMPLEMENTED):
+  → ADVISORY / RECOMMENDATION ONLY
+  → May recommend: CONTINUE | REVISE | REPLAN | VERIFY |
+                   CHANGE_MODEL | REQUEST_MORE_CONTEXT | STOP | ASK_HUMAN
+  → MUST NOT directly: approve mutations, approve executions,
+                        change permissions, invoke MCP, write files,
+                        disable security rules
+```
+
+### Authority Summary
+
+| Domain | Canonical Owner | Non-Owners |
+|---|---|---|
+| Read authority | `read-only-registry.ts` tools | All other components |
+| Write authority | `MutationEngine` | UI, model, MCP, runtime evals |
+| Process authority | `VerificationEngine` | UI, model, MCP, runtime evals |
+| Approval authority | `permissions.ts` + `ChatController` | Model, MCP, runtime evals |
+| MCP execution | `McpCatalog` + `createMcpToolRegistration` | Model, UI, runtime evals |
+| Model routing | `ModelRouter` / `RoutedModelGateway` | All other components |
+| UI | Presentation + validated input only | — |
+| Future evals | Advisory recommendations only | Cannot own any authority domain |
+
+See [ADR-023](docs/adrs/ADR-023-system-security-boundaries.md) for full decision rationale.
+See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for the operational security overview.
