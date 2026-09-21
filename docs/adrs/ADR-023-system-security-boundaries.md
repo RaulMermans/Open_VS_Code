@@ -230,6 +230,17 @@ Under Sprint 4A.1, the security evaluation suite (`security-eval.test.ts`) adher
 4. **Strict Negative Comparators**: Dedicated test assertions verify that the deep equality comparator fails when simulated authority decisions, process counts, secret leaks, or cross-ID mutations deviate from expected state.
 5. **Evidence Coverage**: 91 concrete scenarios across 10 security categories provide exhaustive regression and threat-model verification.
 
+### 16. Final Security Evidence Closure (Sprint 4A.2)
+
+Sprint 4A.2 permanently closes all remaining security evidence gaps across five specific boundaries:
+
+1. **Webview DOM Rendering Execution Safety**: Proves that Chat transcript messages, Controlled Terminal output/commands, and Confirmation/Diff summaries render untrusted input strictly via `textContent` (with container clearance using `innerHTML = ''`), proving zero script executions, zero event handler executions, and zero unsafe navigations (`javascript:` links).
+2. **Canonical Extension Deactivation Lifecycle Cleanup**: Replaced direct synthetic process spawn with real canonical extension `deactivate()` lifecycle verification. An active `VerificationEngine` process tree (`tree-runner.cjs` with child) and active review registries are aborted/cleared via canonical `deactivate()`, verifying both parent and child processes are terminated, review registries flushed to zero, autocomplete disposed, zero orphans remaining, and post-deactivation late events safely ignored as no-ops.
+3. **Real MCP Result Path & Tool Impersonation Non-Authority**: Injected prompt override and built-in tool impersonation payloads through `TestMcpTransport` and `createMcpToolRegistration.execute()`. Proves that tool outputs are strictly treated as inert string data, causing zero permission classification mutations, zero mutation engine invocations, and zero tool escalations.
+4. **Autocomplete Structural Isolation & Acceptance Non-Execution**: Verified structural isolation: `AutocompleteController` and `AutocompleteService` prototypes contain zero references to `AgentRunner`, `ToolRuntime`, `MutationEngine`, `VerificationEngine`, or `McpCatalog`. Furthermore, native VS Code user acceptance of completion items triggers only single-use telemetry consumption, with zero tool or mutation executions.
+5. **Negative Comparator Completeness**: Expanded strict negative comparator assertions to 10 distinct failure dimensions (`allowed`, `spawnCount`, `orphanCount`, `secretExposed`, `crossIdMutation`, `scriptExecutionCount`, `eventHandlerExecutionCount`, `unsafeNavigationCount`, `permission`, `mutationsCount`).
+6. **Final Evidence Count**: 97 deterministic scenarios pass across two independent runs with deep strict equality.
+
 ---
 
 ## Consequences

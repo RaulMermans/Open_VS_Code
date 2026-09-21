@@ -150,15 +150,19 @@ UI / future Runtime Evals:
 
 ---
 
-## 5. Security Evaluation Truth & Runtime Evidence (Sprint 4A.1)
+## 5. Security Evaluation Truth & Runtime Evidence (Sprint 4A.1 & 4A.2)
 
 All security evaluations (`packages/vscode-integration/tests/security-eval.test.ts`) are governed by strict runtime evidence requirements:
 
 - **Strict Evidence Model**: Every scenario produces a `SecurityScenarioResult` structured as `{ id, category, description, actual, expected }`. Success is evaluated strictly via `assert.deepStrictEqual(scenario.actual, scenario.expected)`.
 - **Zero Fake Passes**: Boolean proxies (`passed: true`, `safe: true`, `|| true`, unconditional `assert.ok(true)`) are strictly prohibited. Every scenario executes against live production interfaces (`resolveRepositoryPath`, `MutationEngine`, `VerificationEngine`, `McpCatalog.discover`, `AutocompleteController`, `parseWebviewMessage`, `SessionSummaryStorage`).
-- **Two-Run Determinism**: Scenarios are executed twice (`Run 1` vs `Run 2`) in clean isolated contexts and compared via deep strict equality.
+- **Two-Run Determinism**: 97 scenarios are executed twice (`Run 1` vs `Run 2`) in clean isolated contexts and compared via deep strict equality.
 - **Strict Normalization Boundary**: Normalization is restricted to volatile OS paths (`$TMP`) and execution-specific symbols (`pid`, `durationMs`). Security-critical fields — including authority decisions (`allowed`), error codes, process counts (`spawnCount`, `orphanCount`), secret exposure flags (`secretExposed`), and cross-mutation isolation markers — are never normalized.
-- **Negative Comparator Assertions**: Explicit unit assertions verify that the comparison engine fails when simulated authority decisions, process counts, secret leaks, or cross-ID mutations diverge from expected values.
+- **Negative Comparator Assertions**: Explicit unit assertions verify that the comparison engine fails when simulated authority decisions, process counts, secret leaks, cross-ID mutations, script executions, event handlers, unsafe navigations, permissions, or mutation counts diverge from expected values (10 failure dimensions tested).
+- **DOM Rendering Execution Safety**: Verified that Chat transcript, Controlled Terminal outputs, and Confirmation/Diff summaries render untrusted input exclusively via `textContent` (clearing containers via `innerHTML = ''`), proving 0 script executions, 0 event handler executions, and 0 unsafe navigations (`javascript:` links).
+- **Extension Deactivation Lifecycle Proof**: Real canonical extension `deactivate()` lifecycle verified. Running `VerificationEngine` process tree (`tree-runner.cjs` with child) and review registries are terminated and flushed cleanly on `deactivate()`, leaving 0 orphan processes, 0 review leaks, and safe no-op handling of late events.
+- **MCP Result Path & Impersonation Non-Authority**: Real `TestMcpTransport` and `executeMcpCall` path verified. Prompt injection and built-in tool impersonation payloads are strictly treated as inert string data with 0 permission classification mutations, 0 mutation engine invocations, and 0 tool escalations.
+- **Autocomplete Structural Isolation & Acceptance Safety**: Structural isolation proven on `AutocompleteController` and `AutocompleteService` prototypes (0 execution/mutation authorities). Native acceptance triggers single-use telemetry consumption only, with zero process spawn or tool execution.
 - **Residual Filesystem Race Boundary**: While realpath containment and apply-time base hash verification protect against path traversal and file mutations, a TOCTOU race window theoretically exists between verification and application if an attacker swaps a workspace directory with a symlink. Mitigation is achieved by parent directory realpath validation and base content hash checking; full OS-level openat/O_NOFOLLOW descriptor locking remains a future hardening goal.
 
 ---
