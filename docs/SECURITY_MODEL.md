@@ -146,10 +146,24 @@ UI / future Runtime Evals:
 9. **Host secrets do not propagate to subprocesses** by default.
 10. **Corrupt memory fails closed**: `hasCorruption: true` → `SKIPPED_CORRUPT_STATE`, not partial trust.
 11. **Future runtime evals have no direct authority**: they may only recommend actions.
+12. **Evaluation truth requires structured runtime evidence**: security assertions compare deep runtime evidence (`actual` vs `expected`), rejecting synthetic boolean flags (`passed: true`).
 
 ---
 
-## 5. Known Non-Goals (V1)
+## 5. Security Evaluation Truth & Runtime Evidence (Sprint 4A.1)
+
+All security evaluations (`packages/vscode-integration/tests/security-eval.test.ts`) are governed by strict runtime evidence requirements:
+
+- **Strict Evidence Model**: Every scenario produces a `SecurityScenarioResult` structured as `{ id, category, description, actual, expected }`. Success is evaluated strictly via `assert.deepStrictEqual(scenario.actual, scenario.expected)`.
+- **Zero Fake Passes**: Boolean proxies (`passed: true`, `safe: true`, `|| true`, unconditional `assert.ok(true)`) are strictly prohibited. Every scenario executes against live production interfaces (`resolveRepositoryPath`, `MutationEngine`, `VerificationEngine`, `McpCatalog.discover`, `AutocompleteController`, `parseWebviewMessage`, `SessionSummaryStorage`).
+- **Two-Run Determinism**: Scenarios are executed twice (`Run 1` vs `Run 2`) in clean isolated contexts and compared via deep strict equality.
+- **Strict Normalization Boundary**: Normalization is restricted to volatile OS paths (`$TMP`) and execution-specific symbols (`pid`, `durationMs`). Security-critical fields — including authority decisions (`allowed`), error codes, process counts (`spawnCount`, `orphanCount`), secret exposure flags (`secretExposed`), and cross-mutation isolation markers — are never normalized.
+- **Negative Comparator Assertions**: Explicit unit assertions verify that the comparison engine fails when simulated authority decisions, process counts, secret leaks, or cross-ID mutations diverge from expected values.
+- **Residual Filesystem Race Boundary**: While realpath containment and apply-time base hash verification protect against path traversal and file mutations, a TOCTOU race window theoretically exists between verification and application if an attacker swaps a workspace directory with a symlink. Mitigation is achieved by parent directory realpath validation and base content hash checking; full OS-level openat/O_NOFOLLOW descriptor locking remains a future hardening goal.
+
+---
+
+## 6. Known Non-Goals (V1)
 
 - No OS-level MAC sandbox (seccomp, AppArmor, sandbox-exec) around subprocess execution
 - No signed extension distribution (planned Sprint 4F / VSCodium packaging)
@@ -161,7 +175,7 @@ UI / future Runtime Evals:
 
 ---
 
-## 6. Future Work
+## 7. Future Work
 
 - **Sprint 4B**: Runtime evaluation loop — advisory recommendations with explicit non-authority constraint documented here
 - **Sprint 4E**: Real OSS model attack surface testing and quality benchmarking

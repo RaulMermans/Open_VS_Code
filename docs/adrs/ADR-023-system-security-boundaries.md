@@ -209,6 +209,27 @@ A `RuntimeEvalResult` may only **recommend** one of:
 
 The runtime evaluator is advisory. All authority remains in the canonical security layers established in this ADR.
 
+### 15. Security Evaluation Truth & Runtime Evidence Contract (Sprint 4A.1)
+
+Security claims must not rely on boolean flags or synthetic assertion structures (`{ passed: true }`).
+Under Sprint 4A.1, the security evaluation suite (`security-eval.test.ts`) adheres to strict runtime evidence invariants:
+
+1. **Structured Runtime Evidence**: Every scenario produces a `SecurityScenarioResult`:
+   ```typescript
+   interface SecurityScenarioResult {
+     id: string;
+     category: string;
+     description: string;
+     actual: Record<string, unknown>;
+     expected: Record<string, unknown>;
+   }
+   ```
+   Verification executes `assert.deepStrictEqual(scenario.actual, scenario.expected)` on each scenario directly.
+2. **Zero Fake Passes**: No boolean assertions (`|| true`, `passed: true`, `safe: true`), no trivial `assert.ok(true)` fallbacks. Every outcome is derived from concrete runtime execution against production boundaries (`resolveRepositoryPath`, `MutationEngine`, `VerificationEngine`, `McpCatalog.discover`, `AutocompleteController`, `parseWebviewMessage`, `SessionSummaryStorage`).
+3. **Non-Destructive Normalization & Determinism**: Multi-run determinism validates two independent runs (`Run 1` vs `Run 2`) with `assert.deepStrictEqual`. Normalization only transforms volatile system paths (`$TMP`) and symbolic identifiers (`durationMs`, `pid`). Crucially, authority decisions (`allowed`), error codes, process counts (`spawnCount`, `orphanCount`), secret exposure flags (`secretExposed`), and mutation isolation tracking are never normalized or masked.
+4. **Strict Negative Comparators**: Dedicated test assertions verify that the deep equality comparator fails when simulated authority decisions, process counts, secret leaks, or cross-ID mutations deviate from expected state.
+5. **Evidence Coverage**: 91 concrete scenarios across 10 security categories provide exhaustive regression and threat-model verification.
+
 ---
 
 ## Consequences
@@ -225,6 +246,7 @@ The runtime evaluator is advisory. All authority remains in the canonical securi
 - Secret redaction in session persistence
 - Minimal subprocess environment (no host secret exposure)
 - Future runtime evals cannot gain authority
+- Deterministic, non-boolean security evaluation evidence (91 scenarios verified across two independent runs)
 
 ### Negative / Accepted Limitations
 
@@ -234,6 +256,7 @@ The runtime evaluator is advisory. All authority remains in the canonical securi
 - SSH key sensitivity (id_rsa etc.) added to autocomplete sensitive list — may skip legitimate SSH config editing in rare cases
 - `unsafe-inline` for CSS in webview (acceptable for VS Code theming; no script-unsafe-inline)
 - Real OSS model attack surface testing deferred to Sprint 4E
+- Residual filesystem race window: a symlink swap on the target path between prepare and apply is caught at apply time by base hash verification and parent realpath containment, but does not use OS-level directory fd pinning (openat/O_NOFOLLOW).
 
 ---
 

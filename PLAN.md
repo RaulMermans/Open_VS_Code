@@ -73,12 +73,9 @@ Sprint 3E & 3E.1 — Editor-Native Autocomplete & Production Wiring ✅ PERMANEN
   - 90 deterministic evaluation scenarios pass Run 1 and Run 2 with deep strict equality (zero failures)
   - Full workspace clean: all unit and E2E tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice
 
-Sprint 4A — Security Hardening ✅ CLOSED
+Sprint 4A — Security Hardening ✅ CLOSED PERMANENTLY
   - Adversarial threat model, authority map, and security model documented in docs/SECURITY_MODEL.md and ADR-023 (docs/adrs/ADR-023-system-security-boundaries.md)
   - Architecture updated with dedicated Security Boundary View in ARCHITECTURE.md
-  - 88 adversarial security evaluation scenarios in packages/vscode-integration/tests/security-eval.test.ts
-  - Determinism proven: two fresh runs compared for deep equality with zero failures
-  - Strict comparator negative tests prove false assertions are caught
   - Symlink escape and path containment hardened: realpath-based containment across reads, writes, and non-existent create targets
   - Mutation TOCTOU hardening: applyPreparedMutation re-verifies path containment and rejects symlink targets at apply time
   - Webview protocol hardening: prototype pollution guard rejecting __proto__, constructor, and prototype own keys
@@ -86,8 +83,24 @@ Sprint 4A — Security Hardening ✅ CLOSED
   - MCP runtime bounded: 64 KB maximum schema bytes and 16-level maximum nesting depth enforced
   - Subprocess isolation: shell:false enforced, minimal environment (PATH, NODE_ENV, npm_config_*), secrets isolated
   - Future Runtime Evals non-authority invariant established: evaluators are advisory only and cannot gain direct execution, mutation, or permission authority
-  - All monorepo regressions pass: 18 test suites / 88 security / 90 autocomplete / 97 terminal, 0 failures, 0 TypeScript errors, 0 linter errors, clean build
+
+Sprint 4A.1 — Security Evaluation Truth & Permanent Closure ✅ CLOSED
+  - Strict runtime evidence contract: SecurityScenarioResult { id, category, description, actual, expected }
+  - Elimination of all boolean proxy passes: zero `|| true`, zero `passed: true`, zero `safe: true`, zero synthetic assert.ok(true)
+  - Assertions evaluate concrete runtime state via assert.deepStrictEqual(actual, expected) directly against live boundaries
+  - Live production boundaries evaluated:
+    * McpCatalog.discover() schema bounds and validation with in-memory transport injection
+    * VerificationEngine.execute() subprocess environment isolation, secret redaction, and hash-mismatch stale base detection
+    * Subprocess cancellation and process tree termination cleanup
+    * AutocompleteController.provideInlineCompletionItems() malicious script/JSON completion handling and sensitive file skipping
+    * resolveRepositoryPath / resolveWritePath path traversal, symlink escapes, and multi-root prefix containment
+    * parseWebviewMessage prototype pollution rejection (__proto__, constructor, prototype) and message validation
+    * SessionSummaryStorage corrupt JSONL fail-closed detection
+  - Non-destructive normalization: strictly isolates OS temp paths ($TMP) and symbolic identifiers (durationMs, pid)
+  - Absolute preservation of security decisions: allowed, error codes, spawnCount, orphanCount, secretExposed, and mutation isolation markers are NEVER discarded or normalized
+  - Strict negative comparator tests: verified that assert.deepStrictEqual fails on mismatched allowed, spawnCount, orphanCount, secretExposed, or crossIdMutation
+  - 91 comprehensive security evaluation scenarios pass deterministically on Run 1 and Run 2 (deep strict equality between runs)
+  - Full workspace regressions: 18 test suites across all packages, 0 failures, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice
 
 Next:
 Sprint 4B — Runtime Evals & Adaptive Control → NEXT
-

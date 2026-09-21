@@ -69,31 +69,33 @@ export class McpCatalog {
   async discover(signal?: AbortSignal): Promise<void> {
     for (const [serverId, serverConfig] of Object.entries(this.config.servers)) {
       if (!serverConfig.enabled) continue;
-      
-      let transport: McpTransport;
-      if (serverConfig.transport === "stdio") {
-        if (!serverConfig.command) continue;
-        
-        // Filter env
-        const env: Record<string, string> = {};
-        for (const name of safeBaseEnvNames) {
-          if (process.env[name] !== undefined) {
-            env[name] = process.env[name]!;
-          }
-        }
-        if (serverConfig.envFrom) {
-          for (const key of serverConfig.envFrom) {
-            if (process.env[key] !== undefined) {
-              env[key] = process.env[key]!;
+
+      let transport: McpTransport | undefined = (serverConfig as any).testTransport ?? this.transports.get(serverId);
+      if (!transport) {
+        if (serverConfig.transport === "stdio") {
+          if (!serverConfig.command) continue;
+
+          // Filter env
+          const env: Record<string, string> = {};
+          for (const name of safeBaseEnvNames) {
+            if (process.env[name] !== undefined) {
+              env[name] = process.env[name]!;
             }
           }
+          if (serverConfig.envFrom) {
+            for (const key of serverConfig.envFrom) {
+              if (process.env[key] !== undefined) {
+                env[key] = process.env[key]!;
+              }
+            }
+          }
+
+          transport = new StdioMcpTransport(serverConfig.command, serverConfig.args || [], env);
+        } else if (serverConfig.transport === "test") {
+          transport = new TestMcpTransport(serverId);
+        } else {
+          continue; // Unsupported
         }
-        
-        transport = new StdioMcpTransport(serverConfig.command, serverConfig.args || [], env);
-      } else if (serverConfig.transport === "test") {
-        transport = new TestMcpTransport(serverId);
-      } else {
-        continue; // Unsupported
       }
 
       this.transports.set(serverId, transport);
@@ -121,6 +123,11 @@ export class McpCatalog {
              throw new Error(`Tool collision detected for ${canonicalName}`);
           }
           
+          if (tool.inputSchema !== undefined && (typeof tool.inputSchema !== "object" || tool.inputSchema === null || Array.isArray(tool.inputSchema))) {
+            console.warn(`Malformed schema for MCP tool ${canonicalName}: schema must be a non-null object`);
+            continue;
+          }
+
           let schemaString = "";
           try {
             schemaString = JSON.stringify(tool.inputSchema || {});
