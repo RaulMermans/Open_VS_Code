@@ -157,6 +157,11 @@ import { ChatViewProvider } from './chat-view-provider.js';
 import { DiffReviewController } from './diff-review-controller.js';
 import { TerminalReviewController } from './terminal-review-controller.js';
 import { AutocompleteController } from './autocomplete-controller.js';
+export {
+  renderChatMessage,
+  renderTerminalOutput,
+  renderConfirmationSummary,
+} from './webview-render-helpers.js';
 
 let activeBridge: AgentSessionBridge | null = null;
 let currentAbortController: AbortController | null = null;
@@ -172,12 +177,17 @@ export const _testSeam = {
   get chatController() { return chatController; },
   get terminalReviewController() { return terminalReviewController; },
   get autocompleteController() { return autocompleteController; },
+  get diffReviewController() { return diffReviewController; },
+  get currentAbortController() { return currentAbortController; },
+  setCurrentAbortController(ac: AbortController | null) { currentAbortController = ac; },
   /** For tests only: inject a ChatController so deactivate() exercises the real path. */
   setChatController(c: ChatController | null) { chatController = c; },
   /** For tests only: inject a TerminalReviewController so deactivate() clears it. */
   setTerminalReviewController(c: TerminalReviewController | null) { terminalReviewController = c; },
   /** For tests only: inject an AutocompleteController so deactivate() exercises the real path. */
   setAutocompleteController(c: AutocompleteController | null) { autocompleteController = c; },
+  /** For tests only: inject a DiffReviewController so deactivate() clears it. */
+  setDiffReviewController(c: DiffReviewController | null) { diffReviewController = c; },
   autocompleteGatewayFactory: null as ((workspaceRoot?: string) => AutocompleteGateway) | null,
 };
 

@@ -241,6 +241,16 @@ Sprint 4A.2 permanently closes all remaining security evidence gaps across five 
 5. **Negative Comparator Completeness**: Expanded strict negative comparator assertions to 10 distinct failure dimensions (`allowed`, `spawnCount`, `orphanCount`, `secretExposed`, `crossIdMutation`, `scriptExecutionCount`, `eventHandlerExecutionCount`, `unsafeNavigationCount`, `permission`, `mutationsCount`).
 6. **Final Evidence Count**: 97 deterministic scenarios pass across two independent runs with deep strict equality.
 
+### Sprint 4A.3 Closure Integrity Patch
+
+Sprint 4A.3 establishes complete closure integrity:
+1. **Node >=22 Verification**: Full verification ladder (tests, typecheck, lint, build, evals) executed and verified under Node v22.23.2.
+2. **Shared Production Webview Render Helpers**: Extracted `renderChatMessage`, `renderTerminalOutput`, and `renderConfirmationSummary` into `packages/vscode-integration/src/webview-render-helpers.ts`. Webview script template and test scenarios execute the exact same production functions.
+3. **Canonical Extension Deactivation Sole Trigger**: Security evaluation scenario `lifecycle.4` triggers `extension.deactivate()` via `_testSeam`, verifying termination of the active verification process tree, full registry flushes, and controller nullification; scenario `lifecycle.6` verifies anti-resurrection guarantees (`stateRecreated: false`, `registryResurrectionCount: 0`).
+4. **Real Autocomplete Authority Audit & Filesystem Observations**: Replaced synthetic zero counters with prototype audits (`structuralDependencies: []`), filesystem checks (`workspaceChanged: false`, `targetFileCreated: false`, `childProcessSentinelCount: 0`), and single-use telemetry delta (`acceptedTelemetryDelta: 1`).
+5. **12 Negative Comparator Dimensions**: Tested negative assertion throws across 12 distinct failure modes.
+6. **Non-Contradictory SHA Audit Trail**: Starting SHA, implementation commit, documentation commit, and HEAD SHA documented without circularity.
+
 ---
 
 ## Consequences

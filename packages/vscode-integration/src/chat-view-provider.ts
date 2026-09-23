@@ -1,5 +1,16 @@
 import * as vscode from 'vscode';
 import { ChatController } from './chat-controller.js';
+import {
+  renderChatMessage,
+  renderTerminalOutput,
+  renderConfirmationSummary,
+} from './webview-render-helpers.js';
+
+export {
+  renderChatMessage,
+  renderTerminalOutput,
+  renderConfirmationSummary,
+};
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'open-vs-code.chat';
@@ -228,6 +239,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     </div>
 
     <script nonce="${nonce}">
+        ${renderChatMessage.toString()}
+        ${renderTerminalOutput.toString()}
+        ${renderConfirmationSummary.toString()}
+
         const vscode = acquireVsCodeApi();
         
         const modeSelector = document.getElementById('mode-selector');
@@ -272,77 +287,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // Render messages (simple re-render)
             transcript.innerHTML = '';
             state.messages.forEach(msg => {
-                const div = document.createElement('div');
-                div.className = 'message ' + msg.role;
-                div.textContent = msg.content; // Safe, avoiding innerHTML
-                transcript.appendChild(div);
+                renderChatMessage(transcript, msg);
             });
             
             // Render terminal review card if present
             renderTerminal(state.activeTerminal);
 
             // Render confirmation
-            confirmationContainer.innerHTML = '';
-            if (state.pendingConfirmation) {
-                const conf = state.pendingConfirmation;
-                const div = document.createElement('div');
-                div.className = 'confirmation-card';
-                
-                const title = document.createElement('div');
-                title.style.fontWeight = 'bold';
-                title.style.marginBottom = '5px';
-                title.textContent = conf.riskLabel || 'Approval Required';
-                
-                const summary = document.createElement('div');
-                summary.style.fontSize = '0.9em';
-                summary.style.marginBottom = '10px';
-                summary.textContent = conf.summary;
-                
-                const actions = document.createElement('div');
-                actions.className = 'confirmation-actions';
-                
-                const btnReject = document.createElement('button');
-                btnReject.className = 'btn-reject';
-                btnReject.id = 'btn-reject';
-                btnReject.textContent = 'Reject';
-                
-                const btnApprove = document.createElement('button');
-                btnApprove.className = 'btn-approve';
-                btnApprove.id = 'btn-approve';
-                btnApprove.textContent = conf.preparedCommand ? 'Run' : 'Approve';
-                
-                if (conf.mutationId) {
-                    const btnDiff = document.createElement('button');
-                    btnDiff.className = 'btn-reject'; // use secondary style
-                    btnDiff.id = 'btn-diff';
-                    btnDiff.textContent = 'Open Diff';
-                    actions.appendChild(btnDiff);
-                }
-
-                actions.appendChild(btnReject);
-                actions.appendChild(btnApprove);
-                
-                div.appendChild(title);
-                div.appendChild(summary);
-                div.appendChild(actions);
-
-                confirmationContainer.appendChild(div);
-                
-                if (conf.mutationId) {
-                    document.getElementById('btn-diff').addEventListener('click', () => {
-                        vscode.postMessage({ type: 'ui.openDiff', mutationId: conf.mutationId, path: conf.path || 'unknown', isCreate: conf.type === 'create' });
-                    });
-                }
-
-                document.getElementById('btn-approve').addEventListener('click', () => {
-                    const msgType = conf.preparedCommand ? 'terminal.respond' : 'confirmation.respond';
-                    vscode.postMessage({ type: msgType, confirmationId: conf.id, action: 'APPROVE' });
-                });
-                document.getElementById('btn-reject').addEventListener('click', () => {
-                    const msgType = conf.preparedCommand ? 'terminal.respond' : 'confirmation.respond';
-                    vscode.postMessage({ type: msgType, confirmationId: conf.id, action: 'REJECT' });
-                });
-            }
+            renderConfirmationSummary(confirmationContainer, state.pendingConfirmation, document, vscode.postMessage);
             
             transcript.scrollTop = transcript.scrollHeight;
             
@@ -376,85 +328,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         function renderTerminal(term) {
-            terminalContainer.innerHTML = '';
-            if (!term) return;
-
-            const card = document.createElement('div');
-            card.className = 'terminal-card';
-
-            const title = document.createElement('div');
-            title.style.fontWeight = 'bold';
-            title.style.marginBottom = '5px';
-            title.textContent = 'Controlled Terminal Execution (' + term.status + ')';
-            card.appendChild(title);
-
-            const meta = document.createElement('div');
-            meta.className = 'terminal-meta';
-            meta.textContent = 'CWD: ' + term.cwd + ' | Provenance: ' + term.provenance + ' | Timeout: ' + (term.timeoutMs / 1000) + 's';
-            card.appendChild(meta);
-
-            const cmdBox = document.createElement('div');
-            cmdBox.className = 'terminal-command-box';
-            cmdBox.textContent = term.command;
-            card.appendChild(cmdBox);
-
-            // If finished with exitCode
-            if (term.exitCode !== undefined && term.exitCode !== null) {
-                const resultLine = document.createElement('div');
-                resultLine.className = 'terminal-meta';
-                resultLine.textContent = 'Finished with code ' + term.exitCode + (term.durationMs ? ' (' + term.durationMs + 'ms)' : '');
-                card.appendChild(resultLine);
-            }
-
-            // Output section if visible
-            if (term.isOutputVisible) {
-                const outBox = document.createElement('div');
-                outBox.className = 'terminal-output-box';
-                let text = '';
-                if (term.stdout) text += term.stdout;
-                if (term.stderr) text += (text ? '\n--- STDERR ---\n' : '') + term.stderr;
-                outBox.textContent = text || '(No output)';
-                card.appendChild(outBox);
-
-                if (term.stdoutTruncated || term.stderrTruncated) {
-                    const truncWarn = document.createElement('div');
-                    truncWarn.className = 'truncation-warning';
-                    truncWarn.textContent = '[Output bounded and truncated at limit]';
-                    card.appendChild(truncWarn);
-                }
-            }
-
-            const actions = document.createElement('div');
-            actions.className = 'confirmation-actions';
-
-            const btnToggle = document.createElement('button');
-            btnToggle.className = 'btn-reject';
-            btnToggle.textContent = term.isOutputVisible ? 'Hide Output' : 'Show Output';
-            btnToggle.addEventListener('click', () => {
-                vscode.postMessage({ type: 'terminal.toggleOutput', executionId: term.executionId });
-            });
-            actions.appendChild(btnToggle);
-
-            const btnCopy = document.createElement('button');
-            btnCopy.className = 'btn-reject';
-            btnCopy.textContent = 'Copy Command';
-            btnCopy.addEventListener('click', () => {
-                vscode.postMessage({ type: 'terminal.copyCommand', executionId: term.executionId });
-            });
-            actions.appendChild(btnCopy);
-
-            if (term.status === 'RUNNING') {
-                const btnCancel = document.createElement('button');
-                btnCancel.className = 'btn-reject';
-                btnCancel.textContent = 'Cancel';
-                btnCancel.addEventListener('click', () => {
-                    vscode.postMessage({ type: 'terminal.cancel', executionId: term.executionId });
-                });
-                actions.appendChild(btnCancel);
-            }
-
-            card.appendChild(actions);
-            terminalContainer.appendChild(card);
+            renderTerminalOutput(terminalContainer, term, document, vscode.postMessage);
         }
         
         sendBtn.addEventListener('click', () => {

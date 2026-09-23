@@ -305,7 +305,15 @@ export const runDiffUxEvaluation = async (fixtures: ReturnType<typeof freshFixtu
   class MockDomElement {
     public textContent: string = "";
     public children: MockDomElement[] = [];
+    public className: string = "";
+    public id: string = "";
+    public style = { fontWeight: "", marginBottom: "", fontSize: "" };
+    constructor(public tagName: string = "div") {}
     public set innerHTML(val: string) {
+      if (val === "") {
+        this.children = [];
+        return;
+      }
       if (val.includes("<script")) scriptExecutions++;
       if (val.includes("onerror=")) eventHandlerExecutions++;
       if (val.includes("javascript:")) unsafeNavigation++;
@@ -315,17 +323,27 @@ export const runDiffUxEvaluation = async (fixtures: ReturnType<typeof freshFixtu
     }
   }
 
-  // Exact production rendering path from chat-view-provider.ts (using textContent)
+  // Invoke real production renderer helper from extension.ts / webview-render-helpers.ts
+  const { renderConfirmationSummary } = await import("../src/extension.js");
   const cardDiv = new MockDomElement();
-  const summaryDiv = new MockDomElement();
-  summaryDiv.textContent = maliciousPayload;
-  cardDiv.appendChild(summaryDiv);
+  const mockDoc = {
+    createElement(tag: string) {
+      return new MockDomElement(tag);
+    }
+  };
+  renderConfirmationSummary(cardDiv, {
+    summary: maliciousPayload,
+    riskLabel: maliciousPayload,
+  }, mockDoc);
+
+  const renderedCard = cardDiv.children[0];
+  const summaryDiv = renderedCard?.children[1];
 
   results.push({
     id: "malicious-rendering",
     description: "Malicious input rendered inertly with zero script/event/navigation execution",
     actual: {
-      renderedInertly: summaryDiv.textContent === maliciousPayload && cardDiv.children.length === 1,
+      renderedInertly: summaryDiv?.textContent === maliciousPayload && cardDiv.children.length === 1,
       scriptExecutions,
       eventHandlerExecutions,
       unsafeNavigation
