@@ -122,5 +122,17 @@ Sprint 4A.3 — Closure Integrity Patch ✅ CLOSED PERMANENTLY
   - 97 comprehensive security evaluation scenarios pass deterministically on Run 1 and Run 2 under Node 22 (deep strict equality between runs).
   - Sprint 4A / 4A.1 / 4A.2 / 4A.3 is PERMANENTLY CLOSED.
 
+Sprint 4B — Runtime Evals & Adaptive Control ✅ CLOSED
+  - Tiered runtime evaluation engine: L0 deterministic evaluator (< 1ms, zero token cost), L1 heuristic trajectory evaluator with action loop detection and penalty, L2 selective critic model with timeout race fallback to L1.
+  - Non-authoritative invariant: Runtime evaluations advise/recommend (CONTINUE, SCHEDULE_VERIFICATION, INJECT_REVISION, TRIGGER_REPLAN, TERMINATE_RUN, PAUSE_HUMAN, RECOMMEND_MODEL, NO_OP), but never bypass security, auto-approve mutations, auto-approve commands, or escalate permissions.
+  - Runtime evidence collector: Bounded action, tool, mutation, verification, route, security, and unresolved failure records with automatic secret redaction (API keys, bearer tokens, private keys) and output bounding.
+  - Adaptive control policy: Deterministic mapping from evaluation signals and evidence to concrete runtime directives.
+  - Audit trail & analytics: In-memory RuntimeEvalLedger with intervention state transition tracking (RESOLVED, IMPROVED, UNCHANGED, DEGRADED) and RuntimeEvalAnalytics for developer-facing summaries and repair loop metrics.
+  - AgentRunner integration: Configurable runtimeEvals and adaptiveInterventions flags (both defaulting to true), allowing scripted benchmark traces to run cleanly with adaptiveInterventions: false while retaining evaluation metrics and evidence logging.
+  - Strict evaluation test suite (npm run eval:runtime): 72 scenarios evaluated across 2 consecutive runs with assert.deepStrictEqual determinism, zero boolean proxies, and negative comparator failure tests.
+  - Full workspace regressions: 336 unit tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals (100% task success rate, 100% safety, 100% multi-file).
+  - ADR-024 (docs/adrs/ADR-024-runtime-evals-adaptive-control.md) recorded.
+  - Sprint 4B is CLOSED.
+
 Next:
-Sprint 4B — Runtime Evals & Adaptive Control → NEXT
+Sprint 4C — Benchmark-Driven Repair & Multi-Turn Reasoning → NEXT

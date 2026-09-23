@@ -143,4 +143,6 @@ export interface AgentResult {
   readonly contextDiagnostics: readonly AgentContextDiagnostic[]
   readonly toolCalls: readonly AgentToolCallRecord[]
   readonly confirmation?: AgentConfirmationRequest
+  readonly evalResults?: readonly import("../runtime-evals/contracts.ts").RuntimeEvalResult[]
+  readonly evalSummary?: string
 }

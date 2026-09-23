@@ -51,6 +51,10 @@ const TRANSITIONS: Readonly<Record<AgentEventType, ReadonlySet<AgentStatus>>> = 
   "task.cancelled": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
   "task.max_turns": new Set(["PLANNING", "OBSERVING"]),
   "task.non_progress": new Set(["OBSERVING"]),
+  "runtime_eval.started": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "runtime_eval.completed": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "runtime_eval.intervention": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "runtime_eval.outcome": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
 }
 
 const NEXT_STATUS: Readonly<Record<AgentEventType, AgentStatus>> = {
@@ -92,6 +96,10 @@ const NEXT_STATUS: Readonly<Record<AgentEventType, AgentStatus>> = {
   "task.cancelled": "CANCELLED",
   "task.max_turns": "FAILED",
   "task.non_progress": "FAILED",
+  "runtime_eval.started": "OBSERVING",
+  "runtime_eval.completed": "OBSERVING",
+  "runtime_eval.intervention": "OBSERVING",
+  "runtime_eval.outcome": "OBSERVING",
 }
 
 export function initialAgentState(): AgentState {
@@ -124,8 +132,10 @@ export function applyAgentEvent(state: AgentState, event: AgentLifecycleEvent): 
   const error = event.type === "model.failed" || event.type === "task.failed" || event.type === "task.max_turns" || event.type === "task.non_progress"
     ? errorMessage(event.payload) ?? "Agent task failed"
     : undefined
+  const isEvalEvent = event.type.startsWith("runtime_eval.")
+  const status = isEvalEvent ? state.status : NEXT_STATUS[event.type]
   return {
-    status: NEXT_STATUS[event.type],
+    status,
     task,
     events: [...state.events, event],
     ...(error ? { error } : {}),

@@ -39,6 +39,10 @@ export const AGENT_EVENT_TYPES = [
   "task.cancelled",
   "task.max_turns",
   "task.non_progress",
+  "runtime_eval.started",
+  "runtime_eval.completed",
+  "runtime_eval.intervention",
+  "runtime_eval.outcome",
 ] as const
 
 export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number]

@@ -1,237 +1,132 @@
-SPRINT 4A — SYSTEM-WIDE SECURITY HARDENING & FINAL CLOSURE INTEGRITY REPORT
-FINAL CLOSURE REPORT (SPRINT 4A, 4A.1, 4A.2 & 4A.3)
+SPRINT 4B — RUNTIME EVALUATIONS & ADAPTIVE CONTROL
+FINAL CLOSURE REPORT
 Generated: 2026-09-23
 
 ================================================================================
 SECTION 1 — SPRINT IDENTITY & AUDIT TRAIL
 ================================================================================
 
-Sprint:        Sprint 4A, 4A.1, 4A.2 & 4A.3 — Closure Integrity Patch & Permanent Closure
-Status:        ✅ CLOSED PERMANENTLY
+Sprint:        Sprint 4B — Runtime Evals & Adaptive Control
+Status:        ✅ CLOSED
 Date:          2026-09-23
 Repo:          /Users/raulm/Desktop/GitHub/Open_VS_Code
 Node:          v22.23.2
 npm:           v10.9.8
 Engines:       >=22.0.0 (strictly verified; package.json engines preserved)
 
-Git SHA Audit Trail:
-- Starting SHA (Sprint 4A.3 baseline):  b34175b0253459c5d2024bc68e0d4fcb1451f237 (origin/main)
-- Implementation Commit SHA:           c70599f4ff563a9a654679fc197b08a493900536
-- Final Closure Checkpoint:            c70599f4ff563a9a654679fc197b08a493900536 (main)
+Commit Baseline:
+- Prior HEAD:  5b10a2195973b18fe2b1f81fc04f2d725f06aebe (security(4a.3))
+
+Key Deliverables:
+- Runtime evaluation contracts, types, & directives: packages/agent-core/src/runtime-evals/contracts.ts
+- Bounded evidence collection with secret redaction: packages/agent-core/src/runtime-evals/evidence.ts
+- Multi-level runtime evaluation engine (L0, L1, L2): packages/agent-core/src/runtime-evals/runtime-eval-engine.ts
+- L0 Deterministic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l0-deterministic.ts
+- L1 Heuristic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l1-heuristic.ts
+- L2 Selective Critic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l2-critic.ts
+- Scripted Runtime Critic: packages/agent-core/src/runtime-evals/evaluators/scripted-critic.ts
+- Adaptive Control Policy: packages/agent-core/src/runtime-evals/adaptive-control-policy.ts
+- Runtime Evaluation Ledger: packages/agent-core/src/runtime-evals/runtime-eval-ledger.ts
+- Evaluation Analytics & Summary: packages/agent-core/src/runtime-evals/analytics.ts
+- AgentRunner integration & checkpoints: packages/agent-core/src/agent/runner.ts
+- Architectural Decision Record: docs/adrs/ADR-024-runtime-evals-adaptive-control.md
+- Evaluation Suite (72 scenarios): packages/agent-core/tests/runtime-evals/
 
 ================================================================================
-SECTION 2 — SPRINT 4A.3 CLOSURE INTEGRITY RESOLUTIONS
+SECTION 2 — CORE INVARIANTS & ARCHITECTURAL PRINCIPLES
 ================================================================================
 
-1. Node >=22.0.0 Preflight & Verification:
-   - All tests, typecheck, lint, build, and coding evaluations executed under Node v22.23.2
-     and npm v10.9.8.
-   - Package engines configuration ("node": ">=22.0.0") strictly preserved.
+1. Non-Authoritative Evaluation:
+   - Evaluators advise and recommend directives, but possess zero execution or write authority.
+   - Evaluation results cannot auto-approve mutations, execute shell commands, alter permissions,
+     or bypass security gates.
+   - An evaluation score of 1.0 or CONTINUE grants NO permission.
+   - All mutations remain gated by MutationEngine and human confirmation.
+   - All processes remain gated by VerificationEngine and allowlisted executables.
 
-2. Shared Production Webview Render Helpers:
-   - Extracted canonical DOM rendering logic into shared production module:
-     `packages/vscode-integration/src/webview-render-helpers.ts`:
-     * `renderChatMessage(container, message, doc)`
-     * `renderTerminalOutput(container, term, doc, postMessage)`
-     * `renderConfirmationSummary(container, conf, doc, postMessage)`
-   - Integrated directly into production `ChatViewProvider` webview script template
-     via `${renderChatMessage.toString()}`, `${renderTerminalOutput.toString()}`,
-     and `${renderConfirmationSummary.toString()}`.
-   - Security evaluation scenarios (`webview.10`, `webview.11`, `webview.12`) and
-     `diff-core-e2e.test.ts` directly invoke these shared production rendering helpers,
-     eliminating duplicate test rendering logic and verifying untrusted payloads
-     render via textContent with 0 script, 0 event handler, and 0 unsafe navigations.
+2. Multi-Level Tiered Evaluation Hierarchy:
+   - Level 0 (L0): Purely deterministic rule-based checks (< 1ms latency, 0 token cost).
+   - Level 1 (L1): Heuristic multi-dimensional scoring (progress, completion confidence,
+     verification coverage, plan adherence, execution efficiency, logical consistency,
+     safety authority) with deterministic action cycle detection and loop penalties.
+   - Level 2 (L2): Selective critic invocation for repeated failures (>= 2) or ambiguous states.
+     Racing timeout fallback (default 5000ms) guarantees non-blocking fallback to L1 heuristic.
 
-3. Canonical Extension Deactivation Lifecycle Cleanup:
-   - Security evaluation scenario `lifecycle.4` injects active review controllers,
-     autocomplete controller, and abort controller into `_testSeam` and invokes the
-     actual exported `extension.deactivate()` as the single authoritative trigger.
-   - `deactivate()` aborts the active VerificationEngine process tree (`tree-runner.cjs`
-     and spawned child process), flushes diff and terminal review registries to 0,
-     disposes AutocompleteController, and clears extension references to null.
-   - Scenario `lifecycle.6` verifies post-deactivation anti-resurrection guarantees:
-     late completion, late output, and late review approval events delivered after
-     `deactivate()` are safe no-ops (`stateRecreated: false`, `registryResurrectionCount: 0`).
+3. Four Discrete Execution Checkpoints:
+   - MUTATION_RESULT: Evaluates immediately after code mutation application.
+   - TOOL_FAILURE: Evaluates upon tool rejection, denial, or runtime failure.
+   - VERIFICATION_RESULT: Evaluates after verification execution (test, typecheck, lint).
+   - BEFORE_COMPLETION: Evaluates when the agent signals final answer completion.
 
-4. Real Autocomplete Authority Audit & Filesystem Invariants:
-   - Replaced synthetic zero counters (`toolCallsCount`, `mutationsCount`, `terminalExecutionsCount`)
-     with real structural prototype audits:
-     * Audited `AutocompleteController`, `AutocompleteService`, and `AutocompleteGateway`
-       prototypes, verifying zero references to `AgentRunner`, `ToolRuntime`, `MutationEngine`,
-       `VerificationEngine`, or `McpCatalog` (`structuralDependencies: []`).
-     * Real filesystem invariants: verified workspace directory contents and timestamps remain
-       unmodified (`workspaceChanged: false`), target files are not created (`targetFileCreated: false`),
-       and zero child process sentinels are spawned (`childProcessSentinelCount: 0`).
-     * Real acceptance telemetry delta: native VS Code inline completion acceptance triggers
-       exactly single-use telemetry consumption (`acceptedTelemetryDelta: 1`).
+4. Adaptive Control Loop:
+   - Directives: CONTINUE, SCHEDULE_VERIFICATION, INJECT_REVISION, TRIGGER_REPLAN,
+     TERMINATE_RUN, PAUSE_HUMAN, RECOMMEND_MODEL, NO_OP.
+   - Directives feed observations back into AgentRunner context without bypassing security.
+   - AgentRunner supports configurable `runtimeEvals?: boolean` and `adaptiveInterventions?: boolean`
+     (both defaulting to true), ensuring scripted benchmarks run cleanly while retaining evaluation metrics.
 
-5. Strict Negative Comparator Completeness:
-   - 12 negative comparator assertion tests verify that any deviation in security decisions,
-     process counts, secret leaks, cross-ID mutations, DOM execution metrics, workspace state,
-     or lifecycle resurrection throws an AssertionError:
-     1. allowed decision mismatch
-     2. spawnCount mismatch
-     3. orphanCount mismatch
-     4. secretExposed mismatch
-     5. crossIdMutation mismatch
-     6. scriptExecutionCount mismatch
-     7. eventHandlerExecutionCount mismatch
-     8. unsafeNavigationCount mismatch
-     9. permission classification mismatch
-     10. workspaceChanged mismatch
-     11. structuralDependencies mismatch
-     12. registryResurrectionCount mismatch
+5. Bounded Evidence & Secret Hygiene:
+   - Collections bounded to prevent unbounded memory growth (actions, outcomes, mutations, verifications,
+     security signals, route signals, unresolved failures all capped at 10-20 items).
+   - Automatic regex secret redaction scrubs API keys (`sk-[a-zA-Z0-9_-]{8,}`), bearer tokens,
+     and private keys into `[REDACTED_SECRET]`.
 
 ================================================================================
-SECTION 3 — SYSTEM-WIDE SECURITY HARDENING EVIDENCE SUMMARY
+SECTION 3 — VERIFICATION SCORECARD
 ================================================================================
 
-1. Workspace & Path Containment:
-   - Canonical containment functions: resolveRepositoryPath (reads) and resolveWritePath (writes).
-   - Realpath-based resolution enforces that symlinks pointing outside workspace fail closed.
-   - Non-existent target creation verifies the canonical parent directory via realpath.
-   - Multi-root prefix confusion prevented via path.relative lexical boundary validation.
-   - Encoded traversal (%2E%2E%2F), duplicate slashes, and nested traversal ../ paths safely blocked.
+1. Runtime Evaluation Suite (`npm run eval:runtime`):
+   - Total Scenarios: 72
+   - Runs Evaluated: 2 consecutive runs
+   - Pass Rate: 100% (72/72 passing on Run 1 and Run 2)
+   - Determinism: Run 1 equals Run 2 (`assert.deepStrictEqual(run1, run2)`)
+   - Negative Comparator Tests: 4 distinct failure dimensions verified:
+     * Decision mismatch triggers assertion failure
+     * Missing field triggers assertion failure
+     * Score value mismatch triggers assertion failure
+     * Security authority flag mismatch triggers assertion failure
+   - Zero Boolean Proxy Checks: all assertions evaluate concrete actual vs expected values.
 
-2. Mutation Engine TOCTOU & Symlink Re-Verification:
-   - MutationEngine.applyPreparedMutation re-verifies path containment at apply time
-     to close TOCTOU windows between user preparation/approval and atomic disk write.
-   - Verifies current resolved path matches prepared resolved path; detects parent swaps.
-   - lstat checks disallow patching symbolic links directly (returns SYMLINK_ESCAPE).
-   - File exists / stale base detection verifies hashes before temp-write and rename.
-   - Double-approval, replay of consumed mutations, and approval after rejection fail closed.
+2. Deterministic Coding Agent Benchmark (`npm run eval:coding`):
+   - Total Cases: 30
+   - Task Success Rate: 100.0% (30/30 passed)
+   - Safety Success Rate: 100.0% (3/3 safety rejections blocked cleanly)
+   - Multi-File Success Rate: 100.0%
+   - Average Turns: 3.1
+   - Average Mutations Applied: 0.9
+   - Average Verification Runs: 0.9
 
-3. Webview Protocol Hardening & DOM Rendering Safety:
-   - parseWebviewMessage validates all inbound messages with explicit type switching,
-     field type checks, length caps (text <= 50,000 chars; IDs <= 100 chars).
-   - Prototype pollution guard checks Object.prototype.hasOwnProperty for dangerous keys
-     ("__proto__", "constructor", "prototype") on untrusted payloads and rejects as null.
-   - Shared production webview helpers render untrusted content via textContent:
-     0 script executions, 0 event handler executions, and 0 unsafe navigations.
+3. Monorepo Test Suites (`npm test`):
+   - @open-vs-code/agent-core: 297/297 passed (0 failures)
+   - @open-vs-code/cli: 16/16 passed (0 failures)
+   - @open-vs-code/ide-adapter: 5/5 passed (0 failures)
+   - @open-vs-code/vscode-integration: 18/18 passed (0 failures)
+     * Including 90 autocomplete scenarios
+     * Including 97 controlled terminal scenarios
+     * Including 97 security hardening scenarios
+   - Total Monorepo Tests: 336/336 passed (100%)
 
-4. Controlled Terminal & Subprocess Isolation:
-   - VerificationEngine enforces strictly shell: false with structured arguments array.
-   - Subprocess environment is stripped to minimal safe variables: { PATH, NODE_ENV, npm_config_* }.
-   - Host secrets and tokens do not propagate to subprocess environments.
-   - package.json hash validation detects script modifications between prepare and execute.
-   - Permission classifications enforce hard-denies for repository escapes, system config,
-     destructive disk operations, and mode-based restrictions (write/push in ASK/PLAN).
-   - Canonical extension deactivation aborts running verification process tree and flushes
-     review registries with zero orphan processes.
-
-5. Model Context Protocol (MCP) Runtime Bounds & Result Safety:
-   - Canonical namespacing prevents collision with built-in tools (mcp_{server}_{tool}).
-   - Serialized inputSchema bounded to MAX_SCHEMA_BYTES (64 KB); oversized schemas skipped.
-   - Schema nesting depth bounded to MAX_SCHEMA_DEPTH (16 levels) via iterative depth measurement.
-   - Tool execution results bounded to MAX_MCP_RESULT_BYTES (50 KB); truncated safely to text.
-   - Real TestMcpTransport and executeMcpCall path verified: prompt injection override and built-in
-     tool impersonation payloads are strictly treated as inert string data with 0 permission
-     classification mutations, 0 mutation engine invocations, and 0 tool escalations.
-
-6. Model Provider & Routing Safety:
-   - OpenAICompatibleProvider strictly validates base URLs (http/https only, no query params).
-   - Capability escalation prevented: autocomplete-only deployments reject chat tasks.
-   - Routing failures fail closed with RouteUnavailableError (zero cloud fallback).
-   - Wire response normalization safely handles backend errors without exposing credentials.
-
-7. Sensitive File Matrix Expansion:
-   - Expanded SENSITIVE_FILE_PATTERNS in autocomplete/budget.ts:
-     - .env, .env.*
-     - *.pem, *.key, *.p12, *.pfx, *.crt, *.cert, *.der
-     - *.jks, *.keystore
-     - SSH private keys: id_rsa, id_ed25519, id_ecdsa, id_dsa
-     - credentials files
-   - Sensitive files skipped before provider invocation (zero network/model calls).
-
-8. Project Memory & Persistence Protection:
-   - SessionSummaryStorage path contained inside .open-vs-code/ workspace directory.
-   - Automatic secret redaction for sensitive keys (password, secret, token, key, etc.).
-   - Corrupt session persistence detected and fails closed with SKIPPED_CORRUPT_STATE.
-   - Single session size bounded (16 KB) and total storage bounded (512 KB).
-
-9. Future Runtime Evaluation Non-Authority Invariant:
-   - Established strict architectural boundary for Sprint 4B:
-   - Runtime evaluators are advisory only.
-   - Runtime evaluation results may NEVER directly approve mutations, execute commands,
-     alter permissions, invoke MCP tools, write files, or weaken security policies.
+4. Static Analysis & Build Hygiene:
+   - TypeScript (`npm run typecheck`): 0 errors across all 4 workspaces (`exactOptionalPropertyTypes: true`).
+   - Lint (`npm run lint`): 0 warnings, 0 errors via `oxlint`.
+   - Build (`npm run build`): Clean build across all packages.
+   - Model Evaluation (`npm run eval:model`): Clean benchmark execution.
 
 ================================================================================
-SECTION 4 — ADVERSARIAL SECURITY EVALUATION METRICS
+SECTION 4 — DOCUMENTATION & STATE UPDATES
 ================================================================================
 
-Evaluation Harness:  packages/vscode-integration/tests/security-eval.test.ts
-Runtime:             Node v22.23.2, npm v10.9.8
-Total Scenarios:     97 scenarios per run
-Runs Executed:       Run 1 and Run 2 (fresh temporary fixtures per run)
-Pass Rate:           97 / 97 (100%)
-Failures:            0
-Fake Passes:         0 (zero boolean proxy assertions; strict runtime evidence contract)
-Determinism:         Run 1 and Run 2 are deeply strictly equal
-Strict Comparators:  12 negative assertion tests verify failure on mismatch
-
-Scenario Breakdown by Category (97 total):
-- path_containment:           10 scenarios (traversal read/write, encoded, absolute, symlink escape, create parent)
-- mutation_security:           8 scenarios (stale modify/create, TOCTOU target/symlink, double approve, replay)
-- webview_protocol:           12 scenarios (protocol validation, prototype pollution, Chat/Terminal/Diff DOM textContent rendering)
-- terminal_security:          13 scenarios (git_push mode policy, hard denies, secret env isolation, package hash validation, process tree cancel)
-- mcp_security:               12 scenarios (result bounds, schema size/depth bounds, real transport prompt injection, tool impersonation)
-- model_security:              6 scenarios (malformed response, URL validation, capability escalation, no cloud fallback)
-- autocomplete_security:       9 scenarios (sensitive files .env, .pem, id_rsa, structural isolation, acceptance telemetry safety)
-- memory_skills_security:      6 scenarios (path containment, corrupt JSONL fail-closed, secret redaction, prompt injection)
-- lifecycle_security:          6 scenarios (registry clearAll, canonical deactivation cleanup with active process tree termination, late event no-ops)
-- isolation_security:          4 scenarios (cross-review isolation, execution ID isolation, unknown ID isolation)
-- retention_bounds:            8 scenarios (transcript limits, terminal registry, diff registry, MCP result caps)
-- evidence_policy_invariants:  3 scenarios (determinism verification, comparator negative assertion checks, normalization invariants)
+- docs/adrs/ADR-024-runtime-evals-adaptive-control.md: Created and accepted.
+- docs/adrs/DECISIONS.md: Updated with ADR-024 index entry.
+- ARCHITECTURE.md: Updated with Runtime Evaluation & Adaptive Control subsystem architecture
+  and updated Security Boundary View.
+- PROJECT.md: Current sprint marked as Sprint 4B ✅ CLOSED, Sprint 4C marked NEXT.
+- PLAN.md: Sprint 4B marked as ✅ CLOSED with full audit trail, Sprint 4C marked NEXT.
 
 ================================================================================
-SECTION 5 — MONOREPO TEST & BUILD VERIFICATION
+SECTION 5 — NEXT SPRINT HAND-OFF
 ================================================================================
 
-All monorepo test suites pass cleanly on Node v22.23.2:
-- @open-vs-code/agent-core:          318 tests pass
-- @open-vs-code/cli:                 16 tests pass
-- @open-vs-code/ide-adapter:         5 tests pass
-- @open-vs-code/vscode-integration:  18 tests pass:
-  - Autocomplete Core E2E:           90 scenarios pass deterministically
-  - Terminal Core E2E:               97 scenarios pass deterministically
-  - Security Evaluation:             97 scenarios pass deterministically
-  - Diff Core E2E:                   Strict evaluations pass
-  - Chat UX E2E:                     Deterministic evaluations pass
-  - Extension Smoke Test:            Activation, command registry, deactivation pass
-Total Monorepo Tests:                357 tests pass, 0 failures
-
-Deterministic Coding Evaluations:
-- Run 1:                             30 / 30 cases pass (100.0% task success, 100.0% safety)
-- Run 2:                             30 / 30 cases pass (100.0% task success, 100.0% safety)
-
-TypeScript:     tsc --noEmit: 0 errors across all workspaces
-Linter:         oxlint: 0 warnings, 0 errors across all files
-Build:          esbuild bundled dist/extension.js (320.0 KB) clean
-Git:            clean worktree, 0 syntax/lint errors, zero weight downloads
-
-================================================================================
-SECTION 6 — DELIVERABLE ARTIFACTS
-================================================================================
-
-- packages/vscode-integration/src/webview-render-helpers.ts:
-  Authoritative production rendering helpers for chat messages, terminal output,
-  and confirmation summaries.
-- packages/vscode-integration/src/extension.ts:
-  Canonical extension exports including deactivate() with _testSeam hooks for
-  full deactivation lifecycle verification.
-- packages/vscode-integration/src/chat-view-provider.ts:
-  Production ChatViewProvider embedding and executing shared render helpers.
-- packages/vscode-integration/tests/security-eval.test.ts:
-  Deterministic 97-scenario security evaluation suite adhering to strict runtime evidence.
-- docs/SECURITY_MODEL.md:
-  Operational security model documenting assets, trust boundaries, attack surfaces,
-  security invariants, evaluation truth, and known non-goals.
-- docs/adrs/ADR-023-system-security-boundaries.md:
-  Architecture Decision Record formalizing security boundaries, authority map,
-  distrust model, future runtime eval non-authority invariant, and closure integrity.
-- FINAL_REPORT.txt:
-  Authoritative final closure report with measured counts and verification proofs.
-- PLAN.md:
-  Sprint 4A, 4A.1, 4A.2, and 4A.3 marked CLOSED PERMANENTLY; Sprint 4B marked NEXT.
-- PROJECT.md:
-  Current sprint updated to Sprint 4A / 4A.1 / 4A.2 / 4A.3 CLOSED PERMANENTLY, Sprint 4B NEXT.
+Sprint 4B is now officially and permanently CLOSED.
+Next: Sprint 4C — Benchmark-Driven Repair & Multi-Turn Reasoning.
+All invariants, evaluation criteria, and quality gates are completely satisfied.

@@ -20,6 +20,14 @@ import type { LoadedSkill } from "../context/skills.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
 import { EvidenceLedger } from "./evidence.ts"
+import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
+import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
+import { RuntimeEvalLedger } from "../runtime-evals/runtime-eval-ledger.ts"
+import { RuntimeEvalAnalytics } from "../runtime-evals/analytics.ts"
+import { RuntimeEvidenceCollector } from "../runtime-evals/evidence.ts"
+import type { RuntimeEvalCheckpoint, RuntimeEvalResult } from "../runtime-evals/contracts.ts"
+import type { VerificationEngine } from "../tools/verification-engine.ts"
+import { discoverVerificationCommand } from "../tools/verification-discovery.ts"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
 
@@ -47,6 +55,12 @@ export interface AgentRunnerDependencies {
   readonly observationMaxBytes?: number
   readonly evidenceGate?: boolean
   readonly maxContinuations?: number
+  readonly evalEngine?: RuntimeEvalEngine
+  readonly evalPolicy?: AdaptiveControlPolicy
+  readonly evalLedger?: RuntimeEvalLedger
+  readonly verificationEngine?: VerificationEngine
+  readonly runtimeEvals?: boolean
+  readonly adaptiveInterventions?: boolean
 }
 
 interface PendingConfirmation {
@@ -59,6 +73,12 @@ interface Session {
   readonly input: AgentRunnerInput
   readonly taskProfile: TaskProfile
   readonly evidenceLedger: EvidenceLedger
+  readonly evidenceCollector: RuntimeEvidenceCollector
+  readonly evalEngine: RuntimeEvalEngine
+  readonly evalPolicy: AdaptiveControlPolicy
+  readonly evalLedger: RuntimeEvalLedger
+  readonly evalAnalytics: RuntimeEvalAnalytics
+  readonly evalResults: RuntimeEvalResult[]
   state: AgentState
   turns: number
   continuationAttempts: number
@@ -112,14 +132,20 @@ export class AgentRunner {
   readonly #provider: ModelProvider
   readonly #registry: ToolRegistry
   readonly #factory: AgentEventFactory
-  readonly #eventSink?: AgentRunnerDependencies["eventSink"]
+  readonly #eventSink?: AgentRunnerDependencies["eventSink"] | undefined
   readonly #permissionEvaluator: typeof classifyPermission
   readonly #contextCompiler: (input: ContextCompilerInput) => CompiledContext
   readonly #nonProgressThreshold: number
   readonly #observationMaxBytes: number
   readonly #evidenceGate: boolean
   readonly #maxContinuations: number
-  #session?: Session
+  readonly #evalEngine?: RuntimeEvalEngine | undefined
+  readonly #evalPolicy?: AdaptiveControlPolicy | undefined
+  readonly #evalLedger?: RuntimeEvalLedger | undefined
+  readonly #verificationEngine?: VerificationEngine | undefined
+  readonly #runtimeEvals: boolean
+  readonly #adaptiveInterventions: boolean
+  #session?: Session | undefined
 
   constructor(dependencies: AgentRunnerDependencies) {
     this.#provider = dependencies.provider
@@ -132,6 +158,12 @@ export class AgentRunner {
     this.#observationMaxBytes = dependencies.observationMaxBytes ?? 16 * 1024
     this.#evidenceGate = dependencies.evidenceGate ?? true
     this.#maxContinuations = dependencies.maxContinuations ?? 2
+    this.#evalEngine = dependencies.evalEngine
+    this.#evalPolicy = dependencies.evalPolicy
+    this.#evalLedger = dependencies.evalLedger
+    this.#verificationEngine = dependencies.verificationEngine
+    this.#runtimeEvals = dependencies.runtimeEvals ?? true
+    this.#adaptiveInterventions = dependencies.adaptiveInterventions ?? true
     if (!Number.isInteger(this.#nonProgressThreshold) || this.#nonProgressThreshold < 2) {
       throw new AgentRunnerError("INVALID_INPUT", "nonProgressThreshold must be an integer of at least 2")
     }
@@ -144,10 +176,24 @@ export class AgentRunner {
     if (!Number.isInteger(input.maxTurns) || input.maxTurns <= 0) throw new AgentRunnerError("INVALID_INPUT", "maxTurns must be a positive integer")
     if (!input.workspaceRoot.trim()) throw new AgentRunnerError("INVALID_INPUT", "workspaceRoot must not be empty")
     const taskProfile = input.taskProfile ?? classifyTaskProfile(input.task.instruction, input.task.mode)
+    const evalEngine = this.#evalEngine ?? new RuntimeEvalEngine()
+    const evalPolicy = this.#evalPolicy ?? new AdaptiveControlPolicy()
+    const evalLedger = this.#evalLedger ?? new RuntimeEvalLedger()
+    const evalAnalytics = new RuntimeEvalAnalytics(evalLedger)
+    const evidenceCollector = new RuntimeEvidenceCollector({
+      runId: input.task.id,
+      taskGoal: input.task.instruction,
+    })
     this.#session = {
       input,
       taskProfile,
       evidenceLedger: new EvidenceLedger(),
+      evidenceCollector,
+      evalEngine,
+      evalPolicy,
+      evalLedger,
+      evalAnalytics,
+      evalResults: [],
       state: initialAgentState(),
       turns: 0,
       continuationAttempts: 0,
@@ -230,12 +276,27 @@ export class AgentRunner {
               executionId: reviewable.id,
               result,
             })
+            session.evidenceCollector.recordVerificationOutcome({
+              executionId: reviewable.id,
+              action: (pending.prepared.arguments as any)?.action || "TEST",
+              status: result.status,
+              failedTestCount: (result as any).failedTests ?? (result.status === "FAIL" ? 1 : 0),
+              totalTestCount: (result as any).totalTests,
+              stdout: result.stdout,
+              stderr: result.stderr,
+            })
           } else {
             if (result.status === "APPLIED") {
               this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
             } else {
               this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, error: result.error })
             }
+            session.evidenceCollector.recordMutationOutcome({
+              mutationId: reviewable.id,
+              path: (pending.prepared.arguments as any)?.targetFile || (pending.prepared.arguments as any)?.path || "",
+              status: result.status === "APPLIED" ? "APPLIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
+              diffSummary: (reviewable.reviewPayload as any)?.summary || "",
+            })
           }
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
@@ -247,6 +308,33 @@ export class AgentRunner {
             true,
             result,
           )
+
+          if (isVerification) {
+            const { evalResult: verifEval, directive: verifDirective } = await this.#runEval("VERIFICATION_RESULT")
+            if (this.#adaptiveInterventions) {
+              if (verifDirective.action === "INJECT_REVISION") {
+                session.observations.push(
+                  createToolObservation({
+                    toolName: "runtime_eval_revision",
+                    callId: verifEval.evalId,
+                    error: { category: "REVISION_REQUIRED", message: verifDirective.promptContext ?? "Revise defect" },
+                    maxContentBytes: this.#observationMaxBytes,
+                  })
+                )
+              } else if (verifDirective.action === "TRIGGER_REPLAN") {
+                session.observations.push(
+                  createToolObservation({
+                    toolName: "runtime_eval_replan",
+                    callId: verifEval.evalId,
+                    error: { category: "REPLAN_REQUIRED", message: verifDirective.promptContext ?? "Replan approach" },
+                    maxContentBytes: this.#observationMaxBytes,
+                  })
+                )
+              }
+            }
+          } else {
+            await this.#runEval("MUTATION_RESULT")
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : "Mutation apply failed"
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, error: { category: isVerification ? "VERIFICATION_ERROR" : "MUTATION_ERROR", message }, maxContentBytes: this.#observationMaxBytes })
@@ -259,6 +347,13 @@ export class AgentRunner {
             ...(isVerification ? { executionId: pending.reviewable.id } : {}),
             message,
           })
+          session.evidenceCollector.recordToolAction({
+            id: pending.prepared.id,
+            toolName: pending.prepared.name,
+            outcome: "FAILED",
+            error: message,
+          })
+          await this.#runEval("TOOL_FAILURE")
         }
 
         const progressKey = `${pending.signature}\0${observation.ok}\0${observation.content}`
@@ -394,6 +489,71 @@ export class AgentRunner {
             continue
           }
         }
+
+        // T-4404 / T-4417: BEFORE_COMPLETION evaluation checkpoint
+        const { evalResult: beforeCompEval, directive } = await this.#runEval("BEFORE_COMPLETION")
+
+        if (this.#adaptiveInterventions) {
+          if (directive.action === "SCHEDULE_VERIFICATION") {
+            const verifOutcome = await this.#executeScheduledVerification(beforeCompEval.evalId)
+            if (verifOutcome === "WAITING_CONFIRMATION" || session.state.status === "WAITING_FOR_CONFIRMATION" || ["FAILED", "CANCELLED"].includes(session.state.status)) {
+              return this.#result()
+            }
+            if (verifOutcome === "PASSED" || verifOutcome === "UNAVAILABLE") {
+              session.finalAnswer = response.message.content
+              this.#emit("task.completed", { turns: session.turns })
+              break
+            }
+            session.observations.push(
+              createToolObservation({
+                toolName: "runtime_eval_revision",
+                callId: beforeCompEval.evalId,
+                error: {
+                  category: "VERIFICATION_FAILED",
+                  message: "Verification failed following code mutation. Review test output and fix defect before completing.",
+                },
+                maxContentBytes: this.#observationMaxBytes,
+              })
+            )
+            continue
+          } else if (directive.action === "INJECT_REVISION") {
+            session.observations.push(
+              createToolObservation({
+                toolName: "runtime_eval_revision",
+                callId: beforeCompEval.evalId,
+                error: { category: "REVISION_REQUIRED", message: directive.promptContext ?? "Revise defect" },
+                maxContentBytes: this.#observationMaxBytes,
+              })
+            )
+            continue
+          } else if (directive.action === "TRIGGER_REPLAN") {
+            session.observations.push(
+              createToolObservation({
+                toolName: "runtime_eval_replan",
+                callId: beforeCompEval.evalId,
+                error: { category: "REPLAN_REQUIRED", message: directive.promptContext ?? "Replan strategy" },
+                maxContentBytes: this.#observationMaxBytes,
+              })
+            )
+            continue
+          } else if (directive.action === "TERMINATE_RUN") {
+            session.failureReason = "NON_PROGRESS"
+            this.#emit("task.non_progress", { message: directive.stopReason ?? "Run terminated by adaptive control" })
+            break
+          } else if (directive.action === "PAUSE_HUMAN") {
+            session.state = {
+              ...session.state,
+              status: "WAITING_FOR_CONFIRMATION",
+            }
+            this.#emit("permission.requested", {
+              callId: beforeCompEval.evalId,
+              name: "human_authorization",
+              action: "ask_human",
+            })
+            return this.#result()
+          }
+        }
+
         session.finalAnswer = response.message.content
         this.#emit("task.completed", { turns: session.turns })
         break
@@ -420,6 +580,13 @@ export class AgentRunner {
       const observation = createToolObservation({ toolName: name, callId, error: { category, message }, maxContentBytes: this.#observationMaxBytes })
       session.observations.push(observation)
       session.toolCalls.push({ id: callId, name, outcome: "REJECTED", truncated: observation.truncated })
+      session.evidenceCollector.recordToolAction({
+        id: callId,
+        toolName: name,
+        outcome: "REJECTED",
+        error: message,
+      })
+      await this.#runEval("TOOL_FAILURE")
       return false
     }
     const signature = `${prepared.name}\0${stableValue(prepared.arguments)}`
@@ -427,6 +594,26 @@ export class AgentRunner {
     if (permission === "DENY") {
       this.#emit("permission.denied", { callId: prepared.id, name: prepared.name, action: prepared.definition.action })
       this.#addErrorObservation(prepared, "PERMISSION_DENIED", "Permission policy denied this tool request", "DENIED")
+      session.evidenceCollector.recordSecuritySignal({
+        id: prepared.id,
+        action: prepared.definition.action,
+        reason: "Permission policy denied this tool request",
+        denied: true,
+      })
+      session.evidenceCollector.recordToolAction({
+        id: prepared.id,
+        toolName: prepared.name,
+        outcome: "DENIED",
+        error: "Permission policy denied this tool request",
+      })
+      const { directive: secDirective } = await this.#runEval("TOOL_FAILURE")
+      if (this.#adaptiveInterventions && secDirective.action === "PAUSE_HUMAN") {
+        session.state = {
+          ...session.state,
+          status: "WAITING_FOR_CONFIRMATION",
+        }
+        return true
+      }
       return false
     }
     if (permission === "CONFIRM") {
@@ -457,6 +644,13 @@ export class AgentRunner {
           const message = error instanceof Error ? error.message : "Tool preparation failed"
           this.#addErrorObservation(prepared, "TOOL_PREPARATION_ERROR", message, "FAILED")
           this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+          session.evidenceCollector.recordToolAction({
+            id: prepared.id,
+            toolName: prepared.name,
+            outcome: "FAILED",
+            error: message,
+          })
+          await this.#runEval("TOOL_FAILURE")
           return false
         }
       }
@@ -483,6 +677,13 @@ export class AgentRunner {
         true,
         output,
       )
+      session.evidenceCollector.recordToolAction({
+        id: prepared.id,
+        toolName: prepared.name,
+        outcome: "COMPLETED",
+        args: prepared.arguments as Record<string, unknown>,
+        output,
+      })
       this.#emit("tool.completed", { callId: prepared.id, name: prepared.name, truncated: observation.truncated })
     } catch (error) {
       if (isAbortError(error, session.input.signal)) {
@@ -498,7 +699,32 @@ export class AgentRunner {
       })
       session.observations.push(observation)
       session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "FAILED", truncated: observation.truncated })
+      session.evidenceCollector.recordToolAction({
+        id: prepared.id,
+        toolName: prepared.name,
+        outcome: "FAILED",
+        args: prepared.arguments as Record<string, unknown>,
+        error: message,
+      })
       this.#emit("tool.failed", { callId: prepared.id, name: prepared.name, message })
+
+      const { evalResult: failEval, directive: failDirective } = await this.#runEval("TOOL_FAILURE")
+      if (this.#adaptiveInterventions) {
+        if (failDirective.action === "TERMINATE_RUN") {
+          session.failureReason = "NON_PROGRESS"
+          this.#emit("task.non_progress", { message: failDirective.stopReason ?? "Terminated by adaptive control" })
+          return true
+        } else if (failDirective.action === "TRIGGER_REPLAN") {
+          session.observations.push(
+            createToolObservation({
+              toolName: "runtime_eval_replan",
+              callId: failEval.evalId,
+              error: { category: "REPLAN_REQUIRED", message: failDirective.promptContext ?? "Replan task" },
+              maxContentBytes: this.#observationMaxBytes,
+            })
+          )
+        }
+      }
     }
     const progressKey = `${signature}\0${observation.ok}\0${observation.content}`
     session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
@@ -536,6 +762,273 @@ export class AgentRunner {
     this.#eventSink?.(event)
   }
 
+  async #runEval(checkpoint: RuntimeEvalCheckpoint): Promise<{ evalResult: RuntimeEvalResult; directive: AdaptiveDirective }> {
+    const session = this.#requiredSession()
+    if (!this.#runtimeEvals) {
+      const evalResult: RuntimeEvalResult = {
+        evalId: `eval-disabled-${session.turns}`,
+        runId: session.input.task.id,
+        turnId: session.turns,
+        checkpoint,
+        evidenceVersion: 0,
+        decision: "CONTINUE",
+        scores: {
+          progress: 1.0,
+          completionConfidence: 1.0,
+          verificationCoverage: 1.0,
+          planAdherence: 1.0,
+          executionEfficiency: 1.0,
+          logicalConsistency: 1.0,
+          safetyAuthority: 1.0,
+        },
+        signals: [],
+        evaluatorLevel: "L0",
+        confidence: 1.0,
+      }
+      return {
+        evalResult,
+        directive: { action: "CONTINUE", decision: "CONTINUE", shouldFinalize: false },
+      }
+    }
+
+    session.evidenceCollector.updateTurn(session.turns)
+    const turnId = session.turns
+    const runId = session.input.task.id
+    const evidenceVersion = session.evidenceCollector.evidenceVersion
+
+    this.#emit("runtime_eval.started", {
+      runId,
+      turnId,
+      checkpoint,
+      evidenceVersion,
+    })
+
+    const evalResult = await session.evalEngine.evaluate(
+      session.evidenceCollector,
+      checkpoint,
+      turnId,
+      session.input.signal,
+    )
+
+    session.evalResults.push(evalResult)
+
+    this.#emit("runtime_eval.completed", {
+      evalId: evalResult.evalId,
+      decision: evalResult.decision,
+      scores: evalResult.scores,
+      signals: evalResult.signals,
+      evaluatorLevel: evalResult.evaluatorLevel,
+      confidence: evalResult.confidence,
+    })
+
+    const directive = session.evalPolicy.determineDirective(evalResult, session.evidenceCollector.getEvidence())
+
+    if (this.#adaptiveInterventions && directive.decision !== "CONTINUE") {
+      this.#emit("runtime_eval.intervention", {
+        evalId: evalResult.evalId,
+        decision: directive.decision,
+        action: directive.action,
+        reason: evalResult.signals.map((s) => s.code).join(", "),
+      })
+      session.evalLedger.recordEval(evalResult, directive.action)
+    } else {
+      session.evalLedger.recordEval(evalResult)
+    }
+
+    return { evalResult, directive }
+  }
+
+  async #executeScheduledVerification(evalId: string): Promise<"PASSED" | "FAILED" | "UNAVAILABLE" | "WAITING_CONFIRMATION"> {
+    const session = this.#requiredSession()
+    let prepared: PreparedToolCall | undefined
+
+    const hasRunVerification = this.#registry.listDefinitions().some((d) => d.name === "run_verification")
+    if (hasRunVerification) {
+      try {
+        prepared = this.#registry.prepare({
+          name: "run_verification",
+          arguments: { action: "TEST" },
+        })
+      } catch {
+        prepared = undefined
+      }
+    }
+
+    if (prepared) {
+      const permission = this.#permission(prepared.definition.action)
+      if (permission === "CONFIRM") {
+        if (prepared.prepareForReview) {
+          const reviewable = await prepared.prepareForReview({
+            workspaceRoot: session.input.workspaceRoot,
+            signal: session.input.signal ?? new AbortController().signal,
+          })
+          this.#emit("verification.prepared", {
+            callId: prepared.id,
+            name: prepared.name,
+            mutationId: reviewable.id,
+            executionId: reviewable.id,
+          })
+          session.pending = { prepared, signature: "run_verification:TEST", reviewable }
+          this.#emit("verification.confirmation_requested", {
+            callId: prepared.id,
+            name: prepared.name,
+            mutationId: reviewable.id,
+            executionId: reviewable.id,
+          })
+          return "WAITING_CONFIRMATION"
+        }
+      } else if (permission === "ALLOW") {
+        if (prepared.prepareForReview) {
+          const reviewable = await prepared.prepareForReview({
+            workspaceRoot: session.input.workspaceRoot,
+            signal: session.input.signal ?? new AbortController().signal,
+          })
+          this.#emit("verification.started", {
+            callId: prepared.id,
+            name: prepared.name,
+            mutationId: reviewable.id,
+            executionId: reviewable.id,
+          })
+          const onOutput = (chunk: { stream: "stdout" | "stderr"; chunk: string }) => {
+            this.#emit("verification.output", {
+              callId: prepared!.id,
+              name: prepared!.name,
+              mutationId: reviewable.id,
+              executionId: reviewable.id,
+              stream: chunk.stream,
+              chunk: chunk.chunk,
+            })
+          }
+          const result = (await reviewable.apply({
+            workspaceRoot: session.input.workspaceRoot,
+            signal: session.input.signal ?? new AbortController().signal,
+            onOutput,
+          })) as any
+          this.#emit("verification.completed", {
+            callId: prepared.id,
+            name: prepared.name,
+            mutationId: reviewable.id,
+            executionId: reviewable.id,
+            result,
+          })
+          session.evidenceCollector.recordVerificationOutcome({
+            executionId: reviewable.id,
+            action: "TEST",
+            status: result.status,
+            failedTestCount: result.failedTests ?? (result.status === "FAIL" ? 1 : 0),
+            totalTestCount: result.totalTests,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          })
+          const obs = createToolObservation({
+            toolName: prepared.name,
+            callId: prepared.id,
+            output: result,
+            maxContentBytes: this.#observationMaxBytes,
+          })
+          session.observations.push(obs)
+          session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "COMPLETED", truncated: obs.truncated })
+
+          await this.#runEval("VERIFICATION_RESULT")
+
+          const pass = result.status === "PASS"
+          session.evalLedger.recordInterventionOutcome(evalId, pass ? "RESOLVED" : "DEGRADED", `Verification ${result.status}`)
+          this.#emit("runtime_eval.outcome", {
+            evalId,
+            outcome: pass ? "RESOLVED" : "DEGRADED",
+            details: `Verification result: ${result.status}`,
+          })
+          return pass ? "PASSED" : "FAILED"
+        }
+      }
+    } else if (this.#verificationEngine) {
+      const permission = this.#permission("run_known_test")
+      if (permission === "ALLOW") {
+        let command
+        try {
+          command = await discoverVerificationCommand(session.input.workspaceRoot, "TEST")
+        } catch {
+          command = undefined
+        }
+
+        if (!command) {
+          session.evalLedger.recordInterventionOutcome(evalId, "UNCHANGED", "No test command discovered in workspace")
+          this.#emit("runtime_eval.outcome", {
+            evalId,
+            outcome: "UNCHANGED",
+            details: "No test command discovered in workspace",
+          })
+          return "UNAVAILABLE"
+        }
+
+        const verifId = `verification-${Date.now()}`
+        this.#emit("verification.started", {
+          callId: `call-${verifId}`,
+          name: "run_verification",
+          mutationId: verifId,
+          executionId: verifId,
+        })
+        const preparedVerif = {
+          verificationId: verifId,
+          action: "TEST" as const,
+          executable: command.executable,
+          args: command.args,
+          cwd: session.input.workspaceRoot,
+          timeoutMs: 60000,
+          commandPreview: `${command.executable} ${command.args.join(" ")}`,
+          packageJsonPath: command.packageJsonPath,
+          packageJsonHash: command.packageJsonHash,
+          scriptName: command.scriptName,
+          scriptBody: command.scriptBody,
+        }
+        const result = await this.#verificationEngine.execute(preparedVerif, session.input.signal)
+        this.#emit("verification.completed", {
+          callId: `call-${verifId}`,
+          name: "run_verification",
+          mutationId: verifId,
+          executionId: verifId,
+          result,
+        })
+        const failedCount = (result as any).failedTests ?? (result.status === "FAIL" ? 1 : 0)
+        session.evidenceCollector.recordVerificationOutcome({
+          executionId: verifId,
+          action: "TEST",
+          status: result.status,
+          failedTestCount: failedCount,
+          totalTestCount: (result as any).totalTests,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        })
+        const obs = createToolObservation({
+          toolName: "run_verification",
+          callId: `call-${verifId}`,
+          output: result,
+          maxContentBytes: this.#observationMaxBytes,
+        })
+        session.observations.push(obs)
+
+        await this.#runEval("VERIFICATION_RESULT")
+
+        const pass = result.status === "PASS"
+        session.evalLedger.recordInterventionOutcome(evalId, pass ? "RESOLVED" : "DEGRADED", `Verification ${result.status}`)
+        this.#emit("runtime_eval.outcome", {
+          evalId,
+          outcome: pass ? "RESOLVED" : "DEGRADED",
+          details: `Verification result: ${result.status}`,
+        })
+        return pass ? "PASSED" : "FAILED"
+      }
+    }
+
+    session.evalLedger.recordInterventionOutcome(evalId, "UNCHANGED", "Verification capability unavailable in current environment")
+    this.#emit("runtime_eval.outcome", {
+      evalId,
+      outcome: "UNCHANGED",
+      details: "Verification capability unavailable in current environment",
+    })
+    return "UNAVAILABLE"
+  }
+
   #result(): AgentResult {
     const session = this.#requiredSession()
     const status = session.state.status === "WAITING_FOR_CONFIRMATION"
@@ -550,6 +1043,8 @@ export class AgentRunner {
       events: session.state.events,
       contextDiagnostics: session.diagnostics,
       toolCalls: session.toolCalls,
+      evalResults: session.evalResults,
+      evalSummary: session.evalAnalytics?.formatDeveloperSummary(session.input.task.id),
       ...(session.pending ? {
         confirmation: {
           callId: session.pending.prepared.id,

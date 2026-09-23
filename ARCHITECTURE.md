@@ -298,10 +298,10 @@ UI (WebviewViewProvider / ChatViewProvider):
   → No direct write, process, MCP, or permission authority
   → All inbound messages through parseWebviewMessage
 
-Future RuntimeEvalEngine (Sprint 4B — NOT YET IMPLEMENTED):
+RuntimeEvalEngine (Sprint 4B ✅ CLOSED):
   → ADVISORY / RECOMMENDATION ONLY
-  → May recommend: CONTINUE | REVISE | REPLAN | VERIFY |
-                   CHANGE_MODEL | REQUEST_MORE_CONTEXT | STOP | ASK_HUMAN
+  → Recommends: CONTINUE | REVISE | REPLAN | VERIFY |
+               CHANGE_MODEL | REQUEST_MORE_CONTEXT | STOP | ASK_HUMAN
   → MUST NOT directly: approve mutations, approve executions,
                         change permissions, invoke MCP, write files,
                         disable security rules
@@ -318,7 +318,64 @@ Future RuntimeEvalEngine (Sprint 4B — NOT YET IMPLEMENTED):
 | MCP execution | `McpCatalog` + `createMcpToolRegistration` | Model, UI, runtime evals |
 | Model routing | `ModelRouter` / `RoutedModelGateway` | All other components |
 | UI | Presentation + validated input only | — |
-| Future evals | Advisory recommendations only | Cannot own any authority domain |
+| Runtime evals | Advisory recommendations only | Cannot own any authority domain |
 
 See [ADR-023](docs/adrs/ADR-023-system-security-boundaries.md) for full decision rationale.
 See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for the operational security overview.
+
+---
+
+## Runtime Evaluation & Adaptive Control Architecture (Sprint 4B ✅ CLOSED)
+
+```text
+Agent Execution Cycle: ACT -> OBSERVE -> EVALUATE -> DECIDE -> ADAPT -> ACT AGAIN
+
++-------------------------------------------------------------------------------+
+| AgentRunner Loop (packages/agent-core)                                        |
+|  - Checkpoints: MUTATION_RESULT, TOOL_FAILURE, BEFORE_COMPLETION,             |
+|                 VERIFICATION_RESULT                                           |
+|  - Aggregates runtime evidence via RuntimeEvidenceCollector                   |
++-------------------------------------------------------------------------------+
+                                      │
+                                      ▼
++-------------------------------------------------------------------------------+
+| RuntimeEvidenceCollector                                                      |
+|  - Bounded action, tool, mutation, verification, route, security records      |
+|  - Redacts sensitive secrets (API keys, tokens, private keys)                 |
+|  - Tracks unresolved defects and failure hashes                               |
++-------------------------------------------------------------------------------+
+                                      │
+                                      ▼
++-------------------------------------------------------------------------------+
+| RuntimeEvalEngine (Tiered Multi-Level Evaluation)                             |
+|  ├─ Level 0 (L0): Deterministic Rule-Based Evaluator (< 1ms, zero token cost)  |
+|  ├─ Level 1 (L1): Heuristic Trajectory & Cycle Evaluator (Action loop penalty) |
+|  └─ Level 2 (L2): Selective Critic Escalation (Timed race, fallback to L1)     |
++-------------------------------------------------------------------------------+
+                                      │
+                                      ▼
++-------------------------------------------------------------------------------+
+| AdaptiveControlPolicy                                                         |
+|  - Maps eval scores, signals, and evidence to AdaptiveDirective:             |
+|    • CONTINUE             → Normal execution                                  |
+|    • SCHEDULE_VERIFICATION→ Mandatory verification before completion          |
+|    • INJECT_REVISION      → Targeted corrective revision observation          |
+|    • TRIGGER_REPLAN       → Replan strategy observation                       |
+|    • TERMINATE_RUN        → Clean exit with NON_PROGRESS                      |
+|    • PAUSE_HUMAN          → Pause for user confirmation (ask_human)           |
+|    • RECOMMEND_MODEL      → Advisory routing recommendation                   |
++-------------------------------------------------------------------------------+
+                                      │
+                                      ▼
++-------------------------------------------------------------------------------+
+| RuntimeEvalLedger & Analytics                                                 |
+|  - Immutable in-memory audit log of all evaluations, directives, outcomes     |
+|  - Tracks intervention transitions (RESOLVED, IMPROVED, UNCHANGED, DEGRADED)   |
+|  - Generates developer summaries and repair success metrics                   |
++-------------------------------------------------------------------------------+
+```
+
+- **Non-Authoritative Invariant**: Evaluations only recommend directives; mutations, commands, and security decisions remain gated by `MutationEngine`, `VerificationEngine`, and `classifyPermission`.
+- **72 Deterministic Scenarios**: Verified by `npm run eval:runtime` across 2 consecutive runs with strict comparator assertion tests.
+- **Full Backward Compatibility**: Scripted benchmarks operate cleanly with `adaptiveInterventions: false` without losing evaluation metrics.
+See [ADR-024](docs/adrs/ADR-024-runtime-evals-adaptive-control.md) for full architectural specification.

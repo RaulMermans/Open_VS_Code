@@ -39,7 +39,7 @@ test("completes a direct answer with a deterministic compact trace", async () =>
   assert.equal(result.finalAnswer, "The answer")
   assert.equal(result.turns, 1)
   assert.deepEqual(result.events.map((event) => event.type), [
-    "task.started", "context.compiled", "model.requested", "model.completed", "task.completed",
+    "task.started", "context.compiled", "model.requested", "model.completed", "runtime_eval.started", "runtime_eval.completed", "task.completed",
   ])
   assert.deepEqual(result.toolCalls, [])
   await assert.rejects(runner.resume("APPROVE"), (error: unknown) => (error as AgentRunnerError).code === "TERMINAL_STATE")
@@ -64,7 +64,7 @@ test("executes multiple validated read-only tool turns and recompiles observatio
   assert.deepEqual(result.events.map((event) => event.type), [
     "task.started", "context.compiled", "model.requested", "model.completed", "tool.requested", "tool.completed",
     "context.compiled", "model.requested", "model.completed", "tool.requested", "tool.completed",
-    "context.compiled", "model.requested", "model.completed", "task.completed",
+    "context.compiled", "model.requested", "model.completed", "runtime_eval.started", "runtime_eval.completed", "task.completed",
   ])
   const exposed = provider.requests[0]!.metadata?.tools as readonly { name: string }[]
   assert.deepEqual(exposed.map((tool) => tool.name), ["find_files", "list_directory", "read_file", "search_text"])

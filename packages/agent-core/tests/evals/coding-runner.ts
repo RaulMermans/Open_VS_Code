@@ -123,7 +123,7 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
           maxTotalAgentTurns: budgets?.maxTotalAgentTurns ?? 15
         },
         verificationEngine,
-                () => new AgentRunner({ provider, registry, permissionEvaluator, evidenceGate: false })
+        () => new AgentRunner({ provider, registry, permissionEvaluator, evidenceGate: false, adaptiveInterventions: false })
       )
 
       const preparedVerifRaw = registry.prepare({ id: "init-v", name: "run_verification", arguments: { action: evalCase.initialVerification } })
@@ -146,13 +146,13 @@ export async function runCodingEvalCase(evalCase: CodingEvalCase): Promise<Evalu
       }
 
       runnerResultStatus = orchestratorResult.status
-            runnerResultFailureReason = orchestratorResult.failureReason || "UNKNOWN"
-            result.turns = orchestratorResult.totalAgentTurns || 0
-            result.repairAttempts = orchestratorResult.repairAttempts || 0
+      runnerResultFailureReason = orchestratorResult.failureReason || "UNKNOWN"
+      result.turns = orchestratorResult.totalAgentTurns || 0
+      result.repairAttempts = orchestratorResult.repairAttempts || 0
 
       allEvents = [...(orchestratorResult.events || [])] as AgentLifecycleEvent[]
     } else {
-      const runner = new AgentRunner({ provider, registry, permissionEvaluator: permissionEvaluator as any, evidenceGate: false })
+      const runner = new AgentRunner({ provider, registry, permissionEvaluator: permissionEvaluator as any, evidenceGate: false, adaptiveInterventions: false })
       let runnerResult = await runner.run(input)
 
       while (runnerResult.status === "PAUSED") {

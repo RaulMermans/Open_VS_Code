@@ -55,3 +55,6 @@ export * from "./agent/runtime.ts"
 
 // Sprint 3E — Editor-Native Autocomplete
 export * from "./autocomplete/index.ts"
+
+// Sprint 4B — Runtime Evals & Adaptive Control
+export * from "./runtime-evals/index.ts"
