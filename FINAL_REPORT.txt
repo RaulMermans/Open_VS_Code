@@ -1,4 +1,4 @@
-SPRINT 4B / 4B.1 / 4B.2 — RUNTIME EVALUATIONS & ADAPTIVE CONTROL
+SPRINT 4B / 4B.1 / 4B.2 / 4B.3 — RUNTIME EVALUATIONS & ADAPTIVE CONTROL
 FINAL CLOSURE REPORT
 Generated: 2026-09-23
 
@@ -6,7 +6,7 @@ Generated: 2026-09-23
 SECTION 1 — SPRINT IDENTITY & AUDIT TRAIL
 ================================================================================
 
-Sprint:        Sprint 4B (4B.1 / 4B.2) — Runtime Evals & Adaptive Control
+Sprint:        Sprint 4B (4B.1 / 4B.2 / 4B.3) — Runtime Evals & Adaptive Control
 Status:        ✅ CLOSED PERMANENTLY
 Date:          2026-09-23
 Repo:          /Users/raulm/Desktop/GitHub/Open_VS_Code
@@ -15,7 +15,7 @@ npm:           v10.9.8
 Engines:       >=22.0.0 (strictly verified; package.json engines preserved)
 
 Commit Baseline:
-- Prior HEAD:  5b10a2195973b18fe2b1f81fc04f2d725f06aebe (security(4a.3))
+- Prior HEAD:           846f3ab931d2395945d38c9cbe44702baa03f077 (feat(runtime-eval): complete Sprint 4B.2)
 
 Key Deliverables:
 - Runtime evaluation contracts, types, & directives: packages/agent-core/src/runtime-evals/contracts.ts
@@ -23,8 +23,8 @@ Key Deliverables:
 - Multi-level runtime evaluation engine (L0, L1, L2): packages/agent-core/src/runtime-evals/runtime-eval-engine.ts
 - L0 Deterministic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l0-deterministic.ts
 - L1 Heuristic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l1-heuristic.ts
-- L2 Selective Critic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l2-critic.ts
-- Scripted Runtime Critic: packages/agent-core/src/runtime-evals/evaluators/scripted-critic.ts
+- L2 Selective Critic Evaluator: packages/agent-core/src/runtime-evals/runtime-eval-engine.ts
+- Scripted Runtime Critic & Context Budgeting: packages/agent-core/src/runtime-evals/runtime-critic.ts
 - Adaptive Control Policy (8 decisions): packages/agent-core/src/runtime-evals/adaptive-control-policy.ts
 - Runtime Evaluation Ledger & Outcome Linking: packages/agent-core/src/runtime-evals/runtime-eval-ledger.ts
 - Evaluation Analytics & Summary: packages/agent-core/src/runtime-evals/analytics.ts
@@ -32,8 +32,9 @@ Key Deliverables:
 - ModelRouter hint evaluation & reason codes: packages/agent-core/src/model/router.ts
 - RoutedModelGateway hint forwarding: packages/agent-core/src/model/routed-gateway.ts
 - AgentRunner integration & universal post-verification causality: packages/agent-core/src/agent/runner.ts
+- Integrated CHANGE_MODEL E2E: packages/agent-core/tests/runtime-evals/evaluation.ts
 - Architectural Decision Record: docs/adrs/ADR-024-runtime-evals-adaptive-control.md
-- Evaluation Suite (107 deterministic scenarios): packages/agent-core/tests/runtime-evals/evaluation.ts
+- Evaluation Suite (111 deterministic scenarios): packages/agent-core/tests/runtime-evals/evaluation.ts
 - Runtime Eval Test Harness with Negative Comparators: packages/agent-core/tests/runtime-evals/runtime-eval.test.ts
 
 ================================================================================
@@ -73,14 +74,29 @@ SECTION 2 — CORE INVARIANTS & ARCHITECTURAL PRINCIPLES
    - AgentRunner supports configurable `runtimeEvals?: boolean` and `adaptiveInterventions?: boolean`
      (both defaulting to true), ensuring scripted benchmarks run cleanly while retaining evaluation metrics.
 
-5. Universal Post-Verification Causality & Outcome Linking:
+5. Integrated CHANGE_MODEL Route Proof:
+   - Real production classes execute end-to-end:
+     AgentRunner -> RoutedModelGateway -> ModelRouter -> Provider A -> RuntimeEvalEngine (L2 critic CHANGE_MODEL)
+     -> AdaptiveControlPolicy (RECOMMEND_MODEL) -> ModelRouteHint -> AgentRunner Turn 2
+     -> RoutedModelGateway -> ModelRouter (consumes hint, chooses local-b) -> Provider B (returns response)
+     -> route provenance -> RuntimeEvalLedger (outcome RESOLVED).
+   - Mock fake providers eliminated from all routing scenarios (completion.14, completion.15).
+   - 1-turn bounded hint lifetime proven: Turn 1 no hint, Turn 2 has hint, Turn 3 hint cleared and router routes back to primary.
+   - No persistent router rewrite: Router configuration deep-equality verified before and after adaptation.
+   - No cloud fallback: Zero cloud/network provider calls; strictly local fallback behavior.
+   - Robust edge regressions:
+     * No-alternate deployment retention: ModelRouter retains candidate when no alternative is eligible, ledger records UNCHANGED outcome.
+     * Stale evaluation guard: Concurrent evidenceVersion increment marks eval stale with CONTINUE, suppressing route hint generation.
+     * Cancellation before route B: AbortController cancels before route B invocation; provider B calls = 0.
+
+6. Universal Post-Verification Causality & Outcome Linking:
    - All paths scheduling verification (MUTATION_RESULT, BEFORE_COMPLETION, or generic directives)
      execute verification, run VERIFICATION_RESULT checkpoint eval, record outcome in RuntimeEvalLedger,
      and consume the corrective directive (REVISE, REPLAN, ASK_HUMAN, STOP, CONTINUE).
    - RuntimeEvalLedger links outcomes (RESOLVED, IMPROVED, UNCHANGED, DEGRADED) back to originating eval
      and intervention IDs across model changes, context requests, and verification cycles.
 
-6. Bounded Evidence & Secret Hygiene:
+7. Bounded Evidence & Secret Hygiene:
    - Collections bounded to prevent unbounded memory growth (actions, outcomes, mutations, verifications,
      security signals, route signals, unresolved failures all capped at 10-20 items).
    - Automatic regex secret redaction scrubs API keys (`sk-[a-zA-Z0-9_-]{8,}`), bearer tokens,
@@ -91,16 +107,18 @@ SECTION 3 — VERIFICATION SCORECARD
 ================================================================================
 
 1. Runtime Evaluation Suite (`npm run eval:runtime`):
-   - Total Scenarios: 107
+   - Total Scenarios: 111
+   - Distinct Categories: 13 (12 evaluation categories + negative test suite)
    - Runs Evaluated: 2 consecutive runs
-   - Pass Rate: 100% (107/107 passing on Run 1 and Run 2)
+   - Pass Rate: 100% (111/111 passing on Run 1 and Run 2)
    - Determinism: Run 1 equals Run 2 (`assert.deepStrictEqual(run1, run2)`)
-   - Negative Comparator Tests: 7 distinct failure dimensions verified:
+   - Negative Comparator Tests: 8 distinct failure dimensions verified:
      * Decision mismatch triggers assertion failure
      * Missing field triggers assertion failure
      * Score value mismatch triggers assertion failure
      * Security authority flag mismatch triggers assertion failure
      * Route hint avoidance mismatch triggers assertion failure
+     * Route deployment mismatch triggers assertion failure (expected B, actual A)
      * Loop exceeded observation mismatch triggers assertion failure
      * Intervention outcome mismatch triggers assertion failure
    - Zero Boolean Proxy Checks: all assertions evaluate concrete actual vs expected values.
@@ -119,7 +137,7 @@ SECTION 3 — VERIFICATION SCORECARD
      * Including 90 autocomplete scenarios
      * Including 97 controlled terminal scenarios
      * Including 97 security hardening scenarios
-     * Including 107 runtime eval scenarios
+     * Including 111 runtime eval scenarios
    - Total Monorepo Tests: 100% pass rate
 
 4. Static Analysis & Build Hygiene:
@@ -133,17 +151,17 @@ SECTION 4 — DOCUMENTATION & STATE UPDATES
 ================================================================================
 
 - docs/adrs/ADR-024-runtime-evals-adaptive-control.md: Updated with 8 decisions, bounded ModelRouteHint,
-  context bounds, universal post-verification causality, outcome linking, and 107 scenarios.
+  context bounds, universal post-verification causality, outcome linking, 13 categories, and 111 scenarios.
 - docs/adrs/DECISIONS.md: ADR-024 recorded.
 - ARCHITECTURE.md: Updated with Runtime Evaluation & Adaptive Control subsystem architecture,
-  8 directives, universal causality, and 107 scenarios.
+  8 directives, universal causality, and 111 scenarios.
 - PROJECT.md: Sprint 4B marked as ✅ CLOSED PERMANENTLY, Sprint 4C marked NEXT.
-- PLAN.md: Sprint 4B.1 and 4B.2 marked as ✅ CLOSED PERMANENTLY with full audit trail, Sprint 4C marked NEXT.
+- PLAN.md: Sprint 4B.1, 4B.2, and 4B.3 marked as ✅ CLOSED PERMANENTLY with full audit trail, Sprint 4C marked NEXT.
 
 ================================================================================
 SECTION 5 — NEXT SPRINT HAND-OFF
 ================================================================================
 
-Sprint 4B (4B.1 / 4B.2) is now officially and permanently CLOSED.
+Sprint 4B (4B.1 / 4B.2 / 4B.3) is now officially and permanently CLOSED.
 Next: Sprint 4C — Checkpoints / Recovery.
 All invariants, evaluation criteria, and quality gates are completely satisfied.

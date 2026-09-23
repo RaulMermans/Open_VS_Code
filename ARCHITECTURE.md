@@ -382,6 +382,6 @@ Agent Execution Cycle: ACT -> OBSERVE -> EVALUATE -> DECIDE -> ADAPT -> ACT AGAI
 - **Non-Authoritative Invariant**: Evaluations only recommend directives; mutations, commands, and security decisions remain gated by `MutationEngine`, `VerificationEngine`, and `classifyPermission`.
 - **Universal Post-Verification Causality**: All paths scheduling verification dispatch verifications, evaluate at `VERIFICATION_RESULT`, link outcomes in the ledger, and dispatch corrective directives.
 - **Bounded Adaptations**: Model route hints are bounded to a 1-turn lifetime; context requests are bounded to `MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2`.
-- **107 Deterministic Scenarios**: Verified by `npm run eval:runtime` across 2 consecutive runs with strict comparator assertion tests.
+- **111 Deterministic Scenarios**: Verified by `npm run eval:runtime` across 2 consecutive runs with strict comparator assertion tests.
 - **Full Backward Compatibility**: Scripted benchmarks operate cleanly with `adaptiveInterventions: false` without losing evaluation metrics.
 See [ADR-024](docs/adrs/ADR-024-runtime-evals-adaptive-control.md) for full architectural specification.

@@ -144,10 +144,10 @@ All execution paths scheduling verification (whether originating at `BEFORE_COMP
 ## Verification & Proof
 
 1. **Deterministic Test Suite (`npm run eval:runtime`)**:
-   - 10 test categories, 107 exact scenarios evaluated across 2 consecutive runs.
+   - 13 test categories (12 evaluation categories + negative test suite), 111 exact scenarios evaluated across 2 consecutive runs.
    - 100% pass rate.
    - Determinism assertion: `assert.deepStrictEqual(run1, run2)`.
-   - Strict negative comparator tests verify that any missing field, mismatched score, mismatched decision, altered security flag, routing hint mismatch, loop observation mismatch, or outcome state mismatch immediately fails the suite.
+   - Strict negative comparator tests verify that any missing field, mismatched score, mismatched decision, altered security flag, routing hint mismatch, routing deployment mismatch, loop observation mismatch, or outcome state mismatch immediately fails the suite.
 2. **Deterministic Coding Benchmark (`npm run eval:coding`)**:
    - 30/30 cases passing (100.0% task success rate, 100.0% safety success rate, 100.0% multi-file success rate).
 3. **Monorepo Quality Gate**:
