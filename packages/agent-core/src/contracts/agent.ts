@@ -145,4 +145,5 @@ export interface AgentResult {
   readonly confirmation?: AgentConfirmationRequest
   readonly evalResults?: readonly import("../runtime-evals/contracts.ts").RuntimeEvalResult[]
   readonly evalSummary?: string
+  readonly terminationSource?: "RUNTIME_EVAL" | "NON_PROGRESS_GUARD" | undefined
 }

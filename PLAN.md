@@ -134,5 +134,13 @@ Sprint 4B — Runtime Evals & Adaptive Control ✅ CLOSED
   - ADR-024 (docs/adrs/ADR-024-runtime-evals-adaptive-control.md) recorded.
   - Sprint 4B is CLOSED.
 
+### Sprint 4B.1: Adaptive Loop Integrity & Real Runtime-Eval Closure
+- **Objective**: Close live runtime loop gaps: enforce real E2E loops, stale evaluation version guards without caching, post-verification completion gating, fail-closed VERIFICATION_UNAVAILABLE when tests required, MUTATION_RESULT and TOOL_FAILURE active dispatch, REQUEST_MORE_CONTEXT bounded retrieval, CHANGE_MODEL hint forwarding, hard L0 dominance over L2 critic suggestions, distinct RUNTIME_EVAL terminationSource, and WAITING_FOR_CONFIRMATION transition on PAUSE_HUMAN.
+- **Outcomes**:
+  - 82 evaluation scenarios pass deterministically on Run 1 and Run 2 with deep strict equality.
+  - Real execution loops tested across VERIFY, REVISE, REPLAN, STOP, and ASK_HUMAN without boolean proxies.
+  - Zero regressions across full monorepo: 30/30 coding benchmarks pass (100%), all workspace unit tests pass, 0 typecheck errors, 0 linter errors.
+  - Sprint 4B.1 is CLOSED.
+
 Next:
-Sprint 4C — Benchmark-Driven Repair & Multi-Turn Reasoning → NEXT
+Sprint 4C — Checkpoints / Recovery → NEXT

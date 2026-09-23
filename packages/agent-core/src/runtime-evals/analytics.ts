@@ -7,6 +7,9 @@ import type { RuntimeEvalLedger } from "./runtime-eval-ledger.ts"
 export interface AggregateEvalMetrics {
   readonly totalEvals: number
   readonly totalInterventions: number
+  readonly recommendedInterventions: number
+  readonly appliedInterventions: number
+  readonly staleDroppedInterventions: number
   readonly decisions: Record<AdaptiveDecision, number>
   readonly nonProgressDetections: number
   readonly repeatedFailureDetections: number
@@ -74,6 +77,9 @@ export class RuntimeEvalAnalytics {
     }
 
     let interventions = 0
+    let recommendedInterventions = 0
+    let appliedInterventions = 0
+    let staleDroppedInterventions = 0
     let nonProgress = 0
     let repeatedFailures = 0
     let unverifiedCompletions = 0
@@ -84,6 +90,15 @@ export class RuntimeEvalAnalytics {
     for (const e of entries) {
       decisions[e.decision] = (decisions[e.decision] ?? 0) + 1
       if (e.decision !== "CONTINUE") {
+        recommendedInterventions++
+      }
+      if (e.staleDropped) {
+        staleDroppedInterventions++
+      }
+      if (e.applied === true || (typeof e.applied === "undefined" && e.hasIntervention && !e.staleDropped)) {
+        appliedInterventions++
+      }
+      if (e.hasIntervention || (e.decision !== "CONTINUE" && !e.staleDropped)) {
         interventions++
       }
       if (e.reasonCodes.includes("NON_PROGRESS_LOOP") || e.reasonCodes.includes("RUNAWAY_LOOP_STOP")) {
@@ -113,6 +128,9 @@ export class RuntimeEvalAnalytics {
     return {
       totalEvals: entries.length,
       totalInterventions: interventions,
+      recommendedInterventions,
+      appliedInterventions,
+      staleDroppedInterventions,
       decisions,
       nonProgressDetections: nonProgress,
       repeatedFailureDetections: repeatedFailures,
@@ -263,6 +281,9 @@ export class RuntimeEvalAnalytics {
     return {
       totalEvaluations: metrics.totalEvals,
       totalInterventions: metrics.totalInterventions,
+      recommendedInterventions: metrics.recommendedInterventions,
+      appliedInterventions: metrics.appliedInterventions,
+      staleDroppedInterventions: metrics.staleDroppedInterventions,
       resolvedInterventions: outcomes.RESOLVED,
       degradedInterventions: outcomes.DEGRADED,
       unchangedInterventions: outcomes.UNCHANGED,

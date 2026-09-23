@@ -28,6 +28,8 @@ import { RuntimeEvidenceCollector } from "../runtime-evals/evidence.ts"
 import type { RuntimeEvalCheckpoint, RuntimeEvalResult } from "../runtime-evals/contracts.ts"
 import type { VerificationEngine } from "../tools/verification-engine.ts"
 import { discoverVerificationCommand } from "../tools/verification-discovery.ts"
+import { readRepositoryFile } from "../tools/read-file.ts"
+import { searchText } from "../tools/search-text.ts"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
 
@@ -90,6 +92,8 @@ interface Session {
   failureReason?: AgentFailureReason
   lastProgressKey?: string
   repeatedProgress: number
+  terminationSource?: "RUNTIME_EVAL" | "NON_PROGRESS_GUARD" | undefined
+  pendingModelRecommendation?: { readonly capability: string; readonly reason: string } | undefined
 }
 
 export type AgentRunnerErrorCode = "ACTIVE_SESSION" | "NO_PENDING_CONFIRMATION" | "TERMINAL_STATE" | "INVALID_INPUT"
@@ -311,29 +315,16 @@ export class AgentRunner {
 
           if (isVerification) {
             const { evalResult: verifEval, directive: verifDirective } = await this.#runEval("VERIFICATION_RESULT")
-            if (this.#adaptiveInterventions) {
-              if (verifDirective.action === "INJECT_REVISION") {
-                session.observations.push(
-                  createToolObservation({
-                    toolName: "runtime_eval_revision",
-                    callId: verifEval.evalId,
-                    error: { category: "REVISION_REQUIRED", message: verifDirective.promptContext ?? "Revise defect" },
-                    maxContentBytes: this.#observationMaxBytes,
-                  })
-                )
-              } else if (verifDirective.action === "TRIGGER_REPLAN") {
-                session.observations.push(
-                  createToolObservation({
-                    toolName: "runtime_eval_replan",
-                    callId: verifEval.evalId,
-                    error: { category: "REPLAN_REQUIRED", message: verifDirective.promptContext ?? "Replan approach" },
-                    maxContentBytes: this.#observationMaxBytes,
-                  })
-                )
-              }
+            if (this.#adaptiveInterventions && verifDirective.decision !== "CONTINUE") {
+              const handled = await this.#dispatchDirective(verifEval, verifDirective, "VERIFICATION_RESULT")
+              if (handled) return this.#result()
             }
           } else {
-            await this.#runEval("MUTATION_RESULT")
+            const { evalResult: mutEval, directive: mutDirective } = await this.#runEval("MUTATION_RESULT")
+            if (this.#adaptiveInterventions && mutDirective.decision !== "CONTINUE") {
+              const handled = await this.#dispatchDirective(mutEval, mutDirective, "MUTATION_RESULT")
+              if (handled) return this.#result()
+            }
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "Mutation apply failed"
@@ -353,7 +344,11 @@ export class AgentRunner {
             outcome: "FAILED",
             error: message,
           })
-          await this.#runEval("TOOL_FAILURE")
+          const { evalResult: failEval, directive: failDirective } = await this.#runEval("TOOL_FAILURE")
+          if (this.#adaptiveInterventions && failDirective.decision !== "CONTINUE") {
+            const handled = await this.#dispatchDirective(failEval, failDirective, "TOOL_FAILURE")
+            if (handled) return this.#result()
+          }
         }
 
         const progressKey = `${pending.signature}\0${observation.ok}\0${observation.content}`
@@ -361,7 +356,8 @@ export class AgentRunner {
         session.lastProgressKey = progressKey
         if (session.repeatedProgress >= this.#nonProgressThreshold) {
           session.failureReason = "NON_PROGRESS"
-          this.#emit("task.non_progress", { message: `Repeated ${pending.prepared.name} call made no progress`, threshold: this.#nonProgressThreshold })
+          session.terminationSource = "NON_PROGRESS_GUARD"
+          this.#emit("task.non_progress", { message: `Repeated ${pending.prepared.name} call made no progress`, threshold: this.#nonProgressThreshold, terminationSource: "NON_PROGRESS_GUARD" })
           return this.#result()
         }
       } else {
@@ -453,8 +449,13 @@ export class AgentRunner {
         messages: [{ role: "user", content: promptContent }],
         ...(session.input.signal ? { signal: session.input.signal } : {}),
         tools,
-        metadata: { turn, tools },
+        metadata: {
+          turn,
+          tools,
+          ...(session.pendingModelRecommendation ? { modelRecommendation: session.pendingModelRecommendation } : {}),
+        },
       }
+      session.pendingModelRecommendation = undefined
       this.#emit("model.requested", { turn })
       session.turns = turn
       let response
@@ -495,62 +496,64 @@ export class AgentRunner {
 
         if (this.#adaptiveInterventions) {
           if (directive.action === "SCHEDULE_VERIFICATION") {
-            const verifOutcome = await this.#executeScheduledVerification(beforeCompEval.evalId)
+            const { outcome: verifOutcome, evalResult: postVerifEval, directive: postVerifDirective } = await this.#executeScheduledVerification(beforeCompEval.evalId)
             if (verifOutcome === "WAITING_CONFIRMATION" || session.state.status === "WAITING_FOR_CONFIRMATION" || ["FAILED", "CANCELLED"].includes(session.state.status)) {
               return this.#result()
             }
-            if (verifOutcome === "PASSED" || verifOutcome === "UNAVAILABLE") {
+
+            const hasMutations = session.evidenceCollector.getEvidence().mutationOutcomes.some((m) => m.status === "APPLIED")
+            const isVerificationRequired = Boolean(
+              session.input.task.metadata?.requireVerification === true ||
+              session.input.task.mode === "DEBUG" ||
+              session.taskProfile.category === "TEST_DIAGNOSIS" ||
+              /\b(?:test|tests|verify|verification|assert|diagnose)\b/i.test(session.input.task.instruction)
+            )
+
+            if (verifOutcome === "UNAVAILABLE") {
+              if (hasMutations && isVerificationRequired) {
+                session.failureReason = "INTERNAL_ERROR"
+                this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })
+                break
+              }
               session.finalAnswer = response.message.content
               this.#emit("task.completed", { turns: session.turns })
               break
             }
-            session.observations.push(
-              createToolObservation({
-                toolName: "runtime_eval_revision",
-                callId: beforeCompEval.evalId,
-                error: {
-                  category: "VERIFICATION_FAILED",
-                  message: "Verification failed following code mutation. Review test output and fix defect before completing.",
-                },
-                maxContentBytes: this.#observationMaxBytes,
-              })
-            )
-            continue
-          } else if (directive.action === "INJECT_REVISION") {
-            session.observations.push(
-              createToolObservation({
-                toolName: "runtime_eval_revision",
-                callId: beforeCompEval.evalId,
-                error: { category: "REVISION_REQUIRED", message: directive.promptContext ?? "Revise defect" },
-                maxContentBytes: this.#observationMaxBytes,
-              })
-            )
-            continue
-          } else if (directive.action === "TRIGGER_REPLAN") {
-            session.observations.push(
-              createToolObservation({
-                toolName: "runtime_eval_replan",
-                callId: beforeCompEval.evalId,
-                error: { category: "REPLAN_REQUIRED", message: directive.promptContext ?? "Replan strategy" },
-                maxContentBytes: this.#observationMaxBytes,
-              })
-            )
-            continue
-          } else if (directive.action === "TERMINATE_RUN") {
-            session.failureReason = "NON_PROGRESS"
-            this.#emit("task.non_progress", { message: directive.stopReason ?? "Run terminated by adaptive control" })
-            break
-          } else if (directive.action === "PAUSE_HUMAN") {
-            session.state = {
-              ...session.state,
-              status: "WAITING_FOR_CONFIRMATION",
+
+            if (verifOutcome === "PASSED") {
+              // Post-verification evaluation MUST control whether completion is allowed!
+              if (postVerifDirective && postVerifDirective.decision !== "CONTINUE") {
+                const handled = await this.#dispatchDirective(postVerifEval!, postVerifDirective, "VERIFICATION_RESULT")
+                if (handled) return this.#result()
+                continue
+              }
+              session.finalAnswer = response.message.content
+              this.#emit("task.completed", { turns: session.turns })
+              break
             }
-            this.#emit("permission.requested", {
-              callId: beforeCompEval.evalId,
-              name: "human_authorization",
-              action: "ask_human",
-            })
-            return this.#result()
+
+            // verifOutcome === "FAILED"
+            if (postVerifDirective) {
+              const handled = await this.#dispatchDirective(postVerifEval!, postVerifDirective, "VERIFICATION_RESULT")
+              if (handled) return this.#result()
+            } else {
+              session.observations.push(
+                createToolObservation({
+                  toolName: "runtime_eval_revision",
+                  callId: beforeCompEval.evalId,
+                  error: {
+                    category: "VERIFICATION_FAILED",
+                    message: "Verification failed following code mutation. Review test output and fix defect before completing.",
+                  },
+                  maxContentBytes: this.#observationMaxBytes,
+                })
+              )
+            }
+            continue
+          } else if (directive.decision !== "CONTINUE") {
+            const handled = await this.#dispatchDirective(beforeCompEval, directive, "BEFORE_COMPLETION")
+            if (handled) return this.#result()
+            continue
           }
         }
 
@@ -586,7 +589,11 @@ export class AgentRunner {
         outcome: "REJECTED",
         error: message,
       })
-      await this.#runEval("TOOL_FAILURE")
+      const { evalResult: rejEval, directive: rejDirective } = await this.#runEval("TOOL_FAILURE")
+      if (this.#adaptiveInterventions && rejDirective.decision !== "CONTINUE") {
+        const handled = await this.#dispatchDirective(rejEval, rejDirective, "TOOL_FAILURE")
+        if (handled) return true
+      }
       return false
     }
     const signature = `${prepared.name}\0${stableValue(prepared.arguments)}`
@@ -606,13 +613,10 @@ export class AgentRunner {
         outcome: "DENIED",
         error: "Permission policy denied this tool request",
       })
-      const { directive: secDirective } = await this.#runEval("TOOL_FAILURE")
-      if (this.#adaptiveInterventions && secDirective.action === "PAUSE_HUMAN") {
-        session.state = {
-          ...session.state,
-          status: "WAITING_FOR_CONFIRMATION",
-        }
-        return true
+      const { evalResult: secEval, directive: secDirective } = await this.#runEval("TOOL_FAILURE")
+      if (this.#adaptiveInterventions && secDirective.decision !== "CONTINUE") {
+        const handled = await this.#dispatchDirective(secEval, secDirective, "TOOL_FAILURE")
+        if (handled) return true
       }
       return false
     }
@@ -650,7 +654,11 @@ export class AgentRunner {
             outcome: "FAILED",
             error: message,
           })
-          await this.#runEval("TOOL_FAILURE")
+          const { evalResult: prepEval, directive: prepDirective } = await this.#runEval("TOOL_FAILURE")
+          if (this.#adaptiveInterventions && prepDirective.decision !== "CONTINUE") {
+            const handled = await this.#dispatchDirective(prepEval, prepDirective, "TOOL_FAILURE")
+            if (handled) return true
+          }
           return false
         }
       }
@@ -685,6 +693,36 @@ export class AgentRunner {
         output,
       })
       this.#emit("tool.completed", { callId: prepared.id, name: prepared.name, truncated: observation.truncated })
+
+      if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
+        session.evidenceCollector.recordMutationOutcome({
+          mutationId: prepared.id,
+          path: (prepared.arguments as any)?.targetFile || (prepared.arguments as any)?.path || "",
+          status: "APPLIED",
+        })
+        const { evalResult: mutEval, directive: mutDirective } = await this.#runEval("MUTATION_RESULT")
+        if (this.#adaptiveInterventions && mutDirective.decision !== "CONTINUE") {
+          const handled = await this.#dispatchDirective(mutEval, mutDirective, "MUTATION_RESULT")
+          if (handled) return true
+        }
+      } else if (prepared.definition.action === "run_known_test") {
+        const res = output as any
+        const status = res?.status === "PASS" ? "PASS" : res?.status === "FAIL" ? "FAIL" : "PASS"
+        session.evidenceCollector.recordVerificationOutcome({
+          executionId: prepared.id,
+          action: (prepared.arguments as any)?.action || "TEST",
+          status,
+          failedTestCount: res?.failedTests ?? (status === "FAIL" ? 1 : 0),
+          totalTestCount: res?.totalTests,
+          stdout: res?.stdout,
+          stderr: res?.stderr,
+        })
+        const { evalResult: verifEval, directive: verifDirective } = await this.#runEval("VERIFICATION_RESULT")
+        if (this.#adaptiveInterventions && verifDirective.decision !== "CONTINUE") {
+          const handled = await this.#dispatchDirective(verifEval, verifDirective, "VERIFICATION_RESULT")
+          if (handled) return true
+        }
+      }
     } catch (error) {
       if (isAbortError(error, session.input.signal)) {
         this.#cancel()
@@ -709,21 +747,9 @@ export class AgentRunner {
       this.#emit("tool.failed", { callId: prepared.id, name: prepared.name, message })
 
       const { evalResult: failEval, directive: failDirective } = await this.#runEval("TOOL_FAILURE")
-      if (this.#adaptiveInterventions) {
-        if (failDirective.action === "TERMINATE_RUN") {
-          session.failureReason = "NON_PROGRESS"
-          this.#emit("task.non_progress", { message: failDirective.stopReason ?? "Terminated by adaptive control" })
-          return true
-        } else if (failDirective.action === "TRIGGER_REPLAN") {
-          session.observations.push(
-            createToolObservation({
-              toolName: "runtime_eval_replan",
-              callId: failEval.evalId,
-              error: { category: "REPLAN_REQUIRED", message: failDirective.promptContext ?? "Replan task" },
-              maxContentBytes: this.#observationMaxBytes,
-            })
-          )
-        }
+      if (this.#adaptiveInterventions && failDirective.decision !== "CONTINUE") {
+        const handled = await this.#dispatchDirective(failEval, failDirective, "TOOL_FAILURE")
+        if (handled) return true
       }
     }
     const progressKey = `${signature}\0${observation.ok}\0${observation.content}`
@@ -731,7 +757,8 @@ export class AgentRunner {
     session.lastProgressKey = progressKey
     if (session.repeatedProgress >= this.#nonProgressThreshold) {
       session.failureReason = "NON_PROGRESS"
-      this.#emit("task.non_progress", { message: `Repeated ${prepared.name} call made no progress`, threshold: this.#nonProgressThreshold })
+      session.terminationSource = "NON_PROGRESS_GUARD"
+      this.#emit("task.non_progress", { message: `Repeated ${prepared.name} call made no progress`, threshold: this.#nonProgressThreshold, terminationSource: "NON_PROGRESS_GUARD" })
       return true
     }
     return false
@@ -821,6 +848,12 @@ export class AgentRunner {
       confidence: evalResult.confidence,
     })
 
+    if (evalResult.stale) {
+      const directive: AdaptiveDirective = { action: "CONTINUE", decision: "CONTINUE", shouldFinalize: false }
+      session.evalLedger.recordEval(evalResult, undefined, { staleDropped: true, applied: false })
+      return { evalResult, directive }
+    }
+
     const directive = session.evalPolicy.determineDirective(evalResult, session.evidenceCollector.getEvidence())
 
     if (this.#adaptiveInterventions && directive.decision !== "CONTINUE") {
@@ -830,15 +863,196 @@ export class AgentRunner {
         action: directive.action,
         reason: evalResult.signals.map((s) => s.code).join(", "),
       })
-      session.evalLedger.recordEval(evalResult, directive.action)
+      session.evalLedger.recordEval(evalResult, directive.action, { applied: true, staleDropped: false })
     } else {
-      session.evalLedger.recordEval(evalResult)
+      session.evalLedger.recordEval(evalResult, undefined, { applied: false, staleDropped: false })
     }
 
     return { evalResult, directive }
   }
 
-  async #executeScheduledVerification(evalId: string): Promise<"PASSED" | "FAILED" | "UNAVAILABLE" | "WAITING_CONFIRMATION"> {
+  async #dispatchDirective(
+    evalResult: RuntimeEvalResult,
+    directive: AdaptiveDirective,
+    _checkpoint: RuntimeEvalCheckpoint,
+  ): Promise<boolean> {
+    const session = this.#requiredSession()
+    if (!this.#adaptiveInterventions) return false
+
+    switch (directive.action) {
+      case "SCHEDULE_VERIFICATION": {
+        const { outcome: verifOutcome, evalResult: postEval, directive: postDirective } = await this.#executeScheduledVerification(evalResult.evalId)
+        if (verifOutcome === "WAITING_CONFIRMATION" || session.state.status === "WAITING_FOR_CONFIRMATION" || ["FAILED", "CANCELLED"].includes(session.state.status)) {
+          return true
+        }
+        const hasMutations = session.evidenceCollector.getEvidence().mutationOutcomes.some((m) => m.status === "APPLIED")
+        const isVerificationRequired = Boolean(
+          session.input.task.metadata?.requireVerification === true ||
+          session.input.task.mode === "DEBUG" ||
+          session.taskProfile.category === "TEST_DIAGNOSIS" ||
+          /\b(?:test|tests|verify|verification|assert|diagnose)\b/i.test(session.input.task.instruction)
+        )
+        if (verifOutcome === "UNAVAILABLE" && hasMutations && isVerificationRequired) {
+          session.failureReason = "INTERNAL_ERROR"
+          this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })
+          return true
+        }
+        if (verifOutcome === "FAILED" && postDirective) {
+          return this.#dispatchDirective(postEval!, postDirective, "VERIFICATION_RESULT")
+        }
+        return false
+      }
+
+      case "INJECT_REVISION": {
+        session.observations.push(
+          createToolObservation({
+            toolName: "runtime_eval_revision",
+            callId: evalResult.evalId,
+            error: { category: "REVISION_REQUIRED", message: directive.promptContext ?? "Revise defect" },
+            maxContentBytes: this.#observationMaxBytes,
+          }),
+        )
+        return false
+      }
+
+      case "TRIGGER_REPLAN": {
+        session.observations.push(
+          createToolObservation({
+            toolName: "runtime_eval_replan",
+            callId: evalResult.evalId,
+            error: { category: "REPLAN_REQUIRED", message: directive.promptContext ?? "Replan approach" },
+            maxContentBytes: this.#observationMaxBytes,
+          }),
+        )
+        return false
+      }
+
+      case "TERMINATE_RUN": {
+        session.failureReason = "NON_PROGRESS"
+        session.terminationSource = "RUNTIME_EVAL"
+        this.#emit("task.non_progress", {
+          message: directive.stopReason ?? "Run terminated by runtime evaluation",
+          terminationSource: "RUNTIME_EVAL",
+        })
+        return true
+      }
+
+      case "PAUSE_HUMAN": {
+        session.pending = {
+          prepared: {
+            id: evalResult.evalId,
+            name: "human_authorization",
+            arguments: {},
+            definition: {
+              name: "human_authorization",
+              description: directive.stopReason ?? "Human authorization required",
+              action: "terminal_command",
+              inputSchema: {},
+            },
+            invoke: async () => "APPROVED",
+          },
+          signature: "human_authorization",
+        }
+        this.#emit("permission.requested", {
+          callId: evalResult.evalId,
+          name: "human_authorization",
+          action: "ask_human",
+        })
+        return true
+      }
+
+      case "REQUEST_CONTEXT": {
+        const target = directive.contextRequest?.target?.trim()
+        let resolved = false
+        if (target) {
+          try {
+            const fileData = await readRepositoryFile(session.input.workspaceRoot, target, { maxBytes: 4096 })
+            session.observations.push(
+              createToolObservation({
+                toolName: "runtime_eval_context",
+                callId: evalResult.evalId,
+                output: fileData.content.slice(0, 4000),
+                maxContentBytes: this.#observationMaxBytes,
+              }),
+            )
+            session.evidenceCollector.recordToolAction({
+              id: evalResult.evalId,
+              toolName: "runtime_eval_context",
+              outcome: "COMPLETED",
+              args: { target },
+              output: fileData.content.slice(0, 4000),
+            })
+            resolved = true
+          } catch {
+            try {
+              const searchRes = await searchText(session.input.workspaceRoot, target, { maxResults: 5, maxOutputBytes: 4096 })
+              if (searchRes.results.length > 0) {
+                const formatted = searchRes.results.map((r) => `${r.path}:${r.line}: ${r.text}`).join("\n")
+                session.observations.push(
+                  createToolObservation({
+                    toolName: "runtime_eval_context",
+                    callId: evalResult.evalId,
+                    output: formatted.slice(0, 4000),
+                    maxContentBytes: this.#observationMaxBytes,
+                  }),
+                )
+                session.evidenceCollector.recordToolAction({
+                  id: evalResult.evalId,
+                  toolName: "runtime_eval_context",
+                  outcome: "COMPLETED",
+                  args: { target },
+                  output: formatted.slice(0, 4000),
+                })
+                resolved = true
+              }
+            } catch {
+              resolved = false
+            }
+          }
+        }
+        if (!resolved) {
+          session.observations.push(
+            createToolObservation({
+              toolName: "runtime_eval_replan",
+              callId: evalResult.evalId,
+              error: {
+                category: "CONTEXT_UNAVAILABLE",
+                message: `Requested context '${target || "unknown"}' could not be resolved. Please formulate a new plan.`,
+              },
+              maxContentBytes: this.#observationMaxBytes,
+            }),
+          )
+        }
+        return false
+      }
+
+      case "RECOMMEND_MODEL": {
+        if (directive.modelRecommendation) {
+          session.pendingModelRecommendation = directive.modelRecommendation
+          session.observations.push(
+            createToolObservation({
+              toolName: "runtime_eval_model_recommendation",
+              callId: evalResult.evalId,
+              output: `Model capability recommendation: ${directive.modelRecommendation.capability} (${directive.modelRecommendation.reason})`,
+              maxContentBytes: this.#observationMaxBytes,
+            }),
+          )
+        }
+        return false
+      }
+
+      case "CONTINUE":
+      case "NO_OP":
+      default:
+        return false
+    }
+  }
+
+  async #executeScheduledVerification(evalId: string): Promise<{
+    outcome: "PASSED" | "FAILED" | "UNAVAILABLE" | "WAITING_CONFIRMATION"
+    evalResult?: RuntimeEvalResult
+    directive?: AdaptiveDirective
+  }> {
     const session = this.#requiredSession()
     let prepared: PreparedToolCall | undefined
 
@@ -846,6 +1060,7 @@ export class AgentRunner {
     if (hasRunVerification) {
       try {
         prepared = this.#registry.prepare({
+          id: `scheduled-verify-${evalId}`,
           name: "run_verification",
           arguments: { action: "TEST" },
         })
@@ -858,10 +1073,21 @@ export class AgentRunner {
       const permission = this.#permission(prepared.definition.action)
       if (permission === "CONFIRM") {
         if (prepared.prepareForReview) {
-          const reviewable = await prepared.prepareForReview({
-            workspaceRoot: session.input.workspaceRoot,
-            signal: session.input.signal ?? new AbortController().signal,
-          })
+          let reviewable
+          try {
+            reviewable = await prepared.prepareForReview({
+              workspaceRoot: session.input.workspaceRoot,
+              signal: session.input.signal ?? new AbortController().signal,
+            })
+          } catch {
+            session.evalLedger.recordInterventionOutcome(evalId, "UNCHANGED", "Verification capability unavailable in current environment")
+            this.#emit("runtime_eval.outcome", {
+              evalId,
+              outcome: "UNCHANGED",
+              details: "Verification capability unavailable in current environment",
+            })
+            return { outcome: "UNAVAILABLE" }
+          }
           this.#emit("verification.prepared", {
             callId: prepared.id,
             name: prepared.name,
@@ -875,14 +1101,25 @@ export class AgentRunner {
             mutationId: reviewable.id,
             executionId: reviewable.id,
           })
-          return "WAITING_CONFIRMATION"
+          return { outcome: "WAITING_CONFIRMATION" }
         }
       } else if (permission === "ALLOW") {
         if (prepared.prepareForReview) {
-          const reviewable = await prepared.prepareForReview({
-            workspaceRoot: session.input.workspaceRoot,
-            signal: session.input.signal ?? new AbortController().signal,
-          })
+          let reviewable
+          try {
+            reviewable = await prepared.prepareForReview({
+              workspaceRoot: session.input.workspaceRoot,
+              signal: session.input.signal ?? new AbortController().signal,
+            })
+          } catch {
+            session.evalLedger.recordInterventionOutcome(evalId, "UNCHANGED", "Verification capability unavailable in current environment")
+            this.#emit("runtime_eval.outcome", {
+              evalId,
+              outcome: "UNCHANGED",
+              details: "Verification capability unavailable in current environment",
+            })
+            return { outcome: "UNAVAILABLE" }
+          }
           this.#emit("verification.started", {
             callId: prepared.id,
             name: prepared.name,
@@ -929,7 +1166,7 @@ export class AgentRunner {
           session.observations.push(obs)
           session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "COMPLETED", truncated: obs.truncated })
 
-          await this.#runEval("VERIFICATION_RESULT")
+          const { evalResult: postVerifEval, directive: postVerifDirective } = await this.#runEval("VERIFICATION_RESULT")
 
           const pass = result.status === "PASS"
           session.evalLedger.recordInterventionOutcome(evalId, pass ? "RESOLVED" : "DEGRADED", `Verification ${result.status}`)
@@ -938,7 +1175,7 @@ export class AgentRunner {
             outcome: pass ? "RESOLVED" : "DEGRADED",
             details: `Verification result: ${result.status}`,
           })
-          return pass ? "PASSED" : "FAILED"
+          return { outcome: pass ? "PASSED" : "FAILED", evalResult: postVerifEval, directive: postVerifDirective }
         }
       }
     } else if (this.#verificationEngine) {
@@ -958,7 +1195,7 @@ export class AgentRunner {
             outcome: "UNCHANGED",
             details: "No test command discovered in workspace",
           })
-          return "UNAVAILABLE"
+          return { outcome: "UNAVAILABLE" }
         }
 
         const verifId = `verification-${Date.now()}`
@@ -1007,7 +1244,7 @@ export class AgentRunner {
         })
         session.observations.push(obs)
 
-        await this.#runEval("VERIFICATION_RESULT")
+        const { evalResult: postVerifEval, directive: postVerifDirective } = await this.#runEval("VERIFICATION_RESULT")
 
         const pass = result.status === "PASS"
         session.evalLedger.recordInterventionOutcome(evalId, pass ? "RESOLVED" : "DEGRADED", `Verification ${result.status}`)
@@ -1016,7 +1253,7 @@ export class AgentRunner {
           outcome: pass ? "RESOLVED" : "DEGRADED",
           details: `Verification result: ${result.status}`,
         })
-        return pass ? "PASSED" : "FAILED"
+        return { outcome: pass ? "PASSED" : "FAILED", evalResult: postVerifEval, directive: postVerifDirective }
       }
     }
 
@@ -1026,7 +1263,7 @@ export class AgentRunner {
       outcome: "UNCHANGED",
       details: "Verification capability unavailable in current environment",
     })
-    return "UNAVAILABLE"
+    return { outcome: "UNAVAILABLE" }
   }
 
   #result(): AgentResult {
@@ -1038,6 +1275,7 @@ export class AgentRunner {
       status,
       ...(session.finalAnswer !== undefined ? { finalAnswer: session.finalAnswer } : {}),
       ...(session.failureReason ? { failureReason: session.failureReason } : {}),
+      ...(session.terminationSource ? { terminationSource: session.terminationSource } : {}),
       turns: session.turns,
       finalState: session.state,
       events: session.state.events,

@@ -142,15 +142,24 @@ export class RuntimeEvalEngine {
             },
           ]
 
-          // Critic may influence decision if confident, but cannot override verification failure or security denial (T-4437)
+          // Critic may influence decision if confident, but cannot override verification failure, unverified mutation, or security denial (T-4437)
           let finalDecision: AdaptiveDecision = l1Result.decision
           const suggested = ((criticOutput as any).suggestedDecision ?? (criticOutput as any).decision) as AdaptiveDecision
-          if (l1Result.scores.safetyAuthority > 0) {
-            if (suggested === "CONTINUE" && (recentFails.length > 0 || l1Result.decision === "REVISE" || l1Result.decision === "STOP")) {
-              finalDecision = l1Result.decision
-            } else {
-              finalDecision = suggested
-            }
+          const denials = evidence.securitySignals.filter((s) => s.denied)
+          const hardL0Block =
+            denials.length > 0 ||
+            l0Result.scores.safetyAuthority === 0 ||
+            l0Result.decision === "ASK_HUMAN" ||
+            l0Result.decision === "VERIFY" ||
+            recentFails.length > 0 ||
+            l0Result.decision === "REVISE" ||
+            l0Result.decision === "STOP" ||
+            l1Result.decision === "STOP"
+
+          if (hardL0Block && suggested === "CONTINUE") {
+            finalDecision = l1Result.decision
+          } else if (l1Result.scores.safetyAuthority > 0) {
+            finalDecision = suggested
           }
 
           result = {
@@ -193,6 +202,8 @@ export class RuntimeEvalEngine {
         // Evidence changed while evaluating; result is stale
         result = {
           ...result,
+          stale: true,
+          decision: "CONTINUE",
           signals: [
             ...result.signals,
             {
@@ -245,7 +256,9 @@ export class RuntimeEvalEngine {
       turnId,
     }
 
-    this.#cachedResults.set(checkpointKey, result)
+    if (!result.stale) {
+      this.#cachedResults.set(checkpointKey, result)
+    }
     return result
   }
 }

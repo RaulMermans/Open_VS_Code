@@ -25,9 +25,16 @@ export class RuntimeEvalLedger {
     return JSON.stringify(this.#entries).length
   }
 
-  recordEval(result: RuntimeEvalResult, intervention?: string): EvalLedgerEntry {
-    const sanitizedIntervention = intervention ? redactRuntimeEvalSecrets(intervention) : undefined
-    const hasIntervention = Boolean(intervention)
+  recordEval(
+    result: RuntimeEvalResult,
+    intervention?: string,
+    options?: { readonly staleDropped?: boolean; readonly applied?: boolean },
+  ): EvalLedgerEntry {
+    const isStale = Boolean(result.stale || options?.staleDropped)
+    const sanitizedIntervention = !isStale && intervention ? redactRuntimeEvalSecrets(intervention) : undefined
+    const hasIntervention = !isStale && Boolean(intervention)
+    const applied = !isStale && (options?.applied ?? hasIntervention)
+
     const entry: EvalLedgerEntry = {
       evalId: result.evalId,
       runId: result.runId,
@@ -39,10 +46,12 @@ export class RuntimeEvalLedger {
       reasonCodes: result.signals.map((s) => s.code),
       evidenceRefs: result.evidenceRefs ? [...result.evidenceRefs] : [],
       intervention: sanitizedIntervention,
-      outcome: intervention ? "PENDING" : undefined,
+      outcome: hasIntervention ? "PENDING" : undefined,
       hasIntervention,
       interventionAction: sanitizedIntervention,
-      interventionOutcome: intervention ? "PENDING" : undefined,
+      interventionOutcome: hasIntervention ? "PENDING" : undefined,
+      staleDropped: isStale ? true : undefined,
+      applied,
     }
 
     if (this.#entries.length >= this.#maxEntries) {

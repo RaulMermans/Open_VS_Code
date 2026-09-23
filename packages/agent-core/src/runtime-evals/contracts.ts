@@ -73,6 +73,7 @@ export interface RuntimeEvalResult {
   readonly suggestedModel?: { readonly capability: string; readonly reason: string } | undefined
   readonly modelRecommendation?: { readonly capability: string; readonly reason: string } | undefined
   readonly contextRequest?: { readonly target: string; readonly reason: string } | undefined
+  readonly stale?: boolean | undefined
 }
 
 export type InterventionOutcome = "IMPROVED" | "DEGRADED" | "UNCHANGED" | "PENDING" | "RESOLVED"
@@ -230,4 +231,6 @@ export interface EvalLedgerEntry {
   readonly interventionAction?: string | undefined
   readonly interventionOutcome?: InterventionOutcome | undefined
   readonly interventionDetails?: string | undefined
+  readonly staleDropped?: boolean | undefined
+  readonly applied?: boolean | undefined
 }

@@ -21,7 +21,7 @@
  */
 
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -39,6 +39,7 @@ import {
   computeEvidenceHash,
   evaluateL0,
   evaluateL1,
+  classifyPermission,
 } from "../../src/index.ts"
 import type { ContextBudget } from "../../src/contracts/context.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
@@ -1022,36 +1023,71 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
   // CATEGORY 6: Real Execution Loops E2E (Scenarios 39-43)
   // =========================================================================
 
-  // Scenario 39: VERIFY Loop E2E
+  // Scenario 39: VERIFY Loop E2E (mutation triggers BEFORE_COMPLETION verification, passes, completes)
   {
     const ws = await mkdtemp(join(tmpdir(), "rt-eval-e2e-1-"))
     try {
       const runner = new AgentRunner({
+        evidenceGate: false,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
         provider: new ScriptedModelProvider([
-          { model: "scripted", message: { role: "assistant", content: "Done." } },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "m-1", name: "apply_edit", arguments: { targetFile: "index.ts" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Mutation applied, all done!" },
+          },
         ]),
-        registry: new ToolRegistry([]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_edit", description: "Apply edit", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async (input) => ({
+              id: "m-rev-1",
+              reviewPayload: { targetFile: (input as any)?.targetFile ?? "index.ts" },
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+          {
+            definition: { name: "run_verification", description: "Run test verification", action: "run_known_test", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "PASS", totalTests: 1, failedTests: 0 }),
+            prepareForReview: async () => ({
+              id: "v-rev-1",
+              reviewPayload: {},
+              apply: async () => ({ status: "PASS", totalTests: 1, failedTests: 0 }),
+            }),
+          },
+        ]),
       })
       const result = await runner.run({
-        task: { id: "e2e-v-1", mode: "ASK", instruction: "Query" },
+        task: { id: "e2e-v-1", mode: "BUILD", instruction: "Update index.ts with tests" },
         workspaceRoot: ws,
-        maxTurns: 3,
+        maxTurns: 5,
         contextBudget: defaultContextBudget,
         projectInstructions: [],
       })
+      const beforeCompEval = result.evalResults?.find((e) => e.checkpoint === "BEFORE_COMPLETION")
+      const postVerifEval = result.evalResults?.find((e) => e.checkpoint === "VERIFICATION_RESULT")
       results.push({
         id: "e2e.1",
         category: "REAL_EXECUTION_LOOPS",
-        description: "Read-only ask execution proceeds without requiring verification",
+        description: "Mutation triggers BEFORE_COMPLETION VERIFY, schedules and passes verification, and completes",
         actual: {
           status: result.status,
-          hasEvalResults: (result.evalResults?.length ?? 0) > 0,
-          firstDecision: result.evalResults?.[0]?.decision,
+          beforeCompDecision: beforeCompEval?.decision,
+          postVerifDecision: postVerifEval?.decision,
+          finalAnswer: result.finalAnswer,
         },
         expected: {
           status: "COMPLETED",
-          hasEvalResults: true,
-          firstDecision: "CONTINUE",
+          beforeCompDecision: "VERIFY",
+          postVerifDecision: "CONTINUE",
+          finalAnswer: "Mutation applied, all done!",
         },
       })
     } finally {
@@ -1059,37 +1095,50 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
     }
   }
 
-  // Scenario 40: REVISE Loop E2E (Tool failure injected and recovered)
+  // Scenario 40: REVISE Loop E2E (Tool failure triggers TOOL_FAILURE revision injection and model recovers)
   {
     const ws = await mkdtemp(join(tmpdir(), "rt-eval-e2e-2-"))
     try {
       const runner = new AgentRunner({
         provider: new ScriptedModelProvider([
-          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "bad", name: "non_existent", arguments: {} }] },
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "bad", name: "failing_tool", arguments: {} }] },
           { model: "scripted", message: { role: "assistant", content: "Fixed after tool failure observation." } },
         ]),
-        registry: new ToolRegistry([]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "failing_tool", description: "Failing tool", action: "read_repository", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => {
+              throw new Error("Syntax error in file")
+            },
+          },
+        ]),
       })
       const result = await runner.run({
-        task: { id: "e2e-rev-1", mode: "ASK", instruction: "Recover" },
+        task: { id: "e2e-rev-1", mode: "ASK", instruction: "Recover from error" },
         workspaceRoot: ws,
         maxTurns: 3,
         contextBudget: defaultContextBudget,
         projectInstructions: [],
       })
+      const failureEval = result.evalResults?.find((e) => e.checkpoint === "TOOL_FAILURE")
       results.push({
         id: "e2e.2",
         category: "REAL_EXECUTION_LOOPS",
-        description: "Tool failure triggers eval and allows model turn to recover",
+        description: "Tool failure triggers TOOL_FAILURE eval and allows model turn to recover",
         actual: {
           status: result.status,
           turns: result.turns,
-          toolCallsCount: result.toolCalls.length,
+          toolFailureEvaluated: failureEval !== undefined,
+          failureDecision: failureEval?.decision,
+          finalAnswer: result.finalAnswer,
         },
         expected: {
           status: "COMPLETED",
           turns: 2,
-          toolCallsCount: 1,
+          toolFailureEvaluated: true,
+          failureDecision: "REVISE",
+          finalAnswer: "Fixed after tool failure observation.",
         },
       })
     } finally {
@@ -1097,35 +1146,47 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
     }
   }
 
-  // Scenario 39-43 helpers:
-  // Scenario 41: REPLAN Loop E2E (triggering replan observation)
+  // Scenario 41: REPLAN Loop E2E (Repeated tool failure triggers REPLAN and model recovers with new plan)
   {
     const ws = await mkdtemp(join(tmpdir(), "rt-eval-e2e-3-"))
     try {
       const runner = new AgentRunner({
+        evalEngine: new RuntimeEvalEngine({ l0Options: { repeatedFailureThreshold: 1 } }),
         provider: new ScriptedModelProvider([
-          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "bad1", name: "bad", arguments: {} }] },
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "bad1", name: "failing_tool", arguments: { file: "a.ts" } }] },
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "bad2", name: "failing_tool", arguments: { file: "a.ts" } }] },
           { model: "scripted", message: { role: "assistant", content: "Pivoted after replan observation." } },
         ]),
-        registry: new ToolRegistry([]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "failing_tool", description: "Failing tool", action: "read_repository", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => {
+              throw new Error("Repeated failure")
+            },
+          },
+        ]),
       })
       const result = await runner.run({
         task: { id: "e2e-rep-1", mode: "ASK", instruction: "Replan task" },
         workspaceRoot: ws,
-        maxTurns: 3,
+        maxTurns: 4,
         contextBudget: defaultContextBudget,
         projectInstructions: [],
       })
+      const replanEval = result.evalResults?.find((e) => e.decision === "REPLAN")
       results.push({
         id: "e2e.3",
         category: "REAL_EXECUTION_LOOPS",
-        description: "Replan triggered and model recovers with final answer",
+        description: "Repeated tool failure triggers REPLAN directive and model pivots cleanly",
         actual: {
           status: result.status,
+          replanTriggered: replanEval !== undefined,
           finalAnswer: result.finalAnswer,
         },
         expected: {
           status: "COMPLETED",
+          replanTriggered: true,
           finalAnswer: "Pivoted after replan observation.",
         },
       })
@@ -1134,24 +1195,26 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
     }
   }
 
-  // Scenario 42: Runaway STOP Loop E2E (runner termination)
+  // Scenario 42: Runaway STOP Loop E2E (terminates with RUNTIME_EVAL terminationSource)
   {
     const ws = await mkdtemp(join(tmpdir(), "rt-eval-e2e-4-"))
     try {
       const runner = new AgentRunner({
+        evalEngine: new RuntimeEvalEngine({ l1Options: { runawayStopThreshold: 2 } }),
+        nonProgressThreshold: 10,
         provider: new ScriptedModelProvider([
-          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "rep1", name: "read_file", arguments: { path: "a.ts" } }] },
-          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "rep2", name: "read_file", arguments: { path: "a.ts" } }] },
-          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "rep3", name: "read_file", arguments: { path: "a.ts" } }] },
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "bad1", name: "failing_tool", arguments: {} }] },
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "bad2", name: "failing_tool", arguments: {} }] },
         ]),
         registry: new ToolRegistry([
           {
-            definition: { name: "read_file", description: "Read file", action: "read_repository", inputSchema: {} },
+            definition: { name: "failing_tool", description: "Failing tool", action: "read_repository", inputSchema: {} },
             validate: (a) => a as any,
-            execute: async () => "content",
+            execute: async () => {
+              throw new Error("Unrecoverable error")
+            },
           },
         ]),
-        nonProgressThreshold: 3,
       })
       const result = await runner.run({
         task: { id: "e2e-stop-1", mode: "ASK", instruction: "Loop" },
@@ -1163,14 +1226,16 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
       results.push({
         id: "e2e.4",
         category: "REAL_EXECUTION_LOOPS",
-        description: "Repeated non-progress tool calls terminate run cleanly with NON_PROGRESS",
+        description: "Repeated non-progress tool calls terminate run cleanly with RUNTIME_EVAL",
         actual: {
           status: result.status,
           failureReason: result.failureReason,
+          terminationSource: result.terminationSource,
         },
         expected: {
           status: "FAILED",
           failureReason: "NON_PROGRESS",
+          terminationSource: "RUNTIME_EVAL",
         },
       })
     } finally {
@@ -1178,13 +1243,15 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
     }
   }
 
-  // Scenario 43: ASK_HUMAN pause loop E2E (permission denial escalation)
+  // Scenario 43: ASK_HUMAN pause loop E2E (permission denial escalates to PAUSED with WAITING_FOR_CONFIRMATION)
   {
     const ws = await mkdtemp(join(tmpdir(), "rt-eval-e2e-5-"))
     try {
       const runner = new AgentRunner({
+        evalEngine: new RuntimeEvalEngine({ l0Options: { securityDenialThreshold: 1 } }),
+        permissionEvaluator: () => "DENY",
         provider: new ScriptedModelProvider([
-          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "cmd1", name: "run_command", arguments: { command: "ls" } }] },
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "cmd1", name: "run_command", arguments: { command: "rm -rf /" } }] },
         ]),
         registry: new ToolRegistry([
           {
@@ -1195,7 +1262,7 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         ]),
       })
       const result = await runner.run({
-        task: { id: "e2e-ask-1", mode: "ASK", instruction: "Run cmd" },
+        task: { id: "e2e-ask-1", mode: "ASK", instruction: "Run dangerous command" },
         workspaceRoot: ws,
         maxTurns: 3,
         contextBudget: defaultContextBudget,
@@ -1206,12 +1273,14 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         category: "REAL_EXECUTION_LOOPS",
         description: "Security boundary denial pauses for human confirmation or handles safely",
         actual: {
-          isTerminalOrPaused: ["COMPLETED", "FAILED", "PAUSED"].includes(result.status),
-          toolCallsLogged: result.toolCalls.length,
+          status: result.status,
+          sessionStatus: result.finalState.status,
+          hasDenialEval: result.evalResults?.some((e) => e.decision === "ASK_HUMAN") ?? false,
         },
         expected: {
-          isTerminalOrPaused: true,
-          toolCallsLogged: 1,
+          status: "PAUSED",
+          sessionStatus: "WAITING_FOR_CONFIRMATION",
+          hasDenialEval: true,
         },
       })
     } finally {
@@ -2032,6 +2101,575 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
       description: "Strict comparator asserts error when expected field is missing from actual",
       actual: { caught },
       expected: { caught: true },
+    })
+  }
+
+  // =========================================================================
+  // CATEGORY 11: Adaptive Loop Integrity & Real Closure (Scenarios 73-82)
+  // =========================================================================
+
+  // Scenario 73: Stale evaluation marked stale: true, decision: "CONTINUE"
+  {
+    const collector = new RuntimeEvidenceCollector({ runId: "stale-1", taskGoal: "Detect staleness" })
+    let evalRan = false
+    const critic = {
+      evaluate: async () => {
+        // Evidence changed during critique!
+        collector.recordToolAction({ id: "action-mid", toolName: "read_file", outcome: "COMPLETED" })
+        evalRan = true
+        return {
+          assessment: "Critique during mutation",
+          confidence: 0.9,
+          suggestedDecision: "REVISE" as const,
+          reasonCodes: [],
+          flags: [],
+        }
+      },
+    }
+    const engine = new RuntimeEvalEngine({ critic, forceCritic: true })
+    const result = await engine.evaluate(collector, "PERIODIC", 1)
+    results.push({
+      id: "integrity.1",
+      category: "RUNTIME_INTEGRITY",
+      description: "Evaluation where evidence version changes concurrently is marked stale with CONTINUE",
+      actual: {
+        evalRan,
+        stale: result.stale,
+        decision: result.decision,
+      },
+      expected: {
+        evalRan: true,
+        stale: true,
+        decision: "CONTINUE",
+      },
+    })
+  }
+
+  // Scenario 74: Stale evaluation not cached, subsequent fresh eval succeeds
+  {
+    const collector = new RuntimeEvidenceCollector({ runId: "stale-cache-1", taskGoal: "Cache staleness check" })
+    let callCount = 0
+    const critic = {
+      evaluate: async () => {
+        callCount++
+        if (callCount === 1) {
+          collector.recordToolAction({ id: "action-mid-1", toolName: "read_file", outcome: "COMPLETED" })
+        }
+        return {
+          assessment: "Critic response",
+          confidence: 0.9,
+          suggestedDecision: "REVISE" as const,
+          reasonCodes: [],
+          flags: [],
+        }
+      },
+    }
+    const engine = new RuntimeEvalEngine({ critic, forceCritic: true })
+    const firstResult = await engine.evaluate(collector, "PERIODIC", 1)
+    const secondResult = await engine.evaluate(collector, "PERIODIC", 1)
+    results.push({
+      id: "integrity.2",
+      category: "RUNTIME_INTEGRITY",
+      description: "Stale evaluation is excluded from cache so subsequent evaluation executes freshly",
+      actual: {
+        firstStale: firstResult.stale === true,
+        secondStale: secondResult.stale ?? false,
+        secondDecision: secondResult.decision,
+        invocations: callCount,
+      },
+      expected: {
+        firstStale: true,
+        secondStale: false,
+        secondDecision: "REVISE",
+        invocations: 2,
+      },
+    })
+  }
+
+  // Scenario 75: Post-verification failing evaluation blocks completion and injects revision
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-post-fail-"))
+    try {
+      let verifAttempts = 0
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "m-1", name: "apply_edit", arguments: { targetFile: "app.ts" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Attempting completion 1" },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "v-fix", name: "run_verification", arguments: { action: "TEST" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Fixed and tests pass!" },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_edit", description: "Apply edit", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async (input) => ({
+              id: "m-rev-1",
+              reviewPayload: { targetFile: (input as any)?.targetFile ?? "app.ts" },
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+          {
+            definition: { name: "run_verification", description: "Run test verification", action: "run_known_test", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => {
+              verifAttempts++
+              if (verifAttempts === 1) {
+                return { status: "FAIL", totalTests: 2, failedTests: 1 }
+              }
+              return { status: "PASS", totalTests: 2, failedTests: 0 }
+            },
+            prepareForReview: async () => {
+              verifAttempts++
+              if (verifAttempts === 1) {
+                return { id: "v-rev-1", reviewPayload: {}, apply: async () => ({ status: "FAIL", totalTests: 2, failedTests: 1 }) }
+              }
+              return { id: "v-rev-2", reviewPayload: {}, apply: async () => ({ status: "PASS", totalTests: 2, failedTests: 0 }) }
+            },
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "post-fail-1", mode: "BUILD", instruction: "Update app.ts and verify" },
+        workspaceRoot: ws,
+        maxTurns: 5,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const postVerifEvals = result.evalResults?.filter((e) => e.checkpoint === "VERIFICATION_RESULT") ?? []
+      results.push({
+        id: "integrity.3",
+        category: "RUNTIME_INTEGRITY",
+        description: "Post-verification failure blocks completion and injects revision until verification passes",
+        actual: {
+          status: result.status,
+          turns: result.turns,
+          postVerifDecisions: postVerifEvals.map((e) => e.decision),
+          finalAnswer: result.finalAnswer,
+        },
+        expected: {
+          status: "COMPLETED",
+          turns: 4,
+          postVerifDecisions: ["REVISE", "CONTINUE"],
+          finalAnswer: "Fixed and tests pass!",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 76: Unavailable verification fails closed with VERIFICATION_UNAVAILABLE on required task
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-verif-unavail-"))
+    try {
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        permissionEvaluator: (action) => (action.action === "write_file" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "m-1", name: "apply_edit", arguments: { targetFile: "bug.ts" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Bug fixed, completing now." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_edit", description: "Apply edit", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async (input) => ({
+              id: "m-rev-1",
+              reviewPayload: { targetFile: (input as any)?.targetFile ?? "bug.ts" },
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: {
+          id: "verif-unavail-1",
+          mode: "BUILD",
+          instruction: "Fix bug and verify with tests",
+          metadata: { requireVerification: true },
+        },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const failedEvent = result.events.find((e) => e.type === "task.failed")
+      results.push({
+        id: "integrity.4",
+        category: "RUNTIME_INTEGRITY",
+        description: "Task requiring verification fails closed when verification tool is unavailable",
+        actual: {
+          status: result.status,
+          failureReason: result.failureReason,
+          hasUnavailMessage: String((failedEvent?.payload as any)?.message ?? "").includes("VERIFICATION_UNAVAILABLE"),
+        },
+        expected: {
+          status: "FAILED",
+          failureReason: "INTERNAL_ERROR",
+          hasUnavailMessage: true,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 77: Unavailable verification allows completion on read-only task
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-verif-readonly-"))
+    try {
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Information retrieved successfully." },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "verif-readonly-1", mode: "ASK", instruction: "Explain the architecture" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "integrity.5",
+        category: "RUNTIME_INTEGRITY",
+        description: "Read-only task without mutations completes cleanly without verification capability",
+        actual: {
+          status: result.status,
+          finalAnswer: result.finalAnswer,
+        },
+        expected: {
+          status: "COMPLETED",
+          finalAnswer: "Information retrieved successfully.",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 78: MUTATION_RESULT checkpoint recorded and dispatched
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-mut-dispatch-"))
+    try {
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        permissionEvaluator: (action) => (action.action === "write_file" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "m-mut-1", name: "apply_edit", arguments: { targetFile: "file.ts" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Done editing file." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_edit", description: "Apply edit", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async (input) => ({
+              id: "m-rev-1",
+              reviewPayload: { targetFile: (input as any)?.targetFile ?? "file.ts" },
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "mut-dispatch-1", mode: "ASK", instruction: "Edit file and complete" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const mutEval = result.evalResults?.find((e) => e.checkpoint === "MUTATION_RESULT")
+      results.push({
+        id: "integrity.6",
+        category: "RUNTIME_INTEGRITY",
+        description: "MUTATION_RESULT checkpoint is evaluated and recorded upon successful mutation",
+        actual: {
+          mutEvalPresent: mutEval !== undefined,
+          checkpoint: mutEval?.checkpoint,
+          decision: mutEval?.decision,
+        },
+        expected: {
+          mutEvalPresent: true,
+          checkpoint: "MUTATION_RESULT",
+          decision: "CONTINUE",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 79: REQUEST_MORE_CONTEXT consumes bounded file fragment and injects observation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-req-ctx-"))
+    try {
+      await writeFile(join(ws, "config.json"), JSON.stringify({ environment: "production", timeout: 30 }), "utf-8")
+      let turnCount = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(_evalResult: any): any {
+          turnCount++
+          if (turnCount === 1) {
+            return {
+              decision: "REQUEST_MORE_CONTEXT",
+              action: "REQUEST_CONTEXT",
+              shouldFinalize: false,
+              contextRequest: { type: "FILE", target: "config.json" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: false }
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Initial thought without tools." },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Resolved config context successfully." },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "req-ctx-1", mode: "ASK", instruction: "Check configuration" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "integrity.7",
+        category: "RUNTIME_INTEGRITY",
+        description: "REQUEST_MORE_CONTEXT directive loads repository file and injects runtime_eval_context observation",
+        actual: {
+          status: result.status,
+          turns: result.turns,
+          finalAnswer: result.finalAnswer,
+        },
+        expected: {
+          status: "COMPLETED",
+          turns: 2,
+          finalAnswer: "Resolved config context successfully.",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 80: CHANGE_MODEL forwards modelRecommendation metadata on subsequent turns
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-chg-model-"))
+    try {
+      let turnCount = 0
+      let capturedRecommendation: Record<string, unknown> | undefined
+
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(_evalResult: any): any {
+          turnCount++
+          if (turnCount === 1) {
+            return {
+              decision: "CHANGE_MODEL",
+              action: "RECOMMEND_MODEL",
+              shouldFinalize: false,
+              modelRecommendation: { capability: "COMPLEX_REASONING", reason: "Requires multi-step analysis" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: false }
+        }
+      })()
+
+      class InspectingProvider extends ScriptedModelProvider {
+        override async complete(request: any) {
+          if (request.metadata?.modelRecommendation) {
+            capturedRecommendation = request.metadata.modelRecommendation
+          }
+          return super.complete(request)
+        }
+      }
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        provider: new InspectingProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Needs complex model analysis." },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Solved with upgraded model recommendation." },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "chg-model-1", mode: "ASK", instruction: "Solve hard puzzle" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "integrity.8",
+        category: "RUNTIME_INTEGRITY",
+        description: "RECOMMEND_MODEL directive forwards model recommendation metadata to subsequent turns",
+        actual: {
+          status: result.status,
+          turns: result.turns,
+          recommendedCapability: (capturedRecommendation as any)?.capability,
+          recommendedReason: (capturedRecommendation as any)?.reason,
+          finalAnswer: result.finalAnswer,
+        },
+        expected: {
+          status: "COMPLETED",
+          turns: 2,
+          recommendedCapability: "COMPLEX_REASONING",
+          recommendedReason: "Requires multi-step analysis",
+          finalAnswer: "Solved with upgraded model recommendation.",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 81: Hard L0 dominance over L2 critic (unverified mutation blocks CONTINUE)
+  {
+    const collector = new RuntimeEvidenceCollector({ runId: "l0-dom-1", taskGoal: "Verify L0 dominance" })
+    collector.recordMutationOutcome({ mutationId: "m-dom-1", path: "server.ts", status: "APPLIED" })
+    const critic = {
+      evaluate: async () => ({
+        assessment: "Critic mistakenly thinks unverified mutations can complete",
+        confidence: 0.99,
+        suggestedDecision: "CONTINUE" as const,
+        reasonCodes: [],
+        flags: [],
+      }),
+    }
+    const engine = new RuntimeEvalEngine({ critic, forceCritic: true })
+    const result = await engine.evaluate(collector, "BEFORE_COMPLETION", 1)
+    results.push({
+      id: "integrity.9",
+      category: "RUNTIME_INTEGRITY",
+      description: "Hard L0 rule dominates L2 critic suggestions so unverified mutations require VERIFY",
+      actual: {
+        criticSuggested: "CONTINUE",
+        finalDecision: result.decision,
+        hasUnverifiedSignal: result.signals.some((s) => s.code === "UNVERIFIED_MUTATION"),
+      },
+      expected: {
+        criticSuggested: "CONTINUE",
+        finalDecision: "VERIFY",
+        hasUnverifiedSignal: true,
+      },
+    })
+  }
+
+  // Scenario 82: Analytics distinguishes recommended, applied, and stale dropped interventions
+  {
+    const ledger = new RuntimeEvalLedger()
+    const evalResult1 = {
+      evalId: "e-1",
+      runId: "run-ana",
+      turnId: 1,
+      checkpoint: "BEFORE_COMPLETION" as const,
+      evidenceVersion: 1,
+      decision: "VERIFY" as const,
+      scores: { progress: 0.5, completionConfidence: 0.5, verificationCoverage: 0.5, planAdherence: 1, executionEfficiency: 1, logicalConsistency: 1, safetyAuthority: 1 },
+      signals: [],
+      evaluatorLevel: "L0" as const,
+      confidence: 1,
+    }
+    const evalResult2 = {
+      evalId: "e-2",
+      runId: "run-ana",
+      turnId: 2,
+      checkpoint: "TOOL_FAILURE" as const,
+      evidenceVersion: 2,
+      decision: "REVISE" as const,
+      scores: { progress: 0.5, completionConfidence: 0.5, verificationCoverage: 0.5, planAdherence: 1, executionEfficiency: 1, logicalConsistency: 1, safetyAuthority: 1 },
+      signals: [],
+      evaluatorLevel: "L0" as const,
+      confidence: 1,
+    }
+    const evalResult3 = {
+      evalId: "e-3",
+      runId: "run-ana",
+      turnId: 3,
+      checkpoint: "PERIODIC" as const,
+      evidenceVersion: 3,
+      decision: "VERIFY" as const,
+      scores: { progress: 0.5, completionConfidence: 0.5, verificationCoverage: 0.5, planAdherence: 1, executionEfficiency: 1, logicalConsistency: 1, safetyAuthority: 1 },
+      signals: [],
+      evaluatorLevel: "L0" as const,
+      confidence: 1,
+    }
+
+    ledger.recordEval(evalResult1, "SCHEDULE_VERIFICATION", { applied: true })
+    ledger.recordEval(evalResult2, "INJECT_REVISION", { staleDropped: true, applied: false })
+    ledger.recordEval(evalResult3, "SCHEDULE_VERIFICATION", { applied: false })
+
+    const analytics = new RuntimeEvalAnalytics(ledger)
+    const summary = analytics.getRunSummary("run-ana")
+
+    results.push({
+      id: "integrity.10",
+      category: "RUNTIME_INTEGRITY",
+      description: "Analytics accurately tracks recommended, applied, and stale dropped interventions",
+      actual: {
+        recommendedInterventions: summary.recommendedInterventions,
+        appliedInterventions: summary.appliedInterventions,
+        staleDroppedInterventions: summary.staleDroppedInterventions,
+      },
+      expected: {
+        recommendedInterventions: 3,
+        appliedInterventions: 1,
+        staleDroppedInterventions: 1,
+      },
     })
   }
 
