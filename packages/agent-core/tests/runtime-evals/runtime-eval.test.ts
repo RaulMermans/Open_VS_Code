@@ -118,6 +118,20 @@ describe("Runtime Evaluation — Sprint 4B", () => {
         (err: unknown) => err instanceof assert.AssertionError,
       )
     })
+
+    test("fails when secondDeploymentId routing evidence mismatches (expected B, actual A)", () => {
+      const badResult: RuntimeEvalScenarioResult = {
+        id: "neg.routing_mismatch",
+        category: "NEGATIVE_TEST",
+        description: "Negative test for secondDeploymentId routing mismatch",
+        actual: { secondDeploymentId: "local-a", routerHintConsumed: false },
+        expected: { secondDeploymentId: "local-b", routerHintConsumed: true },
+      }
+      assert.throws(
+        () => assertRuntimeEvalScenario(badResult),
+        (err: unknown) => err instanceof assert.AssertionError,
+      )
+    })
   })
 
   let run1Results: readonly RuntimeEvalScenarioResult[] = []
@@ -152,5 +166,14 @@ describe("Runtime Evaluation — Sprint 4B", () => {
 
   test("Scenario count >= 70", () => {
     assert.ok(run1Results.length >= 70, `Expected at least 70 scenarios, got ${run1Results.length}`)
+  })
+
+  test("Derived scenario and category count check (T-4717)", () => {
+    const distinctCategories = new Set(run1Results.map((r) => r.category))
+    const allSuiteCategories = new Set([...distinctCategories, "NEGATIVE_TEST"])
+    assert.ok(run1Results.length >= 70, `Expected at least 70 scenarios, got ${run1Results.length}`)
+    assert.ok(distinctCategories.size >= 10, `Expected at least 10 categories, got ${distinctCategories.size}`)
+    // Derive exact measured truth
+    console.log(`[T-4717] Measured scenarioCount: ${run1Results.length}, distinctEvaluationCategories: ${distinctCategories.size}, totalHarnessCategories: ${allSuiteCategories.size}`)
   })
 })

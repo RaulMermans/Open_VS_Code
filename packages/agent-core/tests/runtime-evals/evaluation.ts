@@ -3553,17 +3553,54 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
   {
     const ws = await mkdtemp(join(tmpdir(), "rt-eval-route-lifetime-"))
     try {
-      const capturedHints: (any | undefined)[] = []
-      const fakeProvider = {
-        capabilities: new Set(["chat" as const]),
-        complete: async (req: any) => {
-          capturedHints.push(req.metadata?.routeHint)
-          return {
-            model: "scripted",
-            message: { role: "assistant", content: `Turn response with hint ${Boolean(req.metadata?.routeHint)}` },
-          }
+      const config = {
+        providers: [
+          { id: "p1", kind: "scripted" as const },
+          { id: "p2", kind: "scripted" as const },
+        ],
+        models: [
+          { id: "m1", contextWindow: 8192, capabilities: ["toolUse" as const, "reasoning" as const], specialization: "general" as const },
+          { id: "m2", contextWindow: 8192, capabilities: ["toolUse" as const, "reasoning" as const], specialization: "general" as const },
+        ],
+        deployments: [
+          { id: "dep-primary", providerId: "p1", modelId: "m1", enabled: true, priority: 10 },
+          { id: "dep-secondary", providerId: "p2", modelId: "m2", enabled: true, priority: 5 },
+        ],
+        routes: {
+          general: ["dep-primary", "dep-secondary"],
         },
       }
+
+      const pingTool = {
+        definition: { name: "ping", description: "Ping tool", action: "read_repository" as const, inputSchema: {} },
+        validate: (a: any) => a,
+        execute: async () => ({ pong: true }),
+      }
+
+      const p1 = new ScriptedModelProvider([
+        { model: "m1", message: { role: "assistant", content: "Turn 1 from dep-primary" } },
+        { model: "m1", message: { role: "assistant", content: "Turn 3 from dep-primary" } },
+      ])
+      const p2 = new ScriptedModelProvider([
+        {
+          model: "m2",
+          message: { role: "assistant", content: "Turn 2 from dep-secondary calling tool" },
+          toolCalls: [{ id: "c1", name: "ping", arguments: {} }],
+        },
+      ])
+
+      const gateway = new RoutedModelGateway({
+        config,
+        providers: new Map([
+          ["dep-primary", p1],
+          ["dep-secondary", p2],
+        ]),
+        mode: "ASK",
+        budget: defaultContextBudget,
+        hasTools: true,
+        hasStructuredOutput: false,
+      })
+
       let evalTurn = 0
       const customPolicy = new (class extends AdaptiveControlPolicy {
         override determineDirective(evalResult: any, evidence: any): any {
@@ -3576,20 +3613,20 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
               modelRecommendation: { capability: "reasoning", reason: "Upgrade for complex reasoning" },
             }
           }
-          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: evalTurn >= 3 }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
         }
       })()
 
       const runner = new AgentRunner({
         evidenceGate: false,
         evalPolicy: customPolicy,
-        provider: fakeProvider as any,
-        registry: new ToolRegistry([]),
+        provider: gateway,
+        registry: new ToolRegistry([pingTool]),
       })
       await runner.run({
         task: { id: "route-life-1", mode: "ASK", instruction: "Solve puzzle" },
         workspaceRoot: ws,
-        maxTurns: 3,
+        maxTurns: 4,
         contextBudget: defaultContextBudget,
         projectInstructions: [],
       })
@@ -3598,10 +3635,10 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         category: "ADAPTIVE_COMPLETION",
         description: "AgentRunner pendingRouteHint has 1-turn bounded lifetime and clears on subsequent turns",
         actual: {
-          turn1HasHint: capturedHints[0] !== undefined,
-          turn2HasHint: capturedHints[1] !== undefined,
-          turn3HasHint: capturedHints[2] !== undefined,
-          turn2Reason: capturedHints[1]?.reasonCode,
+          turn1HasHint: (p1.requests[0]?.metadata?.routeHint) !== undefined,
+          turn2HasHint: (p2.requests[0]?.metadata?.routeHint) !== undefined,
+          turn3HasHint: (p1.requests[1]?.metadata?.routeHint) !== undefined,
+          turn2Reason: (p2.requests[0]?.metadata?.routeHint as any)?.reasonCode,
         },
         expected: {
           turn1HasHint: false,
@@ -3619,21 +3656,43 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
   {
     const ws = await mkdtemp(join(tmpdir(), "rt-eval-route-outcome-"))
     try {
-      let turn = 0
-      const fakeProvider = {
-        capabilities: new Set(["chat" as const]),
-        complete: async () => {
-          turn++
-          const depId = turn === 1 ? "dep-alpha" : "dep-beta"
-          return {
-            model: "scripted",
-            message: { role: "assistant", content: `Response from ${depId}` },
-            metadata: {
-              routeProvenance: { deploymentId: depId },
-            },
-          }
+      const config = {
+        providers: [
+          { id: "prov-alpha", kind: "scripted" as const },
+          { id: "prov-beta", kind: "scripted" as const },
+        ],
+        models: [
+          { id: "mod-alpha", contextWindow: 8192, capabilities: ["toolUse" as const, "coding" as const], specialization: "general" as const },
+          { id: "mod-beta", contextWindow: 8192, capabilities: ["toolUse" as const, "coding" as const], specialization: "general" as const },
+        ],
+        deployments: [
+          { id: "dep-alpha", providerId: "prov-alpha", modelId: "mod-alpha", enabled: true, priority: 10 },
+          { id: "dep-beta", providerId: "prov-beta", modelId: "mod-beta", enabled: true, priority: 5 },
+        ],
+        routes: {
+          general: ["dep-alpha", "dep-beta"],
         },
       }
+
+      const pAlpha = new ScriptedModelProvider([
+        { model: "mod-alpha", message: { role: "assistant", content: "Response from dep-alpha" } },
+      ])
+      const pBeta = new ScriptedModelProvider([
+        { model: "mod-beta", message: { role: "assistant", content: "Response from dep-beta" } },
+      ])
+
+      const gateway = new RoutedModelGateway({
+        config,
+        providers: new Map([
+          ["dep-alpha", pAlpha],
+          ["dep-beta", pBeta],
+        ]),
+        mode: "ASK",
+        budget: defaultContextBudget,
+        hasTools: false,
+        hasStructuredOutput: false,
+      })
+
       let customPolicyTurn = 0
       const customPolicy = new (class extends AdaptiveControlPolicy {
         override determineDirective(evalResult: any, evidence: any): any {
@@ -3655,7 +3714,7 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         evidenceGate: false,
         evalPolicy: customPolicy,
         evalLedger: ledger,
-        provider: fakeProvider as any,
+        provider: gateway,
         registry: new ToolRegistry([]),
       })
       await runner.run({
@@ -4246,6 +4305,384 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         repairSuccessRate: 0.67,
       },
     })
+  }
+
+  // Scenario 108 (completion.26): Integrated CHANGE_MODEL E2E — Real AgentRunner -> RoutedModelGateway -> ModelRouter -> Provider A -> Eval CHANGE_MODEL -> Hint -> Provider B -> Response -> Route Provenance -> Ledger Outcome RESOLVED
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-route-integrated-"))
+    try {
+      const config = {
+        providers: [
+          { id: "prov-a", kind: "scripted" as const },
+          { id: "prov-b", kind: "scripted" as const },
+        ],
+        models: [
+          { id: "mod-a", contextWindow: 8192, capabilities: ["toolUse" as const, "reasoning" as const], specialization: "general" as const },
+          { id: "mod-b", contextWindow: 8192, capabilities: ["toolUse" as const, "reasoning" as const], specialization: "general" as const },
+        ],
+        deployments: [
+          { id: "local-a", providerId: "prov-a", modelId: "mod-a", enabled: true, priority: 10 },
+          { id: "local-b", providerId: "prov-b", modelId: "mod-b", enabled: true, priority: 5 },
+        ],
+        routes: {
+          general: ["local-a", "local-b"],
+        },
+      }
+      const initialConfigCopy = JSON.parse(JSON.stringify(config))
+
+      const providerA = new ScriptedModelProvider([
+        { model: "mod-a", message: { role: "assistant", content: "route-a-response" } },
+      ])
+      const providerB = new ScriptedModelProvider([
+        { model: "mod-b", message: { role: "assistant", content: "route-b-response" } },
+      ])
+
+      const gateway = new RoutedModelGateway({
+        config,
+        providers: new Map([
+          ["local-a", providerA],
+          ["local-b", providerB],
+        ]),
+        mode: "ASK",
+        budget: defaultContextBudget,
+        hasTools: false,
+        hasStructuredOutput: false,
+      })
+
+      const critic = new ScriptedRuntimeCritic({
+        responses: [
+          {
+            decision: "CHANGE_MODEL",
+            assessment: "Task requires upgraded reasoning model",
+            confidence: 0.9,
+            reasonCodes: ["HIGH_COMPLEXITY"],
+          },
+          {
+            decision: "CONTINUE",
+            assessment: "Reasoning response is satisfactory",
+            confidence: 0.95,
+            reasonCodes: ["COMPLETE"],
+          },
+        ],
+      })
+
+      const engine = new RuntimeEvalEngine({
+        critic,
+        forceCritic: true,
+      })
+
+      const ledger = new RuntimeEvalLedger()
+      const integratedPolicy = new AdaptiveControlPolicy()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalEngine: engine,
+        evalPolicy: integratedPolicy,
+        evalLedger: ledger,
+        provider: gateway,
+        registry: new ToolRegistry([]),
+      })
+
+      const runResult = await runner.run({
+        task: { id: "integrated-route-1", mode: "ASK", instruction: "Solve math proof" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+
+      const finalConfigCopy = JSON.parse(JSON.stringify(config))
+      const entries = ledger.getEntries()
+      const interventionEntry = entries.find((e: any) => e.interventionAction === "RECOMMEND_MODEL")
+
+      const firstRequest = providerA.requests[0]
+      const secondRequest = providerB.requests[0]
+      const secondHint = secondRequest?.metadata?.routeHint as any
+
+      results.push({
+        id: "completion.26",
+        category: "ADAPTIVE_COMPLETION",
+        description: "Integrated CHANGE_MODEL E2E: Real AgentRunner -> RoutedModelGateway -> ModelRouter -> Provider A -> Eval CHANGE_MODEL -> Hint -> Provider B -> Response -> Route Provenance -> Ledger Outcome RESOLVED",
+        actual: {
+          status: runResult.status,
+          finalAnswer: runResult.finalAnswer,
+          providerACalls: providerA.requests.length,
+          providerBCalls: providerB.requests.length,
+          firstTurnHadHint: firstRequest?.metadata?.routeHint !== undefined,
+          secondTurnHadHint: secondHint !== undefined,
+          secondTurnAvoidedId: secondHint?.avoidDeploymentId,
+          secondTurnReasonCode: secondHint?.reasonCode,
+          secondSelectedDeployment: (gateway.lastDiagnostics?.route as any)?.deploymentId,
+          secondRouteHasHintAvoided: (gateway.lastDiagnostics?.route as any)?.reasonCodes?.includes("hint_avoided"),
+          interventionRecorded: interventionEntry !== undefined,
+          interventionDecision: interventionEntry?.decision,
+          interventionAction: interventionEntry?.interventionAction,
+          interventionApplied: interventionEntry?.applied,
+          interventionOutcome: interventionEntry?.interventionOutcome,
+          interventionDetails: interventionEntry?.outcomeDetails,
+          configPreservedUnmutated: JSON.stringify(initialConfigCopy) === JSON.stringify(finalConfigCopy),
+        },
+        expected: {
+          status: "COMPLETED",
+          finalAnswer: "route-b-response",
+          providerACalls: 1,
+          providerBCalls: 1,
+          firstTurnHadHint: false,
+          secondTurnHadHint: true,
+          secondTurnAvoidedId: "local-a",
+          secondTurnReasonCode: "High complexity task requiring advanced reasoning capability",
+          secondSelectedDeployment: "local-b",
+          secondRouteHasHintAvoided: true,
+          interventionRecorded: true,
+          interventionDecision: "CHANGE_MODEL",
+          interventionAction: "RECOMMEND_MODEL",
+          interventionApplied: true,
+          interventionOutcome: "RESOLVED",
+          interventionDetails: "Switched deployment from local-a to local-b",
+          configPreservedUnmutated: true,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 109 (completion.27): T-4714 No-Alternate Regression — ModelRouter retains candidate when no alternative is eligible and ledger records UNCHANGED outcome
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-route-no-alt-"))
+    try {
+      const config = {
+        providers: [
+          { id: "prov-only", kind: "scripted" as const },
+        ],
+        models: [
+          { id: "mod-only", contextWindow: 8192, capabilities: ["toolUse" as const], specialization: "general" as const },
+        ],
+        deployments: [
+          { id: "local-only", providerId: "prov-only", modelId: "mod-only", enabled: true, priority: 10 },
+        ],
+        routes: {
+          general: ["local-only"],
+        },
+      }
+
+      const pOnly = new ScriptedModelProvider([
+        { model: "mod-only", message: { role: "assistant", content: "response-turn-1" } },
+        { model: "mod-only", message: { role: "assistant", content: "response-turn-2-retained" } },
+      ])
+
+      const gateway = new RoutedModelGateway({
+        config,
+        providers: new Map([
+          ["local-only", pOnly],
+        ]),
+        mode: "ASK",
+        budget: defaultContextBudget,
+        hasTools: false,
+        hasStructuredOutput: false,
+      })
+
+      let evalTurn = 0
+      const noAltPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          evalTurn++
+          if (evalTurn === 1) {
+            return {
+              decision: "CHANGE_MODEL",
+              action: "RECOMMEND_MODEL",
+              shouldFinalize: false,
+              modelRecommendation: { capability: "reasoning", reason: "Attempt switch with no alt" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+        }
+      })()
+
+      const ledger = new RuntimeEvalLedger()
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: noAltPolicy,
+        evalLedger: ledger,
+        provider: gateway,
+        registry: new ToolRegistry([]),
+      })
+
+      const result = await runner.run({
+        task: { id: "no-alt-run", mode: "ASK", instruction: "Solve problem" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+
+      const entries = ledger.getEntries()
+      const intervention = entries.find((e: any) => e.interventionAction === "RECOMMEND_MODEL")
+
+      results.push({
+        id: "completion.27",
+        category: "ADAPTIVE_COMPLETION",
+        description: "ModelRouter retains candidate when no alternative is eligible and ledger records UNCHANGED outcome",
+        actual: {
+          status: result.status,
+          finalAnswer: result.finalAnswer,
+          totalProviderCalls: pOnly.requests.length,
+          interventionOutcome: intervention?.interventionOutcome,
+          outcomeDetails: intervention?.outcomeDetails,
+        },
+        expected: {
+          status: "COMPLETED",
+          finalAnswer: "response-turn-2-retained",
+          totalProviderCalls: 2,
+          interventionOutcome: "UNCHANGED",
+          outcomeDetails: "Retained deployment local-only",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 110 (completion.28): T-4715 Stale CHANGE_MODEL Regression — Concurrent evidence version increment marks eval stale with CONTINUE and suppresses route hint
+  {
+    const collector = new RuntimeEvidenceCollector({ runId: "stale-change-model", taskGoal: "Verify stale guard" })
+    const critic = new ScriptedRuntimeCritic({
+      handler: async () => {
+        collector.recordToolAction({
+          id: "call-stale-1",
+          toolName: "read_file",
+          args: { path: "foo.ts" },
+        })
+        return {
+          decision: "CHANGE_MODEL",
+          assessment: "Upgrade model",
+          confidence: 0.9,
+          reasonCodes: ["COMPLEXITY"],
+        }
+      },
+    })
+
+    const engine = new RuntimeEvalEngine({ critic, forceCritic: true })
+    const evalResult = await engine.evaluate(collector, "PERIODIC", 1)
+    const stalePolicy = new AdaptiveControlPolicy()
+    const directive = stalePolicy.determineDirective(evalResult, collector.getEvidence())
+
+    results.push({
+      id: "completion.28",
+      category: "ADAPTIVE_COMPLETION",
+      description: "Concurrent evidence version increment marks eval stale with CONTINUE and suppresses route hint",
+      actual: {
+        evalStale: evalResult.stale === true,
+        evalDecision: evalResult.decision,
+        directiveDecision: directive.decision,
+        directiveAction: directive.action,
+        hasModelRecommendation: Boolean(directive.modelRecommendation),
+      },
+      expected: {
+        evalStale: true,
+        evalDecision: "CONTINUE",
+        directiveDecision: "CONTINUE",
+        directiveAction: "NO_OP",
+        hasModelRecommendation: false,
+      },
+    })
+  }
+
+  // Scenario 111 (completion.29): T-4716 Cancel Before Second Route — AbortController cancellation before route B prevents provider B invocation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-route-cancel-"))
+    try {
+      const config = {
+        providers: [
+          { id: "prov-a", kind: "scripted" as const },
+          { id: "prov-b", kind: "scripted" as const },
+        ],
+        models: [
+          { id: "mod-a", contextWindow: 8192, capabilities: ["toolUse" as const, "reasoning" as const], specialization: "general" as const },
+          { id: "mod-b", contextWindow: 8192, capabilities: ["toolUse" as const, "reasoning" as const], specialization: "general" as const },
+        ],
+        deployments: [
+          { id: "local-a", providerId: "prov-a", modelId: "mod-a", enabled: true, priority: 10 },
+          { id: "local-b", providerId: "prov-b", modelId: "mod-b", enabled: true, priority: 5 },
+        ],
+        routes: {
+          general: ["local-a", "local-b"],
+        },
+      }
+
+      const pA = new ScriptedModelProvider([
+        { model: "mod-a", message: { role: "assistant", content: "route-a-response" } },
+      ])
+      const pB = new ScriptedModelProvider([
+        { model: "mod-b", message: { role: "assistant", content: "route-b-response" } },
+      ])
+
+      const gateway = new RoutedModelGateway({
+        config,
+        providers: new Map([
+          ["local-a", pA],
+          ["local-b", pB],
+        ]),
+        mode: "ASK",
+        budget: defaultContextBudget,
+        hasTools: false,
+        hasStructuredOutput: false,
+      })
+
+      const abortController = new AbortController()
+
+      let evalTurn = 0
+      const cancelPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          evalTurn++
+          if (evalTurn === 1) {
+            abortController.abort()
+            return {
+              decision: "CHANGE_MODEL",
+              action: "RECOMMEND_MODEL",
+              shouldFinalize: false,
+              modelRecommendation: { capability: "reasoning", reason: "Cancel before route B" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+        }
+      })()
+
+      const ledger = new RuntimeEvalLedger()
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: cancelPolicy,
+        evalLedger: ledger,
+        provider: gateway,
+        registry: new ToolRegistry([]),
+      })
+
+      const result = await runner.run({
+        task: { id: "cancel-route-run", mode: "ASK", instruction: "Solve problem" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+        signal: abortController.signal,
+      })
+
+      results.push({
+        id: "completion.29",
+        category: "ADAPTIVE_COMPLETION",
+        description: "AbortController cancellation before route B prevents provider B invocation",
+        actual: {
+          status: result.status,
+          providerACalls: pA.requests.length,
+          providerBCalls: pB.requests.length,
+        },
+        expected: {
+          status: "CANCELLED",
+          providerACalls: 1,
+          providerBCalls: 0,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
   }
 
   return results
