@@ -90,7 +90,7 @@ Evaluations are triggered at 4 explicit checkpoints in `AgentRunner`:
 
 ### 4. Adaptive Control Directives
 
-`AdaptiveControlPolicy` maps evaluation results and evidence state into actionable directives:
+`AdaptiveControlPolicy` maps evaluation results and evidence state into actionable directives across 8 distinct decisions:
 
 | Decision | Primary Directive Action | Description |
 |---|---|---|
@@ -100,26 +100,36 @@ Evaluations are triggered at 4 explicit checkpoints in `AgentRunner`:
 | `REPLAN` | `TRIGGER_REPLAN` | Injects a replan observation prompting a pivot in strategy. |
 | `STOP` | `TERMINATE_RUN` | Halts execution cleanly with `NON_PROGRESS`. |
 | `ASK_HUMAN` | `PAUSE_HUMAN` | Pauses runner with `WAITING_FOR_CONFIRMATION` for user guidance. |
-| `CHANGE_MODEL` | `RECOMMEND_MODEL` | Emits model routing recommendation signal. |
-| `REQUEST_MORE_CONTEXT` | `NO_OP` | Notes context need without interrupting execution. |
+| `CHANGE_MODEL` | `RECOMMEND_MODEL` / `CHANGE_MODEL` | Injects narrow `ModelRouteHint` (`avoidDeploymentId`, `preferredCapabilities`, `preferredDeploymentId`, `reasonCode`) with bounded 1-turn lifetime into `ModelRouter` without direct provider reconstruction or cloud fallback. |
+| `REQUEST_MORE_CONTEXT` | `REQUEST_MORE_CONTEXT` | Injects targeted context inquiry observation, updates evidence collector with incremented `evidenceVersion`, runs explicit re-evaluation, consumes second directive, and caps loops at `MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2`. |
 
-### 5. Bounded Evidence Collection & Secret Redaction
+### 5. Universal Post-Verification Causality
+
+All execution paths scheduling verification (whether originating at `BEFORE_COMPLETION`, `MUTATION_RESULT`, or via generic adaptive directive) adhere to strict post-verification causality:
+1. The prepared verification is dispatched via `VerificationEngine`.
+2. The verification outcome immediately triggers a mandatory `VERIFICATION_RESULT` checkpoint evaluation.
+3. The evaluation outcome is recorded in the `RuntimeEvalLedger` and linked to the originating intervention ID.
+4. The post-verification directive (`REVISE`, `REPLAN`, `ASK_HUMAN`, `STOP`, `CONTINUE`) is consumed and dispatched by the runner loop.
+
+### 6. Bounded Evidence Collection & Secret Redaction
 
 `RuntimeEvidenceCollector` aggregates structured evidence throughout the run:
 - Maximum bounds on collections: recent actions (10), tool outcomes (20), mutations (10), verifications (10), route signals (10), security signals (10), unresolved failures (10).
 - Automatic secret redaction: all string inputs (arguments, outputs, errors) are scanned for API keys (`sk-[a-zA-Z0-9_-]{8,}`, bearer tokens, private keys) and redacted to `[REDACTED_SECRET]`.
 - Output summaries are bounded (200 characters) to prevent token bloat.
+- Incremental `evidenceVersion` ensures cache invalidation when new context or evidence is gathered.
 
-### 6. Audit Trail & Ledger
+### 7. Audit Trail, Outcome Linking & Ledger
 
 `RuntimeEvalLedger` maintains an immutable in-memory ledger of all evaluation results, associated checkpoints, directives, interventions, and subsequent intervention outcomes (`RESOLVED`, `IMPROVED`, `UNCHANGED`, `DEGRADED`).
-`RuntimeEvalAnalytics` computes key operational metrics:
-- Total evaluation counts and decision distributions.
-- Repair loop success rates (`passes / (passes + failures)`).
-- Critic invocation counts and execution efficiency.
-- Developer-facing summary formatting for diagnostic visibility.
+- Outcomes are explicitly linked to originating eval/intervention IDs across model changes, context requests, and verification cycles.
+- `RuntimeEvalAnalytics` computes key operational metrics:
+  - Total evaluation counts and decision distributions across `recommended`, `applied`, and `outcome` layers.
+  - Repair loop success rates (`passes / (passes + failures)`).
+  - Critic invocation counts and execution efficiency.
+  - Developer-facing summary formatting for diagnostic visibility.
 
-### 7. AgentRunner Integration & Configuration
+### 8. AgentRunner Integration & Configuration
 
 `AgentRunnerDependencies` includes optional controls:
 - `evalEngine`: Custom `RuntimeEvalEngine` (defaults to standard multi-level engine).
@@ -134,14 +144,14 @@ Evaluations are triggered at 4 explicit checkpoints in `AgentRunner`:
 ## Verification & Proof
 
 1. **Deterministic Test Suite (`npm run eval:runtime`)**:
-   - 9 test suites, 72 scenarios evaluated across 2 consecutive runs.
+   - 10 test categories, 107 exact scenarios evaluated across 2 consecutive runs.
    - 100% pass rate.
    - Determinism assertion: `assert.deepStrictEqual(run1, run2)`.
-   - Strict comparator negative tests prove that any missing field, mismatched score, mismatched decision, or altered security flag immediately fails the suite.
+   - Strict negative comparator tests verify that any missing field, mismatched score, mismatched decision, altered security flag, routing hint mismatch, loop observation mismatch, or outcome state mismatch immediately fails the suite.
 2. **Deterministic Coding Benchmark (`npm run eval:coding`)**:
    - 30/30 cases passing (100.0% task success rate, 100.0% safety success rate, 100.0% multi-file success rate).
 3. **Monorepo Quality Gate**:
-   - `npm test`: 297/297 agent-core, 16/16 cli, 5/5 ide-adapter, 18/18 vscode-integration passing (0 failures).
+   - `npm test`: 18/18 test suites passing across all packages (0 failures).
    - `npm run typecheck`: 0 TypeScript errors across all 4 packages (`exactOptionalPropertyTypes: true`).
    - `npm run lint`: 0 warnings, 0 errors via `oxlint`.
    - `npm run build`: Clean builds across all packages.

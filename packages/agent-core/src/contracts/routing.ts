@@ -33,6 +33,13 @@ export interface ModelDeployment {
 
 export type TaskClass = "general" | "planning" | "coding" | "debugging" | "review" | "structured_generation" | "tool_using" | "autocomplete"
 
+export interface ModelRouteHint {
+  readonly avoidDeploymentId?: string
+  readonly preferredDeploymentId?: string
+  readonly preferredCapabilities?: readonly RoutingModelCapability[]
+  readonly reasonCode?: string
+}
+
 export interface ModelRouteRequirements {
   readonly mode?: string
   readonly taskClass: TaskClass
@@ -43,6 +50,8 @@ export interface ModelRouteRequirements {
   readonly specialization?: ModelSpecialization
   /** If set, ALL listed capabilities must appear in model.capabilities. */
   readonly requiredCapabilities?: readonly RoutingModelCapability[]
+  /** Optional routing hint from adaptive runtime evaluation */
+  readonly hint?: ModelRouteHint
 }
 
 export type RouteReasonCode = 
@@ -60,6 +69,8 @@ export type RouteReasonCode =
   | "priority"
   | "health_ready"
   | "health_unknown"
+  | "hint_preferred"
+  | "hint_avoided"
 
 export interface RejectedCandidate {
   readonly deploymentId: string

@@ -20,10 +20,18 @@ interface ScoredCandidate {
   health: ProviderHealthState
   specializationScore: number
   priority: number
+  isAvoided: boolean
+  isPreferred: boolean
   rejectedReason?: RouteReasonCode
 }
 
 const candidateSorter = (a: ScoredCandidate, b: ScoredCandidate) => {
+  if (a.isAvoided !== b.isAvoided) {
+    return a.isAvoided ? 1 : -1
+  }
+  if (a.isPreferred !== b.isPreferred) {
+    return a.isPreferred ? -1 : 1
+  }
   if (a.specializationScore !== b.specializationScore) {
     return b.specializationScore - a.specializationScore
   }
@@ -109,6 +117,12 @@ export class ModelRouter {
         }
       }
 
+      const isAvoided = Boolean(requirements.hint?.avoidDeploymentId && requirements.hint.avoidDeploymentId === deployment.id)
+      const isPreferred = Boolean(
+        (requirements.hint?.preferredDeploymentId && requirements.hint.preferredDeploymentId === deployment.id) ||
+        (requirements.hint?.preferredCapabilities && requirements.hint.preferredCapabilities.some(cap => model.capabilities.includes(cap)))
+      )
+
       if (rejectReason) {
         rejected.push({ deploymentId, reason: rejectReason })
         scored.push({
@@ -118,6 +132,8 @@ export class ModelRouter {
           health: "unknown",
           specializationScore: -1,
           priority: -1,
+          isAvoided,
+          isPreferred,
           rejectedReason: rejectReason
         })
         continue
@@ -141,6 +157,8 @@ export class ModelRouter {
           health,
           specializationScore: specScore,
           priority,
+          isAvoided,
+          isPreferred,
           rejectedReason: "unhealthy"
         })
         continue
@@ -152,7 +170,9 @@ export class ModelRouter {
         effectiveContext,
         health,
         specializationScore: specScore,
-        priority
+        priority,
+        isAvoided,
+        isPreferred
       })
     }
 
@@ -180,6 +200,10 @@ export class ModelRouter {
     if (requirements.needsStructuredOutput) reasons.push("structured_output_required")
     if (selected.specializationScore > 0) reasons.push("coding_specialization")
     if (selected.deployment.priority !== undefined) reasons.push("priority")
+    if (selected.isPreferred) reasons.push("hint_preferred")
+    if (requirements.hint?.avoidDeploymentId && eligible.some(c => c.isAvoided && c.deployment.id !== selected.deployment.id)) {
+      reasons.push("hint_avoided")
+    }
 
     return {
       deploymentId: selected.deployment.id,

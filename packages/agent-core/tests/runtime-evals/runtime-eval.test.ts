@@ -76,6 +76,48 @@ describe("Runtime Evaluation — Sprint 4B", () => {
         (err: unknown) => err instanceof assert.AssertionError,
       )
     })
+
+    test("fails when route hint avoidance flag mismatches", () => {
+      const badResult: RuntimeEvalScenarioResult = {
+        id: "neg.route_hint_avoided",
+        category: "NEGATIVE_TEST",
+        description: "Negative test for mismatched route hint avoidance",
+        actual: { deploymentId: "dep-fast", hasHintAvoided: false },
+        expected: { deploymentId: "dep-fast", hasHintAvoided: true },
+      }
+      assert.throws(
+        () => assertRuntimeEvalScenario(badResult),
+        (err: unknown) => err instanceof assert.AssertionError,
+      )
+    })
+
+    test("fails when context loop exceeded flag mismatches", () => {
+      const badResult: RuntimeEvalScenarioResult = {
+        id: "neg.context_loop_bound",
+        category: "NEGATIVE_TEST",
+        description: "Negative test for context loop exceeded flag",
+        actual: { hasLoopExceededObservation: false, turns: 2 },
+        expected: { hasLoopExceededObservation: true, turns: 2 },
+      }
+      assert.throws(
+        () => assertRuntimeEvalScenario(badResult),
+        (err: unknown) => err instanceof assert.AssertionError,
+      )
+    })
+
+    test("fails when intervention outcome mismatches (RESOLVED vs DEGRADED)", () => {
+      const badResult: RuntimeEvalScenarioResult = {
+        id: "neg.intervention_outcome",
+        category: "NEGATIVE_TEST",
+        description: "Negative test for intervention outcome mismatch",
+        actual: { interventionOutcome: "DEGRADED" },
+        expected: { interventionOutcome: "RESOLVED" },
+      }
+      assert.throws(
+        () => assertRuntimeEvalScenario(badResult),
+        (err: unknown) => err instanceof assert.AssertionError,
+      )
+    })
   })
 
   let run1Results: readonly RuntimeEvalScenarioResult[] = []

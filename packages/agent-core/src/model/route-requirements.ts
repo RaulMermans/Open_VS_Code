@@ -1,4 +1,4 @@
-import type { TaskClass, ModelRouteRequirements, ModelSpecialization } from "../contracts/routing.ts"
+import type { TaskClass, ModelRouteRequirements, ModelSpecialization, ModelRouteHint } from "../contracts/routing.ts"
 import type { AgentMode } from "../contracts/agent.ts"
 import type { ContextBudget } from "../contracts/context.ts"
 
@@ -55,6 +55,7 @@ export interface RouteRequirementsInput {
   readonly hasTools: boolean
   readonly hasStructuredOutput: boolean
   readonly budget?: ContextBudget
+  readonly hint?: ModelRouteHint
 }
 
 /**
@@ -75,5 +76,6 @@ export function buildModelRouteRequirements(input: RouteRequirementsInput): Mode
     estimatedInputTokens: input.estimatedInputTokens,
     requiredContextWindow,
     specialization: deriveSpecialization(taskClass),
+    ...(input.hint ? { hint: input.hint } : {}),
   }
 }

@@ -1,5 +1,5 @@
 import type { ModelProvider, ModelRequest, ModelResponse, ModelCapability } from "../contracts/model.ts"
-import type { RouteDecision, RoutingConfiguration, ProviderHealthState } from "../contracts/routing.ts"
+import type { RouteDecision, RoutingConfiguration, ProviderHealthState, ModelRouteHint } from "../contracts/routing.ts"
 import type { ContextBudget } from "../contracts/context.ts"
 import type { AgentMode } from "../contracts/agent.ts"
 import { ModelRouter, type HealthChecker } from "./router.ts"
@@ -131,12 +131,14 @@ export class RoutedModelGateway implements ModelProvider {
     const estimatedInputTokens = this.#estimateInputTokens(request)
 
     // Step 2: Build route requirements from actual runtime facts
+    const hint = request.metadata?.routeHint as ModelRouteHint | undefined
     const reqInput: RouteRequirementsInput = {
       mode: this.#mode,
       estimatedInputTokens,
       hasTools: this.#hasTools,
       hasStructuredOutput: this.#hasStructuredOutput,
       ...(this.#budget ? { budget: this.#budget } : {}),
+      ...(hint ? { hint } : {}),
     }
     const requirements = buildModelRouteRequirements(reqInput)
 

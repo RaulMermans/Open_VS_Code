@@ -40,6 +40,9 @@ import {
   evaluateL0,
   evaluateL1,
   classifyPermission,
+  ModelRouter,
+  RoutedModelGateway,
+  StaticHealthChecker,
 } from "../../src/index.ts"
 import type { ContextBudget } from "../../src/contracts/context.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
@@ -2669,6 +2672,1578 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         recommendedInterventions: 3,
         appliedInterventions: 1,
         staleDroppedInterventions: 1,
+      },
+    })
+  }
+
+  // =========================================================================
+  // CATEGORY 10: Adaptive Decision Completion & Loop Closure (Scenarios 83-107)
+  // =========================================================================
+
+  // Scenario 83: MUTATION_RESULT SCHEDULE_VERIFICATION passes -> postDirective CONTINUE allows normal continuation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-post-verif-pass-"))
+    try {
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          if (evalResult.checkpoint === "MUTATION_RESULT") {
+            return {
+              decision: "VERIFY",
+              action: "SCHEDULE_VERIFICATION",
+              shouldFinalize: false,
+            }
+          }
+          return super.determineDirective(evalResult, evidence)
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "mut-1", name: "apply_mutation", arguments: { path: "fix.ts", content: "const x = 1;" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Completed after successful verification." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_mutation", description: "Apply code mutation", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async () => ({
+              id: "m-rev-pass",
+              reviewPayload: {},
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+          {
+            definition: { name: "run_verification", description: "Run verification test suite", action: "run_known_test", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "PASS", totalTests: 5, failedTests: 0 }),
+            prepareForReview: async () => ({
+              id: "v-rev-pass",
+              reviewPayload: {},
+              apply: async () => ({ status: "PASS", totalTests: 5, failedTests: 0 }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "post-verif-pass-1", mode: "BUILD", instruction: "Apply fix and verify" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const verifOutcome = result.evalResults?.find((e) => e.checkpoint === "VERIFICATION_RESULT")
+      results.push({
+        id: "completion.1",
+        category: "ADAPTIVE_COMPLETION",
+        description: "MUTATION_RESULT schedules verification and CONTINUE postDirective enables clean completion",
+        actual: {
+          status: result.status,
+          turns: result.turns,
+          hasVerifEval: verifOutcome !== undefined,
+          verifDecision: verifOutcome?.decision,
+          finalAnswer: result.finalAnswer,
+        },
+        expected: {
+          status: "COMPLETED",
+          turns: 2,
+          hasVerifEval: true,
+          verifDecision: "CONTINUE",
+          finalAnswer: "Completed after successful verification.",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 84: MUTATION_RESULT SCHEDULE_VERIFICATION fails -> postDirective REVISE injects revision observation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-post-verif-revise-"))
+    try {
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          if (evalResult.checkpoint === "MUTATION_RESULT") {
+            return {
+              decision: "VERIFY",
+              action: "SCHEDULE_VERIFICATION",
+              shouldFinalize: false,
+            }
+          }
+          return super.determineDirective(evalResult, evidence)
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "mut-rev-1", name: "apply_mutation", arguments: { path: "bug.ts", content: "broken" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Got revision observation, fixing..." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_mutation", description: "Apply code mutation", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async () => ({
+              id: "m-rev-fail",
+              reviewPayload: {},
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+          {
+            definition: { name: "run_verification", description: "Run verification test suite", action: "run_known_test", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "FAIL", totalTests: 5, failedTests: 2, failureSummary: "Syntax error in bug.ts" }),
+            prepareForReview: async () => ({
+              id: "v-rev-fail",
+              reviewPayload: {},
+              apply: async () => ({ status: "FAIL", totalTests: 5, failedTests: 2, failureSummary: "Syntax error in bug.ts" }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "post-verif-rev-1", mode: "BUILD", instruction: "Apply fix and verify" },
+        workspaceRoot: ws,
+        maxTurns: 2,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const revObs = result.observations?.find((o) => o.errorCategory === "REVISION_REQUIRED")
+      const verifEval = result.evalResults?.find((e) => e.checkpoint === "VERIFICATION_RESULT")
+      results.push({
+        id: "completion.2",
+        category: "ADAPTIVE_COMPLETION",
+        description: "MUTATION_RESULT schedules verification and failing test dispatches REVISE observation",
+        actual: {
+          hasVerifEval: verifEval !== undefined,
+          verifDecision: verifEval?.decision,
+          hasRevisionObservation: revObs !== undefined,
+        },
+        expected: {
+          hasVerifEval: true,
+          verifDecision: "REVISE",
+          hasRevisionObservation: true,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 85: MUTATION_RESULT SCHEDULE_VERIFICATION fails -> postDirective REPLAN triggers replan observation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-post-verif-replan-"))
+    try {
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          if (evalResult.checkpoint === "MUTATION_RESULT") {
+            return {
+              decision: "VERIFY",
+              action: "SCHEDULE_VERIFICATION",
+              shouldFinalize: false,
+            }
+          }
+          if (evalResult.checkpoint === "VERIFICATION_RESULT") {
+            return {
+              decision: "REPLAN",
+              action: "TRIGGER_REPLAN",
+              shouldFinalize: false,
+              promptContext: "Approach repeatedly failed verification. Replan required.",
+            }
+          }
+          return super.determineDirective(evalResult, evidence)
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "mut-rep-1", name: "apply_mutation", arguments: { path: "bad.ts", content: "bad" } }],
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Formulating new plan from replan directive." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_mutation", description: "Apply code mutation", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async () => ({
+              id: "m-rep-fail",
+              reviewPayload: {},
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+          {
+            definition: { name: "run_verification", description: "Run verification test suite", action: "run_known_test", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "FAIL", totalTests: 3, failedTests: 3 }),
+            prepareForReview: async () => ({
+              id: "v-rep-fail",
+              reviewPayload: {},
+              apply: async () => ({ status: "FAIL", totalTests: 3, failedTests: 3 }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "post-verif-rep-1", mode: "BUILD", instruction: "Fix with replan" },
+        workspaceRoot: ws,
+        maxTurns: 2,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const replanObs = result.observations?.find((o) => o.errorCategory === "REPLAN_REQUIRED")
+      results.push({
+        id: "completion.3",
+        category: "ADAPTIVE_COMPLETION",
+        description: "Post-verification REPLAN directive dispatches TRIGGER_REPLAN observation",
+        actual: {
+          hasReplanObservation: replanObs !== undefined,
+          turns: result.turns,
+        },
+        expected: {
+          hasReplanObservation: true,
+          turns: 2,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 86: MUTATION_RESULT SCHEDULE_VERIFICATION returns ASK_HUMAN -> pauses execution
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-post-verif-human-"))
+    try {
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          if (evalResult.checkpoint === "MUTATION_RESULT") {
+            return {
+              decision: "VERIFY",
+              action: "SCHEDULE_VERIFICATION",
+              shouldFinalize: false,
+            }
+          }
+          if (evalResult.checkpoint === "VERIFICATION_RESULT") {
+            return {
+              decision: "ASK_HUMAN",
+              action: "PAUSE_HUMAN",
+              shouldFinalize: false,
+              stopReason: "Critical verification discrepancy requires human review",
+            }
+          }
+          return super.determineDirective(evalResult, evidence)
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "mut-hum-1", name: "apply_mutation", arguments: { path: "sec.ts", content: "sec" } }],
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_mutation", description: "Apply mutation", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async () => ({
+              id: "m-hum-pass",
+              reviewPayload: {},
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+          {
+            definition: { name: "run_verification", description: "Run verification test suite", action: "run_known_test", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "PASS", totalTests: 1, failedTests: 0 }),
+            prepareForReview: async () => ({
+              id: "v-hum-pass",
+              reviewPayload: {},
+              apply: async () => ({ status: "PASS", totalTests: 1, failedTests: 0 }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "post-verif-hum-1", mode: "BUILD", instruction: "Apply mutation" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "completion.4",
+        category: "ADAPTIVE_COMPLETION",
+        description: "Post-verification ASK_HUMAN directive pauses runner in WAITING_FOR_CONFIRMATION",
+        actual: {
+          status: result.status,
+          hasConfirmation: result.confirmation !== undefined,
+        },
+        expected: {
+          status: "PAUSED",
+          hasConfirmation: true,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 87: MUTATION_RESULT SCHEDULE_VERIFICATION returns STOP -> terminates run
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-post-verif-stop-"))
+    try {
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          if (evalResult.checkpoint === "MUTATION_RESULT") {
+            return {
+              decision: "VERIFY",
+              action: "SCHEDULE_VERIFICATION",
+              shouldFinalize: false,
+            }
+          }
+          if (evalResult.checkpoint === "VERIFICATION_RESULT") {
+            return {
+              decision: "STOP",
+              action: "TERMINATE_RUN",
+              shouldFinalize: false,
+              stopReason: "Unrecoverable verification crash detected",
+            }
+          }
+          return super.determineDirective(evalResult, evidence)
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "mut-stp-1", name: "apply_mutation", arguments: { path: "crash.ts", content: "crash" } }],
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: { name: "apply_mutation", description: "Apply mutation", action: "write_file", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "APPLIED" }),
+            prepareForReview: async () => ({
+              id: "m-stp-fail",
+              reviewPayload: {},
+              apply: async () => ({ status: "APPLIED" }),
+            }),
+          },
+          {
+            definition: { name: "run_verification", description: "Run verification test suite", action: "run_known_test", inputSchema: {} },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "FAIL", totalTests: 1, failedTests: 1 }),
+            prepareForReview: async () => ({
+              id: "v-stp-fail",
+              reviewPayload: {},
+              apply: async () => ({ status: "FAIL", totalTests: 1, failedTests: 1 }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "post-verif-stp-1", mode: "BUILD", instruction: "Apply mutation" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "completion.5",
+        category: "ADAPTIVE_COMPLETION",
+        description: "Post-verification STOP directive terminates run with RUNTIME_EVAL terminationSource",
+        actual: {
+          status: result.status,
+          failureReason: result.failureReason,
+          terminationSource: result.terminationSource,
+        },
+        expected: {
+          status: "FAILED",
+          failureReason: "NON_PROGRESS",
+          terminationSource: "RUNTIME_EVAL",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 88: BEFORE_COMPLETION scheduled verification passes but VERIFICATION_RESULT eval returns REVISE -> blocks completion
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-comp-block-rev-"))
+    try {
+      let verifCallCount = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          if (evalResult.checkpoint === "BEFORE_COMPLETION") {
+            return {
+              decision: "VERIFY",
+              action: "SCHEDULE_VERIFICATION",
+              shouldFinalize: false,
+            }
+          }
+          if (evalResult.checkpoint === "VERIFICATION_RESULT") {
+            verifCallCount++
+            if (verifCallCount === 1) {
+              return {
+                decision: "REVISE",
+                action: "INJECT_REVISION",
+                shouldFinalize: false,
+                promptContext: "Coverage insufficient despite passing test. Revise implementation.",
+              }
+            }
+            return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+          }
+          return super.determineDirective(evalResult, evidence)
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "I am ready to complete." },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Revised and now completing." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: {
+              name: "run_verification",
+              description: "Run verification test suite",
+              action: "run_known_test",
+              inputSchema: {},
+            },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "PASS", totalTests: 2, failedTests: 0 }),
+            prepareForReview: async () => ({
+              id: "v-rev-comp-88",
+              reviewPayload: {},
+              apply: async () => ({ status: "PASS", totalTests: 2, failedTests: 0 }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "comp-blk-rev-1", mode: "BUILD", instruction: "Build and complete" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "completion.6",
+        category: "ADAPTIVE_COMPLETION",
+        description: "Passing verification blocked from completion when post-verification eval requires REVISE",
+        actual: {
+          turns: result.turns,
+          verifCalls: verifCallCount,
+          status: result.status,
+        },
+        expected: {
+          turns: 2,
+          verifCalls: 2,
+          status: "COMPLETED",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 89: BEFORE_COMPLETION scheduled verification passes and postDirective is CONTINUE -> completes
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-comp-pass-cont-"))
+    try {
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Task finished." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: {
+              name: "run_verification",
+              description: "Run verification test suite",
+              action: "run_known_test",
+              inputSchema: {},
+            },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "PASS", totalTests: 10, failedTests: 0 }),
+            prepareForReview: async () => ({
+              id: "v-rev-comp-89",
+              reviewPayload: {},
+              apply: async () => ({ status: "PASS", totalTests: 10, failedTests: 0 }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "comp-pass-cont-1", mode: "BUILD", instruction: "Build feature" },
+        workspaceRoot: ws,
+        maxTurns: 2,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "completion.7",
+        category: "ADAPTIVE_COMPLETION",
+        description: "BEFORE_COMPLETION verification passes and CONTINUE postDirective enables immediate completion",
+        actual: {
+          status: result.status,
+          turns: result.turns,
+          finalAnswer: result.finalAnswer,
+        },
+        expected: {
+          status: "COMPLETED",
+          turns: 1,
+          finalAnswer: "Task finished.",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 90: BEFORE_COMPLETION scheduled verification fails and postDirective is STOP -> terminates run
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-comp-fail-stop-"))
+    try {
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          if (evalResult.checkpoint === "BEFORE_COMPLETION") {
+            return {
+              decision: "VERIFY",
+              action: "SCHEDULE_VERIFICATION",
+              shouldFinalize: false,
+            }
+          }
+          if (evalResult.checkpoint === "VERIFICATION_RESULT") {
+            return {
+              decision: "STOP",
+              action: "TERMINATE_RUN",
+              shouldFinalize: false,
+              stopReason: "Verification failed at completion boundary",
+            }
+          }
+          return super.determineDirective(evalResult, evidence)
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        permissionEvaluator: (action) => (action.action === "write_file" || action.action === "run_known_test" ? "ALLOW" : classifyPermission(action)),
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Attempting completion without testing." },
+          },
+        ]),
+        registry: new ToolRegistry([
+          {
+            definition: {
+              name: "run_verification",
+              description: "Run verification test suite",
+              action: "run_known_test",
+              inputSchema: {},
+            },
+            validate: (a) => a as any,
+            execute: async () => ({ status: "FAIL", totalTests: 1, failedTests: 1 }),
+            prepareForReview: async () => ({
+              id: "v-rev-comp-90",
+              reviewPayload: {},
+              apply: async () => ({ status: "FAIL", totalTests: 1, failedTests: 1 }),
+            }),
+          },
+        ]),
+      })
+      const result = await runner.run({
+        task: { id: "comp-fail-stop-1", mode: "BUILD", instruction: "Build and complete" },
+        workspaceRoot: ws,
+        maxTurns: 2,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "completion.8",
+        category: "ADAPTIVE_COMPLETION",
+        description: "BEFORE_COMPLETION scheduled verification fails and STOP terminates run",
+        actual: {
+          status: result.status,
+          failureReason: result.failureReason,
+          terminationSource: result.terminationSource,
+        },
+        expected: {
+          status: "FAILED",
+          failureReason: "NON_PROGRESS",
+          terminationSource: "RUNTIME_EVAL",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 91: ModelRouter with avoidDeploymentId selects alternative candidate
+  {
+    const config = {
+      providers: [{ id: "p1", kind: "scripted" as const }],
+      models: [
+        { id: "m-fast", contextWindow: 4000, capabilities: ["toolUse" as const, "coding" as const], specialization: "coding" as const },
+        { id: "m-smart", contextWindow: 4000, capabilities: ["toolUse" as const, "coding" as const], specialization: "coding" as const },
+      ],
+      deployments: [
+        { id: "dep-fast", providerId: "p1", modelId: "m-fast", enabled: true, priority: 10 },
+        { id: "dep-smart", providerId: "p1", modelId: "m-smart", enabled: true, priority: 5 },
+      ],
+      routes: {
+        coding: ["dep-fast", "dep-smart"],
+      },
+    }
+    const router = new ModelRouter(config)
+    const health = new StaticHealthChecker()
+    const decision = await router.route({
+      taskClass: "coding",
+      needsTools: true,
+      needsStructuredOutput: false,
+      estimatedInputTokens: 500,
+      requiredContextWindow: 2000,
+      hint: { avoidDeploymentId: "dep-fast" },
+    }, health)
+    results.push({
+      id: "completion.9",
+      category: "ADAPTIVE_COMPLETION",
+      description: "ModelRouter with avoidDeploymentId selects alternative candidate despite lower base priority",
+      actual: {
+        deploymentId: decision.deploymentId,
+        hasHintAvoided: decision.reasons.includes("hint_avoided"),
+      },
+      expected: {
+        deploymentId: "dep-smart",
+        hasHintAvoided: true,
+      },
+    })
+  }
+
+  // Scenario 92: ModelRouter with avoidDeploymentId retains candidate when no alternative is eligible
+  {
+    const config = {
+      providers: [{ id: "p1", kind: "scripted" as const }],
+      models: [
+        { id: "m-fast", contextWindow: 4000, capabilities: ["toolUse" as const, "coding" as const], specialization: "coding" as const },
+        { id: "m-broken", contextWindow: 4000, capabilities: ["toolUse" as const, "coding" as const], specialization: "coding" as const },
+      ],
+      deployments: [
+        { id: "dep-fast", providerId: "p1", modelId: "m-fast", enabled: true, priority: 10 },
+        { id: "dep-broken", providerId: "p1", modelId: "m-broken", enabled: false, priority: 5 },
+      ],
+      routes: {
+        coding: ["dep-fast", "dep-broken"],
+      },
+    }
+    const router = new ModelRouter(config)
+    const health = new StaticHealthChecker()
+    const decision = await router.route({
+      taskClass: "coding",
+      needsTools: true,
+      needsStructuredOutput: false,
+      estimatedInputTokens: 500,
+      requiredContextWindow: 2000,
+      hint: { avoidDeploymentId: "dep-fast" },
+    }, health)
+    results.push({
+      id: "completion.10",
+      category: "ADAPTIVE_COMPLETION",
+      description: "ModelRouter retains avoided candidate when no other candidate is eligible without failing",
+      actual: {
+        deploymentId: decision.deploymentId,
+        hasHintAvoided: decision.reasons.includes("hint_avoided"),
+      },
+      expected: {
+        deploymentId: "dep-fast",
+        hasHintAvoided: false,
+      },
+    })
+  }
+
+  // Scenario 93: ModelRouter with preferredDeploymentId prioritizes candidate
+  {
+    const config = {
+      providers: [{ id: "p1", kind: "scripted" as const }],
+      models: [
+        { id: "m1", contextWindow: 4000, capabilities: ["toolUse" as const], specialization: "general" as const },
+        { id: "m2", contextWindow: 4000, capabilities: ["toolUse" as const], specialization: "general" as const },
+      ],
+      deployments: [
+        { id: "dep-1", providerId: "p1", modelId: "m1", enabled: true, priority: 10 },
+        { id: "dep-2", providerId: "p1", modelId: "m2", enabled: true, priority: 1 },
+      ],
+      routes: {
+        default: ["dep-1", "dep-2"],
+      },
+    }
+    const router = new ModelRouter(config)
+    const health = new StaticHealthChecker()
+    const decision = await router.route({
+      taskClass: "general",
+      needsTools: true,
+      needsStructuredOutput: false,
+      estimatedInputTokens: 200,
+      requiredContextWindow: 1000,
+      hint: { preferredDeploymentId: "dep-2" },
+    }, health)
+    results.push({
+      id: "completion.11",
+      category: "ADAPTIVE_COMPLETION",
+      description: "ModelRouter with preferredDeploymentId routes to preferred deployment over higher priority",
+      actual: {
+        deploymentId: decision.deploymentId,
+        hasHintPreferred: decision.reasons.includes("hint_preferred"),
+      },
+      expected: {
+        deploymentId: "dep-2",
+        hasHintPreferred: true,
+      },
+    })
+  }
+
+  // Scenario 94: ModelRouter with preferredCapabilities matches capability
+  {
+    const config = {
+      providers: [{ id: "p1", kind: "scripted" as const }],
+      models: [
+        { id: "m-base", contextWindow: 4000, capabilities: ["toolUse" as const, "coding" as const], specialization: "coding" as const },
+        { id: "m-reason", contextWindow: 4000, capabilities: ["toolUse" as const, "coding" as const, "reasoning" as const], specialization: "coding" as const },
+      ],
+      deployments: [
+        { id: "dep-base", providerId: "p1", modelId: "m-base", enabled: true, priority: 10 },
+        { id: "dep-reason", providerId: "p1", modelId: "m-reason", enabled: true, priority: 2 },
+      ],
+      routes: {
+        coding: ["dep-base", "dep-reason"],
+      },
+    }
+    const router = new ModelRouter(config)
+    const health = new StaticHealthChecker()
+    const decision = await router.route({
+      taskClass: "coding",
+      needsTools: true,
+      needsStructuredOutput: false,
+      estimatedInputTokens: 200,
+      requiredContextWindow: 1000,
+      hint: { preferredCapabilities: ["reasoning"] },
+    }, health)
+    results.push({
+      id: "completion.12",
+      category: "ADAPTIVE_COMPLETION",
+      description: "ModelRouter with preferredCapabilities routes to candidate possessing preferred capability",
+      actual: {
+        deploymentId: decision.deploymentId,
+        hasHintPreferred: decision.reasons.includes("hint_preferred"),
+      },
+      expected: {
+        deploymentId: "dep-reason",
+        hasHintPreferred: true,
+      },
+    })
+  }
+
+  // Scenario 95: RoutedModelGateway extracts request metadata routeHint and routes accordingly
+  {
+    const config = {
+      providers: [{ id: "p1", kind: "scripted" as const }],
+      models: [
+        { id: "m1", contextWindow: 8192, capabilities: ["toolUse" as const], specialization: "general" as const },
+        { id: "m2", contextWindow: 8192, capabilities: ["toolUse" as const], specialization: "general" as const },
+      ],
+      deployments: [
+        { id: "dep-1", providerId: "p1", modelId: "m1", enabled: true, priority: 10 },
+        { id: "dep-2", providerId: "p1", modelId: "m2", enabled: true, priority: 1 },
+      ],
+      routes: {
+        default: ["dep-1", "dep-2"],
+      },
+    }
+    const providers = new Map([
+      ["dep-1", new ScriptedModelProvider([{ model: "m1", message: { role: "assistant", content: "From dep-1" } }])],
+      ["dep-2", new ScriptedModelProvider([{ model: "m2", message: { role: "assistant", content: "From dep-2" } }])],
+    ])
+    const gateway = new RoutedModelGateway({
+      config,
+      providers,
+      mode: "ASK",
+      hasTools: false,
+      hasStructuredOutput: false,
+    })
+    const response = await gateway.complete({
+      messages: [{ role: "user", content: "Hello" }],
+      metadata: {
+        routeHint: { avoidDeploymentId: "dep-1" },
+      },
+    })
+    results.push({
+      id: "completion.13",
+      category: "ADAPTIVE_COMPLETION",
+      description: "RoutedModelGateway consumes routeHint from request metadata and attaches route provenance",
+      actual: {
+        deploymentId: (response.metadata?.routeProvenance as any)?.deploymentId,
+        content: response.message.content,
+      },
+      expected: {
+        deploymentId: "dep-2",
+        content: "From dep-2",
+      },
+    })
+  }
+
+  // Scenario 96: AgentRunner CHANGE_MODEL sets routeHint with 1-turn bounded lifetime
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-route-lifetime-"))
+    try {
+      const capturedHints: (any | undefined)[] = []
+      const fakeProvider = {
+        capabilities: new Set(["chat" as const]),
+        complete: async (req: any) => {
+          capturedHints.push(req.metadata?.routeHint)
+          return {
+            model: "scripted",
+            message: { role: "assistant", content: `Turn response with hint ${Boolean(req.metadata?.routeHint)}` },
+          }
+        },
+      }
+      let evalTurn = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          evalTurn++
+          if (evalTurn === 1) {
+            return {
+              decision: "CHANGE_MODEL",
+              action: "RECOMMEND_MODEL",
+              shouldFinalize: false,
+              modelRecommendation: { capability: "reasoning", reason: "Upgrade for complex reasoning" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: evalTurn >= 3 }
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        provider: fakeProvider as any,
+        registry: new ToolRegistry([]),
+      })
+      await runner.run({
+        task: { id: "route-life-1", mode: "ASK", instruction: "Solve puzzle" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "completion.14",
+        category: "ADAPTIVE_COMPLETION",
+        description: "AgentRunner pendingRouteHint has 1-turn bounded lifetime and clears on subsequent turns",
+        actual: {
+          turn1HasHint: capturedHints[0] !== undefined,
+          turn2HasHint: capturedHints[1] !== undefined,
+          turn3HasHint: capturedHints[2] !== undefined,
+          turn2Reason: capturedHints[1]?.reasonCode,
+        },
+        expected: {
+          turn1HasHint: false,
+          turn2HasHint: true,
+          turn3HasHint: false,
+          turn2Reason: "Upgrade for complex reasoning",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 97: AgentRunner outcome linking on model change
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-route-outcome-"))
+    try {
+      let turn = 0
+      const fakeProvider = {
+        capabilities: new Set(["chat" as const]),
+        complete: async () => {
+          turn++
+          const depId = turn === 1 ? "dep-alpha" : "dep-beta"
+          return {
+            model: "scripted",
+            message: { role: "assistant", content: `Response from ${depId}` },
+            metadata: {
+              routeProvenance: { deploymentId: depId },
+            },
+          }
+        },
+      }
+      let customPolicyTurn = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          customPolicyTurn++
+          if (customPolicyTurn === 1) {
+            return {
+              decision: "CHANGE_MODEL",
+              action: "RECOMMEND_MODEL",
+              shouldFinalize: false,
+              modelRecommendation: { capability: "coding", reason: "Switch model" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+        }
+      })()
+
+      const ledger = new RuntimeEvalLedger()
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        evalLedger: ledger,
+        provider: fakeProvider as any,
+        registry: new ToolRegistry([]),
+      })
+      await runner.run({
+        task: { id: "route-out-1", mode: "ASK", instruction: "Test model outcome linking" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const ledgerEntry = ledger.getEntries().find((e: any) => e.interventionAction === "RECOMMEND_MODEL")
+      results.push({
+        id: "completion.15",
+        category: "ADAPTIVE_COMPLETION",
+        description: "AgentRunner records RESOLVED outcome linked to CHANGE_MODEL evalId after deployment switch",
+        actual: {
+          hasChangeEval: ledgerEntry !== undefined,
+          interventionOutcome: ledgerEntry?.outcome,
+        },
+        expected: {
+          hasChangeEval: true,
+          interventionOutcome: "RESOLVED",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 98: Security and capability constraints preserved during CHANGE_MODEL
+  {
+    const config = {
+      providers: [{ id: "p1", kind: "scripted" as const }],
+      models: [
+        { id: "m-healthy", contextWindow: 4000, capabilities: ["toolUse" as const], specialization: "general" as const },
+        { id: "m-disabled", contextWindow: 4000, capabilities: ["toolUse" as const], specialization: "general" as const },
+        { id: "m-small", contextWindow: 500, capabilities: ["toolUse" as const], specialization: "general" as const },
+      ],
+      deployments: [
+        { id: "dep-healthy", providerId: "p1", modelId: "m-healthy", enabled: true, priority: 1 },
+        { id: "dep-disabled", providerId: "p1", modelId: "m-disabled", enabled: false, priority: 100 },
+        { id: "dep-small", providerId: "p1", modelId: "m-small", enabled: true, priority: 50 },
+      ],
+      routes: {
+        default: ["dep-healthy", "dep-disabled", "dep-small"],
+      },
+    }
+    const router = new ModelRouter(config)
+    const health = new StaticHealthChecker()
+    const decision = await router.route({
+      taskClass: "general",
+      needsTools: true,
+      needsStructuredOutput: false,
+      estimatedInputTokens: 600,
+      requiredContextWindow: 2000,
+      hint: { preferredDeploymentId: "dep-disabled" },
+    }, health)
+    results.push({
+      id: "completion.16",
+      category: "ADAPTIVE_COMPLETION",
+      description: "ModelRouter strictly preserves disabled candidate rejection even when requested by route hint",
+      actual: {
+        selectedDeploymentId: decision.deploymentId,
+        rejectedReasons: decision.rejectedCandidates?.map((r) => r.reason).toSorted(),
+      },
+      expected: {
+        selectedDeploymentId: "dep-healthy",
+        rejectedReasons: ["disabled", "insufficient_context"],
+      },
+    })
+  }
+
+  // Scenario 99: REQUEST_MORE_CONTEXT file resolved -> explicit re-eval CONTINUE allows completion
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-ctx-pass-"))
+    try {
+      await writeFile(join(ws, "manifest.json"), JSON.stringify({ name: "core", version: "1.0.0" }), "utf-8")
+      let evalCount = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          evalCount++
+          if (evalCount === 1) {
+            return {
+              decision: "REQUEST_MORE_CONTEXT",
+              action: "REQUEST_CONTEXT",
+              shouldFinalize: false,
+              contextRequest: { target: "manifest.json", reason: "Need package metadata" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Initial query" },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Got package metadata, completed." },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "ctx-pass-1", mode: "ASK", instruction: "Read package metadata" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const ctxObs = result.observations?.find((o) => o.toolName === "runtime_eval_context")
+      results.push({
+        id: "completion.17",
+        category: "ADAPTIVE_COMPLETION",
+        description: "REQUEST_MORE_CONTEXT resolves file, triggers explicit re-eval, and CONTINUE enables task completion",
+        actual: {
+          status: result.status,
+          hasContextObservation: ctxObs !== undefined,
+          finalAnswer: result.finalAnswer,
+        },
+        expected: {
+          status: "COMPLETED",
+          hasContextObservation: true,
+          finalAnswer: "Got package metadata, completed.",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 100: REQUEST_MORE_CONTEXT file resolved -> explicit re-eval REPLAN injects replan observation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-ctx-replan-"))
+    try {
+      await writeFile(join(ws, "error.log"), "Fatal: memory corrupted", "utf-8")
+      let evalCount = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          evalCount++
+          if (evalCount === 1) {
+            return {
+              decision: "REQUEST_MORE_CONTEXT",
+              action: "REQUEST_CONTEXT",
+              shouldFinalize: false,
+              contextRequest: { target: "error.log", reason: "Inspect log file" },
+            }
+          }
+          if (evalCount === 2) {
+            return {
+              decision: "REPLAN",
+              action: "TRIGGER_REPLAN",
+              shouldFinalize: false,
+              promptContext: "Fatal error in log requires total approach replanning.",
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Checking logs..." },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Revising overall strategy based on replan directive." },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "ctx-rep-1", mode: "DEBUG", instruction: "Investigate crash" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const replanObs = result.observations?.find((o) => o.errorCategory === "REPLAN_REQUIRED")
+      results.push({
+        id: "completion.18",
+        category: "ADAPTIVE_COMPLETION",
+        description: "REQUEST_MORE_CONTEXT explicit re-evaluation dispatches second directive REPLAN",
+        actual: {
+          hasReplanObservation: replanObs !== undefined,
+          status: result.status,
+        },
+        expected: {
+          hasReplanObservation: true,
+          status: "COMPLETED",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 101: REQUEST_MORE_CONTEXT file resolved -> explicit re-eval ASK_HUMAN pauses runner
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-ctx-human-"))
+    try {
+      await writeFile(join(ws, "secrets.cfg"), "DB_PASS=xyz", "utf-8")
+      let evalCount = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          evalCount++
+          if (evalCount === 1) {
+            return {
+              decision: "REQUEST_MORE_CONTEXT",
+              action: "REQUEST_CONTEXT",
+              shouldFinalize: false,
+              contextRequest: { target: "secrets.cfg", reason: "Check credentials" },
+            }
+          }
+          if (evalCount === 2) {
+            return {
+              decision: "ASK_HUMAN",
+              action: "PAUSE_HUMAN",
+              shouldFinalize: false,
+              stopReason: "Confidential credentials found in requested context",
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Checking config" },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "ctx-hum-1", mode: "ASK", instruction: "Check configuration safely" },
+        workspaceRoot: ws,
+        maxTurns: 2,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      results.push({
+        id: "completion.19",
+        category: "ADAPTIVE_COMPLETION",
+        description: "REQUEST_MORE_CONTEXT explicit re-evaluation dispatches ASK_HUMAN and pauses runner",
+        actual: {
+          status: result.status,
+          hasConfirmation: result.confirmation !== undefined,
+        },
+        expected: {
+          status: "PAUSED",
+          hasConfirmation: true,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 102: REQUEST_MORE_CONTEXT target unavailable yields DEGRADED outcome and replan observation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-ctx-miss-"))
+    try {
+      let evalCount = 0
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(evalResult: any, evidence: any): any {
+          evalCount++
+          if (evalCount === 1) {
+            return {
+              decision: "REQUEST_MORE_CONTEXT",
+              action: "REQUEST_CONTEXT",
+              shouldFinalize: false,
+              contextRequest: { target: "does_not_exist.txt", reason: "Missing doc" },
+            }
+          }
+          return { decision: "CONTINUE", action: "CONTINUE", shouldFinalize: true }
+        }
+      })()
+
+      const ledger = new RuntimeEvalLedger()
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        evalLedger: ledger,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Looking for missing doc" },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Adapted to missing context." },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "ctx-miss-1", mode: "ASK", instruction: "Search doc" },
+        workspaceRoot: ws,
+        maxTurns: 3,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const replanObs = result.observations?.find((o) => o.errorCategory === "CONTEXT_UNAVAILABLE")
+      const ledgerEntry = ledger.getEntries().find((e: any) => e.interventionAction === "REQUEST_CONTEXT")
+      results.push({
+        id: "completion.20",
+        category: "ADAPTIVE_COMPLETION",
+        description: "REQUEST_MORE_CONTEXT records DEGRADED outcome when requested target cannot be resolved",
+        actual: {
+          hasUnavailableObservation: replanObs !== undefined,
+          interventionOutcome: ledgerEntry?.outcome,
+        },
+        expected: {
+          hasUnavailableObservation: true,
+          interventionOutcome: "DEGRADED",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 103: REQUEST_MORE_CONTEXT loop bound prevents runaway context fetching
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-ctx-loop-"))
+    try {
+      await writeFile(join(ws, "file.txt"), "some content", "utf-8")
+      const loopPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(_evalResult: any): any {
+          return {
+            decision: "REQUEST_MORE_CONTEXT",
+            action: "REQUEST_CONTEXT",
+            shouldFinalize: false,
+            contextRequest: { target: "file.txt", reason: "Infinite loop context" },
+          }
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: loopPolicy,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Need more data" },
+          },
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Got loop bound observation, stopping context loop." },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "ctx-loop-1", mode: "ASK", instruction: "Infinite context test" },
+        workspaceRoot: ws,
+        maxTurns: 2,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+      })
+      const loopObs = result.observations?.find((o) => o.errorCategory === "CONTEXT_LOOP_EXCEEDED")
+      results.push({
+        id: "completion.21",
+        category: "ADAPTIVE_COMPLETION",
+        description: "REQUEST_MORE_CONTEXT caps consecutive context requests at MAX_CONSECUTIVE_CONTEXT_REQUESTS",
+        actual: {
+          hasLoopExceededObservation: loopObs !== undefined,
+          turns: result.turns,
+        },
+        expected: {
+          hasLoopExceededObservation: true,
+          turns: 2,
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 104: Context retrieval increments evidenceVersion avoiding dedup stale drops
+  {
+    const collector = new RuntimeEvidenceCollector({
+      runId: "ev-ver-test",
+      taskGoal: "Test version increment",
+    })
+    const v1 = collector.evidenceVersion
+    collector.recordToolAction({
+      id: "ctx-act-1",
+      toolName: "runtime_eval_context",
+      outcome: "COMPLETED",
+      output: "Retrieved file content",
+    })
+    const v2 = collector.evidenceVersion
+    const checkpointKeyV1 = `PERIODIC:${v1}`
+    const checkpointKeyV2 = `PERIODIC:${v2}`
+    collector.recordEvaluatedCheckpoint(checkpointKeyV1)
+    results.push({
+      id: "completion.22",
+      category: "ADAPTIVE_COMPLETION",
+      description: "Context retrieval increments evidenceVersion so subsequent evaluation is not dedup-cached",
+      actual: {
+        initialVersion: v1,
+        updatedVersion: v2,
+        v1Evaluated: collector.hasEvaluatedCheckpoint(checkpointKeyV1),
+        v2Evaluated: collector.hasEvaluatedCheckpoint(checkpointKeyV2),
+      },
+      expected: {
+        initialVersion: 1,
+        updatedVersion: 2,
+        v1Evaluated: true,
+        v2Evaluated: false,
+      },
+    })
+  }
+
+  // Scenario 105: Adaptation Safety — Abort signal cancels runner before/during adaptation
+  {
+    const ws = await mkdtemp(join(tmpdir(), "rt-eval-abort-"))
+    try {
+      const abortCtrl = new AbortController()
+      const customPolicy = new (class extends AdaptiveControlPolicy {
+        override determineDirective(_evalResult: any): any {
+          abortCtrl.abort()
+          return {
+            decision: "REQUEST_MORE_CONTEXT",
+            action: "REQUEST_CONTEXT",
+            shouldFinalize: false,
+            contextRequest: { target: "any.txt", reason: "Aborted context" },
+          }
+        }
+      })()
+
+      const runner = new AgentRunner({
+        evidenceGate: false,
+        evalPolicy: customPolicy,
+        provider: new ScriptedModelProvider([
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "Query" },
+          },
+        ]),
+        registry: new ToolRegistry([]),
+      })
+      const result = await runner.run({
+        task: { id: "abort-1", mode: "ASK", instruction: "Cancelled run" },
+        workspaceRoot: ws,
+        maxTurns: 2,
+        contextBudget: defaultContextBudget,
+        projectInstructions: [],
+        signal: abortCtrl.signal,
+      })
+      results.push({
+        id: "completion.23",
+        category: "ADAPTIVE_COMPLETION",
+        description: "AbortSignal cancellation is honored during adaptive directive dispatch",
+        actual: {
+          status: result.status,
+          failureReason: result.failureReason,
+        },
+        expected: {
+          status: "CANCELLED",
+          failureReason: "CANCELLED",
+        },
+      })
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+    }
+  }
+
+  // Scenario 106: Outcome Linking — Scheduled verification records pass as RESOLVED and fail as DEGRADED
+  {
+    const ledger = new RuntimeEvalLedger()
+    const eval1 = {
+      evalId: "verif-eval-pass",
+      runId: "run-outcome-test",
+      turnId: 1,
+      checkpoint: "MUTATION_RESULT" as const,
+      evidenceVersion: 1,
+      decision: "VERIFY" as const,
+      scores: { progress: 1, completionConfidence: 1, verificationCoverage: 1, planAdherence: 1, executionEfficiency: 1, logicalConsistency: 1, safetyAuthority: 1 },
+      signals: [],
+      evaluatorLevel: "L0" as const,
+      confidence: 1,
+    }
+    const eval2 = {
+      evalId: "verif-eval-fail",
+      runId: "run-outcome-test",
+      turnId: 2,
+      checkpoint: "MUTATION_RESULT" as const,
+      evidenceVersion: 2,
+      decision: "VERIFY" as const,
+      scores: { progress: 1, completionConfidence: 1, verificationCoverage: 1, planAdherence: 1, executionEfficiency: 1, logicalConsistency: 1, safetyAuthority: 1 },
+      signals: [],
+      evaluatorLevel: "L0" as const,
+      confidence: 1,
+    }
+
+    ledger.recordEval(eval1, "SCHEDULE_VERIFICATION", { applied: true })
+    ledger.recordEval(eval2, "SCHEDULE_VERIFICATION", { applied: true })
+
+    ledger.recordInterventionOutcome("verif-eval-pass", "RESOLVED", "Verification PASS")
+    ledger.recordInterventionOutcome("verif-eval-fail", "DEGRADED", "Verification FAIL")
+
+    const entry1 = ledger.getEntries().find((e) => e.evalId === "verif-eval-pass")
+    const entry2 = ledger.getEntries().find((e) => e.evalId === "verif-eval-fail")
+
+    results.push({
+      id: "completion.24",
+      category: "ADAPTIVE_COMPLETION",
+      description: "Scheduled verification updates intervention outcome to RESOLVED or DEGRADED in ledger",
+      actual: {
+        passOutcome: entry1?.outcome,
+        failOutcome: entry2?.outcome,
+      },
+      expected: {
+        passOutcome: "RESOLVED",
+        failOutcome: "DEGRADED",
+      },
+    })
+  }
+
+  // Scenario 107: Analytics Aggregation with Outcomes and Separation of Layers
+  {
+    const ledger = new RuntimeEvalLedger()
+    const entries = [
+      { id: "e1", decision: "VERIFY" as const, applied: true, outcome: "RESOLVED" as const },
+      { id: "e2", decision: "REVISE" as const, applied: true, outcome: "DEGRADED" as const },
+      { id: "e3", decision: "CHANGE_MODEL" as const, applied: true, outcome: "RESOLVED" as const },
+      { id: "e4", decision: "REPLAN" as const, applied: false, staleDropped: true },
+      { id: "e5", decision: "CONTINUE" as const, applied: false },
+    ]
+    for (const item of entries) {
+      ledger.recordEval(
+        {
+          evalId: item.id,
+          runId: "run-full-ana",
+          turnId: 1,
+          checkpoint: "PERIODIC" as const,
+          evidenceVersion: 1,
+          decision: item.decision,
+          scores: { progress: 1, completionConfidence: 1, verificationCoverage: 1, planAdherence: 1, executionEfficiency: 1, logicalConsistency: 1, safetyAuthority: 1 },
+          signals: [],
+          evaluatorLevel: "L0" as const,
+          confidence: 1,
+        },
+        item.applied ? "INTERVENTION" : undefined,
+        { applied: item.applied, ...(item.staleDropped ? { staleDropped: item.staleDropped } : {}) }
+      )
+      if (item.outcome) {
+        ledger.recordInterventionOutcome(item.id, item.outcome, "Detail")
+      }
+    }
+
+    const analytics = new RuntimeEvalAnalytics(ledger)
+    const summary = analytics.getRunSummary("run-full-ana")
+    results.push({
+      id: "completion.25",
+      category: "ADAPTIVE_COMPLETION",
+      description: "Analytics correctly aggregates recommended, applied, stale dropped, and outcome counts",
+      actual: {
+        totalEvaluations: summary.totalEvaluations,
+        recommendedInterventions: summary.recommendedInterventions,
+        appliedInterventions: summary.appliedInterventions,
+        staleDroppedInterventions: summary.staleDroppedInterventions,
+        resolvedInterventions: summary.resolvedInterventions,
+        degradedInterventions: summary.degradedInterventions,
+        repairSuccessRate: summary.repairSuccessRate,
+      },
+      expected: {
+        totalEvaluations: 5,
+        recommendedInterventions: 4,
+        appliedInterventions: 3,
+        staleDroppedInterventions: 1,
+        resolvedInterventions: 2,
+        degradedInterventions: 1,
+        repairSuccessRate: 0.67,
       },
     })
   }

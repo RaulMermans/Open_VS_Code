@@ -13,6 +13,7 @@ import type {
 } from "../contracts/agent.ts"
 import type { CompiledContext, ContextBudget, ContextItem, ConversationTurn } from "../contracts/context.ts"
 import type { ModelProvider, ModelRequest } from "../contracts/model.ts"
+import type { ModelRouteHint } from "../contracts/routing.ts"
 import type { ToolCall, ToolPermission } from "../contracts/tools.ts"
 import { classifyPermission } from "../tools/permissions.ts"
 import { type PreparedToolCall, ToolRegistry, ToolRegistryError } from "../tools/registry.ts"
@@ -94,7 +95,13 @@ interface Session {
   repeatedProgress: number
   terminationSource?: "RUNTIME_EVAL" | "NON_PROGRESS_GUARD" | undefined
   pendingModelRecommendation?: { readonly capability: string; readonly reason: string } | undefined
+  pendingRouteHint?: ModelRouteHint | undefined
+  pendingModelEvalId?: string | undefined
+  consecutiveContextRequests?: number | undefined
+  lastDeploymentId?: string | undefined
 }
+
+export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
 
 export type AgentRunnerErrorCode = "ACTIVE_SESSION" | "NO_PENDING_CONFIRMATION" | "TERMINAL_STATE" | "INVALID_INPUT"
 
@@ -314,6 +321,16 @@ export class AgentRunner {
           )
 
           if (isVerification) {
+            if (pending.prepared.id.startsWith("scheduled-verify-")) {
+              const originatingEvalId = pending.prepared.id.replace("scheduled-verify-", "")
+              const pass = (result as any)?.status === "PASS"
+              session.evalLedger.recordInterventionOutcome(originatingEvalId, pass ? "RESOLVED" : "DEGRADED", `Verification ${(result as any)?.status}`)
+              this.#emit("runtime_eval.outcome", {
+                evalId: originatingEvalId,
+                outcome: pass ? "RESOLVED" : "DEGRADED",
+                details: `Verification result: ${(result as any)?.status}`,
+              })
+            }
             const { evalResult: verifEval, directive: verifDirective } = await this.#runEval("VERIFICATION_RESULT")
             if (this.#adaptiveInterventions && verifDirective.decision !== "CONTINUE") {
               const handled = await this.#dispatchDirective(verifEval, verifDirective, "VERIFICATION_RESULT")
@@ -445,6 +462,8 @@ export class AgentRunner {
         promptContent += "\n\n---\n**Instruction**: Repository evidence has been collected above. DO NOT emit any tool calls. Provide your final grounded answer directly now."
       }
 
+      session.consecutiveContextRequests = 0
+
       const request: ModelRequest = {
         messages: [{ role: "user", content: promptContent }],
         ...(session.input.signal ? { signal: session.input.signal } : {}),
@@ -452,9 +471,11 @@ export class AgentRunner {
         metadata: {
           turn,
           tools,
+          ...(session.pendingRouteHint ? { routeHint: session.pendingRouteHint } : {}),
           ...(session.pendingModelRecommendation ? { modelRecommendation: session.pendingModelRecommendation } : {}),
         },
       }
+      session.pendingRouteHint = undefined
       session.pendingModelRecommendation = undefined
       this.#emit("model.requested", { turn })
       session.turns = turn
@@ -462,12 +483,40 @@ export class AgentRunner {
       try {
         response = await this.#provider.complete(request)
       } catch (error) {
+        if (session.pendingModelEvalId) {
+          session.evalLedger.recordInterventionOutcome(session.pendingModelEvalId, "DEGRADED", "Model request failed after model change")
+          this.#emit("runtime_eval.outcome", {
+            evalId: session.pendingModelEvalId,
+            outcome: "DEGRADED",
+            details: "Model request failed after model change",
+          })
+          session.pendingModelEvalId = undefined
+        }
         if (isAbortError(error, session.input.signal)) this.#cancel()
         else {
           session.failureReason = "MODEL_ERROR"
           this.#emit("model.failed", { turn, message: error instanceof Error ? error.message : "Model request failed" })
         }
         break
+      }
+
+      const newDeploymentId = (response.metadata?.routeProvenance as any)?.deploymentId as string | undefined
+      if (session.pendingModelEvalId) {
+        const changed = Boolean(newDeploymentId && session.lastDeploymentId && newDeploymentId !== session.lastDeploymentId)
+        const outcome = changed ? "RESOLVED" : "UNCHANGED"
+        const details = changed
+          ? `Switched deployment from ${session.lastDeploymentId} to ${newDeploymentId}`
+          : (newDeploymentId ? `Retained deployment ${newDeploymentId}` : "Model request completed")
+        session.evalLedger.recordInterventionOutcome(session.pendingModelEvalId, outcome, details)
+        this.#emit("runtime_eval.outcome", {
+          evalId: session.pendingModelEvalId,
+          outcome,
+          details,
+        })
+        session.pendingModelEvalId = undefined
+      }
+      if (newDeploymentId) {
+        session.lastDeploymentId = newDeploymentId
       }
       const calls = response.toolCalls ?? []
       this.#emit("model.completed", { turn, toolCallCount: calls.length, hasAnswer: response.message.content.length > 0 })
@@ -879,8 +928,17 @@ export class AgentRunner {
     const session = this.#requiredSession()
     if (!this.#adaptiveInterventions) return false
 
+    if (session.input.signal?.aborted) {
+      this.#cancel()
+      return true
+    }
+
     switch (directive.action) {
       case "SCHEDULE_VERIFICATION": {
+        if (session.input.signal?.aborted) {
+          this.#cancel()
+          return true
+        }
         const { outcome: verifOutcome, evalResult: postEval, directive: postDirective } = await this.#executeScheduledVerification(evalResult.evalId)
         if (verifOutcome === "WAITING_CONFIRMATION" || session.state.status === "WAITING_FOR_CONFIRMATION" || ["FAILED", "CANCELLED"].includes(session.state.status)) {
           return true
@@ -897,7 +955,7 @@ export class AgentRunner {
           this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })
           return true
         }
-        if (verifOutcome === "FAILED" && postDirective) {
+        if (postDirective && postDirective.decision !== "CONTINUE" && postDirective.action !== "NO_OP") {
           return this.#dispatchDirective(postEval!, postDirective, "VERIFICATION_RESULT")
         }
         return false
@@ -962,6 +1020,33 @@ export class AgentRunner {
       }
 
       case "REQUEST_CONTEXT": {
+        if (session.input.signal?.aborted) {
+          this.#cancel()
+          return true
+        }
+
+        session.consecutiveContextRequests = (session.consecutiveContextRequests ?? 0) + 1
+        if (session.consecutiveContextRequests > MAX_CONSECUTIVE_CONTEXT_REQUESTS) {
+          session.evalLedger.recordInterventionOutcome(evalResult.evalId, "DEGRADED", "Maximum consecutive context requests exceeded")
+          this.#emit("runtime_eval.outcome", {
+            evalId: evalResult.evalId,
+            outcome: "DEGRADED",
+            details: "Maximum consecutive context requests exceeded",
+          })
+          session.observations.push(
+            createToolObservation({
+              toolName: "runtime_eval_replan",
+              callId: evalResult.evalId,
+              error: {
+                category: "CONTEXT_LOOP_EXCEEDED",
+                message: "Maximum consecutive context requests exceeded. Please formulate a new plan.",
+              },
+              maxContentBytes: this.#observationMaxBytes,
+            }),
+          )
+          return false
+        }
+
         const target = directive.contextRequest?.target?.trim()
         let resolved = false
         if (target) {
@@ -1010,7 +1095,27 @@ export class AgentRunner {
             }
           }
         }
-        if (!resolved) {
+        if (resolved) {
+          session.evalLedger.recordInterventionOutcome(evalResult.evalId, "RESOLVED", `Resolved context for ${target}`)
+          this.#emit("runtime_eval.outcome", {
+            evalId: evalResult.evalId,
+            outcome: "RESOLVED",
+            details: `Resolved context for ${target}`,
+          })
+        } else {
+          session.evidenceCollector.recordToolAction({
+            id: evalResult.evalId,
+            toolName: "runtime_eval_context",
+            outcome: "FAILED",
+            args: { target },
+            error: { message: `Context target not found: ${target || "unknown"}` },
+          })
+          session.evalLedger.recordInterventionOutcome(evalResult.evalId, "DEGRADED", `Context target could not be resolved: ${target || "unknown"}`)
+          this.#emit("runtime_eval.outcome", {
+            evalId: evalResult.evalId,
+            outcome: "DEGRADED",
+            details: `Context target could not be resolved: ${target || "unknown"}`,
+          })
           session.observations.push(
             createToolObservation({
               toolName: "runtime_eval_replan",
@@ -1023,12 +1128,28 @@ export class AgentRunner {
             }),
           )
         }
+
+        if (session.input.signal?.aborted) {
+          this.#cancel()
+          return true
+        }
+
+        const { evalResult: secondEval, directive: secondDirective } = await this.#runEval("PERIODIC")
+        if (secondDirective && secondDirective.decision !== "CONTINUE" && secondDirective.action !== "NO_OP") {
+          return this.#dispatchDirective(secondEval, secondDirective, "PERIODIC")
+        }
         return false
       }
 
       case "RECOMMEND_MODEL": {
         if (directive.modelRecommendation) {
           session.pendingModelRecommendation = directive.modelRecommendation
+          session.pendingRouteHint = {
+            ...(session.lastDeploymentId ? { avoidDeploymentId: session.lastDeploymentId } : {}),
+            preferredCapabilities: [directive.modelRecommendation.capability as any],
+            reasonCode: directive.modelRecommendation.reason,
+          }
+          session.pendingModelEvalId = evalResult.evalId
           session.observations.push(
             createToolObservation({
               toolName: "runtime_eval_model_recommendation",
@@ -1283,6 +1404,7 @@ export class AgentRunner {
       toolCalls: session.toolCalls,
       evalResults: session.evalResults,
       evalSummary: session.evalAnalytics?.formatDeveloperSummary(session.input.task.id),
+      observations: session.observations,
       ...(session.pending ? {
         confirmation: {
           callId: session.pending.prepared.id,

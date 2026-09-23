@@ -358,24 +358,30 @@ Agent Execution Cycle: ACT -> OBSERVE -> EVALUATE -> DECIDE -> ADAPT -> ACT AGAI
 | AdaptiveControlPolicy                                                         |
 |  - Maps eval scores, signals, and evidence to AdaptiveDirective:             |
 |    • CONTINUE             → Normal execution                                  |
-|    • SCHEDULE_VERIFICATION→ Mandatory verification before completion          |
+|    • SCHEDULE_VERIFICATION→ Mandatory verification before completion/mutation |
 |    • INJECT_REVISION      → Targeted corrective revision observation          |
 |    • TRIGGER_REPLAN       → Replan strategy observation                       |
 |    • TERMINATE_RUN        → Clean exit with NON_PROGRESS                      |
 |    • PAUSE_HUMAN          → Pause for user confirmation (ask_human)           |
-|    • RECOMMEND_MODEL      → Advisory routing recommendation                   |
+|    • RECOMMEND_MODEL /    → Narrow 1-turn ModelRouteHint for ModelRouter      |
+|      CHANGE_MODEL                                                             |
+|    • REQUEST_MORE_CONTEXT → Context inquiry, explicit re-eval, 2-turn loop cap|
 +-------------------------------------------------------------------------------+
                                       │
                                       ▼
 +-------------------------------------------------------------------------------+
 | RuntimeEvalLedger & Analytics                                                 |
 |  - Immutable in-memory audit log of all evaluations, directives, outcomes     |
-|  - Tracks intervention transitions (RESOLVED, IMPROVED, UNCHANGED, DEGRADED)   |
+|  - Universal post-verification causality & intervention outcome linking       |
+|    (RESOLVED, IMPROVED, UNCHANGED, DEGRADED)                                  |
+|  - Multi-layer tracking: recommended, applied, and outcome metrics            |
 |  - Generates developer summaries and repair success metrics                   |
 +-------------------------------------------------------------------------------+
 ```
 
 - **Non-Authoritative Invariant**: Evaluations only recommend directives; mutations, commands, and security decisions remain gated by `MutationEngine`, `VerificationEngine`, and `classifyPermission`.
-- **72 Deterministic Scenarios**: Verified by `npm run eval:runtime` across 2 consecutive runs with strict comparator assertion tests.
+- **Universal Post-Verification Causality**: All paths scheduling verification dispatch verifications, evaluate at `VERIFICATION_RESULT`, link outcomes in the ledger, and dispatch corrective directives.
+- **Bounded Adaptations**: Model route hints are bounded to a 1-turn lifetime; context requests are bounded to `MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2`.
+- **107 Deterministic Scenarios**: Verified by `npm run eval:runtime` across 2 consecutive runs with strict comparator assertion tests.
 - **Full Backward Compatibility**: Scripted benchmarks operate cleanly with `adaptiveInterventions: false` without losing evaluation metrics.
 See [ADR-024](docs/adrs/ADR-024-runtime-evals-adaptive-control.md) for full architectural specification.
