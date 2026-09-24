@@ -163,6 +163,8 @@ export class RecoveryController {
     if (latestCheckpoint && (latestCheckpoint.runtimeState.status === "WAITING_FOR_CONFIRMATION" || latestCheckpoint.runtimeState.pendingConfirmation)) {
       if (isNewEpoch) {
         requiredApprovals.push("NEW_EPOCH_AUTHORITY_REQUIRED")
+      } else {
+        requiredApprovals.push("PENDING_CONFIRMATION_REQUIRED")
       }
     }
 

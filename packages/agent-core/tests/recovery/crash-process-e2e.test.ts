@@ -13,6 +13,7 @@ import { CheckpointCoordinator } from "../../src/recovery/checkpoint-coordinator
 import { MutationEngine, sha256 } from "../../src/tools/mutation-engine.js"
 
 const coordModuleUrl = new URL("../../src/recovery/checkpoint-coordinator.ts", import.meta.url).href
+const mutationModuleUrl = new URL("../../src/tools/mutation-engine.ts", import.meta.url).href
 
 describe("Sprint 4C — Real Process-Boundary Crash Tests (E2E)", () => {
   test("T-4840: Mid-write crash: Child crashes after writing file before recordCompleted -> Reconciles to RECONCILED_APPLIED without duplicate write", async () => {
@@ -27,12 +28,18 @@ describe("Sprint 4C — Real Process-Boundary Crash Tests (E2E)", () => {
       const runId = "run-crash-mid-1"
 
       // Worker script running in child process:
-      // Prepares operation, writes file directly to disk, and immediately exits (crash simulation)
+      // Prepares operation, mutates file through canonical MutationEngine, and immediately exits (crash simulation)
       const workerCode = `
         import { CheckpointCoordinator } from ${JSON.stringify(coordModuleUrl)};
-        import { writeFile } from "node:fs/promises";
+        import { MutationEngine } from ${JSON.stringify(mutationModuleUrl)};
 
-        const coord = new CheckpointCoordinator({ workspaceRoot: ${JSON.stringify(wsDir)} });
+        const mutationEngine = new MutationEngine(${JSON.stringify(wsDir)});
+        const coord = new CheckpointCoordinator({ workspaceRoot: ${JSON.stringify(wsDir)}, mutationEngine });
+        const prep = await mutationEngine.preparePatch({
+          operation: "patch",
+          path: "product.ts",
+          patch: { search: "version = 1", replace: "version = 2" },
+        });
         const op = await coord.prepareOperation({
           runId: ${JSON.stringify(runId)},
           evidenceVersion: 1,
@@ -40,16 +47,18 @@ describe("Sprint 4C — Real Process-Boundary Crash Tests (E2E)", () => {
           authorityId: "mutation-engine",
           preconditions: [{ path: ${JSON.stringify(targetFile)}, expectedHash: ${JSON.stringify(beforeHash)}, exists: true }],
           expectedPostconditions: [{ path: ${JSON.stringify(targetFile)}, expectedHash: ${JSON.stringify(afterHash)}, exists: true }],
+          payload: { mutationId: prep.id },
         });
 
         await coord.operationJournal.recordStarted(op.operationId, ${JSON.stringify(runId)});
 
-        // File is mutated on disk
-        await writeFile(${JSON.stringify(targetFile)}, ${JSON.stringify(afterContent)}, "utf8");
+        // File is mutated on disk via canonical MutationEngine
+        await mutationEngine.applyPreparedMutation(prep);
 
         // PROCESS CRASHES ABRUPTLY BEFORE recordCompleted OR checkpoint
         process.exit(0);
       `
+
 
       // Execute child process
       await new Promise<void>((resolve, reject) => {

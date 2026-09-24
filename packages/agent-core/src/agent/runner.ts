@@ -4,6 +4,7 @@ import { applyAgentEvent, initialAgentState } from "./state.ts"
 import { compileContext, type ContextCompilerInput } from "../context/compiler.ts"
 import { ContextBudgetError } from "../context/budget.ts"
 import type {
+  AgentConfirmationRequest,
   AgentContextDiagnostic,
   AgentFailureReason,
   AgentResult,
@@ -32,6 +33,8 @@ import { discoverVerificationCommand } from "../tools/verification-discovery.ts"
 import { readRepositoryFile } from "../tools/read-file.ts"
 import { searchText } from "../tools/search-text.ts"
 import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts"
+import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
+import { join } from "node:path"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
 
@@ -91,6 +94,7 @@ interface Session {
   diagnostics: AgentContextDiagnostic[]
   toolCalls: AgentToolCallRecord[]
   pending?: PendingConfirmation
+  recoveredConfirmation?: AgentConfirmationRequest | undefined
   finalAnswer?: string
   failureReason?: AgentFailureReason
   lastProgressKey?: string
@@ -222,6 +226,17 @@ export class AgentRunner {
       repeatedProgress: 0,
     }
     this.#emit("task.started", { task: input.task })
+    if (this.#checkpointCoordinator) {
+      await this.#checkpointCoordinator.checkpoint({
+        runId: input.task.id,
+        reason: "RUN_STARTED",
+        phase: "PLANNING",
+        turnId: 0,
+        evidenceVersion: 1,
+        runtimeState: { status: "PLANNING" },
+        touchedFilePaths: [],
+      }).catch(() => {})
+    }
     return this.#continue()
   }
 
@@ -270,6 +285,68 @@ export class AgentRunner {
             })
           }
           const reviewableId = reviewable.id
+          let opId: string | undefined
+          let targetFilePath = ""
+          if (this.#checkpointCoordinator && !isVerification) {
+            const payload = reviewable.reviewPayload as any
+            targetFilePath = payload?.path ?? (pending.prepared.arguments as any)?.targetFile ?? (pending.prepared.arguments as any)?.path ?? ""
+            if (!targetFilePath.startsWith("/") && session.input.workspaceRoot) {
+              targetFilePath = join(session.input.workspaceRoot, targetFilePath)
+            }
+            if (payload?.beforeContent !== undefined && payload?.beforeContent !== null && payload.beforeContent !== "") {
+              await this.#checkpointCoordinator.artifactStore.storePreimage(
+                session.input.task.id,
+                reviewable.id,
+                targetFilePath,
+                Buffer.from(payload.beforeContent, "utf8"),
+              ).catch(() => {})
+            }
+            const op = await this.#checkpointCoordinator.prepareOperation({
+              runId: session.input.task.id,
+              evidenceVersion: session.turns + 1,
+              kind: "MUTATION",
+              authorityId: "mutation-engine",
+              preconditions: payload?.beforeHash ? [{ path: targetFilePath, expectedHash: payload.beforeHash, exists: true }] : [],
+              expectedPostconditions: payload?.afterHash ? [{ path: targetFilePath, expectedHash: payload.afterHash, exists: true }] : [],
+              payload: { mutationId: reviewable.id },
+            }).catch(() => undefined)
+            if (op) {
+              opId = op.operationId
+              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+              await this.#checkpointCoordinator.checkpoint({
+                runId: session.input.task.id,
+                reason: "BEFORE_MUTATION",
+                phase: "MUTATION",
+                turnId: session.turns,
+                evidenceVersion: session.turns + 1,
+                runtimeState: { status: "WAITING_FOR_TOOL" },
+                touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+              }).catch(() => {})
+            }
+          } else if (this.#checkpointCoordinator && isVerification) {
+            const op = await this.#checkpointCoordinator.prepareOperation({
+              runId: session.input.task.id,
+              evidenceVersion: session.turns + 1,
+              kind: "VERIFICATION",
+              authorityId: "verification-engine",
+              preconditions: [],
+              expectedPostconditions: [],
+              payload: { executionId: reviewable.id },
+            }).catch(() => undefined)
+            if (op) {
+              opId = op.operationId
+              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+              await this.#checkpointCoordinator.checkpoint({
+                runId: session.input.task.id,
+                reason: "BEFORE_VERIFICATION",
+                phase: "VERIFYING",
+                turnId: session.turns,
+                evidenceVersion: session.turns + 1,
+                runtimeState: { status: "VERIFYING" },
+              }).catch(() => {})
+            }
+          }
+
           const onOutput = isVerification
             ? (chunk: { stream: "stdout" | "stderr"; chunk: string }) => {
                 this.#emit("verification.output", {
@@ -287,6 +364,39 @@ export class AgentRunner {
             signal: session.input.signal ?? new AbortController().signal,
             onOutput,
           }) as any
+
+          if (this.#checkpointCoordinator && opId) {
+            if (isVerification) {
+              if (result.status === "PASS") {
+                await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id).catch(() => {})
+              } else {
+                await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification failed").catch(() => {})
+              }
+              await this.#checkpointCoordinator.checkpoint({
+                runId: session.input.task.id,
+                reason: "AFTER_VERIFICATION",
+                phase: "VERIFYING",
+                turnId: session.turns,
+                evidenceVersion: session.turns + 1,
+                runtimeState: { status: "OBSERVING" },
+              }).catch(() => {})
+            } else {
+              if (result.status === "APPLIED") {
+                await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id).catch(() => {})
+              } else {
+                await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.error?.message ?? "Mutation failed").catch(() => {})
+              }
+              await this.#checkpointCoordinator.checkpoint({
+                runId: session.input.task.id,
+                reason: "AFTER_MUTATION",
+                phase: "MUTATION",
+                turnId: session.turns,
+                evidenceVersion: session.turns + 1,
+                runtimeState: { status: "OBSERVING" },
+                touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+              }).catch(() => {})
+            }
+          }
           if (isVerification) {
             this.#emit("verification.completed", {
               callId: pending.prepared.id,
@@ -389,6 +499,186 @@ export class AgentRunner {
         this.#emit("permission.approved", { callId: pending.prepared.id, name: pending.prepared.name })
         if (await this.#execute(pending.prepared, pending.signature)) return this.#result()
       }
+    }
+    return this.#continue()
+  }
+
+  async resumeFromRecovery(runId: string, options?: {
+    instruction?: string
+    workspaceRoot?: string
+    mode?: import("../contracts/agent.ts").AgentMode
+    signal?: AbortSignal
+  }): Promise<AgentResult> {
+    if (!this.#checkpointCoordinator) {
+      throw new AgentRunnerError("TERMINAL_STATE", "Recovery requires a configured CheckpointCoordinator")
+    }
+
+    const latestCp = await this.#checkpointCoordinator.checkpointStore.getLatestCheckpoint(runId)
+    if (!latestCp) {
+      throw new AgentRunnerError("TERMINAL_STATE", `No checkpoint found for runId: ${runId}`)
+    }
+
+    const plan = await this.#checkpointCoordinator.recoveryController.buildRecoveryPlan(runId)
+    const wsRoot = options?.workspaceRoot ?? this.#checkpointCoordinator.workspaceRoot
+    const instruction = options?.instruction ?? `Resume task ${runId}`
+    const mode = options?.mode ?? "BUILD"
+    const taskProfile = classifyTaskProfile(instruction, mode)
+
+    const evalEngine = this.#evalEngine ?? new RuntimeEvalEngine()
+    const evalPolicy = this.#evalPolicy ?? new AdaptiveControlPolicy()
+    const evalLedger = this.#evalLedger ?? new RuntimeEvalLedger()
+    const evalAnalytics = new RuntimeEvalAnalytics(evalLedger)
+    const evidenceCollector = new RuntimeEvidenceCollector({
+      runId,
+      taskGoal: instruction,
+    })
+
+    evidenceCollector.recordRecoveryPlan(plan)
+    const evalOutput = evaluateL0(evidenceCollector.getEvidence(), "RECOVERY_RESULT")
+    const evalResult: RuntimeEvalResult = {
+      evalId: `eval-rec-${runId}`,
+      runId,
+      turnId: latestCp.turnId ?? 0,
+      checkpoint: "RECOVERY_RESULT",
+      evidenceVersion: latestCp.evidenceVersion,
+      decision: evalOutput.decision,
+      scores: evalOutput.scores,
+      signals: evalOutput.signals,
+      recommendedAction: evalOutput.recommendedAction,
+      evaluatorLevel: "L0",
+      confidence: 1.0,
+      evidenceRefs: [],
+    }
+    const directive = evalPolicy.determineDirective(evalResult, evidenceCollector.getEvidence())
+
+    // Checkpoint recovery restored
+    await this.#checkpointCoordinator.checkpoint({
+      runId,
+      reason: "RECOVERY_RECONCILED",
+      phase: plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" ? "PLANNING" : latestCp.phase,
+      turnId: latestCp.turnId ?? 0,
+      evidenceVersion: latestCp.evidenceVersion + 1,
+      runtimeState: {
+        status: (directive.decision === "ASK_HUMAN" || plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" || plan.divergenceClass === "BLOCKED_DIVERGENCE")
+          ? "WAITING_FOR_CONFIRMATION"
+          : (plan.disposition === "STOP" || directive.decision === "STOP" ? "COMPLETED" : "PLANNING"),
+      },
+    }).catch(() => {})
+
+    // Check if recovery requires human escalation or reconfirmation
+    if (directive.decision === "ASK_HUMAN" || plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" || plan.divergenceClass === "BLOCKED_DIVERGENCE") {
+      const pendingConf = latestCp.runtimeState.pendingConfirmation
+      const recoveredConfirmation: AgentConfirmationRequest | undefined = pendingConf ? {
+        callId: pendingConf.callId,
+        toolName: pendingConf.toolName,
+        action: pendingConf.action as any,
+        arguments: (pendingConf.arguments as Record<string, unknown>) ?? {},
+      } : undefined
+
+      this.#session = {
+        input: {
+          workspaceRoot: wsRoot,
+          task: { id: runId, instruction, mode },
+          maxTurns: 10,
+          contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+          projectInstructions: [],
+          ...(options?.signal ? { signal: options.signal } : {}),
+        },
+        taskProfile,
+        evidenceLedger: new EvidenceLedger(),
+        evidenceCollector,
+        evalEngine,
+        evalPolicy,
+        evalLedger,
+        evalAnalytics,
+        evalResults: [
+          {
+            evalId: `eval-rec-${runId}`,
+            runId,
+            turnId: latestCp.turnId ?? 0,
+            checkpoint: "RECOVERY_RESULT",
+            evidenceVersion: latestCp.evidenceVersion,
+            decision: directive.decision,
+            scores: evalOutput.scores,
+            signals: evalOutput.signals,
+            recommendedAction: evalOutput.recommendedAction,
+            evaluatorLevel: "L0",
+            confidence: 1.0,
+            evidenceRefs: [],
+          }
+        ],
+        state: {
+          status: "WAITING_FOR_CONFIRMATION",
+          events: [],
+        },
+        turns: latestCp.turnId ?? 0,
+        continuationAttempts: 0,
+        observations: [],
+        diagnostics: [],
+        toolCalls: [],
+        repeatedProgress: 0,
+        recoveredConfirmation,
+      }
+      const res = this.#result()
+      return { ...res, recoveryPlan: plan }
+    }
+
+    if (plan.disposition === "STOP" || directive.decision === "STOP") {
+      this.#session = {
+        input: {
+          workspaceRoot: wsRoot,
+          task: { id: runId, instruction, mode },
+          maxTurns: 10,
+          contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+          projectInstructions: [],
+          ...(options?.signal ? { signal: options.signal } : {}),
+        },
+        taskProfile,
+        evidenceLedger: new EvidenceLedger(),
+        evidenceCollector,
+        evalEngine,
+        evalPolicy,
+        evalLedger,
+        evalAnalytics,
+        evalResults: [],
+        state: {
+          status: "COMPLETED",
+          events: [],
+        },
+        turns: latestCp.turnId ?? 0,
+        continuationAttempts: 0,
+        observations: [],
+        diagnostics: [],
+        toolCalls: [],
+        repeatedProgress: 0,
+      }
+      return this.#result()
+    }
+
+    this.#session = {
+      input: {
+        workspaceRoot: wsRoot,
+        task: { id: runId, instruction, mode },
+        maxTurns: 10,
+        contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+        projectInstructions: [],
+        ...(options?.signal ? { signal: options.signal } : {}),
+      },
+      taskProfile,
+      evidenceLedger: new EvidenceLedger(),
+      evidenceCollector,
+      evalEngine,
+      evalPolicy,
+      evalLedger,
+      evalAnalytics,
+      evalResults: [],
+      state: initialAgentState(),
+      turns: latestCp.turnId ?? 0,
+      continuationAttempts: 0,
+      observations: [],
+      diagnostics: [],
+      toolCalls: [],
+      repeatedProgress: 0,
     }
     return this.#continue()
   }
@@ -572,8 +862,7 @@ export class AgentRunner {
                 this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })
                 break
               }
-              session.finalAnswer = response.message.content
-              this.#emit("task.completed", { turns: session.turns })
+              await this.#completeTask(response.message.content)
               break
             }
 
@@ -584,8 +873,7 @@ export class AgentRunner {
                 if (handled) return this.#result()
                 continue
               }
-              session.finalAnswer = response.message.content
-              this.#emit("task.completed", { turns: session.turns })
+              await this.#completeTask(response.message.content)
               break
             }
 
@@ -614,10 +902,10 @@ export class AgentRunner {
           }
         }
 
-        session.finalAnswer = response.message.content
-        this.#emit("task.completed", { turns: session.turns })
+        await this.#completeTask(response.message.content)
         break
       }
+
       for (const call of calls) {
         if (await this.#handleCall(call)) break
       }
@@ -730,8 +1018,92 @@ export class AgentRunner {
     const session = this.#requiredSession()
     this.#emit("tool.requested", { callId: prepared.id, name: prepared.name })
     let observation: ToolObservation
+    let opId: string | undefined
+    let targetFilePath = ""
+    if (this.#checkpointCoordinator) {
+      if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
+        targetFilePath = (prepared.arguments as any)?.targetFile ?? (prepared.arguments as any)?.path ?? ""
+        if (!targetFilePath.startsWith("/") && session.input.workspaceRoot) {
+          targetFilePath = join(session.input.workspaceRoot, targetFilePath)
+        }
+        const op = await this.#checkpointCoordinator.prepareOperation({
+          runId: session.input.task.id,
+          evidenceVersion: session.turns + 1,
+          kind: "MUTATION",
+          authorityId: "mutation-engine",
+          preconditions: [],
+          expectedPostconditions: targetFilePath ? [{ path: targetFilePath, expectedHash: "", exists: prepared.definition.action !== "delete_file" }] : [],
+          payload: { toolId: prepared.id },
+        }).catch(() => undefined)
+        if (op) {
+          opId = op.operationId
+          await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+          await this.#checkpointCoordinator.checkpoint({
+            runId: session.input.task.id,
+            reason: "BEFORE_MUTATION",
+            phase: "MUTATION",
+            turnId: session.turns,
+            evidenceVersion: session.turns + 1,
+            runtimeState: { status: "WAITING_FOR_TOOL" },
+            touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+          }).catch(() => {})
+        }
+      } else if (prepared.definition.action === "run_known_test") {
+        const op = await this.#checkpointCoordinator.prepareOperation({
+          runId: session.input.task.id,
+          evidenceVersion: session.turns + 1,
+          kind: "VERIFICATION",
+          authorityId: "verification-engine",
+          preconditions: [],
+          expectedPostconditions: [],
+          payload: { toolId: prepared.id },
+        }).catch(() => undefined)
+        if (op) {
+          opId = op.operationId
+          await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+          await this.#checkpointCoordinator.checkpoint({
+            runId: session.input.task.id,
+            reason: "BEFORE_VERIFICATION",
+            phase: "VERIFYING",
+            turnId: session.turns,
+            evidenceVersion: session.turns + 1,
+            runtimeState: { status: "VERIFYING" },
+          }).catch(() => {})
+        }
+      }
+    }
+
     try {
       const output = await prepared.invoke({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
+      if (this.#checkpointCoordinator && opId) {
+        if (prepared.definition.action === "run_known_test") {
+          const pass = (output as any)?.status === "PASS"
+          if (pass) {
+            await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, prepared.id).catch(() => {})
+          } else {
+            await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, (output as any)?.stderr ?? "Verification non-zero exit").catch(() => {})
+          }
+          await this.#checkpointCoordinator.checkpoint({
+            runId: session.input.task.id,
+            reason: "AFTER_VERIFICATION",
+            phase: "VERIFYING",
+            turnId: session.turns,
+            evidenceVersion: session.turns + 1,
+            runtimeState: { status: "OBSERVING" },
+          }).catch(() => {})
+        } else if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
+          await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, prepared.id).catch(() => {})
+          await this.#checkpointCoordinator.checkpoint({
+            runId: session.input.task.id,
+            reason: "AFTER_MUTATION",
+            phase: "MUTATION",
+            turnId: session.turns,
+            evidenceVersion: session.turns + 1,
+            runtimeState: { status: "OBSERVING" },
+            touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+          }).catch(() => {})
+        }
+      }
       observation = createToolObservation({ toolName: prepared.name, callId: prepared.id, output, maxContentBytes: this.#observationMaxBytes })
       session.observations.push(observation)
       session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "COMPLETED", truncated: observation.truncated })
@@ -786,6 +1158,9 @@ export class AgentRunner {
         return true
       }
       const message = error instanceof Error ? error.message : "Tool execution failed"
+      if (this.#checkpointCoordinator && opId) {
+        await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, message).catch(() => {})
+      }
       observation = createToolObservation({
         toolName: prepared.name,
         callId: prepared.id,
@@ -1265,11 +1640,50 @@ export class AgentRunner {
               chunk: chunk.chunk,
             })
           }
+          let opId: string | undefined
+          if (this.#checkpointCoordinator) {
+            const op = await this.#checkpointCoordinator.prepareOperation({
+              runId: session.input.task.id,
+              evidenceVersion: session.turns + 1,
+              kind: "VERIFICATION",
+              authorityId: "verification-engine",
+              preconditions: [],
+              expectedPostconditions: [],
+              payload: { executionId: reviewable.id },
+            }).catch(() => undefined)
+            if (op) {
+              opId = op.operationId
+              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+              await this.#checkpointCoordinator.checkpoint({
+                runId: session.input.task.id,
+                reason: "BEFORE_VERIFICATION",
+                phase: "VERIFYING",
+                turnId: session.turns,
+                evidenceVersion: session.turns + 1,
+                runtimeState: { status: "VERIFYING" },
+              }).catch(() => {})
+            }
+          }
           const result = (await reviewable.apply({
             workspaceRoot: session.input.workspaceRoot,
             signal: session.input.signal ?? new AbortController().signal,
             onOutput,
           })) as any
+          if (this.#checkpointCoordinator && opId) {
+            if (result.status === "PASS") {
+              await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id).catch(() => {})
+            } else {
+              await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification non-zero exit").catch(() => {})
+            }
+            await this.#checkpointCoordinator.checkpoint({
+              runId: session.input.task.id,
+              reason: "AFTER_VERIFICATION",
+              phase: "VERIFYING",
+              turnId: session.turns,
+              evidenceVersion: session.turns + 1,
+              runtimeState: { status: "OBSERVING" },
+            }).catch(() => {})
+          }
           this.#emit("verification.completed", {
             callId: prepared.id,
             name: prepared.name,
@@ -1347,7 +1761,46 @@ export class AgentRunner {
           scriptName: command.scriptName,
           scriptBody: command.scriptBody,
         }
+        let opId: string | undefined
+        if (this.#checkpointCoordinator) {
+          const op = await this.#checkpointCoordinator.prepareOperation({
+            runId: session.input.task.id,
+            evidenceVersion: session.turns + 1,
+            kind: "VERIFICATION",
+            authorityId: "verification-engine",
+            preconditions: [],
+            expectedPostconditions: [],
+            payload: { executionId: verifId },
+          }).catch(() => undefined)
+          if (op) {
+            opId = op.operationId
+            await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+            await this.#checkpointCoordinator.checkpoint({
+              runId: session.input.task.id,
+              reason: "BEFORE_VERIFICATION",
+              phase: "VERIFYING",
+              turnId: session.turns,
+              evidenceVersion: session.turns + 1,
+              runtimeState: { status: "VERIFYING" },
+            }).catch(() => {})
+          }
+        }
         const result = await this.#verificationEngine.execute(preparedVerif, session.input.signal)
+        if (this.#checkpointCoordinator && opId) {
+          if (result.status === "PASS") {
+            await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, verifId).catch(() => {})
+          } else {
+            await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification non-zero exit").catch(() => {})
+          }
+          await this.#checkpointCoordinator.checkpoint({
+            runId: session.input.task.id,
+            reason: "AFTER_VERIFICATION",
+            phase: "VERIFYING",
+            turnId: session.turns,
+            evidenceVersion: session.turns + 1,
+            runtimeState: { status: "OBSERVING" },
+          }).catch(() => {})
+        }
         this.#emit("verification.completed", {
           callId: `call-${verifId}`,
           name: "run_verification",
@@ -1395,6 +1848,22 @@ export class AgentRunner {
     return { outcome: "UNAVAILABLE" }
   }
 
+  async #completeTask(responseContent: string): Promise<void> {
+    const session = this.#requiredSession()
+    session.finalAnswer = responseContent
+    this.#emit("task.completed", { turns: session.turns })
+    if (this.#checkpointCoordinator) {
+      await this.#checkpointCoordinator.checkpoint({
+        runId: session.input.task.id,
+        reason: "COMPLETED",
+        phase: "COMPLETED",
+        turnId: session.turns,
+        evidenceVersion: session.turns + 1,
+        runtimeState: { status: "COMPLETED" },
+      }).catch(() => {})
+    }
+  }
+
   #result(): AgentResult {
     const session = this.#requiredSession()
     const status = session.state.status === "WAITING_FOR_CONFIRMATION"
@@ -1425,6 +1894,8 @@ export class AgentRunner {
                 : { preparedMutation: session.pending.reviewable.reviewPayload as any })
             : {})
         },
+      } : session.recoveredConfirmation ? {
+        confirmation: session.recoveredConfirmation,
       } : {}),
     }
   }

@@ -11,7 +11,6 @@ import {
 import { observeFilePath } from "./reconciliation.ts"
 import { RecoveryArtifactStore } from "./recovery-artifacts.ts"
 import { MutationEngine } from "../tools/mutation-engine.ts"
-import { writeFile } from "node:fs/promises"
 
 export interface RollbackExecutionResult {
   readonly success: boolean
@@ -156,7 +155,7 @@ export class RollbackManager {
     // Double check current observation to avoid race / TOCTOU
     const obs = await observeFilePath(candidate.path)
 
-    // 1. Rollback CREATE (file exists, delete it)
+    // 1. Rollback CREATE (file exists, delete it via MutationEngine)
     if (candidate.beforeHash === "") {
       if (obs.hash !== candidate.afterHash) {
         return {
@@ -167,34 +166,29 @@ export class RollbackManager {
         }
       }
 
-      // Try canonical MutationEngine.rollback if snapshot exists in memory, or use safe reverse mutation
       try {
-        const snapshot = this.#mutationEngine.getSnapshot(candidate.mutationId)
-        if (snapshot) {
-          const res = await this.#mutationEngine.rollback(candidate.mutationId)
-          const isSuccess = res.status === "APPLIED"
-          return {
-            success: isSuccess,
+        let snapshot = this.#mutationEngine.getSnapshot(candidate.mutationId)
+        if (!snapshot) {
+          // Reconstitute snapshot for canonical rollback across restart
+          snapshot = {
+            id: candidate.mutationId,
             path: candidate.path,
-            status: isSuccess ? "ROLLED_BACK" : "FAILED",
-            ...(res.error?.message ? { error: res.error.message } : {}),
+            resolvedPath: candidate.path,
+            operation: "create",
+            beforeContent: null,
+            beforeHash: "",
+            afterHash: candidate.afterHash,
+            timestamp: new Date().toISOString(),
           }
+          this.#mutationEngine.registerSnapshot(snapshot)
         }
-      } catch {
-        // Fall back to preparing reverse delete via MutationEngine
-      }
-
-      // Prepare reverse patch that blanks/deletes or restores
-      // Using MutationEngine prepareCreate or in-memory snapshot
-      // For create rollback: file must be unlinked. If snapshot wasn't present, register and execute
-      try {
-        // Across restart: unlink file atomically
-        const { unlink } = await import("node:fs/promises")
-        await unlink(candidate.path)
+        const res = await this.#mutationEngine.rollback(candidate.mutationId)
+        const isSuccess = res.status === "APPLIED"
         return {
-          success: true,
+          success: isSuccess,
           path: candidate.path,
-          status: "ROLLED_BACK",
+          status: isSuccess ? "ROLLED_BACK" : "FAILED",
+          ...(res.error?.message ? { error: res.error.message } : {}),
         }
       } catch (err: any) {
         return {
@@ -248,10 +242,14 @@ export class RollbackManager {
     }
 
     try {
-      // Check if MutationEngine in-memory snapshot exists
-      const snapshot = this.#mutationEngine.getSnapshot(candidate.mutationId)
-      if (snapshot) {
-        const res = await this.#mutationEngine.rollback(candidate.mutationId)
+      if (candidate.afterHash === "") {
+        // DELETE rollback: recreate deleted file from preimage through MutationEngine prepareCreate & applyPreparedMutation
+        const prep = await this.#mutationEngine.prepareCreate({
+          operation: "create",
+          path: candidate.path,
+          content: preimage.toString("utf8"),
+        })
+        const res = await this.#mutationEngine.applyPreparedMutation(prep)
         const isSuccess = res.status === "APPLIED"
         return {
           success: isSuccess,
@@ -261,16 +259,28 @@ export class RollbackManager {
         }
       }
 
-      // Across process restart: write temp preimage and atomically rename
-      const { rename } = await import("node:fs/promises")
-      const tempPath = `${candidate.path}.rollback-tmp.${Date.now()}`
-      await writeFile(tempPath, preimage)
-      await rename(tempPath, candidate.path)
-
+      // MODIFY rollback: restore via MutationEngine.rollback with in-memory or reconstituted snapshot
+      let snapshot = this.#mutationEngine.getSnapshot(candidate.mutationId)
+      if (!snapshot) {
+        snapshot = {
+          id: candidate.mutationId,
+          path: candidate.path,
+          resolvedPath: candidate.path,
+          operation: "patch",
+          beforeContent: preimage.toString("utf8"),
+          beforeHash: candidate.beforeHash,
+          afterHash: candidate.afterHash,
+          timestamp: new Date().toISOString(),
+        }
+        this.#mutationEngine.registerSnapshot(snapshot)
+      }
+      const res = await this.#mutationEngine.rollback(candidate.mutationId)
+      const isSuccess = res.status === "APPLIED"
       return {
-        success: true,
+        success: isSuccess,
         path: candidate.path,
-        status: "ROLLED_BACK",
+        status: isSuccess ? "ROLLED_BACK" : "FAILED",
+        ...(res.error?.message ? { error: res.error.message } : {}),
       }
     } catch (err: any) {
       return {
@@ -282,3 +292,4 @@ export class RollbackManager {
     }
   }
 }
+

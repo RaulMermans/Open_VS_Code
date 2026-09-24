@@ -229,15 +229,62 @@ export function evaluateL0(
       }
     }
   } else if (checkpoint === "RECOVERY_RESULT") {
-    // If recovery blocked or required ask human
-    decision = "VERIFY"
-    progress = 0.5
-    signals.push({
-      code: "RECOVERY_RECONCILED",
-      message: "Recovery reconciled state; verification recommended before continuation",
-      severity: "INFO",
-    })
-    recommendedAction = "Verify reconciled workspace state"
+    const recEv = evidence.recoveryEvidence
+    if (recEv?.blockedDivergence || recEv?.recoveryDisposition === "ASK_HUMAN") {
+      decision = "ASK_HUMAN"
+      progress = 0
+      signals.push({
+        code: "RECOVERY_BLOCKED_DIVERGENCE",
+        message: "Recovery detected blocked divergence or manual resolution requirement",
+        severity: "CRITICAL",
+      })
+      recommendedAction = "Request human intervention due to workspace divergence"
+    } else if (recEv?.approvalInvalidated || recEv?.recoveryDisposition === "RECONFIRM") {
+      decision = "ASK_HUMAN"
+      progress = 0.2
+      signals.push({
+        code: "RECOVERY_RECONFIRM_REQUIRED",
+        message: "Stale authority across process restart requires reconfirmation",
+        severity: "WARNING",
+      })
+      recommendedAction = "Obtain fresh human confirmation in current process epoch"
+    } else if (recEv?.interruptedVerification || recEv?.reconciledOperationCounts.applied || recEv?.recoveryDisposition === "REVERIFY") {
+      decision = "VERIFY"
+      progress = 0.5
+      signals.push({
+        code: "RECOVERY_RECONCILED",
+        message: "Recovery reconciled state; verification recommended before continuation",
+        severity: "INFO",
+      })
+      recommendedAction = "Verify reconciled workspace state"
+    } else if (recEv?.recoveryDisposition === "REPLAN") {
+      decision = "REPLAN"
+      progress = 0.3
+      signals.push({
+        code: "RECOVERY_REPLAN",
+        message: "Mutation intent existed but was not applied; replanning required",
+        severity: "WARNING",
+      })
+      recommendedAction = "Formulate a new plan to achieve goal"
+    } else if (recEv?.recoveryDisposition === "STOP") {
+      decision = "STOP"
+      progress = 1.0
+      signals.push({
+        code: "RECOVERY_STOP",
+        message: "Task was already completed durably or previously stopped",
+        severity: "INFO",
+      })
+      recommendedAction = "Terminate runner safely"
+    } else {
+      decision = "CONTINUE"
+      progress = 0.6
+      signals.push({
+        code: "RECOVERY_RESUME",
+        message: "All preconditions satisfied for safe continuation",
+        severity: "INFO",
+      })
+      recommendedAction = "Resume execution"
+    }
   }
 
   const scores: RuntimeEvalScores = {

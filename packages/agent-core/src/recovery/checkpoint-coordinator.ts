@@ -35,7 +35,7 @@ export class CheckpointCoordinator {
   readonly #artifactStore: RecoveryArtifactStore
   readonly #recoveryController: RecoveryController
   readonly #mutationEngine: MutationEngine
-  #sequence = 0
+  readonly #sequences = new Map<string, number>()
 
   constructor(options: CheckpointCoordinatorOptions) {
     this.#workspaceRoot = options.workspaceRoot
@@ -84,6 +84,17 @@ export class CheckpointCoordinator {
     return this.#recoveryController
   }
 
+  async #nextSequence(runId: string): Promise<number> {
+    let current = this.#sequences.get(runId)
+    if (current === undefined) {
+      const latest = await this.#checkpointStore.getLatestCheckpoint(runId)
+      current = latest ? latest.sequence : 0
+    }
+    const next = current + 1
+    this.#sequences.set(runId, next)
+    return next
+  }
+
   /**
    * Capture durable checkpoint at semantic transition
    */
@@ -99,7 +110,7 @@ export class CheckpointCoordinator {
     currentStepRef?: string
     runtimeEvalRef?: string
   }): Promise<CheckpointRecord> {
-    this.#sequence++
+    const sequence = await this.#nextSequence(params.runId)
     const checkpointId = `cp_${randomUUID().slice(0, 8)}`
     const processEpochId = getProcessEpochId()
 
@@ -132,7 +143,7 @@ export class CheckpointCoordinator {
     const recordWithoutChecksum: Omit<CheckpointRecord, "checksum"> = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
       checkpointId,
-      sequence: this.#sequence,
+      sequence,
       runId: params.runId,
       processEpochId,
       turnId: params.turnId,

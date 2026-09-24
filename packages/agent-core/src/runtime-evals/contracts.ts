@@ -153,6 +153,21 @@ export interface RuntimeEvidenceCounts {
   readonly duplicateReads: number
 }
 
+export interface BoundedRecoveryEvidence {
+  readonly recoveryDisposition: string
+  readonly reconciledOperationCounts: {
+    readonly applied: number
+    readonly notApplied: number
+    readonly interrupted: number
+    readonly ambiguous: number
+  }
+  readonly interruptedVerification: boolean
+  readonly blockedDivergence: boolean
+  readonly approvalInvalidated: boolean
+  readonly rollbackAvailable: boolean
+  readonly recoveryReasonCodes: readonly string[]
+}
+
 export interface RuntimeEvidence {
   readonly runId: string
   readonly turnId: number
@@ -168,6 +183,7 @@ export interface RuntimeEvidence {
   readonly unresolvedFailures: readonly BoundedFailureRecord[]
   readonly routeSignals: readonly BoundedRouteSignal[]
   readonly progressSignals: readonly BoundedProgressSignal[]
+  readonly recoveryEvidence?: BoundedRecoveryEvidence | undefined
   readonly counts: RuntimeEvidenceCounts
   readonly timestamps: {
     readonly startedAt: string

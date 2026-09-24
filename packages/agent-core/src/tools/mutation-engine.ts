@@ -1,5 +1,5 @@
 import { readFile, writeFile, rename, unlink, mkdir, realpath, access, lstat } from "node:fs/promises"
-import { resolve, relative, dirname, isAbsolute, join } from "node:path"
+import { resolve, relative, dirname, isAbsolute, join, basename } from "node:path"
 import { createHash } from "node:crypto"
 import {
   type MutationRequest,
@@ -34,7 +34,24 @@ export async function resolveWritePath(
   options: { mustExist: boolean },
 ): Promise<string> {
   const root = await realpath(workspaceRoot)
-  const candidate = resolve(root, requestedPath)
+  let normPath = requestedPath
+  if (isAbsolute(requestedPath)) {
+    let relCandidate = relative(workspaceRoot, requestedPath)
+    if (relCandidate.startsWith("..") || isAbsolute(relCandidate)) {
+      relCandidate = relative(root, requestedPath)
+    }
+    if (relCandidate.startsWith("..") || isAbsolute(relCandidate)) {
+      try {
+        const realParent = await realpath(dirname(requestedPath))
+        const resolvedAbs = join(realParent, basename(requestedPath))
+        relCandidate = relative(root, resolvedAbs)
+      } catch {}
+    }
+    if (!relCandidate.startsWith("..") && !isAbsolute(relCandidate)) {
+      normPath = relCandidate
+    }
+  }
+  const candidate = resolve(root, normPath)
 
   // Check pre-resolution containment
   if (!isContainedPath(root, candidate)) {
@@ -775,11 +792,20 @@ export class MutationEngine {
 
   // --- Accessors ---
 
+  get workspaceRoot(): string {
+    return this.#workspaceRoot
+  }
+
   getSnapshot(mutationId: string): MutationSnapshot | undefined {
     return this.#snapshots.get(mutationId)
+  }
+
+  registerSnapshot(snapshot: MutationSnapshot): void {
+    this.#snapshots.set(snapshot.id, snapshot)
   }
 
   get snapshotCount(): number {
     return this.#snapshots.size
   }
 }
+
