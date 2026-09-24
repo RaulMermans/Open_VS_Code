@@ -147,4 +147,5 @@ export interface AgentResult {
   readonly evalSummary?: string
   readonly terminationSource?: "RUNTIME_EVAL" | "NON_PROGRESS_GUARD" | undefined
   readonly observations?: readonly import("../agent/observations.ts").ToolObservation[]
+  readonly recoveryPlan?: import("../recovery/contracts.ts").RecoveryPlan
 }

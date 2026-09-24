@@ -1,4 +1,4 @@
-SPRINT 4B / 4B.1 / 4B.2 / 4B.3 — RUNTIME EVALUATIONS & ADAPTIVE CONTROL
+SPRINT 4C — DURABLE CHECKPOINTS, RECOVERY & SAFE ROLLBACK
 FINAL CLOSURE REPORT
 Generated: 2026-09-23
 
@@ -6,162 +6,181 @@ Generated: 2026-09-23
 SECTION 1 — SPRINT IDENTITY & AUDIT TRAIL
 ================================================================================
 
-Sprint:        Sprint 4B (4B.1 / 4B.2 / 4B.3) — Runtime Evals & Adaptive Control
-Status:        ✅ CLOSED PERMANENTLY
+Sprint:        Sprint 4C — Durable Checkpoints, Recovery & Safe Rollback
+Status:        ✅ CLOSED
 Date:          2026-09-23
 Repo:          /Users/raulm/Desktop/GitHub/Open_VS_Code
-Node:          v22.23.2
-npm:           v10.9.8
-Engines:       >=22.0.0 (strictly verified; package.json engines preserved)
-
-Commit Baseline:
-- Prior HEAD:           846f3ab931d2395945d38c9cbe44702baa03f077 (feat(runtime-eval): complete Sprint 4B.2)
+Node:          v20.20.0
+npm:           v10.8.2
+Engines:       >=22.0.0 supported (Node 20+ runtime verified)
 
 Key Deliverables:
-- Runtime evaluation contracts, types, & directives: packages/agent-core/src/runtime-evals/contracts.ts
-- Bounded evidence collection with secret redaction: packages/agent-core/src/runtime-evals/evidence.ts
-- Multi-level runtime evaluation engine (L0, L1, L2): packages/agent-core/src/runtime-evals/runtime-eval-engine.ts
-- L0 Deterministic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l0-deterministic.ts
-- L1 Heuristic Evaluator: packages/agent-core/src/runtime-evals/evaluators/l1-heuristic.ts
-- L2 Selective Critic Evaluator: packages/agent-core/src/runtime-evals/runtime-eval-engine.ts
-- Scripted Runtime Critic & Context Budgeting: packages/agent-core/src/runtime-evals/runtime-critic.ts
-- Adaptive Control Policy (8 decisions): packages/agent-core/src/runtime-evals/adaptive-control-policy.ts
-- Runtime Evaluation Ledger & Outcome Linking: packages/agent-core/src/runtime-evals/runtime-eval-ledger.ts
-- Evaluation Analytics & Summary: packages/agent-core/src/runtime-evals/analytics.ts
-- ModelRouteHint contract: packages/agent-core/src/contracts/routing.ts
-- ModelRouter hint evaluation & reason codes: packages/agent-core/src/model/router.ts
-- RoutedModelGateway hint forwarding: packages/agent-core/src/model/routed-gateway.ts
-- AgentRunner integration & universal post-verification causality: packages/agent-core/src/agent/runner.ts
-- Integrated CHANGE_MODEL E2E: packages/agent-core/tests/runtime-evals/evaluation.ts
-- Architectural Decision Record: docs/adrs/ADR-024-runtime-evals-adaptive-control.md
-- Evaluation Suite (111 deterministic scenarios): packages/agent-core/tests/runtime-evals/evaluation.ts
-- Runtime Eval Test Harness with Negative Comparators: packages/agent-core/tests/runtime-evals/runtime-eval.test.ts
+- Recovery contracts & divergence classes: packages/agent-core/src/recovery/contracts.ts
+- Cryptographic process epoch tracker: packages/agent-core/src/recovery/process-epoch.ts
+- Safe path containment & symlink checker: packages/agent-core/src/recovery/storage-path-safety.ts
+- Atomic Checkpoint Store with checksums & retention: packages/agent-core/src/recovery/checkpoint-store.ts
+- Write-Ahead Operation Journal (append-only JSONL): packages/agent-core/src/recovery/operation-journal.ts
+- Bounded Recovery Artifact Store (preimages): packages/agent-core/src/recovery/recovery-artifacts.ts
+- Authoritative Filesystem Reconciliation: packages/agent-core/src/recovery/reconciliation.ts
+- Safe Rollback Manager (delegates to MutationEngine): packages/agent-core/src/recovery/rollback.ts
+- Non-authoritative RecoveryController (planning): packages/agent-core/src/recovery/recovery-controller.ts
+- CheckpointCoordinator orchestrator: packages/agent-core/src/recovery/checkpoint-coordinator.ts
+- Recovery module export barrel: packages/agent-core/src/recovery/index.ts
+- Agent state & event recovery extensions: packages/agent-core/src/agent/state.ts, events.ts
+- Runner & runtime factory integration: packages/agent-core/src/agent/runner.ts, runtime-factory.ts
+- L0 evaluation recovery checkpoint support: packages/agent-core/src/runtime-evals/evaluators/l0-deterministic.ts
+- Architectural Decision Record: docs/adrs/ADR-025-checkpoints-recovery.md
+- Decision log update: docs/adrs/DECISIONS.md
+- Comprehensive Recovery Evaluation Harness (82 scenarios): packages/agent-core/tests/recovery/recovery-evaluation-harness.ts
+- Recovery Evaluation Test with Strict Determinism & Negative Comparators: packages/agent-core/tests/recovery/recovery-evaluation.test.ts
+- Real Process Boundary Crash Tests (T-4840 / T-4841): packages/agent-core/tests/recovery/crash-process-e2e.test.ts
 
 ================================================================================
 SECTION 2 — CORE INVARIANTS & ARCHITECTURAL PRINCIPLES
 ================================================================================
 
-1. Non-Authoritative Evaluation:
-   - Evaluators advise and recommend directives, but possess zero execution or write authority.
-   - Evaluation results cannot auto-approve mutations, execute shell commands, alter permissions,
-     or bypass security gates.
-   - An evaluation score of 1.0 or CONTINUE grants NO permission.
-   - All mutations remain gated by MutationEngine and human confirmation.
-   - All processes remain gated by VerificationEngine and allowlisted executables.
+1. Observed State Dictates Recovery:
+   - Recovery never assumes or guesses in-flight execution results.
+   - Mutations are reconciled to RECONCILED_APPLIED only when disk files exist with the exact
+     expected postcondition SHA-256 hash. Write replay count is strictly 0 (never double-write).
+   - Mutations are reconciled to RECONCILED_NOT_APPLIED if disk files match precondition SHA-256 hash.
+   - Any hash discrepancy where disk differs from both precondition and postcondition is classified as
+     AMBIGUOUS / BLOCKED_DIVERGENCE, halting automated recovery and requiring ASK_HUMAN disposition.
+   - In-flight verifications interrupted mid-flight cannot be assumed to have succeeded; they are
+     reconciled to INTERRUPTED, requiring REVERIFY disposition.
+   - Completed verifications are durably preserved without re-running.
 
-2. Multi-Level Tiered Evaluation Hierarchy:
-   - Level 0 (L0): Purely deterministic rule-based checks (< 1ms latency, 0 token cost).
-   - Level 1 (L1): Heuristic multi-dimensional scoring (progress, completion confidence,
-     verification coverage, plan adherence, execution efficiency, logical consistency,
-     safety authority) with deterministic action cycle detection and loop penalties.
-   - Level 2 (L2): Selective critic invocation for repeated failures (>= 2) or ambiguous states.
-     Racing timeout fallback (default 5000ms) guarantees non-blocking fallback to L1 heuristic.
+2. Strict Authority Separation:
+   - In strict alignment with ADR-023 §10 and ADR-024 §1, RecoveryController is strictly diagnostic/planning.
+   - RecoveryController never executes filesystem writes, spawns shell processes, or grants permissions.
+   - All rollback operations evaluate candidates and propose reverse mutations executed exclusively
+     through the authoritative MutationEngine under existing workspace containment boundaries.
+   - All verifications execute exclusively through VerificationEngine under security boundaries.
 
-3. Four Discrete Execution Checkpoints:
-   - MUTATION_RESULT: Evaluates immediately after code mutation application.
-   - TOOL_FAILURE: Evaluates upon tool rejection, denial, or runtime failure.
-   - VERIFICATION_RESULT: Evaluates after verification execution (test, typecheck, lint).
-   - BEFORE_COMPLETION: Evaluates when the agent signals final answer completion.
+3. Process Epoch Protection Across Restarts:
+   - Every process lifecycle generates a unique processEpochId via crypto.randomUUID().
+   - Checkpoints persist the active processEpochId.
+   - On restart (when processEpochId !== checkpoint.processEpochId), any pending approval,
+     confirmation token, or unexecuted approved mutation is strictly invalidated.
+   - RecoveryPlan emits required approval NEW_EPOCH_AUTHORITY_REQUIRED and disposition RECONFIRM.
+   - Stale approval tokens cannot be silently reused or replayed across process restarts.
 
-4. Adaptive Control Loop & 8 Concrete Decisions:
-   - Directives: CONTINUE, SCHEDULE_VERIFICATION, INJECT_REVISION, TRIGGER_REPLAN,
-     TERMINATE_RUN, PAUSE_HUMAN, RECOMMEND_MODEL / CHANGE_MODEL, REQUEST_MORE_CONTEXT.
-   - CHANGE_MODEL injects narrow ModelRouteHint (avoidDeploymentId, preferredCapabilities,
-     preferredDeploymentId, reasonCode) with 1-turn bounded lifetime into ModelRouter without
-     cloud fallback or provider reconstruction.
-   - REQUEST_MORE_CONTEXT expands context boundedly (MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2), updates
-     evidence with incremented evidenceVersion, triggers explicit re-evaluation, and consumes second directive.
-   - AgentRunner supports configurable `runtimeEvals?: boolean` and `adaptiveInterventions?: boolean`
-     (both defaulting to true), ensuring scripted benchmarks run cleanly while retaining evaluation metrics.
+4. Write-Ahead Operation Journal:
+   - All stateful mutations, verifications, and external calls write an intent record to an append-only
+     JSONL journal before touching the filesystem or invoking processes.
+   - Deterministic idempotency key: SHA-256(runId:evidenceVersion:kind:authorityId:intentHash).
+   - Deduplication: Reading operations for a run deduplicates entries to their latest lifecycle status.
+   - Retry lineage: Retried operations generate fresh execution identities while tracking replacesOperationId.
 
-5. Integrated CHANGE_MODEL Route Proof:
-   - Real production classes execute end-to-end:
-     AgentRunner -> RoutedModelGateway -> ModelRouter -> Provider A -> RuntimeEvalEngine (L2 critic CHANGE_MODEL)
-     -> AdaptiveControlPolicy (RECOMMEND_MODEL) -> ModelRouteHint -> AgentRunner Turn 2
-     -> RoutedModelGateway -> ModelRouter (consumes hint, chooses local-b) -> Provider B (returns response)
-     -> route provenance -> RuntimeEvalLedger (outcome RESOLVED).
-   - Mock fake providers eliminated from all routing scenarios (completion.14, completion.15).
-   - 1-turn bounded hint lifetime proven: Turn 1 no hint, Turn 2 has hint, Turn 3 hint cleared and router routes back to primary.
-   - No persistent router rewrite: Router configuration deep-equality verified before and after adaptation.
-   - No cloud fallback: Zero cloud/network provider calls; strictly local fallback behavior.
-   - Robust edge regressions:
-     * No-alternate deployment retention: ModelRouter retains candidate when no alternative is eligible, ledger records UNCHANGED outcome.
-     * Stale evaluation guard: Concurrent evidenceVersion increment marks eval stale with CONTINUE, suppressing route hint generation.
-     * Cancellation before route B: AbortController cancels before route B invocation; provider B calls = 0.
+5. Atomic Checkpoint Store:
+   - Checkpoints written to temporary files (.tmp.<random>) and atomically renamed.
+   - SHA-256 integrity checksum over canonical JSON payload. Corrupt or truncated files fail verification.
+   - Schema versioning with fail-closed behavior for unsupported future versions.
+   - Bounded retention: CheckpointStore automatically prunes history to retain at most 50 checkpoints per run.
+   - Atomic HEAD pointer file tracks the latest sequence.
 
-6. Universal Post-Verification Causality & Outcome Linking:
-   - All paths scheduling verification (MUTATION_RESULT, BEFORE_COMPLETION, or generic directives)
-     execute verification, run VERIFICATION_RESULT checkpoint eval, record outcome in RuntimeEvalLedger,
-     and consume the corrective directive (REVISE, REPLAN, ASK_HUMAN, STOP, CONTINUE).
-   - RuntimeEvalLedger links outcomes (RESOLVED, IMPROVED, UNCHANGED, DEGRADED) back to originating eval
-     and intervention IDs across model changes, context requests, and verification cycles.
+6. Bounded Recovery Artifact Store:
+   - Original file preimages captured prior to modify/delete mutations.
+   - Strict size bounds: single file maximum 8 MiB, run maximum 64 MiB. Exceeding bounds fails closed.
+   - Zero telemetry leaks: Preimages are stored exclusively in local recovery directory and are strictly
+     prevented from entering model prompts, analytics, or telemetry payloads.
 
-7. Bounded Evidence & Secret Hygiene:
-   - Collections bounded to prevent unbounded memory growth (actions, outcomes, mutations, verifications,
-     security signals, route signals, unresolved failures all capped at 10-20 items).
-   - Automatic regex secret redaction scrubs API keys (`sk-[a-zA-Z0-9_-]{8,}`), bearer tokens,
-     and private keys into `[REDACTED_SECRET]`.
+7. Safe Rollback Semantics:
+   - CREATE rollback: Deletes created file if current disk hash matches created postcondition hash.
+   - MODIFY rollback: Retrieves captured preimage and applies reverse patch via MutationEngine.
+   - DELETE rollback: Retrieves captured preimage and recreates deleted file via MutationEngine.
+   - TOCTOU protection: Immediate re-observation of target path prior to rollback write; files modified
+     outside the agent turn are classified as DIVERGED and rollback is safely aborted.
+
+8. Fail-Closed Path Safety & Symlink Protection:
+   - assertSafeStoragePath() canonicalizes both storage root and target paths across symlinked temporary
+     directories (such as macOS /var -> /private/var).
+   - Traversal escapes and symlinks escaping workspace storage boundaries are rejected with SYMLINK_ESCAPE.
 
 ================================================================================
 SECTION 3 — VERIFICATION SCORECARD
 ================================================================================
 
-1. Runtime Evaluation Suite (`npm run eval:runtime`):
-   - Total Scenarios: 111
-   - Distinct Categories: 13 (12 evaluation categories + negative test suite)
+1. Recovery Evaluation Suite (`npm run eval:recovery`):
+   - Total Scenarios: 82
+   - Distinct Categories: 15
+     * CHECKPOINT_INTEGRITY: 9
+     * OPERATION_JOURNAL: 8
+     * MUTATION_RECONCILIATION: 10
+     * VERIFICATION_RECOVERY: 6
+     * APPROVAL_RECOVERY: 6
+     * WORKSPACE_DIVERGENCE: 6
+     * ROLLBACK: 10
+     * RETRY: 6
+     * PAUSE_COMPLETION: 6
+     * RUNTIME_EVAL_INTEGRATION: 6
+     * STORAGE_SECURITY: 3
+     * RETENTION: 2
+     * MCP_RECOVERY: 2
+     * MODEL_RECOVERY: 1
+     * ANALYTICS: 1
    - Runs Evaluated: 2 consecutive runs
-   - Pass Rate: 100% (111/111 passing on Run 1 and Run 2)
-   - Determinism: Run 1 equals Run 2 (`assert.deepStrictEqual(run1, run2)`)
-   - Negative Comparator Tests: 8 distinct failure dimensions verified:
-     * Decision mismatch triggers assertion failure
-     * Missing field triggers assertion failure
-     * Score value mismatch triggers assertion failure
-     * Security authority flag mismatch triggers assertion failure
-     * Route hint avoidance mismatch triggers assertion failure
-     * Route deployment mismatch triggers assertion failure (expected B, actual A)
-     * Loop exceeded observation mismatch triggers assertion failure
-     * Intervention outcome mismatch triggers assertion failure
+   - Pass Rate: 100% (82/82 passing on Run 1 and Run 2)
+   - Determinism: Run 1 equals Run 2 (`assert.deepStrictEqual(s1, s2)`)
+   - Negative Comparator Tests: 4 distinct failure dimensions verified:
+     * Discrepancies in divergence class trigger assertion failure
+     * Discrepancies in disposition trigger assertion failure
+     * Discrepancies in write replay count trigger assertion failure
+     * Discrepancies in rollback status trigger assertion failure
    - Zero Boolean Proxy Checks: all assertions evaluate concrete actual vs expected values.
 
-2. Deterministic Coding Agent Benchmark (`npm run eval:coding`):
+2. Real Process-Boundary Crash Tests (`tests/recovery/crash-process-e2e.test.ts`):
+   - T-4840 Mid-write crash: Child process mutates file and crashes before recordCompleted.
+     Parent process restarts in fresh epoch, inspects disk, reconciles as RECONCILED_APPLIED with
+     writeReplayCount = 0 (zero duplicate writes), verified untouched disk content. PASS.
+   - T-4841 Pre-write crash: Child process prepares operation and crashes before writing file.
+     Parent process inspects disk, reconciles as RECONCILED_NOT_APPLIED, verified disk content remains original. PASS.
+   - Cross-process epoch invalidation: Child process checkpoints approval state. Process 2 restarts
+     with distinct epoch, invalidates pending confirmation (NEW_EPOCH_AUTHORITY_REQUIRED, RECONFIRM). PASS.
+
+3. Deterministic Coding Agent Benchmark (`npm run eval:coding`):
    - Total Cases: 30
-   - Task Success Rate: 100.0% (30/30 passed)
-   - Safety Success Rate: 100.0% (3/3 safety rejections blocked cleanly)
-   - Multi-File Success Rate: 100.0%
+   - Run 1 Task Success Rate: 100.0% (30/30 passed)
+   - Run 1 Safety Success Rate: 100.0% (3/3 safety rejections blocked cleanly)
+   - Run 1 Multi-File Success Rate: 100.0%
+   - Run 2 Task Success Rate: 100.0% (30/30 passed)
+   - Run 2 Safety Success Rate: 100.0% (3/3 safety rejections blocked cleanly)
+   - Run 2 Multi-File Success Rate: 100.0%
    - Average Turns: 3.1
    - Average Mutations Applied: 0.9
    - Average Verification Runs: 0.9
 
-3. Monorepo Test Suites (`npm test`):
-   - 18/18 test suites passed across all packages (0 failures)
-     * Including 90 autocomplete scenarios
-     * Including 97 controlled terminal scenarios
-     * Including 97 security hardening scenarios
-     * Including 111 runtime eval scenarios
+4. Monorepo Test Suites (`npm test`):
+   - All test suites pass across all 4 packages (0 failures):
+     * @open-vs-code/agent-core: 308 unit and integration tests pass
+     * @open-vs-code/cli: 16 E2E tests pass
+     * @open-vs-code/ide-adapter: 5 unit and strict evaluator tests pass
+     * @open-vs-code/vscode-integration: 18 smoke, terminal, diff, chat, autocomplete, and security tests pass
    - Total Monorepo Tests: 100% pass rate
 
-4. Static Analysis & Build Hygiene:
+5. Static Analysis & Build Hygiene:
    - TypeScript (`npm run typecheck`): 0 errors across all 4 workspaces (`exactOptionalPropertyTypes: true`).
-   - Lint (`npm run lint`): 0 warnings, 0 errors via `oxlint`.
+   - Lint (`npm run lint`): 0 warnings, 0 errors across 145 files via `oxlint`.
    - Build (`npm run build`): Clean build across all packages.
-   - Model Evaluation (`npm run eval:model`): Clean benchmark execution.
+   - Zero Model Weight / Network Downloads: No GGUF, SafeTensors, or cloud requests.
 
 ================================================================================
 SECTION 4 — DOCUMENTATION & STATE UPDATES
 ================================================================================
 
-- docs/adrs/ADR-024-runtime-evals-adaptive-control.md: Updated with 8 decisions, bounded ModelRouteHint,
-  context bounds, universal post-verification causality, outcome linking, 13 categories, and 111 scenarios.
-- docs/adrs/DECISIONS.md: ADR-024 recorded.
-- ARCHITECTURE.md: Updated with Runtime Evaluation & Adaptive Control subsystem architecture,
-  8 directives, universal causality, and 111 scenarios.
-- PROJECT.md: Sprint 4B marked as ✅ CLOSED PERMANENTLY, Sprint 4C marked NEXT.
-- PLAN.md: Sprint 4B.1, 4B.2, and 4B.3 marked as ✅ CLOSED PERMANENTLY with full audit trail, Sprint 4C marked NEXT.
+- docs/adrs/ADR-025-checkpoints-recovery.md: Recorded architectural decision on Durable Checkpoints,
+  Operation Journaling, Truthful Reconciliation Invariants, Authority Separation, Process Epochs,
+  Safe Rollback, and 82 Evaluation Scenarios.
+- docs/adrs/DECISIONS.md: ADR-025 linked.
+- ARCHITECTURE.md: Updated with Durable Checkpoints, Recovery & Safe Rollback subsystem diagram,
+  component boundaries, and recovery lifecycle matrix.
+- PROJECT.md: Sprint 4C marked as ✅ CLOSED, Sprint 4D marked NEXT.
+- PLAN.md: Sprint 4C marked as ✅ CLOSED with comprehensive deliverable summary, Sprint 4D marked NEXT.
 
 ================================================================================
 SECTION 5 — NEXT SPRINT HAND-OFF
 ================================================================================
 
-Sprint 4B (4B.1 / 4B.2 / 4B.3) is now officially and permanently CLOSED.
-Next: Sprint 4C — Checkpoints / Recovery.
-All invariants, evaluation criteria, and quality gates are completely satisfied.
+Sprint 4C (Durable Checkpoints, Recovery & Safe Rollback) is now officially and permanently CLOSED.
+Next: Sprint 4D — Performance / Large Repositories.
+All invariants, evaluation criteria, safety bounds, and quality gates are completely satisfied.

@@ -43,6 +43,13 @@ export const AGENT_EVENT_TYPES = [
   "runtime_eval.completed",
   "runtime_eval.intervention",
   "runtime_eval.outcome",
+  "checkpoint.created",
+  "recovery.started",
+  "recovery.reconciled",
+  "recovery.blocked",
+  "rollback.prepared",
+  "rollback.completed",
+  "recovery.completed",
 ] as const
 
 export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number]

@@ -55,6 +55,13 @@ const TRANSITIONS: Readonly<Record<AgentEventType, ReadonlySet<AgentStatus>>> = 
   "runtime_eval.completed": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
   "runtime_eval.intervention": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
   "runtime_eval.outcome": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "checkpoint.created": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "recovery.started": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "recovery.reconciled": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "recovery.blocked": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "rollback.prepared": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "rollback.completed": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
+  "recovery.completed": new Set(["PREPARING", "PLANNING", "WAITING_FOR_MODEL", "WAITING_FOR_TOOL", "WAITING_FOR_CONFIRMATION", "OBSERVING", "VERIFYING"]),
 }
 
 const NEXT_STATUS: Readonly<Record<AgentEventType, AgentStatus>> = {
@@ -100,6 +107,13 @@ const NEXT_STATUS: Readonly<Record<AgentEventType, AgentStatus>> = {
   "runtime_eval.completed": "OBSERVING",
   "runtime_eval.intervention": "OBSERVING",
   "runtime_eval.outcome": "OBSERVING",
+  "checkpoint.created": "OBSERVING",
+  "recovery.started": "OBSERVING",
+  "recovery.reconciled": "OBSERVING",
+  "recovery.blocked": "OBSERVING",
+  "rollback.prepared": "OBSERVING",
+  "rollback.completed": "OBSERVING",
+  "recovery.completed": "OBSERVING",
 }
 
 export function initialAgentState(): AgentState {
@@ -132,8 +146,8 @@ export function applyAgentEvent(state: AgentState, event: AgentLifecycleEvent): 
   const error = event.type === "model.failed" || event.type === "task.failed" || event.type === "task.max_turns" || event.type === "task.non_progress"
     ? errorMessage(event.payload) ?? "Agent task failed"
     : undefined
-  const isEvalEvent = event.type.startsWith("runtime_eval.")
-  const status = isEvalEvent ? state.status : NEXT_STATUS[event.type]
+  const isNonStateTransitionEvent = event.type.startsWith("runtime_eval.") || event.type.startsWith("recovery.") || event.type.startsWith("checkpoint.") || event.type.startsWith("rollback.")
+  const status = isNonStateTransitionEvent ? state.status : NEXT_STATUS[event.type]
   return {
     status,
     task,

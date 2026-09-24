@@ -18,6 +18,7 @@ import { MemoryRetriever } from "../context/memory-retriever.ts";
 import { discoverSkills, loadSkill } from "../context/skills.ts";
 import { selectSkills } from "../context/skill-selector.ts";
 import { calculateBudget, estimateTokens } from "../context/budget.ts";
+import { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
 
 import type { AgentMode, AgentEvent } from "../contracts/agent.ts";
 import type { ModelProvider } from "../contracts/model.ts";
@@ -89,6 +90,10 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
 
   const mutationEngine = new MutationEngine(options.workspaceRoot);
   const verificationEngine = new VerificationEngine({ workspaceRoot: options.workspaceRoot });
+  const checkpointCoordinator = new CheckpointCoordinator({
+    workspaceRoot: options.workspaceRoot,
+    mutationEngine,
+  });
   
   const registry = createReadOnlyToolRegistry();
   
@@ -194,7 +199,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     registry,
     permissionEvaluator: classifyPermission,
     evidenceGate: false,
-    eventSink: options.eventSink
+    eventSink: options.eventSink,
+    checkpointCoordinator,
   });
 
   const repairOrchestrator = new RepairOrchestrator(
@@ -215,6 +221,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     actualSkillTokens,
     selectedSkills,
     memory,
+    checkpointCoordinator,
+    recoveryController: checkpointCoordinator.recoveryController,
     cleanup: async () => {
       await mcpCatalog.close();
       (mcpStats as any).cleanupCount = ((mcpStats as any).cleanupCount || 0) + 1;

@@ -58,3 +58,6 @@ export * from "./autocomplete/index.ts"
 
 // Sprint 4B — Runtime Evals & Adaptive Control
 export * from "./runtime-evals/index.ts"
+
+// Sprint 4C — Durable Checkpoints, Recovery & Safe Rollback
+export * from "./recovery/index.ts"

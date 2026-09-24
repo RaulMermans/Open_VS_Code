@@ -385,3 +385,47 @@ Agent Execution Cycle: ACT -> OBSERVE -> EVALUATE -> DECIDE -> ADAPT -> ACT AGAI
 - **111 Deterministic Scenarios**: Verified by `npm run eval:runtime` across 2 consecutive runs with strict comparator assertion tests.
 - **Full Backward Compatibility**: Scripted benchmarks operate cleanly with `adaptiveInterventions: false` without losing evaluation metrics.
 See [ADR-024](docs/adrs/ADR-024-runtime-evals-adaptive-control.md) for full architectural specification.
+
+## Durable Checkpoints, Recovery & Safe Rollback (Sprint 4C)
+
+Sprint 4C adds durable write-ahead journaling, atomic checkpointing, and deterministic recovery to survive abrupt process crashes, application restarts, and workspace divergence without duplicate writes or bypassed security.
+
+```text
++-------------------------------------------------------------------------------+
+| CheckpointCoordinator                                                         |
+|  - Central orchestrator initialized per agent runner                          |
+|  - Captures semantic checkpoints at state transitions                         |
+|  - Write-ahead prepares operations before filesystem or external calls        |
++-------------------------------------------------------------------------------+
+       │                       │                       │
+       ▼                       ▼                       ▼
++---------------+       +---------------+       +-------------------------------+
+| Checkpoint    |       | Operation     |       | RecoveryArtifactStore         |
+| Store         |       | Journal       |       |  - Preimage storage           |
+|  - Atomic     |       |  - Append-only|       |  - 8 MiB single file limit    |
+|    .tmp+rename|       |    JSONL      |       |  - 64 MiB run limit           |
+|  - SHA-256    |       |  - Idempotency|       |  - Zero leak to analytics/ctx |
+|    checksum   |       |    keys       |       +-------------------------------+
+|  - Retention  |       |  - Status     |                       ▲
+|    pruning    |       |    updates    |                       │
++---------------+       +---------------+                       │
+       │                       │                                │
+       └───────────────────────┼────────────────────────────────┘
+                               ▼
++-------------------------------------------------------------------------------+
+| RecoveryController                                                            |
+|  - Non-authoritative planning and inspection component                        |
+|  - Reconciles journal operations against observed filesystem SHA-256 hashes   |
+|  - Generates truthful RecoveryPlan (RESUME, REVERIFY, RECONFIRM, ASK_HUMAN,   |
+|    STOP)                                                                      |
+|  - Evaluates rollback candidates and delegates reverse mutations through      |
+|    MutationEngine                                                             |
++-------------------------------------------------------------------------------+
+```
+
+- **Observed State Dictates Recovery**: Mutation reconciliation directly inspects disk files against precondition and expected postcondition SHA-256 hashes (`RECONCILED_APPLIED` with write replay count = 0, `RECONCILED_NOT_APPLIED`, or `AMBIGUOUS`). Interrupted verifications are never assumed to have passed (`INTERRUPTED` yielding `REVERIFY`).
+- **Separation of Authorities**: `RecoveryController` is strictly non-authoritative; it never performs filesystem writes or spawns processes. Rollbacks route through `MutationEngine`, and verifications route through `VerificationEngine`.
+- **Process Epoch Protection**: Every process invocation instantiates a unique `processEpochId`. Stale approvals from prior epochs are invalidated across process restarts (`NEW_EPOCH_AUTHORITY_REQUIRED`), preventing unauthorized execution.
+- **Fail-Closed Path Safety**: All storage operations are checked against `assertSafeStoragePath` ensuring strict workspace containment and symlink escape rejection.
+- **Two-Run Determinism**: 82 scenarios across 15 categories verified by `npm run eval:recovery` with deep equality and negative comparator tests.
+See [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) for full architectural specification.

@@ -31,6 +31,7 @@ import type { VerificationEngine } from "../tools/verification-engine.ts"
 import { discoverVerificationCommand } from "../tools/verification-discovery.ts"
 import { readRepositoryFile } from "../tools/read-file.ts"
 import { searchText } from "../tools/search-text.ts"
+import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
 
@@ -64,6 +65,7 @@ export interface AgentRunnerDependencies {
   readonly verificationEngine?: VerificationEngine
   readonly runtimeEvals?: boolean
   readonly adaptiveInterventions?: boolean
+  readonly checkpointCoordinator?: CheckpointCoordinator
 }
 
 interface PendingConfirmation {
@@ -156,6 +158,7 @@ export class AgentRunner {
   readonly #verificationEngine?: VerificationEngine | undefined
   readonly #runtimeEvals: boolean
   readonly #adaptiveInterventions: boolean
+  readonly #checkpointCoordinator?: CheckpointCoordinator | undefined
   #session?: Session | undefined
 
   constructor(dependencies: AgentRunnerDependencies) {
@@ -175,9 +178,14 @@ export class AgentRunner {
     this.#verificationEngine = dependencies.verificationEngine
     this.#runtimeEvals = dependencies.runtimeEvals ?? true
     this.#adaptiveInterventions = dependencies.adaptiveInterventions ?? true
+    this.#checkpointCoordinator = dependencies.checkpointCoordinator
     if (!Number.isInteger(this.#nonProgressThreshold) || this.#nonProgressThreshold < 2) {
       throw new AgentRunnerError("INVALID_INPUT", "nonProgressThreshold must be an integer of at least 2")
     }
+  }
+
+  get checkpointCoordinator(): CheckpointCoordinator | undefined {
+    return this.#checkpointCoordinator
   }
 
   async run(input: AgentRunnerInput): Promise<AgentResult> {

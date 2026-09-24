@@ -27,6 +27,7 @@ export const RUNTIME_EVAL_CHECKPOINTS = [
   "AFTER_REPAIR",
   "THRESHOLD_EXCEEDED",
   "PERIODIC",
+  "RECOVERY_RESULT",
 ] as const
 
 export type RuntimeEvalCheckpoint = (typeof RUNTIME_EVAL_CHECKPOINTS)[number]

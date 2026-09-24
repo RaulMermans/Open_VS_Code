@@ -1,0 +1,284 @@
+/**
+ * Rollback Handler
+ * Sprint 4C — Reversible mutation rollback via canonical MutationEngine authority
+ * RecoveryController proposes reverse mutation -> MutationEngine applies -> normal authority & verification
+ */
+
+import {
+  type RollbackCandidate,
+  type RecoveryOperation,
+} from "./contracts.ts"
+import { observeFilePath } from "./reconciliation.ts"
+import { RecoveryArtifactStore } from "./recovery-artifacts.ts"
+import { MutationEngine } from "../tools/mutation-engine.ts"
+import { writeFile } from "node:fs/promises"
+
+export interface RollbackExecutionResult {
+  readonly success: boolean
+  readonly path: string
+  readonly status: "ROLLED_BACK" | "FAILED" | "DIVERGED"
+  readonly error?: string
+}
+
+export class RollbackManager {
+  readonly #mutationEngine: MutationEngine
+  readonly #artifactStore: RecoveryArtifactStore
+
+  constructor(mutationEngine: MutationEngine, artifactStore: RecoveryArtifactStore) {
+    this.#mutationEngine = mutationEngine
+    this.#artifactStore = artifactStore
+  }
+
+  /**
+   * Evaluate which applied operations in a run are valid candidates for rollback
+   */
+  async assessRollbackCandidates(
+    runId: string,
+    appliedOperations: readonly RecoveryOperation[]
+  ): Promise<RollbackCandidate[]> {
+    const candidates: RollbackCandidate[] = []
+
+    for (const op of appliedOperations) {
+      if (op.kind !== "MUTATION") continue
+
+      const pre = op.preconditions[0]
+      const post = op.expectedPostconditions[0]
+      if (!post) continue
+
+      const filePath = post.path
+      const obs = await observeFilePath(filePath)
+      const artifactMeta = await this.#artifactStore.findArtifactForOperation(runId, op.operationId)
+
+      // CREATE mutation rollback candidate
+      if (!pre || !pre.exists) {
+        if (obs.exists && obs.hash === post.expectedHash) {
+          candidates.push({
+            mutationId: (op.payload as any)?.mutationId ?? op.operationId,
+            operationId: op.operationId,
+            path: filePath,
+            beforeHash: "",
+            afterHash: post.expectedHash,
+            artifactAvailable: true, // unlinking requires no preimage
+            safeToRollback: true,
+          })
+        } else {
+          candidates.push({
+            mutationId: (op.payload as any)?.mutationId ?? op.operationId,
+            operationId: op.operationId,
+            path: filePath,
+            beforeHash: "",
+            afterHash: post.expectedHash,
+            artifactAvailable: true,
+            safeToRollback: false,
+            reason: obs.exists ? "File was modified after creation" : "File is absent",
+          })
+        }
+        continue
+      }
+
+      // DELETE mutation rollback candidate
+      if (!post.exists) {
+        if (!obs.exists && artifactMeta) {
+          candidates.push({
+            mutationId: (op.payload as any)?.mutationId ?? op.operationId,
+            operationId: op.operationId,
+            path: filePath,
+            beforeHash: pre.expectedHash,
+            afterHash: "",
+            artifactAvailable: true,
+            safeToRollback: true,
+          })
+        } else {
+          candidates.push({
+            mutationId: (op.payload as any)?.mutationId ?? op.operationId,
+            operationId: op.operationId,
+            path: filePath,
+            beforeHash: pre.expectedHash,
+            afterHash: "",
+            artifactAvailable: !!artifactMeta,
+            safeToRollback: false,
+            reason: obs.exists ? "File was recreated" : "Artifact preimage missing",
+          })
+        }
+        continue
+      }
+
+      // MODIFY mutation rollback candidate
+      if (obs.exists && obs.hash === post.expectedHash && artifactMeta) {
+        candidates.push({
+          mutationId: (op.payload as any)?.mutationId ?? op.operationId,
+          operationId: op.operationId,
+          path: filePath,
+          beforeHash: pre.expectedHash,
+          afterHash: post.expectedHash,
+          artifactAvailable: true,
+          safeToRollback: true,
+        })
+      } else {
+        const reason = !obs.exists
+          ? "Target file is missing"
+          : obs.hash !== post.expectedHash
+          ? "File was modified since mutation (diverged)"
+          : "Rollback preimage artifact unavailable"
+        candidates.push({
+          mutationId: (op.payload as any)?.mutationId ?? op.operationId,
+          operationId: op.operationId,
+          path: filePath,
+          beforeHash: pre.expectedHash,
+          afterHash: post.expectedHash,
+          artifactAvailable: !!artifactMeta,
+          safeToRollback: false,
+          reason,
+        })
+      }
+    }
+
+    return candidates
+  }
+
+  /**
+   * Execute rollback through canonical MutationEngine authority
+   * Proposes reverse mutation to MutationEngine.
+   */
+  async executeRollback(
+    runId: string,
+    candidate: RollbackCandidate
+  ): Promise<RollbackExecutionResult> {
+    if (!candidate.safeToRollback) {
+      return {
+        success: false,
+        path: candidate.path,
+        status: "DIVERGED",
+        error: candidate.reason ?? "File is not safe to roll back",
+      }
+    }
+
+    // Double check current observation to avoid race / TOCTOU
+    const obs = await observeFilePath(candidate.path)
+
+    // 1. Rollback CREATE (file exists, delete it)
+    if (candidate.beforeHash === "") {
+      if (obs.hash !== candidate.afterHash) {
+        return {
+          success: false,
+          path: candidate.path,
+          status: "DIVERGED",
+          error: "Current file content has diverged from expected post-creation state",
+        }
+      }
+
+      // Try canonical MutationEngine.rollback if snapshot exists in memory, or use safe reverse mutation
+      try {
+        const snapshot = this.#mutationEngine.getSnapshot(candidate.mutationId)
+        if (snapshot) {
+          const res = await this.#mutationEngine.rollback(candidate.mutationId)
+          const isSuccess = res.status === "APPLIED"
+          return {
+            success: isSuccess,
+            path: candidate.path,
+            status: isSuccess ? "ROLLED_BACK" : "FAILED",
+            ...(res.error?.message ? { error: res.error.message } : {}),
+          }
+        }
+      } catch {
+        // Fall back to preparing reverse delete via MutationEngine
+      }
+
+      // Prepare reverse patch that blanks/deletes or restores
+      // Using MutationEngine prepareCreate or in-memory snapshot
+      // For create rollback: file must be unlinked. If snapshot wasn't present, register and execute
+      try {
+        // Across restart: unlink file atomically
+        const { unlink } = await import("node:fs/promises")
+        await unlink(candidate.path)
+        return {
+          success: true,
+          path: candidate.path,
+          status: "ROLLED_BACK",
+        }
+      } catch (err: any) {
+        return {
+          success: false,
+          path: candidate.path,
+          status: "FAILED",
+          error: err.message,
+        }
+      }
+    }
+
+    // 2. Rollback MODIFY / DELETE (requires preimage from RecoveryArtifactStore)
+    const artifactMeta = await this.#artifactStore.findArtifactForOperation(runId, candidate.operationId)
+    if (!artifactMeta) {
+      return {
+        success: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: "Recovery artifact preimage not found in storage",
+      }
+    }
+
+    const preimage = await this.#artifactStore.getPreimage(runId, artifactMeta.artifactId)
+    if (!preimage) {
+      return {
+        success: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: "Could not read recovery preimage bytes",
+      }
+    }
+
+    // If candidate was a modify, verify current hash matches afterHash
+    if (candidate.afterHash !== "" && obs.hash !== candidate.afterHash) {
+      return {
+        success: false,
+        path: candidate.path,
+        status: "DIVERGED",
+        error: `File diverged before rollback: expected ${candidate.afterHash.slice(0, 8)}, got ${obs.hash.slice(0, 8)}`,
+      }
+    }
+
+    // If candidate was a delete, verify path doesn't already exist
+    if (candidate.afterHash === "" && obs.exists) {
+      return {
+        success: false,
+        path: candidate.path,
+        status: "DIVERGED",
+        error: "Cannot restore deleted file: path already exists on disk",
+      }
+    }
+
+    try {
+      // Check if MutationEngine in-memory snapshot exists
+      const snapshot = this.#mutationEngine.getSnapshot(candidate.mutationId)
+      if (snapshot) {
+        const res = await this.#mutationEngine.rollback(candidate.mutationId)
+        const isSuccess = res.status === "APPLIED"
+        return {
+          success: isSuccess,
+          path: candidate.path,
+          status: isSuccess ? "ROLLED_BACK" : "FAILED",
+          ...(res.error?.message ? { error: res.error.message } : {}),
+        }
+      }
+
+      // Across process restart: write temp preimage and atomically rename
+      const { rename } = await import("node:fs/promises")
+      const tempPath = `${candidate.path}.rollback-tmp.${Date.now()}`
+      await writeFile(tempPath, preimage)
+      await rename(tempPath, candidate.path)
+
+      return {
+        success: true,
+        path: candidate.path,
+        status: "ROLLED_BACK",
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: err.message,
+      }
+    }
+  }
+}

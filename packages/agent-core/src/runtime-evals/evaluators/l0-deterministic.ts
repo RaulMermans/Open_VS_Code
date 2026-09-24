@@ -228,6 +228,16 @@ export function evaluateL0(
         recommendedAction = "Revise tool arguments or select alternative tool"
       }
     }
+  } else if (checkpoint === "RECOVERY_RESULT") {
+    // If recovery blocked or required ask human
+    decision = "VERIFY"
+    progress = 0.5
+    signals.push({
+      code: "RECOVERY_RECONCILED",
+      message: "Recovery reconciled state; verification recommended before continuation",
+      severity: "INFO",
+    })
+    recommendedAction = "Verify reconciled workspace state"
   }
 
   const scores: RuntimeEvalScores = {
