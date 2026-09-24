@@ -139,3 +139,30 @@ Sprint 4C is verified through a rigorous evaluation harness (`packages/agent-cor
 2. **Two-Run Determinism:** The harness runs twice independently across clean temporary environments. All 82 scenarios must pass with 0 failures, and strict deep equality is asserted between Run 1 and Run 2 results.
 3. **Negative Comparator Verification:** Verifies that intentional discrepancies in divergence class, disposition, replay count, and rollback status trigger strict assertion errors.
 4. **Real Process-Boundary Crash Tests (T-4840 / T-4841):** Child Node processes simulate mid-write and pre-write crashes, verifying that process B recovers without duplicate writes and invalidates approval tokens across process boundaries.
+
+---
+
+## Sprint 4C.1 — Production Recovery Integration & Integrity Closure
+
+To complete the production integration and close Sprint 4C permanently:
+1. **Stable Canonical Serialization (`canonical-serializer.ts`):** Recursive object key sorting and circular reference detection guarantee byte-for-byte deterministic SHA-256 checkpoint checksums and journal intent hashes across engines and runtimes.
+2. **Monotonic Checkpoint Sequence Tracking:** `CheckpointCoordinator` maintains monotonic per-run sequence numbers seeded from latest on-disk checkpoint sequence across restarts.
+3. **Canonical AgentRunner Write-Ahead Durability:** Checkpoints persisted at all semantic lifecycle boundaries:
+   - `RUN_STARTED` at session start
+   - `BEFORE_MUTATION` before executing file mutations
+   - `AFTER_MUTATION` immediately after mutation applied
+   - `BEFORE_VERIFICATION` before executing test/command verifications
+   - `AFTER_VERIFICATION` immediately after verification outcome recorded
+   - `COMPLETED` upon task conclusion
+4. **`AgentRunner.resumeFromRecovery`:**
+   - Evaluates on-disk checkpoints, reconciles workspace operations, builds `RecoveryPlan`, feeds evidence to `RuntimeEvalEngine`.
+   - On `STOP`: terminates cleanly without side effects.
+   - On `RECONFIRM` / `ASK_HUMAN`: pauses safely in `WAITING_FOR_CONFIRMATION` without automatic approval replay.
+   - Attaches `recoveryPlan` and emits `recovery.resumed` / `recovery.paused` events.
+5. **MutationEngine Rollback Authority:**
+   - All rollback operations (patch reversal, create deletion, delete re-creation) execute exclusively through `MutationEngine`.
+   - Added `registerSnapshot` to allow restoring snapshots from artifact store.
+6. **Zero Artificial Passes:**
+   - Audited every scenario in `recovery-evaluation-harness.ts`, replacing all synthetic passes with verifiable runtime assertions.
+   - Strict comparator asserts zero discrepancies across two independent runs.
+

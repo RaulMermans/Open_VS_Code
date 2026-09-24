@@ -24,8 +24,10 @@ export function computeOperationIdempotencyKey(
   return createHash("sha256").update(raw, "utf8").digest("hex")
 }
 
+import { canonicalSerialize } from "./canonical-serializer.ts"
+
 export function computeIntentHash(payload: unknown): string {
-  const serialized = JSON.stringify(payload, Object.keys((payload as any) || {}).toSorted())
+  const serialized = canonicalSerialize(payload)
   return createHash("sha256").update(serialized, "utf8").digest("hex")
 }
 

@@ -4,6 +4,7 @@
  */
 
 export * from "./contracts.ts"
+export * from "./canonical-serializer.ts"
 export * from "./process-epoch.ts"
 export * from "./storage-path-safety.ts"
 export * from "./checkpoint-store.ts"

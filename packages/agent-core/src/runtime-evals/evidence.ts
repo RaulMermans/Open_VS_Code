@@ -8,9 +8,11 @@ import type {
   BoundedRouteSignal,
   BoundedSecuritySignal,
   BoundedVerificationOutcome,
+  BoundedRecoveryEvidence,
   RuntimeEvidence,
   RuntimeEvidenceCounts,
 } from "./contracts.ts"
+import type { RecoveryPlan } from "../recovery/contracts.ts"
 
 export const MAX_RECENT_ACTIONS = 20
 export const MAX_TOOL_OUTCOMES = 20
@@ -71,6 +73,7 @@ export class RuntimeEvidenceCollector {
   readonly #unresolvedFailures = new Map<string, BoundedFailureRecord>()
   readonly #routeSignals: BoundedRouteSignal[] = []
   readonly #progressSignals: BoundedProgressSignal[] = []
+  #recoveryEvidence?: BoundedRecoveryEvidence | undefined
 
   #actionCount = 0
   #failureCount = 0
@@ -371,6 +374,59 @@ export class RuntimeEvidenceCollector {
     this.#markUpdated()
   }
 
+  recordRecoveryPlan(plan: RecoveryPlan | {
+    disposition: string
+    reconciledOperations?: readonly { reconciledStatus: string }[]
+    blockedOperations?: readonly unknown[]
+    requiredApprovals?: readonly string[]
+    rollbackCandidates?: readonly { safeToRollback: boolean }[]
+    divergenceClass?: string
+    reasons?: readonly string[]
+    [key: string]: unknown
+  }): void {
+    let applied = 0
+    let notApplied = 0
+    let interrupted = 0
+    let ambiguous = 0
+    let hasInterruptedVerif = false
+
+    for (const op of plan.reconciledOperations ?? []) {
+      if (op.reconciledStatus === "RECONCILED_APPLIED") applied++
+      else if (op.reconciledStatus === "RECONCILED_NOT_APPLIED") notApplied++
+      else if (op.reconciledStatus === "INTERRUPTED") {
+        interrupted++
+        hasInterruptedVerif = true
+      } else if (op.reconciledStatus === "AMBIGUOUS") ambiguous++
+    }
+
+    const blockedDivergence =
+      plan.divergenceClass === "BLOCKED_DIVERGENCE" ||
+      (plan.blockedOperations && plan.blockedOperations.length > 0) ||
+      false
+
+    const approvalInvalidated =
+      (plan.requiredApprovals && plan.requiredApprovals.includes("NEW_EPOCH_AUTHORITY_REQUIRED")) || false
+
+    const rollbackAvailable =
+      (plan.rollbackCandidates && plan.rollbackCandidates.some((c) => c.safeToRollback)) || false
+
+    this.#recoveryEvidence = {
+      recoveryDisposition: plan.disposition,
+      reconciledOperationCounts: {
+        applied,
+        notApplied,
+        interrupted,
+        ambiguous,
+      },
+      interruptedVerification: hasInterruptedVerif,
+      blockedDivergence: !!blockedDivergence,
+      approvalInvalidated,
+      rollbackAvailable,
+      recoveryReasonCodes: (plan.reasons ?? []).map((r) => truncateBounded(r, 100)),
+    }
+    this.#markUpdated()
+  }
+
   getEvidence(): RuntimeEvidence {
     const counts: RuntimeEvidenceCounts = {
       actions: this.#actionCount,
@@ -397,6 +453,7 @@ export class RuntimeEvidenceCollector {
       unresolvedFailures: Array.from(this.#unresolvedFailures.values()),
       routeSignals: [...this.#routeSignals],
       progressSignals: [...this.#progressSignals],
+      recoveryEvidence: this.#recoveryEvidence,
       counts,
       timestamps: {
         startedAt: this.#startedAt,

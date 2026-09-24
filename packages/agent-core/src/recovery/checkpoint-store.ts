@@ -35,8 +35,10 @@ export class CheckpointStoreError extends Error {
   }
 }
 
+import { canonicalSerialize } from "./canonical-serializer.ts"
+
 export function computeCheckpointChecksum(recordWithoutChecksum: Omit<CheckpointRecord, "checksum">): string {
-  const serialized = JSON.stringify(recordWithoutChecksum, Object.keys(recordWithoutChecksum).toSorted())
+  const serialized = canonicalSerialize(recordWithoutChecksum)
   return createHash("sha256").update(serialized, "utf8").digest("hex")
 }
 
@@ -134,16 +136,28 @@ export class CheckpointStore {
       try {
         return await this.#readCheckpointFile(runId, headData.fileName)
       } catch (err) {
-        if (err instanceof CheckpointStoreError) throw err
-        // fallback to highest sequence file
+        if (err instanceof CheckpointStoreError && err.code === "UNSUPPORTED_CHECKPOINT_VERSION") {
+          throw err
+        }
+        // Fall back to safely scanning valid checkpoint history backwards
       }
     }
 
     const files = await this.#listCheckpointFiles(runId)
     if (files.length === 0) return null
-    const fallbackFile = files[files.length - 1]
-    if (!fallbackFile) return null
-    return this.#readCheckpointFile(runId, fallbackFile)
+
+    // Scan backwards from highest sequence file to find the latest valid checkpoint
+    for (let i = files.length - 1; i >= 0; i--) {
+      const file = files[i]!
+      try {
+        return await this.#readCheckpointFile(runId, file)
+      } catch {
+        // If file is corrupt or checksum failed, keep looking backwards for latest valid checkpoint
+        continue
+      }
+    }
+
+    return null
   }
 
   async getCheckpointById(runId: string, checkpointId: string): Promise<CheckpointRecord | null> {

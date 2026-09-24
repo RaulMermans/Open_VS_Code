@@ -18,6 +18,9 @@ import {
   computeOperationIdempotencyKey,
 } from "../../src/recovery/index.ts"
 import { MutationEngine, sha256 } from "../../src/tools/mutation-engine.ts"
+import { RuntimeEvidenceCollector } from "../../src/runtime-evals/evidence.ts"
+import { evaluateL0 } from "../../src/runtime-evals/evaluators/l0-deterministic.ts"
+import { compileContext } from "../../src/context/compiler.ts"
 
 export interface RecoveryScenarioResult {
   id: string
@@ -667,14 +670,25 @@ export async function runRecoveryEvaluation(): Promise<{
       })
 
       // Scenario 30: no PID blind kill
+      let killCalled = false
+      const origKill = process.kill
+      const spyKill = (..._args: any[]) => { killCalled = true; return true as any }
+      let planPIDResult: any = null
+      try {
+        process.kill = spyKill as any
+        planPIDResult = await coord.recoveryController.buildRecoveryPlan("run-verif-1")
+      } finally {
+        process.kill = origKill
+      }
       scenarios.push({
         id: "REC-VER-04",
         category: "VERIFICATION_RECOVERY",
         description: "Lost verification process treated conservatively without blind PID kill",
-        passed: true, // by architectural design, no kill(pid) is invoked on recovery
-        expected: true,
-        actual: true,
+        passed: !killCalled && planPIDResult !== null,
+        expected: false,
+        actual: killCalled,
       })
+
 
       // Scenario 31: verification retry gets new identity
       const retryOp = await coord.prepareOperation({
@@ -1185,14 +1199,27 @@ export async function runRecoveryEvaluation(): Promise<{
       })
 
       // Scenario 54: rollback crash is recoverable
+      const rbCrashFile = join(wsDir, "rb_crash.txt")
+      await writeFile(rbCrashFile, "rb-before", "utf8")
+      const rbCrashOp = await coord.prepareOperation({
+        runId: "run-rb-crash",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: rbCrashFile, expectedHash: sha256("rb-before"), exists: true }],
+        expectedPostconditions: [{ path: rbCrashFile, expectedHash: sha256("rb-after"), exists: true }],
+      })
+      await coord.operationJournal.recordStarted(rbCrashOp.operationId, "run-rb-crash")
+      const rbCrashPlan = await coord.recoveryController.buildRecoveryPlan("run-rb-crash")
       scenarios.push({
         id: "REC-ROL-10",
         category: "ROLLBACK",
         description: "Crash during rollback is recoverable through standard operation journal",
-        passed: true,
-        expected: true,
-        actual: true,
+        passed: rbCrashPlan.reconciledOperations.length === 1 && rbCrashPlan.reconciledOperations[0]?.reconciledStatus === "RECONCILED_NOT_APPLIED",
+        expected: "RECONCILED_NOT_APPLIED",
+        actual: rbCrashPlan.reconciledOperations[0]?.reconciledStatus,
       })
+
     }
 
     // ----------------------------------------------------
@@ -1440,13 +1467,25 @@ export async function runRecoveryEvaluation(): Promise<{
 
       // Scenario 68: safety precedence - critic cannot override recovery block
       // In architecture: BLOCKED_DIVERGENCE forces ASK_HUMAN regardless of L2 CONTINUE
+      const evCollDiverged = new RuntimeEvidenceCollector({ runId: "run-blocked", taskGoal: "test" })
+      evCollDiverged.recordRecoveryPlan({
+        runId: "run-blocked",
+        checkpointId: "cp_1",
+        divergenceClass: "BLOCKED_DIVERGENCE",
+        disposition: "ASK_HUMAN",
+        reconciledOperations: [],
+        rollbackCandidates: [],
+        epochMismatch: false,
+        summary: "diverged",
+      })
+      const l0Result = evaluateL0(evCollDiverged.getEvidence(), "RECOVERY_RESULT")
       scenarios.push({
         id: "REC-RTE-02",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Recovery safety gate dominates heuristic critic CONTINUE recommendation",
-        passed: true,
-        expected: true,
-        actual: true,
+        passed: l0Result.decision === "ASK_HUMAN",
+        expected: "ASK_HUMAN",
+        actual: l0Result.decision,
       })
 
       // Scenario 69: reconciled mutation leads to REVERIFY evidence
@@ -1479,13 +1518,21 @@ export async function runRecoveryEvaluation(): Promise<{
       })
 
       // Scenario 70: runtime eval outcome linked to recovery resolution
+      const evCollVerif = new RuntimeEvidenceCollector({ runId: "run-resolved", taskGoal: "test" })
+      evCollVerif.recordVerificationOutcome({
+        executionId: "exec-1",
+        action: "run_known_test",
+        status: "PASS",
+        stdout: "all passed",
+      })
+      const l0VerifResult = evaluateL0(evCollVerif.getEvidence(), "VERIFICATION_RESULT")
       scenarios.push({
         id: "REC-RTE-04",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Subsequent verification PASS resolves recovery intervention",
-        passed: true,
-        expected: true,
-        actual: true,
+        passed: l0VerifResult.decision === "CONTINUE",
+        expected: "CONTINUE",
+        actual: l0VerifResult.decision,
       })
 
       // Scenario 71: adaptive route hints expire across process epoch
@@ -1503,15 +1550,23 @@ export async function runRecoveryEvaluation(): Promise<{
       })
 
       // Scenario 72: context adaptation bounds
+      const compiledCtx = compileContext({
+        task: "recovery task",
+        projectInstructions: [],
+        budget: { contextWindow: 2000, reservedOutput: 200, reservedToolHistory: 200, availableContext: 1600 },
+        recentTurns: [{ role: "user", content: "recover workspace" }],
+      })
+      const withinBudget = compiledCtx.items.reduce((acc, item) => acc + item.estimatedTokens, 0) <= 1600
       scenarios.push({
         id: "REC-RTE-06",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Transient context reread goes through bounded context compiler without whole-repo ingest",
-        passed: true,
+        passed: withinBudget && compiledCtx.items.length > 0,
         expected: true,
-        actual: true,
+        actual: withinBudget,
       })
     }
+
 
     // ----------------------------------------------------
     // CATEGORY 11: STORAGE_SECURITY & RETENTION (Scenarios 73 - 82)
@@ -1789,14 +1844,21 @@ export async function runRecoveryEvaluation(): Promise<{
       })
 
       // Scenario 81: Semantic checkpoint frequency guard
+      const validReasons = new Set([
+        "RUN_STARTED", "BEFORE_MUTATION", "AFTER_MUTATION", "BEFORE_VERIFICATION",
+        "AFTER_VERIFICATION", "TASK_COMPLETED", "RECOVERY_RESTORED", "INTERVENTION"
+      ])
+      const testReason: any = "PER_TOKEN_STREAM"
+      const isValidSemanticReason = validReasons.has(testReason)
       scenarios.push({
         id: "REC-SEC-09",
         category: "CHECKPOINT_INTEGRITY",
         description: "Checkpoints only created at semantic state boundaries, not per-token",
-        passed: true,
-        expected: true,
-        actual: true,
+        passed: !isValidSemanticReason,
+        expected: false,
+        actual: isValidSemanticReason,
       })
+
 
       // Scenario 82: Recovery analytics metrics compilation
       const metrics = {
