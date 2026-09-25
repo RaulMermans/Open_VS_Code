@@ -75,7 +75,8 @@ To prevent replaying approvals across application restarts:
 ### 4. Write-Ahead Operation Journal
 
 All stateful operations (mutations, verifications, MCP interactions) write an intent record to an append-only JSONL log before touching workspace files or external processes:
-- **Append-only storage:** Never rewritten in place; updates append a new entry with the updated status (`PREPARED -> STARTED -> COMPLETED | FAILED | INTERRUPTED`).
+- **Append-only storage with Physical Sync:** Never rewritten in place; updates append a new entry with the updated status (`PREPARED -> STARTED -> COMPLETED | FAILED | INTERRUPTED`). Appends use `fs.promises.open("a")`, `handle.appendFile()`, and explicit `handle.sync()` before closing.
+- **Fail-Closed Truncation Rollback:** If physical disk synchronization (`handle.sync()`) fails, the journal handle truncates the file back to its pre-append length, preventing corrupt, unpersisted partial lines from remaining in the log.
 - **Deterministic Idempotency Key:** Computed as `SHA-256(runId:evidenceVersion:kind:authorityId:intentHash)`.
 - **Deduplication:** When querying journal operations for a run, entries are deduplicated by `operationId`, preserving the latest authoritative lifecycle status.
 - **Lineage Tracking:** Retried operations link to the failed/interrupted operation via `replacesOperationId`, providing an audit trail.

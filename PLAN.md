@@ -219,20 +219,22 @@ Sprint 4C.4 — Rollback Durability Final Seal ✅ CLOSED PERMANENTLY
   - Full Monorepo Regressions Clean: All unit and E2E tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals.
   - Sprint 4C / 4C.1 / 4C.2 / 4C.3 / 4C.4 is PERMANENTLY CLOSED.
 
-Sprint 4D — Performance & Large Repositories ✅ CLOSED
-  - Synthetic Repository Fixtures (T-6000): Small (~100 files), Medium (~5,000 files), and Large (~25,000+ files) deterministic repository generators including multi-language sources, nested trees, ignored build trees, binary assets, and oversized datasets.
-  - Zero-Content Byte Repository Discovery (T-6001-T-6005): Discovery walks files with bounded concurrency (`AsyncSemaphore`), enforces canonical ignore policies (`.git`, `node_modules`, `dist`, `build`, `coverage`, `.checkpoints`), and reads zero file content bytes during metadata indexing.
-  - Incremental File Metadata Updates (T-6003-T-6004): Single file additions, modifications, and deletions update the in-memory metadata index without requiring full repository scans.
-  - Bounded Targeted Search & Diversity (T-6006-T-6008): Hard ceilings on maxResults (50), per-file match diversity (5), snippet characters (300), and total search payload bytes (32 KB), skipping binary and giant files from broad searches.
-  - Task-Independent Context Budgeting (T-6009-T-6012): Strict token budgets enforced by `fitContext`; context token volume is strictly invariant to repository scale. Large files support bounded slice/range reading (`startLine`, `endLine`) and explicit truncation flags.
-  - Bounded LRU Cache (T-6013-T-6014): `BoundedLruCache` enforces entry count and memory byte ceilings with deterministic LRU eviction and key invalidation on file changes.
-  - Scalable Runtime Eval Compaction (T-6015-T-6017): Repetitive failures compact into bounded structured failure records with counts and error signatures; deterministic L0 and heuristic L1 evaluations maintain full adaptive-control fidelity without unbounded evidence accumulation.
-  - Non-Authoritative Secondary Recovery Indexes (T-6018-T-6021): OperationJournal and CheckpointStore maintain rebuildable secondary in-memory lookup caches (`#indexCache`, `#metadataIndex`) that accelerate lookups without weakening durable journal authority or checkpoint integrity.
-  - Bounded Diff & Terminal Presentation (T-6022-T-6026): Unified diff generation enforces byte limits with truncation markers; subprocess stdout/stderr streams enforce strict 16 KB buffer ceilings with clean UTF-8 truncation boundaries.
-  - Bounded Concurrency & Clean Cancellation (T-6027-T-6030): Fan-out bounded via `AsyncSemaphore`; cancellation honors `AbortSignal` without leaking tasks or background slots.
-  - 80 Deterministic Scenarios across 8 Categories: Evaluated by `npm run eval:performance` across two independent runs with 0 failures, 100% deep strict equality, and negative comparator tests.
-  - Full Monorepo Regressions Clean: All unit and E2E tests pass across agent-core, cli, ide-adapter, and vscode-integration; 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals, 117 recovery evals, 97 security evals.
-  - Sprint 4D is PERMANENTLY CLOSED.
+Sprint 4D & 4D.1 — Performance Truth, Real Scale & Backpressure Closure ✅ CLOSED PERMANENTLY
+  - Real Large Scale Fixtures: Deterministic synthetic repository generator creating 25,005 indexable source files across 25 modules + 1,500 ignored/build tree files.
+  - Zero-Content Byte Repository Discovery: Discovery walks directory trees using iterative BFS with bounded concurrency (`AsyncSemaphore`), enforces canonical ignore policies, sorts directory entries and files for 100% determinism across runs, and reads strictly 0 content bytes (`contentBytesRead = 0`).
+  - Incremental File Metadata Updates: Single file additions, modifications, and deletions update the in-memory metadata index without full repository scans.
+  - Rapid Event Storm Coalescing: `processEventStorm` coalesces rapid bursts of file change events by path within a 50ms window.
+  - Production Bounded Concurrency in Search: `RepositorySearch` operates with a bounded worker pool feeding tasks through `AsyncSemaphore`, maintaining `peakActive <= maxConcurrency` and `peakQueued <= maxQueued`. Matches are committed in candidate index order for deterministic results.
+  - Query Coalescing & Supersession: Identical concurrent queries are deduplicated via `searchCoalesced()`; rapid query storms are handled via `SearchCoordinator.searchLatest()`, cleanly aborting stale searches.
+  - Truly Bounded Streaming File Reads: `readRepositoryFile` uses a chunk-streaming line reader (`open("r")`, `StringDecoder("utf8")`, chunk scanner) with 8KB null-byte binary detection, per-line byte ceilings, CRLF stripping, and immediate EOF upon reaching `endLine`, completely eliminating whole-file buffer allocations and proving `bytesReadFromFile << totalFileBytes`.
+  - Bounded Waiting Queue in Semaphore: `AsyncSemaphore` bounds active tasks to `maxConcurrency` and waiting tasks to `maxQueued`, supporting `reject_new` (throws `SemaphoreQueueFullError`) and `cancel_oldest` overflow policies, with clean `AbortSignal` queued cancellation that never consumes running slots or leaks listeners.
+  - Physical Sync Durability: `OperationJournal` writes entries using `FileHandle.appendFile()` followed by `FileHandle.sync()`, with fail-closed rollback truncation back to pre-append length on sync failure.
+  - Scalable Runtime Eval Compaction: Repetitive failures compact into structured summary records with counts and error signatures; deterministic L0 and heuristic L1 evaluations maintain full adaptive-control fidelity across all 8 decisions (`CONTINUE`, `VERIFY`, `REVISE`, `REPLAN`, `STOP`, `ASK_HUMAN`, `REQUEST_MORE_CONTEXT`, `CHANGE_MODEL`) without accumulating unbounded raw evidence.
+  - Rebuildable Secondary Recovery Indexes: `OperationJournal` and `CheckpointStore` maintain secondary in-memory metadata lookup caches (`#indexCache`, `#metadataIndex`) that accelerate lookups without weakening the durable append log or checkpoint JSON files as the sole authoritative sources of truth.
+  - Zero Fake Passes: 48 placeholder/generator scenarios completely removed. Evaluated with 77 concrete, 100% measured scenarios across 10 categories.
+  - Determinism & Negative Comparators: 100% deep strict equality between Run 1 and Run 2 across all 77 scenarios with 0 failures; 12 strict negative comparator tests verifying invalid scales, fake passes, cap overflows, whole-file reads, and durability violations fail.
+  - Full Monorepo Regressions Clean: Verified under Node v22.23.2. All unit and E2E tests pass across agent-core, cli, ide-adapter, and vscode-integration; 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals, 117 recovery evals, 97 security evals.
+  - Sprint 4D and Sprint 4D.1 are PERMANENTLY CLOSED.
 
 Next:
 Sprint 4E — Real OSS Models + FIM Provider & Benchmarking → NEXT
