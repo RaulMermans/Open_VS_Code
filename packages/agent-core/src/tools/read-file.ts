@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises"
+import { readFile, stat, realpath } from "node:fs/promises"
 import { extname, relative } from "node:path"
 
 import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
@@ -26,8 +26,20 @@ export function isProbablyBinary(path: string, content: Uint8Array): boolean {
 export async function readRepositoryFile(
   workspaceRoot: string,
   requestedPath: string,
-  options: { readonly maxBytes?: number } = {},
-): Promise<{ readonly path: string; readonly content: string; readonly sizeBytes: number }> {
+  options: {
+    readonly maxBytes?: number
+    readonly startLine?: number
+    readonly endLine?: number
+  } = {},
+): Promise<{
+  readonly path: string
+  readonly content: string
+  readonly sizeBytes: number
+  readonly truncated?: boolean
+  readonly totalLines?: number
+  readonly startLine?: number
+  readonly endLine?: number
+}> {
   const maxBytes = options.maxBytes ?? 1024 * 1024
   if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new ReadFileError("INVALID_LIMIT", "maxBytes must be a positive integer")
   let path: string
@@ -40,8 +52,55 @@ export async function readRepositoryFile(
     throw error
   }
   const details = await stat(path)
-  if (details.size > maxBytes) throw new ReadFileError("TOO_LARGE", `File exceeds ${maxBytes} bytes: ${requestedPath}`)
+  // If line range is specified, allow reading from files larger than maxBytes by slicing
+  const hasLineRange = options.startLine !== undefined || options.endLine !== undefined
+  if (details.size > maxBytes && !hasLineRange) {
+    throw new ReadFileError("TOO_LARGE", `File exceeds ${maxBytes} bytes: ${requestedPath}`)
+  }
   const bytes = await readFile(path)
   if (isProbablyBinary(path, bytes)) throw new ReadFileError("BINARY_FILE", `Binary files cannot be read as context: ${requestedPath}`)
-  return { path: relative(workspaceRoot, path).replaceAll("\\", "/"), content: bytes.toString("utf8"), sizeBytes: details.size }
+
+  const rawText = bytes.toString("utf8")
+  const lines = rawText.split(/\r?\n/)
+  const totalLines = lines.length
+
+  if (hasLineRange) {
+    const start = Math.max(1, options.startLine ?? 1)
+    const end = Math.min(totalLines, options.endLine ?? totalLines)
+    const slicedLines = lines.slice(start - 1, end)
+    let content = slicedLines.join("\n")
+    let truncated = false
+    if (Buffer.byteLength(content, "utf8") > maxBytes) {
+      content = content.slice(0, maxBytes) + "\n[TRUNCATED]"
+      truncated = true
+    }
+    const realRoot = await realpath(workspaceRoot)
+    const relPath = relative(realRoot, path).replaceAll("\\", "/")
+    return {
+      path: relPath,
+      content,
+      sizeBytes: details.size,
+      truncated,
+      totalLines,
+      startLine: start,
+      endLine: end,
+    }
+  }
+
+  let content = rawText
+  let truncated = false
+  if (details.size > maxBytes) {
+    content = rawText.slice(0, maxBytes) + "\n[TRUNCATED]"
+    truncated = true
+  }
+
+  const realRoot = await realpath(workspaceRoot)
+  const relPath = relative(realRoot, path).replaceAll("\\", "/")
+  return {
+    path: relPath,
+    content,
+    sizeBytes: details.size,
+    truncated,
+    totalLines,
+  }
 }

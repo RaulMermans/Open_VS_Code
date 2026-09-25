@@ -61,3 +61,6 @@ export * from "./runtime-evals/index.ts"
 
 // Sprint 4C — Durable Checkpoints, Recovery & Safe Rollback
 export * from "./recovery/index.ts"
+
+// Sprint 4D — Large Repository Performance & Discovery
+export * from "./repository/index.ts"

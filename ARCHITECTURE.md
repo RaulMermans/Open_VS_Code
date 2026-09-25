@@ -461,3 +461,34 @@ RECOVERY REQUIRED
 - **Fail-Closed Path Safety**: All storage operations are checked against `assertSafeStoragePath` ensuring strict workspace containment and symlink escape rejection.
 - **Two-Run Determinism & Process-Boundary Crashes**: 117 scenarios across 21 categories verified by `npm run eval:recovery` with deep equality, 18 negative comparator tests, and real process-boundary crash tests (`T-4840`, `T-4841`, `T-5114`-`T-5117`, `T-5200`-`T-5222`).
 See [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) for full architectural specification.
+
+## Large-Repository Performance Architecture (Sprint 4D ✅ CLOSED)
+
+```text
+Workspace (25,000+ files)
+   ↓
+Incremental Discovery (RepositoryDiscovery + AsyncSemaphore + ignore policy)
+   ↓
+Bounded Repository Index (lightweight metadata: path, size, mtime, binary/large flags)
+   ↓
+Targeted Search (RepositorySearch: maxResults, maxMatchesPerFile, maxSnippetChars, maxPayload)
+   ↓
+Bounded Context Compiler (fitContext: task-dependent tokens, independent of repo scale)
+   ↓
+Agent Runtime (bounded concurrency, AbortSignal cancellation)
+   ↓
+Runtime Eval (continuous evaluation with repetitive failure compaction)
+   ↓
+Bounded Durable Recovery (OperationJournal & CheckpointStore with rebuildable in-memory indexes)
+```
+
+- **Incremental Discovery & Zero-Content Byte Indexing**: `RepositoryDiscovery` discovers files without reading contents during discovery. Canonical ignores (`.git`, `node_modules`, `dist`, `build`, `coverage`, `.next`, `.cache`, `.checkpoints`) skip generated trees. Single file additions, modifications, or deletions update metadata incrementally without full repository rebuilds.
+- **Targeted Search & Diversity**: `RepositorySearch` caps total matches, restricts matches per individual file (diversity cap), bounds snippet lengths, and enforces a payload ceiling (default 32 KB), while automatically bypassing binary and giant files from broad scans.
+- **Bounded File Reads & Slices**: `readRepositoryFile` supports targeted line ranges (`startLine`, `endLine`) and explicit truncation flags, preventing giant files from overloading memory.
+- **Context Token Ceiling**: `compileContext` and `fitContext` ensure prompt context tokens depend strictly on the task instructions and retrieved items, not repository file counts.
+- **Bounded LRU Cache**: `BoundedLruCache` bounds cached content by both entry count and retained bytes with deterministic LRU eviction and key invalidation upon file modification.
+- **Runtime Eval Compaction**: `RuntimeEvidenceCollector` compacts repeated identical failures into structured summary records with counts and bounded error signatures, maintaining continuous adaptive-control accuracy (`L0`/`L1` decisions: `CONTINUE`, `VERIFY`, `REVISE`, `REPLAN`, `STOP`, `ASK_HUMAN`) without accumulating unbounded raw evidence.
+- **Rebuildable Secondary Recovery Indexes**: `OperationJournal` and `CheckpointStore` maintain secondary in-memory metadata lookup caches (`#indexCache`, `#metadataIndex`) that accelerate lookups without weakening the durable append log or checkpoint JSON files as the sole authoritative sources of truth.
+- **Bounded Presentation Limits**: Diff generation and terminal review streams adhere strictly to byte ceilings (16 KB buffer with clean UTF-8 truncation boundaries), preventing unbounded memory retention.
+- **Concurrency & Cancellation**: Operations throttle fan-out with `AsyncSemaphore` and halt cleanly upon `AbortSignal` triggering without orphaned background workers.
+See [ADR-026](docs/adrs/ADR-026-large-repository-performance.md) for full architectural specification.

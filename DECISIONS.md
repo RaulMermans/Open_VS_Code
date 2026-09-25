@@ -24,6 +24,11 @@
 | [ADR-021](docs/adrs/ADR-021-controlled-terminal-execution.md) | Controlled Terminal UX and Presentation Boundary | Accepted |
 | [ADR-022](docs/adrs/ADR-022-editor-native-autocomplete.md) | Editor-Native Autocomplete | Accepted |
 
+| [ADR-023](docs/adrs/ADR-023-system-security-model.md) | System-Wide Security Hardening | Accepted |
+| [ADR-024](docs/adrs/ADR-024-runtime-evals-adaptive-control.md) | Runtime Evaluations & Adaptive Control | Accepted |
+| [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) | Durable Checkpoints, Recovery & Safe Rollback | Accepted |
+| [ADR-026](docs/adrs/ADR-026-large-repository-performance.md) | Large-Repository Performance & Hardening | Accepted |
+
 Decision status changes belong in the ADR and this index.
 
 Sprint 1's implementation recommendation is documented separately at `docs/research/starting-strategy.md`; it does not make the provisional ADRs permanent.
@@ -35,3 +40,7 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 3C**: Diff / Edit UX Review Boundary complete (ADR-019).
 - **Sprint 3D**: Controlled Terminal UX & Presentation Boundary complete (ADR-021).
 - **Sprint 3E**: Editor-Native Autocomplete complete (ADR-022).
+- **Sprint 4A**: System-Wide Security Hardening complete (ADR-023).
+- **Sprint 4B**: Runtime Evaluations & Adaptive Control complete (ADR-024).
+- **Sprint 4C**: Durable Checkpoints, Recovery & Safe Rollback complete (ADR-025).
+- **Sprint 4D**: Large-Repository Performance & Hardening complete (ADR-026).

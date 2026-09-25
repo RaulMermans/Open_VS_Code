@@ -155,13 +155,27 @@ export class OperationJournal {
     return updated
   }
 
+  // Secondary in-memory lookup index: runId -> (operationId -> RecoveryOperation)
+  readonly #indexCache = new Map<string, Map<string, RecoveryOperation>>()
+
   async #append(op: RecoveryOperation): Promise<void> {
     const journalPath = await this.#getJournalPath(op.runId)
     const line = JSON.stringify(op) + "\n"
     await appendFile(journalPath, line, "utf8")
+
+    // Update secondary index if loaded
+    const runIndex = this.#indexCache.get(op.runId)
+    if (runIndex) {
+      runIndex.set(op.operationId, op)
+    }
   }
 
   async getAllOperations(runId: string): Promise<RecoveryOperation[]> {
+    const cached = this.#indexCache.get(runId)
+    if (cached) {
+      return Array.from(cached.values())
+    }
+
     const journalPath = await this.#getJournalPath(runId)
     let raw: string
     try {
@@ -183,10 +197,23 @@ export class OperationJournal {
       }
     }
 
+    this.#indexCache.set(runId, opMap)
     return Array.from(opMap.values())
   }
 
+  rebuildIndex(runId?: string): void {
+    if (runId) {
+      this.#indexCache.delete(runId)
+    } else {
+      this.#indexCache.clear()
+    }
+  }
+
   async getOperation(runId: string, operationId: string): Promise<RecoveryOperation | undefined> {
+    const runIndex = this.#indexCache.get(runId)
+    if (runIndex) {
+      return runIndex.get(operationId)
+    }
     const ops = await this.getAllOperations(runId)
     return ops.find((o) => o.operationId === operationId)
   }
@@ -204,6 +231,7 @@ export class OperationJournal {
   }
 
   async clearRun(runId: string): Promise<void> {
+    this.#indexCache.delete(runId)
     const runDir = join(this.#storageRoot, "runs", runId)
     await assertSafeStoragePath(this.#storageRoot, runDir)
     try {
