@@ -206,7 +206,14 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   const repairOrchestrator = new RepairOrchestrator(
     { maxRepairAttempts: 3, maxMutations: 3, maxVerificationRuns: 3, maxTotalAgentTurns: 20 },
     verificationEngine,
-    () => new AgentRunner({ provider: provider!, registry, permissionEvaluator: classifyPermission, evidenceGate: false, eventSink: options.eventSink })
+    () => new AgentRunner({
+      provider: provider!,
+      registry,
+      permissionEvaluator: classifyPermission,
+      evidenceGate: false,
+      eventSink: options.eventSink,
+      checkpointCoordinator,
+    })
   );
 
   return {

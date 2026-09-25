@@ -424,8 +424,10 @@ Sprint 4C adds durable write-ahead journaling, atomic checkpointing, and determi
 ```
 
 - **Observed State Dictates Recovery**: Mutation reconciliation directly inspects disk files against precondition and expected postcondition SHA-256 hashes (`RECONCILED_APPLIED` with write replay count = 0, `RECONCILED_NOT_APPLIED`, or `AMBIGUOUS`). Interrupted verifications are never assumed to have passed (`INTERRUPTED` yielding `REVERIFY`).
+- **Fail-Closed Durability Gates**: Pre-mutation and pre-verification journal/checkpoint persistence errors immediately halt execution before side-effects with `INTERNAL_ERROR` (`DURABILITY_UNAVAILABLE`). Post-mutation persistence failures halt without replaying writes or attempting unverified rollbacks. Completion checkpoints fail closed.
+- **Repair Runner Propagation**: `RepairOrchestrator` propagates `CheckpointCoordinator` to all sub-runners, guaranteeing full operation journaling for automated repairs.
 - **Separation of Authorities**: `RecoveryController` is strictly non-authoritative; it never performs filesystem writes or spawns processes. Rollbacks route through `MutationEngine`, and verifications route through `VerificationEngine`.
 - **Process Epoch Protection**: Every process invocation instantiates a unique `processEpochId`. Stale approvals from prior epochs are invalidated across process restarts (`NEW_EPOCH_AUTHORITY_REQUIRED`), preventing unauthorized execution.
 - **Fail-Closed Path Safety**: All storage operations are checked against `assertSafeStoragePath` ensuring strict workspace containment and symlink escape rejection.
-- **Two-Run Determinism**: 82 scenarios across 15 categories verified by `npm run eval:recovery` with deep equality and negative comparator tests.
+- **Two-Run Determinism & Process-Boundary Crashes**: 90 scenarios across 17 categories verified by `npm run eval:recovery` with deep equality, negative comparator tests, and real process-boundary crash tests (`T-4840`, `T-4841`, `T-4842`).
 See [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) for full architectural specification.

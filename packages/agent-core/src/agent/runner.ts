@@ -227,15 +227,22 @@ export class AgentRunner {
     }
     this.#emit("task.started", { task: input.task })
     if (this.#checkpointCoordinator) {
-      await this.#checkpointCoordinator.checkpoint({
-        runId: input.task.id,
-        reason: "RUN_STARTED",
-        phase: "PLANNING",
-        turnId: 0,
-        evidenceVersion: 1,
-        runtimeState: { status: "PLANNING" },
-        touchedFilePaths: [],
-      }).catch(() => {})
+      try {
+        await this.#checkpointCoordinator.checkpoint({
+          runId: input.task.id,
+          reason: "RUN_STARTED",
+          phase: "PLANNING",
+          turnId: 0,
+          evidenceVersion: 1,
+          runtimeState: { status: "PLANNING" },
+          touchedFilePaths: [],
+        })
+      } catch (err) {
+        this.#session.failureReason = "INTERNAL_ERROR"
+        const message = `RECOVERY_PERSISTENCE_FAILED: Failed to record initial RUN_STARTED checkpoint: ${err instanceof Error ? err.message : String(err)}`
+        this.#emit("task.failed", { message })
+        return this.#result()
+      }
     }
     return this.#continue()
   }
@@ -294,25 +301,38 @@ export class AgentRunner {
               targetFilePath = join(session.input.workspaceRoot, targetFilePath)
             }
             if (payload?.beforeContent !== undefined && payload?.beforeContent !== null && payload.beforeContent !== "") {
-              await this.#checkpointCoordinator.artifactStore.storePreimage(
-                session.input.task.id,
-                reviewable.id,
-                targetFilePath,
-                Buffer.from(payload.beforeContent, "utf8"),
-              ).catch(() => {})
+              try {
+                await this.#checkpointCoordinator.artifactStore.storePreimage(
+                  session.input.task.id,
+                  reviewable.id,
+                  targetFilePath,
+                  Buffer.from(payload.beforeContent, "utf8"),
+                )
+              } catch (err) {
+                throw new Error(`DURABILITY_UNAVAILABLE: Failed to store preimage before mutation: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
+              }
             }
-            const op = await this.#checkpointCoordinator.prepareOperation({
-              runId: session.input.task.id,
-              evidenceVersion: session.turns + 1,
-              kind: "MUTATION",
-              authorityId: "mutation-engine",
-              preconditions: payload?.beforeHash ? [{ path: targetFilePath, expectedHash: payload.beforeHash, exists: true }] : [],
-              expectedPostconditions: payload?.afterHash ? [{ path: targetFilePath, expectedHash: payload.afterHash, exists: true }] : [],
-              payload: { mutationId: reviewable.id },
-            }).catch(() => undefined)
-            if (op) {
-              opId = op.operationId
-              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+            let op
+            try {
+              op = await this.#checkpointCoordinator.prepareOperation({
+                runId: session.input.task.id,
+                evidenceVersion: session.turns + 1,
+                kind: "MUTATION",
+                authorityId: "mutation-engine",
+                preconditions: payload?.beforeHash ? [{ path: targetFilePath, expectedHash: payload.beforeHash, exists: true }] : [],
+                expectedPostconditions: payload?.afterHash ? [{ path: targetFilePath, expectedHash: payload.afterHash, exists: true }] : [],
+                payload: { mutationId: reviewable.id },
+              })
+            } catch (err) {
+              throw new Error(`DURABILITY_UNAVAILABLE: Failed to prepare operation before mutation: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
+            }
+            opId = op.operationId
+            try {
+              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id)
+            } catch (err) {
+              throw new Error(`DURABILITY_UNAVAILABLE: Failed to record operation started before mutation: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
+            }
+            try {
               await this.#checkpointCoordinator.checkpoint({
                 runId: session.input.task.id,
                 reason: "BEFORE_MUTATION",
@@ -321,21 +341,32 @@ export class AgentRunner {
                 evidenceVersion: session.turns + 1,
                 runtimeState: { status: "WAITING_FOR_TOOL" },
                 touchedFilePaths: targetFilePath ? [targetFilePath] : [],
-              }).catch(() => {})
+              })
+            } catch (err) {
+              throw new Error(`DURABILITY_UNAVAILABLE: Failed to record BEFORE_MUTATION checkpoint: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
             }
           } else if (this.#checkpointCoordinator && isVerification) {
-            const op = await this.#checkpointCoordinator.prepareOperation({
-              runId: session.input.task.id,
-              evidenceVersion: session.turns + 1,
-              kind: "VERIFICATION",
-              authorityId: "verification-engine",
-              preconditions: [],
-              expectedPostconditions: [],
-              payload: { executionId: reviewable.id },
-            }).catch(() => undefined)
-            if (op) {
-              opId = op.operationId
-              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+            let op
+            try {
+              op = await this.#checkpointCoordinator.prepareOperation({
+                runId: session.input.task.id,
+                evidenceVersion: session.turns + 1,
+                kind: "VERIFICATION",
+                authorityId: "verification-engine",
+                preconditions: [],
+                expectedPostconditions: [],
+                payload: { executionId: reviewable.id },
+              })
+            } catch (err) {
+              throw new Error(`DURABILITY_UNAVAILABLE: Failed to prepare operation before verification: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
+            }
+            opId = op.operationId
+            try {
+              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id)
+            } catch (err) {
+              throw new Error(`DURABILITY_UNAVAILABLE: Failed to record operation started before verification: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
+            }
+            try {
               await this.#checkpointCoordinator.checkpoint({
                 runId: session.input.task.id,
                 reason: "BEFORE_VERIFICATION",
@@ -343,7 +374,9 @@ export class AgentRunner {
                 turnId: session.turns,
                 evidenceVersion: session.turns + 1,
                 runtimeState: { status: "VERIFYING" },
-              }).catch(() => {})
+              })
+            } catch (err) {
+              throw new Error(`DURABILITY_UNAVAILABLE: Failed to record BEFORE_VERIFICATION checkpoint: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
             }
           }
 
@@ -365,36 +398,41 @@ export class AgentRunner {
             onOutput,
           }) as any
 
+          let postDurabilityError: Error | undefined
           if (this.#checkpointCoordinator && opId) {
-            if (isVerification) {
-              if (result.status === "PASS") {
-                await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id).catch(() => {})
+            try {
+              if (isVerification) {
+                if (result.status === "PASS") {
+                  await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id)
+                } else {
+                  await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification failed")
+                }
+                await this.#checkpointCoordinator.checkpoint({
+                  runId: session.input.task.id,
+                  reason: "AFTER_VERIFICATION",
+                  phase: "VERIFYING",
+                  turnId: session.turns,
+                  evidenceVersion: session.turns + 1,
+                  runtimeState: { status: "OBSERVING" },
+                })
               } else {
-                await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification failed").catch(() => {})
+                if (result.status === "APPLIED") {
+                  await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id)
+                } else {
+                  await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.error?.message ?? "Mutation failed")
+                }
+                await this.#checkpointCoordinator.checkpoint({
+                  runId: session.input.task.id,
+                  reason: "AFTER_MUTATION",
+                  phase: "MUTATION",
+                  turnId: session.turns,
+                  evidenceVersion: session.turns + 1,
+                  runtimeState: { status: "OBSERVING" },
+                  touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+                })
               }
-              await this.#checkpointCoordinator.checkpoint({
-                runId: session.input.task.id,
-                reason: "AFTER_VERIFICATION",
-                phase: "VERIFYING",
-                turnId: session.turns,
-                evidenceVersion: session.turns + 1,
-                runtimeState: { status: "OBSERVING" },
-              }).catch(() => {})
-            } else {
-              if (result.status === "APPLIED") {
-                await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id).catch(() => {})
-              } else {
-                await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.error?.message ?? "Mutation failed").catch(() => {})
-              }
-              await this.#checkpointCoordinator.checkpoint({
-                runId: session.input.task.id,
-                reason: "AFTER_MUTATION",
-                phase: "MUTATION",
-                turnId: session.turns,
-                evidenceVersion: session.turns + 1,
-                runtimeState: { status: "OBSERVING" },
-                touchedFilePaths: targetFilePath ? [targetFilePath] : [],
-              }).catch(() => {})
+            } catch (err) {
+              postDurabilityError = err instanceof Error ? err : new Error(String(err))
             }
           }
           if (isVerification) {
@@ -438,6 +476,13 @@ export class AgentRunner {
             result,
           )
 
+          if (postDurabilityError) {
+            session.failureReason = "INTERNAL_ERROR"
+            const message = `RECOVERY_PERSISTENCE_FAILED: Side effect succeeded but post-persistence failed: ${postDurabilityError.message}`
+            this.#emit("task.failed", { message })
+            return this.#result()
+          }
+
           if (isVerification) {
             if (pending.prepared.id.startsWith("scheduled-verify-")) {
               const originatingEvalId = pending.prepared.id.replace("scheduled-verify-", "")
@@ -463,6 +508,7 @@ export class AgentRunner {
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "Mutation apply failed"
+          session.failureReason = "INTERNAL_ERROR"
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, error: { category: isVerification ? "VERIFICATION_ERROR" : "MUTATION_ERROR", message }, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
           session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: "FAILED", truncated: observation.truncated })
@@ -472,6 +518,7 @@ export class AgentRunner {
             mutationId: pending.reviewable.id,
             ...(isVerification ? { executionId: pending.reviewable.id } : {}),
             message,
+            error: error instanceof Error ? error : new Error(message),
           })
           session.evidenceCollector.recordToolAction({
             id: pending.prepared.id,
@@ -479,6 +526,10 @@ export class AgentRunner {
             outcome: "FAILED",
             error: message,
           })
+          if (message.includes("DURABILITY_UNAVAILABLE") || message.includes("RECOVERY_PERSISTENCE_FAILED")) {
+            this.#emit("task.failed", { message })
+            return this.#result()
+          }
           const { evalResult: failEval, directive: failDirective } = await this.#runEval("TOOL_FAILURE")
           if (this.#adaptiveInterventions && failDirective.decision !== "CONTINUE") {
             const handled = await this.#dispatchDirective(failEval, failDirective, "TOOL_FAILURE")
@@ -1026,18 +1077,18 @@ export class AgentRunner {
         if (!targetFilePath.startsWith("/") && session.input.workspaceRoot) {
           targetFilePath = join(session.input.workspaceRoot, targetFilePath)
         }
-        const op = await this.#checkpointCoordinator.prepareOperation({
-          runId: session.input.task.id,
-          evidenceVersion: session.turns + 1,
-          kind: "MUTATION",
-          authorityId: "mutation-engine",
-          preconditions: [],
-          expectedPostconditions: targetFilePath ? [{ path: targetFilePath, expectedHash: "", exists: prepared.definition.action !== "delete_file" }] : [],
-          payload: { toolId: prepared.id },
-        }).catch(() => undefined)
-        if (op) {
+        try {
+          const op = await this.#checkpointCoordinator.prepareOperation({
+            runId: session.input.task.id,
+            evidenceVersion: session.turns + 1,
+            kind: "MUTATION",
+            authorityId: "mutation-engine",
+            preconditions: [],
+            expectedPostconditions: targetFilePath ? [{ path: targetFilePath, expectedHash: "", exists: prepared.definition.action !== "delete_file" }] : [],
+            payload: { toolId: prepared.id },
+          })
           opId = op.operationId
-          await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+          await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id)
           await this.#checkpointCoordinator.checkpoint({
             runId: session.input.task.id,
             reason: "BEFORE_MUTATION",
@@ -1046,21 +1097,28 @@ export class AgentRunner {
             evidenceVersion: session.turns + 1,
             runtimeState: { status: "WAITING_FOR_TOOL" },
             touchedFilePaths: targetFilePath ? [targetFilePath] : [],
-          }).catch(() => {})
+          })
+        } catch (err) {
+          const message = `DURABILITY_UNAVAILABLE: Failed pre-mutation durability: ${err instanceof Error ? err.message : String(err)}`
+          session.failureReason = "INTERNAL_ERROR"
+          this.#addErrorObservation(prepared, "MUTATION_ERROR", message, "FAILED")
+          this.#emit("mutation.failed", { callId: prepared.id, name: prepared.name, mutationId: prepared.id, error: new Error(message) })
+          this.#emit("task.failed", { message })
+          return true
         }
       } else if (prepared.definition.action === "run_known_test") {
-        const op = await this.#checkpointCoordinator.prepareOperation({
-          runId: session.input.task.id,
-          evidenceVersion: session.turns + 1,
-          kind: "VERIFICATION",
-          authorityId: "verification-engine",
-          preconditions: [],
-          expectedPostconditions: [],
-          payload: { toolId: prepared.id },
-        }).catch(() => undefined)
-        if (op) {
+        try {
+          const op = await this.#checkpointCoordinator.prepareOperation({
+            runId: session.input.task.id,
+            evidenceVersion: session.turns + 1,
+            kind: "VERIFICATION",
+            authorityId: "verification-engine",
+            preconditions: [],
+            expectedPostconditions: [],
+            payload: { toolId: prepared.id },
+          })
           opId = op.operationId
-          await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+          await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id)
           await this.#checkpointCoordinator.checkpoint({
             runId: session.input.task.id,
             reason: "BEFORE_VERIFICATION",
@@ -1068,40 +1126,52 @@ export class AgentRunner {
             turnId: session.turns,
             evidenceVersion: session.turns + 1,
             runtimeState: { status: "VERIFYING" },
-          }).catch(() => {})
+          })
+        } catch (err) {
+          const message = `DURABILITY_UNAVAILABLE: Failed pre-verification durability: ${err instanceof Error ? err.message : String(err)}`
+          session.failureReason = "INTERNAL_ERROR"
+          this.#addErrorObservation(prepared, "VERIFICATION_ERROR", message, "FAILED")
+          this.#emit("verification.failed", { callId: prepared.id, name: prepared.name, mutationId: prepared.id, executionId: prepared.id, message })
+          this.#emit("task.failed", { message })
+          return true
         }
       }
     }
 
     try {
       const output = await prepared.invoke({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
+      let postDurabilityError: Error | undefined
       if (this.#checkpointCoordinator && opId) {
-        if (prepared.definition.action === "run_known_test") {
-          const pass = (output as any)?.status === "PASS"
-          if (pass) {
-            await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, prepared.id).catch(() => {})
-          } else {
-            await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, (output as any)?.stderr ?? "Verification non-zero exit").catch(() => {})
+        try {
+          if (prepared.definition.action === "run_known_test") {
+            const pass = (output as any)?.status === "PASS"
+            if (pass) {
+              await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, prepared.id)
+            } else {
+              await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, (output as any)?.stderr ?? "Verification non-zero exit")
+            }
+            await this.#checkpointCoordinator.checkpoint({
+              runId: session.input.task.id,
+              reason: "AFTER_VERIFICATION",
+              phase: "VERIFYING",
+              turnId: session.turns,
+              evidenceVersion: session.turns + 1,
+              runtimeState: { status: "OBSERVING" },
+            })
+          } else if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
+            await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, prepared.id)
+            await this.#checkpointCoordinator.checkpoint({
+              runId: session.input.task.id,
+              reason: "AFTER_MUTATION",
+              phase: "MUTATION",
+              turnId: session.turns,
+              evidenceVersion: session.turns + 1,
+              runtimeState: { status: "OBSERVING" },
+              touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+            })
           }
-          await this.#checkpointCoordinator.checkpoint({
-            runId: session.input.task.id,
-            reason: "AFTER_VERIFICATION",
-            phase: "VERIFYING",
-            turnId: session.turns,
-            evidenceVersion: session.turns + 1,
-            runtimeState: { status: "OBSERVING" },
-          }).catch(() => {})
-        } else if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
-          await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, prepared.id).catch(() => {})
-          await this.#checkpointCoordinator.checkpoint({
-            runId: session.input.task.id,
-            reason: "AFTER_MUTATION",
-            phase: "MUTATION",
-            turnId: session.turns,
-            evidenceVersion: session.turns + 1,
-            runtimeState: { status: "OBSERVING" },
-            touchedFilePaths: targetFilePath ? [targetFilePath] : [],
-          }).catch(() => {})
+        } catch (err) {
+          postDurabilityError = err instanceof Error ? err : new Error(String(err))
         }
       }
       observation = createToolObservation({ toolName: prepared.name, callId: prepared.id, output, maxContentBytes: this.#observationMaxBytes })
@@ -1122,6 +1192,13 @@ export class AgentRunner {
         output,
       })
       this.#emit("tool.completed", { callId: prepared.id, name: prepared.name, truncated: observation.truncated })
+
+      if (postDurabilityError) {
+        session.failureReason = "INTERNAL_ERROR"
+        const message = `RECOVERY_PERSISTENCE_FAILED: Tool ${prepared.name} succeeded on disk but post-execution persistence failed: ${postDurabilityError.message}`
+        this.#emit("task.failed", { message })
+        return true
+      }
 
       if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
         session.evidenceCollector.recordMutationOutcome({
@@ -1642,18 +1719,18 @@ export class AgentRunner {
           }
           let opId: string | undefined
           if (this.#checkpointCoordinator) {
-            const op = await this.#checkpointCoordinator.prepareOperation({
-              runId: session.input.task.id,
-              evidenceVersion: session.turns + 1,
-              kind: "VERIFICATION",
-              authorityId: "verification-engine",
-              preconditions: [],
-              expectedPostconditions: [],
-              payload: { executionId: reviewable.id },
-            }).catch(() => undefined)
-            if (op) {
+            try {
+              const op = await this.#checkpointCoordinator.prepareOperation({
+                runId: session.input.task.id,
+                evidenceVersion: session.turns + 1,
+                kind: "VERIFICATION",
+                authorityId: "verification-engine",
+                preconditions: [],
+                expectedPostconditions: [],
+                payload: { executionId: reviewable.id },
+              })
               opId = op.operationId
-              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+              await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id)
               await this.#checkpointCoordinator.checkpoint({
                 runId: session.input.task.id,
                 reason: "BEFORE_VERIFICATION",
@@ -1661,7 +1738,26 @@ export class AgentRunner {
                 turnId: session.turns,
                 evidenceVersion: session.turns + 1,
                 runtimeState: { status: "VERIFYING" },
-              }).catch(() => {})
+              })
+            } catch (err) {
+              const message = `DURABILITY_UNAVAILABLE: Scheduled verification durability failed before execution: ${err instanceof Error ? err.message : String(err)}`
+              session.failureReason = "INTERNAL_ERROR"
+              this.#emit("verification.failed", {
+                callId: prepared.id,
+                name: prepared.name,
+                mutationId: reviewable.id,
+                executionId: reviewable.id,
+                message,
+              })
+              session.evidenceCollector.recordVerificationOutcome({
+                executionId: reviewable.id,
+                action: "TEST",
+                status: "EXECUTION_ERROR",
+                failedTestCount: 1,
+                stderr: message,
+              })
+              this.#emit("task.failed", { message })
+              return { outcome: "FAILED" }
             }
           }
           const result = (await reviewable.apply({
@@ -1669,20 +1765,25 @@ export class AgentRunner {
             signal: session.input.signal ?? new AbortController().signal,
             onOutput,
           })) as any
+          let postDurabilityError: Error | undefined
           if (this.#checkpointCoordinator && opId) {
-            if (result.status === "PASS") {
-              await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id).catch(() => {})
-            } else {
-              await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification non-zero exit").catch(() => {})
+            try {
+              if (result.status === "PASS") {
+                await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, reviewable.id)
+              } else {
+                await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification non-zero exit")
+              }
+              await this.#checkpointCoordinator.checkpoint({
+                runId: session.input.task.id,
+                reason: "AFTER_VERIFICATION",
+                phase: "VERIFYING",
+                turnId: session.turns,
+                evidenceVersion: session.turns + 1,
+                runtimeState: { status: "OBSERVING" },
+              })
+            } catch (err) {
+              postDurabilityError = err instanceof Error ? err : new Error(String(err))
             }
-            await this.#checkpointCoordinator.checkpoint({
-              runId: session.input.task.id,
-              reason: "AFTER_VERIFICATION",
-              phase: "VERIFYING",
-              turnId: session.turns,
-              evidenceVersion: session.turns + 1,
-              runtimeState: { status: "OBSERVING" },
-            }).catch(() => {})
           }
           this.#emit("verification.completed", {
             callId: prepared.id,
@@ -1708,6 +1809,13 @@ export class AgentRunner {
           })
           session.observations.push(obs)
           session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "COMPLETED", truncated: obs.truncated })
+
+          if (postDurabilityError) {
+            session.failureReason = "INTERNAL_ERROR"
+            const message = `RECOVERY_PERSISTENCE_FAILED: Scheduled verification completed but post-persistence failed: ${postDurabilityError.message}`
+            this.#emit("task.failed", { message })
+            return { outcome: "FAILED" }
+          }
 
           const { evalResult: postVerifEval, directive: postVerifDirective } = await this.#runEval("VERIFICATION_RESULT")
 
@@ -1763,18 +1871,18 @@ export class AgentRunner {
         }
         let opId: string | undefined
         if (this.#checkpointCoordinator) {
-          const op = await this.#checkpointCoordinator.prepareOperation({
-            runId: session.input.task.id,
-            evidenceVersion: session.turns + 1,
-            kind: "VERIFICATION",
-            authorityId: "verification-engine",
-            preconditions: [],
-            expectedPostconditions: [],
-            payload: { executionId: verifId },
-          }).catch(() => undefined)
-          if (op) {
+          try {
+            const op = await this.#checkpointCoordinator.prepareOperation({
+              runId: session.input.task.id,
+              evidenceVersion: session.turns + 1,
+              kind: "VERIFICATION",
+              authorityId: "verification-engine",
+              preconditions: [],
+              expectedPostconditions: [],
+              payload: { executionId: verifId },
+            })
             opId = op.operationId
-            await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id).catch(() => {})
+            await this.#checkpointCoordinator.operationJournal.recordStarted(opId, session.input.task.id)
             await this.#checkpointCoordinator.checkpoint({
               runId: session.input.task.id,
               reason: "BEFORE_VERIFICATION",
@@ -1782,24 +1890,48 @@ export class AgentRunner {
               turnId: session.turns,
               evidenceVersion: session.turns + 1,
               runtimeState: { status: "VERIFYING" },
-            }).catch(() => {})
+            })
+          } catch (err) {
+            const message = `DURABILITY_UNAVAILABLE: Auto test verification durability failed before execution: ${err instanceof Error ? err.message : String(err)}`
+            session.failureReason = "INTERNAL_ERROR"
+            this.#emit("verification.failed", {
+              callId: `call-${verifId}`,
+              name: "run_verification",
+              mutationId: verifId,
+              executionId: verifId,
+              message,
+            })
+            session.evidenceCollector.recordVerificationOutcome({
+              executionId: verifId,
+              action: "TEST",
+              status: "EXECUTION_ERROR",
+              failedTestCount: 1,
+              stderr: message,
+            })
+            this.#emit("task.failed", { message })
+            return { outcome: "FAILED" }
           }
         }
         const result = await this.#verificationEngine.execute(preparedVerif, session.input.signal)
+        let postDurabilityError: Error | undefined
         if (this.#checkpointCoordinator && opId) {
-          if (result.status === "PASS") {
-            await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, verifId).catch(() => {})
-          } else {
-            await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification non-zero exit").catch(() => {})
+          try {
+            if (result.status === "PASS") {
+              await this.#checkpointCoordinator.operationJournal.recordCompleted(opId, session.input.task.id, verifId)
+            } else {
+              await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, result.stderr ?? "Verification non-zero exit")
+            }
+            await this.#checkpointCoordinator.checkpoint({
+              runId: session.input.task.id,
+              reason: "AFTER_VERIFICATION",
+              phase: "VERIFYING",
+              turnId: session.turns,
+              evidenceVersion: session.turns + 1,
+              runtimeState: { status: "OBSERVING" },
+            })
+          } catch (err) {
+            postDurabilityError = err instanceof Error ? err : new Error(String(err))
           }
-          await this.#checkpointCoordinator.checkpoint({
-            runId: session.input.task.id,
-            reason: "AFTER_VERIFICATION",
-            phase: "VERIFYING",
-            turnId: session.turns,
-            evidenceVersion: session.turns + 1,
-            runtimeState: { status: "OBSERVING" },
-          }).catch(() => {})
         }
         this.#emit("verification.completed", {
           callId: `call-${verifId}`,
@@ -1826,6 +1958,13 @@ export class AgentRunner {
         })
         session.observations.push(obs)
 
+        if (postDurabilityError) {
+          session.failureReason = "INTERNAL_ERROR"
+          const message = `RECOVERY_PERSISTENCE_FAILED: Auto test verification completed but post-persistence failed: ${postDurabilityError.message}`
+          this.#emit("task.failed", { message })
+          return { outcome: "FAILED" }
+        }
+
         const { evalResult: postVerifEval, directive: postVerifDirective } = await this.#runEval("VERIFICATION_RESULT")
 
         const pass = result.status === "PASS"
@@ -1851,17 +1990,24 @@ export class AgentRunner {
   async #completeTask(responseContent: string): Promise<void> {
     const session = this.#requiredSession()
     session.finalAnswer = responseContent
-    this.#emit("task.completed", { turns: session.turns })
     if (this.#checkpointCoordinator) {
-      await this.#checkpointCoordinator.checkpoint({
-        runId: session.input.task.id,
-        reason: "COMPLETED",
-        phase: "COMPLETED",
-        turnId: session.turns,
-        evidenceVersion: session.turns + 1,
-        runtimeState: { status: "COMPLETED" },
-      }).catch(() => {})
+      try {
+        await this.#checkpointCoordinator.checkpoint({
+          runId: session.input.task.id,
+          reason: "COMPLETED",
+          phase: "COMPLETED",
+          turnId: session.turns,
+          evidenceVersion: session.turns + 1,
+          runtimeState: { status: "COMPLETED" },
+        })
+      } catch (err) {
+        session.failureReason = "INTERNAL_ERROR"
+        const message = `RECOVERY_PERSISTENCE_FAILED: Failed to record COMPLETED checkpoint: ${err instanceof Error ? err.message : String(err)}`
+        this.#emit("task.failed", { message })
+        return
+      }
     }
+    this.#emit("task.completed", { turns: session.turns })
   }
 
   #result(): AgentResult {

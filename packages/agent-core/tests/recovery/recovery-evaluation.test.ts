@@ -52,12 +52,59 @@ describe("Sprint 4C — Recovery Evaluation & Strict Determinism", () => {
       },
       { name: "AssertionError" }
     )
+
+    // Negative comparator test 5: durability gate failure reason discrepancy caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { runnerStatus: "FAILED", failureReason: "INTERNAL_ERROR" },
+          { runnerStatus: "COMPLETED", failureReason: undefined }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 6: checksum divergence discrepancy caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { stateAlters: true, footprintAlters: true, reorderIdentical: true },
+          { stateAlters: false, footprintAlters: true, reorderIdentical: true }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 7: sequence monotonicity mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { strictlyMonotonic: true },
+          { strictlyMonotonic: false }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 8: repair runner coordinator presence discrepancy caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { hasCoordinator: true, coordinatorMatchesRuntime: true },
+          { hasCoordinator: false, coordinatorMatchesRuntime: false }
+        )
+      },
+      { name: "AssertionError" }
+    )
   })
 
   test("Run 1: Evaluate all recovery scenarios", async () => {
     const res1 = await runRecoveryEvaluation()
     assert.strictEqual(res1.totalFailed, 0, `Expected 0 failed scenarios in Run 1, got ${res1.totalFailed}`)
-    assert.ok(res1.scenarios.length >= 80, `Expected >= 80 scenarios, got ${res1.scenarios.length}`)
+    assert.ok(res1.scenarios.length >= 90, `Expected >= 90 scenarios, got ${res1.scenarios.length}`)
+    for (const s of res1.scenarios) {
+      assert.deepStrictEqual(s.actual, s.expected, `Scenario ${s.id} failed strict deep equality`)
+    }
   })
 
   test("Run 2: Evaluate all recovery scenarios and prove determinism", async () => {
@@ -77,6 +124,7 @@ describe("Sprint 4C — Recovery Evaluation & Strict Determinism", () => {
       assert.strictEqual(s1.passed, s2.passed, `Pass boolean mismatch at ${i}`)
       assert.deepStrictEqual(s1.expected, s2.expected, `Expected mismatch at ${i}`)
       assert.deepStrictEqual(s1.actual, s2.actual, `Actual mismatch at ${i}`)
+      assert.deepStrictEqual(s2.actual, s2.expected, `Scenario ${s2.id} in Run 2 failed strict deep equality`)
     }
   })
 })

@@ -179,7 +179,7 @@ Sprint 4C — Durable Checkpoints, Recovery & Safe Rollback ✅ CLOSED
   - Strict Deterministic Evaluation Harness (npm run eval:recovery): 82 scenarios across 15 categories evaluated across 2 consecutive runs with assert.deepStrictEqual determinism and negative comparator tests.
   - ADR-025 (docs/adrs/ADR-025-checkpoints-recovery.md) recorded.
 
-Sprint 4C.1 — Production Recovery Integration & Integrity Closure ✅ CLOSED PERMANENTLY
+Sprint 4C.1 — Production Recovery Integration & Integrity Closure ✅ CLOSED
   - Canonical JSON Serialization: Recursive deterministic object key sorting and circular reference detection (`canonicalSerialize`) guaranteeing cross-platform deterministic SHA-256 checksums and journal idempotency keys.
   - Monotonic Checkpoint Sequences: CheckpointCoordinator seeds monotonically increasing sequence numbers from the latest on-disk checkpoint across restarts.
   - Production AgentRunner Write-Ahead Durability: Checkpoint coordinator integrated at all key lifecycle stages: `RUN_STARTED`, `BEFORE_MUTATION`, `AFTER_MUTATION`, `BEFORE_VERIFICATION`, `AFTER_VERIFICATION`, and `COMPLETED`.
@@ -188,7 +188,15 @@ Sprint 4C.1 — Production Recovery Integration & Integrity Closure ✅ CLOSED P
   - Zero Artificial Test Passes: Evaluated all 82 scenarios with concrete runtime observations; zero boolean proxies, zero simulated assertions.
   - 4/4 End-to-End Integration Tests: Complete E2E validation in `recovery-integration-e2e.test.ts`.
   - Full Monorepo Regressions Clean: 312 unit tests pass in agent-core, all workspace tests pass across cli, ide-adapter, and vscode-integration, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice.
-  - Sprint 4C and 4C.1 are PERMANENTLY CLOSED.
+
+Sprint 4C.2 — Fail-Closed Durability & Recovery Evidence Closure ✅ CLOSED PERMANENTLY
+  - Fail-Closed Durability Gates: Pre-mutation & pre-verification journal/checkpoint persistence errors immediately halt execution before side-effects with `INTERNAL_ERROR` (`DURABILITY_UNAVAILABLE`). Post-mutation persistence failure records error, halts execution, but does not replay writes or attempt unverified rollbacks. Task completion checkpoint failure transitions task status to `FAILED` with `INTERNAL_ERROR`.
+  - Repair Runner Durability Wiring: `RepairOrchestrator` propagates `checkpointCoordinator` to sub-runners, ensuring repair workflows enforce durable write-ahead operation journaling.
+  - Strict Evidence Truth: `RecoveryScenarioDefinition` completely decoupled from evaluation results — callers cannot supply `passed: boolean`; pass/fail derived strictly via `node:util` `isDeepStrictEqual(actual, expected)`. All boolean proxies and synthetic stubs (e.g. `REC-ROL-05`, `REC-ROL-06`, `REC-RET-04`) eliminated.
+  - Real Process-Boundary Rollback Crash Proof (`T-4842` in `crash-process-e2e.test.ts`): Child process writes rollback file to disk and is forcefully terminated (`process.exit(1)`) prior to recording journal completion; recovery process inspects workspace, confirms file matches pre-mutation preimage, and reconciles to `RECONCILED_NOT_APPLIED` with `writeReplayCount = 0`.
+  - 90 Deterministic Scenarios across 17 Categories: Evaluated by `npm run eval:recovery` across two independent runs with 0 failures, 100% deep strict equality, and 8 negative comparator tests.
+  - Full Monorepo Regressions Clean: 315 tests pass in agent-core, all workspace tests pass across cli, ide-adapter, and vscode-integration, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals.
+  - Sprint 4C / 4C.1 / 4C.2 is PERMANENTLY CLOSED.
 
 Next:
 Sprint 4D — Performance / Large Repositories → NEXT

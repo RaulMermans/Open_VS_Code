@@ -166,3 +166,28 @@ To complete the production integration and close Sprint 4C permanently:
    - Audited every scenario in `recovery-evaluation-harness.ts`, replacing all synthetic passes with verifiable runtime assertions.
    - Strict comparator asserts zero discrepancies across two independent runs.
 
+---
+
+## Sprint 4C.2 — Fail-Closed Durability & Recovery Evidence Closure
+
+Sprint 4C.2 permanently closes Sprint 4C with fail-closed durability guarantees and strict evidence truth:
+
+1. **Fail-Closed Durability Gates in `AgentRunner` (`runner.ts`):**
+   - **Pre-Mutation & Pre-Verification Persistence:** Before side effects occur on the filesystem or external processes, operations are prepared in the journal and checkpointed. If persistence throws `DURABILITY_UNAVAILABLE`, execution halts immediately without side effects, failing closed with `INTERNAL_ERROR`.
+   - **Post-Mutation Persistence Failure:** If post-mutation checkpointing or journal recording fails, the runner marks the turn failed with `INTERNAL_ERROR` and halts execution, strictly preventing duplicate re-application or unverified rollbacks.
+   - **Completion Checkpoint Gate:** If the final `COMPLETED` checkpoint fails to persist, completion is aborted and the session transitions to `FAILED` with `INTERNAL_ERROR`.
+2. **Durability Propagation to Repair Runners:**
+   - `RepairOrchestrator` (`runtime.ts`) wires `checkpointCoordinator` to newly spawned repair runners, ensuring automated repairs enforce write-ahead operation journaling and checkpointing.
+3. **Strict Evidence Truth in Recovery Evaluations:**
+   - `RecoveryScenarioDefinition` completely decouples definition from evaluation: callers cannot provide a `passed: boolean` proxy.
+   - `passed` is strictly derived at evaluation time using `node:util` `isDeepStrictEqual(actual, expected)`.
+   - All boolean proxies, synthetic stubs, and dummy passes (such as `REC-ROL-05`, `REC-ROL-06`, `REC-RET-04`) are eliminated in favor of real, deep observable state comparisons.
+4. **Real Process-Boundary Rollback Crash Test (`T-4842` in `crash-process-e2e.test.ts`):**
+   - A child process applies a rollback write to disk and is forcefully terminated with `process.exit(1)` prior to recording journal completion.
+   - A second recovery process inspects the workspace, verifies the file matches the pre-mutation preimage, and reconciles to `RECONCILED_NOT_APPLIED` with `writeReplayCount = 0`, proving zero duplicate writes even across rollback process crashes.
+5. **Evaluation Suite Expansion:**
+   - Expanded to **90 Scenarios across 17 Categories** (including `DURABILITY_GATE` and `REPAIR`).
+   - Two-run determinism and 8 negative comparator tests prove 100% strict equality and zero flakiness.
+6. **Sprint 4C Permanent Closure:**
+   - Checkpoint, Journal, Recovery, Rollback, and Durability subsystems are fully integrated, hardened, and verified with zero pending technical debt.
+
