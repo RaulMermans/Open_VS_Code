@@ -211,5 +211,55 @@ Sprint 4C.3 permanently seals and closes Sprint 4C with complete durability inva
    - Evaluates with 100% pass rate and 100% two-run determinism using strict deep equality comparator with zero fake passes.
    - Negative comparator suite expanded to 13 negative tests asserting discrepancies in rollback reconciliation, replay counts, persistence failures, verification durability, and side-effect counts.
 
-7. **Sprint 4C Permanent Closure:**
-   - Sprint 4C is fully and permanently closed. Roadmap advances to Sprint 4D.
+7. **Sprint 4C.3 Verification:**
+   - Evaluated with 100% pass rate and 100% two-run determinism using strict deep equality comparator with zero fake passes.
+   - Negative comparator suite expanded to 13 negative tests asserting discrepancies in rollback reconciliation, replay counts, persistence failures, verification durability, and side-effect counts.
+
+---
+
+## Sprint 4C.4 — Rollback Durability Final Seal & Permanent Closure
+
+Sprint 4C.4 seals rollback durability so that rollback operations provide the exact same fail-closed write-ahead durability, persistence guarantees, and restart reconciliation as forward mutations.
+
+1. **Required Durability Dependencies & Elimination of Non-Durable Mode:**
+   - In `RollbackManager` (`rollback.ts`), `operationJournal` and `checkpointStore` are mandatory dependencies in `RollbackManagerOptions`.
+   - Non-durable rollback mode is completely eliminated.
+   - If durability dependencies are missing or uninitialized, `executeRollback` fails closed immediately (`status: "FAILED"`, `durabilityFailure: true`) with 0 reverse `MutationEngine` invocations and 0 disk writes (`T-5200` - `T-5202`).
+
+2. **Fail-Closed Journal History Read:**
+   - Removed `.catch(() => [])` silent fallback when querying operation journal history (`getAllOperations(runId)`).
+   - If journal history lookup fails (e.g. disk corruption, parse error), rollback fails closed immediately (`status: "FAILED"`, `durabilityFailure: true`) with 0 reverse `MutationEngine` calls, 0 PREPARED operations recorded, and 0 workspace modifications (`T-5203` - `T-5204`).
+
+3. **6-Phase Durable Success Lifecycle:**
+   - Every durable rollback strictly follows the sequence:
+     `Rollback requested -> Durability dependencies confirmed -> Journal history read successfully -> Rollback PREPARED durable -> Rollback STARTED durable -> MutationEngine reverse mutation -> Rollback COMPLETED durable -> ROLLBACK_COMPLETED checkpoint durable -> Only then report durable rollback success`.
+   - Any failure prior to reverse mutation halts execution with 0 reverse `MutationEngine` calls.
+
+4. **Post-Write Checkpoint Persistence Failure Semantics:**
+   - If the reverse mutation write succeeds on disk and `recordCompleted` succeeds, but `saveCheckpoint` for `ROLLBACK_COMPLETED` throws:
+     Removed `.catch(() => {})`. The rollback manager returns `status: "RECOVERY_REQUIRED"`, `recoveryRequired: true`, `durabilityFailure: true`, `durableSuccess: false`, `success: false`.
+     No same-process replay is attempted. Truthful restart reconciliation resolves state (`T-5209` - `T-5210`).
+
+5. **`recordFailed()` Persistence Failure Semantics:**
+   - If reverse mutation write fails and `recordFailed()` persistence also fails:
+     Removed `.catch(() => {})`. Rollback fails closed with `status: "RECOVERY_REQUIRED"` and `error: "RECOVERY_PERSISTENCE_FAILED: ..."`.
+     The journal entry remains conservatively `STARTED` rather than falsely `FAILED`. Execution halts immediately (0 new side effects), and restart reconciliation safely marks the operation `NOT_APPLIED` without automatic replay (`T-5212` - `T-5213`).
+
+6. **Exactly-Once Reconciliation & Duplicate Write Prevention:**
+   - Completed rollback operations replay with 0 reverse calls.
+   - `STARTED` + restored state reconciles to `RECONCILED_APPLIED` with 0 duplicate reverse calls.
+   - `STARTED` + not-restored state reconciles to `RECONCILED_NOT_APPLIED` with 0 automatic replay.
+   - `STARTED` + modified state triggers `BLOCKED_DIVERGENCE` / `DIVERGED` with 0 reverse calls.
+
+7. **Strict Analytics & Evidence Truth:**
+   - `RollbackMetrics` tracks `rollbackAttempts`, `rollbackSuccesses`, `rollbackFailures`, `rollbackDurabilityFailures`, `rollbackReconciledApplied`, `rollbackReconciledNotApplied`, `rollbackDuplicateWritesPrevented`.
+   - Zero raw preimage data is leaked into telemetry, logs, or analytics.
+
+8. **Expanded Deterministic Evaluation Suite (117 Scenarios Across 21 Categories):**
+   - `recovery-evaluation-harness.ts` expanded to **117 scenarios** across 21 categories (adding Category 20: `ROLLBACK_DURABILITY_SEAL` covering scenarios 111–117).
+   - Evaluates with 100% pass rate and 100% two-run determinism using strict deep equality comparator with zero fake passes.
+   - Negative comparator suite expanded to 18 negative tests asserting discrepancies across all rollback durability failure modes.
+
+9. **Sprint 4C Permanent Closure:**
+   - Sprint 4C, 4C.1, 4C.2, 4C.3, and 4C.4 are PERMANENTLY CLOSED.
+   - Roadmap canonically advances to Sprint 4D — Performance & Large Repositories.

@@ -208,5 +208,16 @@ Sprint 4C.3 — Recovery Resume & Rollback Durability Closure ✅ CLOSED PERMANE
   - Full Monorepo Regressions Clean: 334 tests pass in agent-core, all workspace tests pass across cli, ide-adapter, and vscode-integration, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals.
   - Sprint 4C / 4C.1 / 4C.2 / 4C.3 is PERMANENTLY CLOSED.
 
+Sprint 4C.4 — Rollback Durability Final Seal ✅ CLOSED PERMANENTLY
+  - Mandatory Durability Dependencies: `RollbackManager` strictly requires `operationJournal` and `checkpointStore` in `RollbackManagerOptions`. Non-durable rollback mode is completely eliminated. Missing dependencies fail closed with `status: "FAILED"`, `durabilityFailure: true`, 0 reverse writes, and 0 disk mutations (`T-5200`-`T-5202`).
+  - Fail-Closed Journal History Read: Removed `.catch(() => [])` silent swallow from `getAllOperations(runId)`. Unreadable history fails closed with `status: "FAILED"`, `durabilityFailure: true`, 0 reverse `MutationEngine` calls, 0 PREPARED operations, and 0 workspace changes (`T-5203`-`T-5204`).
+  - 6-Phase Durable Success Lifecycle: `Rollback requested -> Durability dependencies confirmed -> Journal history read successfully -> Rollback PREPARED durable -> Rollback STARTED durable -> MutationEngine reverse mutation -> Rollback COMPLETED durable -> ROLLBACK_COMPLETED checkpoint durable -> Only then report durable rollback success`.
+  - Post-Write Checkpoint Persistence Failure Semantics: Reverse write and `recordCompleted` succeed on disk, but `saveCheckpoint` for `ROLLBACK_COMPLETED` throws -> removed `.catch(() => {})`, returns `status: "RECOVERY_REQUIRED"`, `recoveryRequired: true`, `durabilityFailure: true`, `durableSuccess: false`, `success: false`. Zero same-process replay; restart reconciliation truthfully resolves state (`T-5209`-`T-5210`).
+  - `recordFailed()` Persistence Failure Semantics: Reverse write fails and `recordFailed()` persistence throws -> removed `.catch(() => {})`, returns `status: "RECOVERY_REQUIRED"` and `error: "RECOVERY_PERSISTENCE_FAILED: ..."`. Operation remains conservatively `STARTED` in the journal, zero same-process replay is attempted, and restart reconciliation marks it `NOT_APPLIED` (`T-5212`-`T-5213`).
+  - Exactly-Once Reconciliation & Duplicate Write Prevention: Completed rollback replays with 0 reverse writes; `STARTED` + restored state reconciles to `RECONCILED_APPLIED` with 0 duplicate writes; `STARTED` + not-restored state reconciles to `RECONCILED_NOT_APPLIED` with 0 replay; `STARTED` + divergent state triggers `BLOCKED_DIVERGENCE` / `DIVERGED` with 0 reverse writes (`T-5214`-`T-5217`).
+  - 117 Deterministic Scenarios across 21 Categories: Evaluated by `npm run eval:recovery` across two independent runs with 0 failures, 100% deep strict equality, and 18 negative comparator tests.
+  - Full Monorepo Regressions Clean: All unit and E2E tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals.
+  - Sprint 4C / 4C.1 / 4C.2 / 4C.3 / 4C.4 is PERMANENTLY CLOSED.
+
 Next:
 Sprint 4D — Performance / Large Repositories → NEXT
