@@ -1,18 +1,18 @@
-SPRINT 4C — DURABLE CHECKPOINTS, RECOVERY & SAFE ROLLBACK
+SPRINT 4C / 4C.1 / 4C.2 — DURABLE CHECKPOINTS, RECOVERY & SAFE ROLLBACK
 FINAL CLOSURE REPORT
-Generated: 2026-09-23
+Generated: 2026-09-25
 
 ================================================================================
 SECTION 1 — SPRINT IDENTITY & AUDIT TRAIL
 ================================================================================
 
-Sprint:        Sprint 4C — Durable Checkpoints, Recovery & Safe Rollback
-Status:        ✅ CLOSED
-Date:          2026-09-23
+Sprint:        Sprint 4C (4C, 4C.1, 4C.2) — Fail-Closed Durability & Recovery Evidence Closure
+Status:        ✅ CLOSED PERMANENTLY
+Date:          2026-09-25
 Repo:          /Users/raulm/Desktop/GitHub/Open_VS_Code
-Node:          v20.20.0
-npm:           v10.8.2
-Engines:       >=22.0.0 supported (Node 20+ runtime verified)
+Node:          v22.23.2
+npm:           v10.9.8
+Engines:       >=22.0.0 supported (Node 22.x verified)
 
 Key Deliverables:
 - Recovery contracts & divergence classes: packages/agent-core/src/recovery/contracts.ts
@@ -25,15 +25,16 @@ Key Deliverables:
 - Safe Rollback Manager (delegates to MutationEngine): packages/agent-core/src/recovery/rollback.ts
 - Non-authoritative RecoveryController (planning): packages/agent-core/src/recovery/recovery-controller.ts
 - CheckpointCoordinator orchestrator: packages/agent-core/src/recovery/checkpoint-coordinator.ts
+- Canonical key-sorted JSON serializer: packages/agent-core/src/recovery/canonical-serializer.ts
+- Fail-closed durability gates in AgentRunner: packages/agent-core/src/agent/runner.ts
+- Repair runner durability wiring: packages/agent-core/src/agent/runtime.ts
 - Recovery module export barrel: packages/agent-core/src/recovery/index.ts
 - Agent state & event recovery extensions: packages/agent-core/src/agent/state.ts, events.ts
-- Runner & runtime factory integration: packages/agent-core/src/agent/runner.ts, runtime-factory.ts
-- L0 evaluation recovery checkpoint support: packages/agent-core/src/runtime-evals/evaluators/l0-deterministic.ts
 - Architectural Decision Record: docs/adrs/ADR-025-checkpoints-recovery.md
-- Decision log update: docs/adrs/DECISIONS.md
-- Comprehensive Recovery Evaluation Harness (82 scenarios): packages/agent-core/tests/recovery/recovery-evaluation-harness.ts
-- Recovery Evaluation Test with Strict Determinism & Negative Comparators: packages/agent-core/tests/recovery/recovery-evaluation.test.ts
-- Real Process Boundary Crash Tests (T-4840 / T-4841): packages/agent-core/tests/recovery/crash-process-e2e.test.ts
+- Comprehensive Recovery Evaluation Harness (90 scenarios across 17 categories): packages/agent-core/tests/recovery/recovery-evaluation-harness.ts
+- Recovery Evaluation Test with Strict Determinism & 8 Negative Comparators: packages/agent-core/tests/recovery/recovery-evaluation.test.ts
+- Production Recovery Integration E2E: packages/agent-core/tests/recovery/recovery-integration-e2e.test.ts
+- Real Process Boundary Crash Tests (T-4840, T-4841, T-4842): packages/agent-core/tests/recovery/crash-process-e2e.test.ts
 
 ================================================================================
 SECTION 2 — CORE INVARIANTS & ARCHITECTURAL PRINCIPLES
@@ -50,14 +51,25 @@ SECTION 2 — CORE INVARIANTS & ARCHITECTURAL PRINCIPLES
      reconciled to INTERRUPTED, requiring REVERIFY disposition.
    - Completed verifications are durably preserved without re-running.
 
-2. Strict Authority Separation:
+2. Fail-Closed Durability Gates:
+   - Pre-mutation and pre-verification journal/checkpoint persistence errors immediately halt execution
+     before side effects occur on the filesystem or external processes, failing closed with INTERNAL_ERROR
+     (DURABILITY_UNAVAILABLE).
+   - Post-mutation persistence failure records error, halts execution, but does not replay writes or
+     attempt unverified rollbacks.
+   - Task completion checkpoint failure transitions task status to FAILED with INTERNAL_ERROR instead of
+     reporting durable completion.
+   - RepairOrchestrator propagates CheckpointCoordinator to all sub-runners, guaranteeing full operation
+     journaling for automated repairs.
+
+3. Strict Authority Separation:
    - In strict alignment with ADR-023 §10 and ADR-024 §1, RecoveryController is strictly diagnostic/planning.
    - RecoveryController never executes filesystem writes, spawns shell processes, or grants permissions.
-   - All rollback operations evaluate candidates and propose reverse mutations executed exclusively
+   - All rollback operations evaluate candidates and execute reverse mutations exclusively
      through the authoritative MutationEngine under existing workspace containment boundaries.
    - All verifications execute exclusively through VerificationEngine under security boundaries.
 
-3. Process Epoch Protection Across Restarts:
+4. Process Epoch Protection Across Restarts:
    - Every process lifecycle generates a unique processEpochId via crypto.randomUUID().
    - Checkpoints persist the active processEpochId.
    - On restart (when processEpochId !== checkpoint.processEpochId), any pending approval,
@@ -65,34 +77,34 @@ SECTION 2 — CORE INVARIANTS & ARCHITECTURAL PRINCIPLES
    - RecoveryPlan emits required approval NEW_EPOCH_AUTHORITY_REQUIRED and disposition RECONFIRM.
    - Stale approval tokens cannot be silently reused or replayed across process restarts.
 
-4. Write-Ahead Operation Journal:
+5. Write-Ahead Operation Journal:
    - All stateful mutations, verifications, and external calls write an intent record to an append-only
      JSONL journal before touching the filesystem or invoking processes.
    - Deterministic idempotency key: SHA-256(runId:evidenceVersion:kind:authorityId:intentHash).
    - Deduplication: Reading operations for a run deduplicates entries to their latest lifecycle status.
    - Retry lineage: Retried operations generate fresh execution identities while tracking replacesOperationId.
 
-5. Atomic Checkpoint Store:
+6. Atomic Checkpoint Store:
    - Checkpoints written to temporary files (.tmp.<random>) and atomically renamed.
    - SHA-256 integrity checksum over canonical JSON payload. Corrupt or truncated files fail verification.
    - Schema versioning with fail-closed behavior for unsupported future versions.
    - Bounded retention: CheckpointStore automatically prunes history to retain at most 50 checkpoints per run.
    - Atomic HEAD pointer file tracks the latest sequence.
 
-6. Bounded Recovery Artifact Store:
+7. Bounded Recovery Artifact Store:
    - Original file preimages captured prior to modify/delete mutations.
    - Strict size bounds: single file maximum 8 MiB, run maximum 64 MiB. Exceeding bounds fails closed.
    - Zero telemetry leaks: Preimages are stored exclusively in local recovery directory and are strictly
      prevented from entering model prompts, analytics, or telemetry payloads.
 
-7. Safe Rollback Semantics:
+8. Safe Rollback Semantics:
    - CREATE rollback: Deletes created file if current disk hash matches created postcondition hash.
    - MODIFY rollback: Retrieves captured preimage and applies reverse patch via MutationEngine.
    - DELETE rollback: Retrieves captured preimage and recreates deleted file via MutationEngine.
    - TOCTOU protection: Immediate re-observation of target path prior to rollback write; files modified
      outside the agent turn are classified as DIVERGED and rollback is safely aborted.
 
-8. Fail-Closed Path Safety & Symlink Protection:
+9. Fail-Closed Path Safety & Symlink Protection:
    - assertSafeStoragePath() canonicalizes both storage root and target paths across symlinked temporary
      directories (such as macOS /var -> /private/var).
    - Traversal escapes and symlinks escaping workspace storage boundaries are rejected with SYMLINK_ESCAPE.
@@ -102,15 +114,17 @@ SECTION 3 — VERIFICATION SCORECARD
 ================================================================================
 
 1. Recovery Evaluation Suite (`npm run eval:recovery`):
-   - Total Scenarios: 82
-   - Distinct Categories: 15
-     * CHECKPOINT_INTEGRITY: 9
+   - Total Scenarios: 90
+   - Distinct Categories: 17
+     * CHECKPOINT_INTEGRITY: 11
      * OPERATION_JOURNAL: 8
      * MUTATION_RECONCILIATION: 10
      * VERIFICATION_RECOVERY: 6
+     * DURABILITY_GATE: 4
+     * ROLLBACK: 11
+     * REPAIR: 1
      * APPROVAL_RECOVERY: 6
      * WORKSPACE_DIVERGENCE: 6
-     * ROLLBACK: 10
      * RETRY: 6
      * PAUSE_COMPLETION: 6
      * RUNTIME_EVAL_INTEGRATION: 6
@@ -120,14 +134,20 @@ SECTION 3 — VERIFICATION SCORECARD
      * MODEL_RECOVERY: 1
      * ANALYTICS: 1
    - Runs Evaluated: 2 consecutive runs
-   - Pass Rate: 100% (82/82 passing on Run 1 and Run 2)
-   - Determinism: Run 1 equals Run 2 (`assert.deepStrictEqual(s1, s2)`)
-   - Negative Comparator Tests: 4 distinct failure dimensions verified:
-     * Discrepancies in divergence class trigger assertion failure
-     * Discrepancies in disposition trigger assertion failure
-     * Discrepancies in write replay count trigger assertion failure
-     * Discrepancies in rollback status trigger assertion failure
+   - Pass Rate: 100% (90/90 passing on Run 1 and Run 2)
+   - Determinism: Run 1 equals Run 2 (`isDeepStrictEqual(s1, s2)`)
+   - Negative Comparator Tests: 8 distinct failure dimensions verified:
+     * Status mismatch caught
+     * Write replay count discrepancy caught
+     * Disposition divergence caught
+     * Rollback outcome discrepancy caught
+     * Durability gate failure reason discrepancy caught
+     * Checksum divergence discrepancy caught
+     * Sequence monotonicity mismatch caught
+     * Repair runner coordinator presence discrepancy caught
    - Zero Boolean Proxy Checks: all assertions evaluate concrete actual vs expected values.
+     RecoveryScenarioDefinition completely decouples definition from evaluation; `passed: boolean` is
+     derived strictly via `isDeepStrictEqual(actual, expected)`.
 
 2. Real Process-Boundary Crash Tests (`tests/recovery/crash-process-e2e.test.ts`):
    - T-4840 Mid-write crash: Child process mutates file and crashes before recordCompleted.
@@ -137,6 +157,9 @@ SECTION 3 — VERIFICATION SCORECARD
      Parent process inspects disk, reconciles as RECONCILED_NOT_APPLIED, verified disk content remains original. PASS.
    - Cross-process epoch invalidation: Child process checkpoints approval state. Process 2 restarts
      with distinct epoch, invalidates pending confirmation (NEW_EPOCH_AUTHORITY_REQUIRED, RECONFIRM). PASS.
+   - T-4842 Rollback crash: Child process writes rollback restore file to disk and is forcefully terminated
+     (process.exit(1)) prior to recording journal completion. Process 2 reconciles to RECONCILED_NOT_APPLIED
+     with writeReplayCount = 0 (zero duplicate writes), verifying pre-mutation preimage restored. PASS.
 
 3. Deterministic Coding Agent Benchmark (`npm run eval:coding`):
    - Total Cases: 30
@@ -150,17 +173,22 @@ SECTION 3 — VERIFICATION SCORECARD
    - Average Mutations Applied: 0.9
    - Average Verification Runs: 0.9
 
-4. Monorepo Test Suites (`npm test`):
+4. Runtime Evaluation Benchmark (`npm run eval:runtime`):
+   - Total Scenarios: 111 across 13 categories (12 evaluation + negative tests)
+   - Pass Rate: 100% (111/111 passed deterministically across two runs)
+   - Determinism: Run 1 equals Run 2 with zero discrepancies
+
+5. Monorepo Test Suites (`npm test --workspaces`):
    - All test suites pass across all 4 packages (0 failures):
-     * @open-vs-code/agent-core: 308 unit and integration tests pass
+     * @open-vs-code/agent-core: 315 unit and integration tests pass
      * @open-vs-code/cli: 16 E2E tests pass
      * @open-vs-code/ide-adapter: 5 unit and strict evaluator tests pass
      * @open-vs-code/vscode-integration: 18 smoke, terminal, diff, chat, autocomplete, and security tests pass
    - Total Monorepo Tests: 100% pass rate
 
-5. Static Analysis & Build Hygiene:
+6. Static Analysis & Build Hygiene:
    - TypeScript (`npm run typecheck`): 0 errors across all 4 workspaces (`exactOptionalPropertyTypes: true`).
-   - Lint (`npm run lint`): 0 warnings, 0 errors across 145 files via `oxlint`.
+   - Lint (`npm run lint`): 0 warnings, 0 errors across 147 files via `oxlint`.
    - Build (`npm run build`): Clean build across all packages.
    - Zero Model Weight / Network Downloads: No GGUF, SafeTensors, or cloud requests.
 
@@ -168,14 +196,12 @@ SECTION 3 — VERIFICATION SCORECARD
 SECTION 4 — DOCUMENTATION & STATE UPDATES
 ================================================================================
 
-- docs/adrs/ADR-025-checkpoints-recovery.md: Recorded architectural decision on Durable Checkpoints,
-  Operation Journaling, Truthful Reconciliation Invariants, Authority Separation, Process Epochs,
-  Safe Rollback, and 82 Evaluation Scenarios.
-- docs/adrs/DECISIONS.md: ADR-025 linked.
-- ARCHITECTURE.md: Updated with Durable Checkpoints, Recovery & Safe Rollback subsystem diagram,
-  component boundaries, and recovery lifecycle matrix.
-- PROJECT.md: Sprint 4C marked as ✅ CLOSED, Sprint 4D marked NEXT.
-- PLAN.md: Sprint 4C marked as ✅ CLOSED with comprehensive deliverable summary, Sprint 4D marked NEXT.
+- docs/adrs/ADR-025-checkpoints-recovery.md: Updated with Sprint 4C.2 fail-closed durability gates,
+  strict evidence truth, rollback crash proofs, and 90 evaluation scenarios.
+- docs/adrs/DECISIONS.md: ADR-025 linked and active.
+- ARCHITECTURE.md: Updated with fail-closed durability gates, repair runner propagation, and 90 scenarios.
+- PROJECT.md: Sprint 4C, 4C.1 & 4C.2 marked as ✅ CLOSED PERMANENTLY, Sprint 4D marked NEXT.
+- PLAN.md: Sprint 4C.2 marked as ✅ CLOSED PERMANENTLY with comprehensive deliverable summary, Sprint 4D marked NEXT.
 
 ================================================================================
 SECTION 5 — NEXT SPRINT HAND-OFF
@@ -183,4 +209,4 @@ SECTION 5 — NEXT SPRINT HAND-OFF
 
 Sprint 4C (Durable Checkpoints, Recovery & Safe Rollback) is now officially and permanently CLOSED.
 Next: Sprint 4D — Performance / Large Repositories.
-All invariants, evaluation criteria, safety bounds, and quality gates are completely satisfied.
+All invariants, evaluation criteria, safety bounds, durability gates, and quality gates are completely satisfied.
