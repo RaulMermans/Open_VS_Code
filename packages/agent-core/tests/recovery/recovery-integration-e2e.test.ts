@@ -285,7 +285,6 @@ describe("Sprint 4C.1 — Production Recovery Integration (E2E)", () => {
       assert.strictEqual(resumeRes.failureReason, "INTERNAL_ERROR")
 
       // File on disk must remain uncorrupted and untouched
-      const { readFile } = await import("node:fs/promises")
       const diskContent = await readFile(targetFile, "utf8")
       assert.strictEqual(diskContent, "safe_data\n")
     } finally {

@@ -13,9 +13,11 @@ import {
   OperationJournal,
   RecoveryArtifactStore,
   RecoveryController,
+  RollbackManager,
   CheckpointCoordinator,
   resetProcessEpochId,
   getProcessEpochId,
+  type RollbackCandidate,
   computeOperationIdempotencyKey,
 } from "../../src/recovery/index.ts"
 import { MutationEngine, sha256 } from "../../src/tools/mutation-engine.ts"
@@ -2589,10 +2591,9 @@ export async function runRecoveryEvaluation(): Promise<{
 
       // Scenario 100: Verification recordStarted durability failure blocks VerificationEngine and fails closed
       const { createVerificationToolRegistrations } = await import("../../src/tools/verification-registry.ts")
-      const { ToolRegistry } = await import("../../src/tools/registry.ts")
       await writeFile(join(wsDir, "package.json"), JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }), "utf8")
       const origRecordStartedV = coord.operationJournal.recordStarted.bind(coord.operationJournal)
-      coord.operationJournal.recordStarted = async (opId, rId) => {
+      coord.operationJournal.recordStarted = async () => {
         throw new Error("Journal disk full: cannot recordStarted")
       }
       let verifToolRan = false
@@ -2616,7 +2617,7 @@ export async function runRecoveryEvaluation(): Promise<{
         checkpointCoordinator: coord,
         permissionEvaluator: () => "CONFIRM",
       })
-      const runVRes = await runnerV.run({
+      await runnerV.run({
         workspaceRoot: wsDir,
         task: { id: "run-v-dur-fail", instruction: "test", mode: "BUILD" },
         maxTurns: 3,
@@ -2828,7 +2829,6 @@ export async function runRecoveryEvaluation(): Promise<{
       const target107 = join(wsDir, "mut_start_fail.txt")
       await writeFile(target107, "initial\n", "utf8")
       const coord107 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
-      const origRecordStarted107 = coord107.operationJournal.recordStarted.bind(coord107.operationJournal)
       coord107.operationJournal.recordStarted = async () => {
         throw new Error("Disk full: cannot recordStarted mutation")
       }
@@ -2838,8 +2838,6 @@ export async function runRecoveryEvaluation(): Promise<{
         mutEngineCalled107 = true
         return origApply107(...args)
       }
-      const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
-      const { ToolRegistry } = await import("../../src/tools/registry.ts")
       const runner107 = new AgentRunner({
         provider: new ScriptedModelProvider([
           { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "mut_start_fail.txt", search: "initial", replace: "updated" } }] },
@@ -2870,7 +2868,6 @@ export async function runRecoveryEvaluation(): Promise<{
       const target108 = join(wsDir, "mut_recfail.txt")
       await writeFile(target108, "initial\n", "utf8")
       const coord108 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
-      const origRecordFailed108 = coord108.operationJournal.recordFailed.bind(coord108.operationJournal)
       coord108.operationJournal.recordFailed = async () => {
         throw new Error("Disk full: cannot recordFailed mutation")
       }
@@ -2912,7 +2909,6 @@ export async function runRecoveryEvaluation(): Promise<{
 
       // Scenario 109: Verification failure + recordFailed failure stops execution immediately fail closed
       const coord109 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
-      const origRecordFailed109 = coord109.operationJournal.recordFailed.bind(coord109.operationJournal)
       coord109.operationJournal.recordFailed = async () => {
         throw new Error("Disk full: cannot recordFailed verification")
       }
@@ -2967,6 +2963,307 @@ export async function runRecoveryEvaluation(): Promise<{
           duplicatesPrevented: metrics110.rollbackDuplicateWritesPrevented,
           persistenceFailures: metrics110.recoveryPersistenceFailures,
         },
+      })
+    }
+
+    // ----------------------------------------------------
+    // CATEGORY 20: ROLLBACK_DURABILITY_SEAL (Scenarios 111 - 117)
+    // ----------------------------------------------------
+    {
+      const wsDir = join(baseTmp, "ws_rb_seal")
+      await mkdir(wsDir, { recursive: true })
+      const mutationEngine = new MutationEngine(wsDir)
+      const coord = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+
+      // Scenario 111: RollbackManager without durability dependencies fails closed
+      mutationEngine.resetStepCounter()
+      const noDurManager = new RollbackManager({
+        mutationEngine,
+        artifactStore: coord.artifactStore,
+        operationJournal: undefined as any,
+        checkpointStore: undefined as any,
+      })
+      const cand111: RollbackCandidate = {
+        mutationId: "cand-111",
+        operationId: "op-111",
+        path: join(wsDir, "f111.txt"),
+        beforeHash: sha256("before"),
+        afterHash: sha256("after"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      let writes111 = 0
+      const origRollback111 = mutationEngine.rollback.bind(mutationEngine)
+      mutationEngine.rollback = async (...args) => {
+        writes111++
+        return origRollback111(...args)
+      }
+      const res111 = await noDurManager.executeRollback("run-seal-111", cand111)
+      mutationEngine.rollback = origRollback111
+
+      scenarioDefs.push({
+        id: "REC-RBSEAL-01",
+        category: "ROLLBACK_DURABILITY_SEAL",
+        description: "RollbackManager without durability dependencies fails closed with zero reverse writes",
+        expected: { success: false, durableSuccess: false, durabilityFailure: true, reverseWrites: 0 },
+        actual: { success: res111.success, durableSuccess: res111.durableSuccess, durabilityFailure: res111.durabilityFailure, reverseWrites: writes111 },
+      })
+
+      // Scenario 112: Journal history read failure aborts rollback without reverse writes or PREPARED op
+      mutationEngine.resetStepCounter()
+      const file112 = join(wsDir, "f112.txt")
+      await writeFile(file112, "v1", "utf8")
+      const op112 = await coord.prepareOperation({
+        runId: "run-seal-112",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file112, expectedHash: sha256("v1"), exists: true }],
+        expectedPostconditions: [{ path: file112, expectedHash: sha256("v2"), exists: true }],
+      })
+      await coord.savePreimage("run-seal-112", op112.operationId, file112, "v1")
+      await writeFile(file112, "v2", "utf8")
+      await coord.operationJournal.recordCompleted(op112.operationId, "run-seal-112")
+
+      const cand112: RollbackCandidate = {
+        mutationId: op112.operationId,
+        operationId: op112.operationId,
+        path: file112,
+        beforeHash: sha256("v1"),
+        afterHash: sha256("v2"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      const origGetAll112 = coord.operationJournal.getAllOperations.bind(coord.operationJournal)
+      coord.operationJournal.getAllOperations = async () => {
+        throw new Error("Journal unreadable")
+      }
+      let writes112 = 0
+      mutationEngine.rollback = async (...args) => {
+        writes112++
+        return origRollback111(...args)
+      }
+      const res112 = await coord.recoveryController.rollbackManager.executeRollback("run-seal-112", cand112)
+      coord.operationJournal.getAllOperations = origGetAll112
+      mutationEngine.rollback = origRollback111
+
+      scenarioDefs.push({
+        id: "REC-RBSEAL-02",
+        category: "ROLLBACK_DURABILITY_SEAL",
+        description: "Journal history read failure aborts rollback with zero reverse writes and durability failure",
+        expected: { success: false, durableSuccess: false, durabilityFailure: true, reverseWrites: 0 },
+        actual: { success: res112.success, durableSuccess: res112.durableSuccess, durabilityFailure: res112.durabilityFailure, reverseWrites: writes112 },
+      })
+
+      // Scenario 113: Reverse mutation succeeds but recordCompleted fails -> RECOVERY_REQUIRED with zero replay
+      mutationEngine.resetStepCounter()
+      const file113 = join(wsDir, "f113.txt")
+      await writeFile(file113, "orig113", "utf8")
+      const op113 = await coord.prepareOperation({
+        runId: "run-seal-113",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file113, expectedHash: sha256("orig113"), exists: true }],
+        expectedPostconditions: [{ path: file113, expectedHash: sha256("mut113"), exists: true }],
+      })
+      await coord.savePreimage("run-seal-113", op113.operationId, file113, "orig113")
+      await writeFile(file113, "mut113", "utf8")
+      await coord.operationJournal.recordCompleted(op113.operationId, "run-seal-113")
+
+      const cand113: RollbackCandidate = {
+        mutationId: op113.operationId,
+        operationId: op113.operationId,
+        path: file113,
+        beforeHash: sha256("orig113"),
+        afterHash: sha256("mut113"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      let writes113 = 0
+      mutationEngine.rollback = async (...args) => {
+        writes113++
+        return origRollback111(...args)
+      }
+      const origComp113 = coord.operationJournal.recordCompleted.bind(coord.operationJournal)
+      coord.operationJournal.recordCompleted = async (id, r, resId) => {
+        if (id.startsWith("op_rb_")) throw new Error("recordCompleted failed")
+        return origComp113(id, r, resId)
+      }
+      const res113 = await coord.recoveryController.rollbackManager.executeRollback("run-seal-113", cand113)
+      // Second attempt must not write again
+      await coord.recoveryController.rollbackManager.executeRollback("run-seal-113", cand113)
+      coord.operationJournal.recordCompleted = origComp113
+      mutationEngine.rollback = origRollback111
+
+      scenarioDefs.push({
+        id: "REC-RBSEAL-03",
+        category: "ROLLBACK_DURABILITY_SEAL",
+        description: "recordCompleted persistence failure returns RECOVERY_REQUIRED with exactly 1 reverse write and zero replay",
+        expected: { success: false, durableSuccess: false, recoveryRequired: true, status: "RECOVERY_REQUIRED", reverseWrites: 1 },
+        actual: { success: res113.success, durableSuccess: res113.durableSuccess, recoveryRequired: res113.recoveryRequired, status: res113.status, reverseWrites: writes113 },
+      })
+
+      // Scenario 114: Final ROLLBACK_COMPLETED checkpoint failure returns RECOVERY_REQUIRED with zero replay
+      mutationEngine.resetStepCounter()
+      const file114 = join(wsDir, "f114.txt")
+      await writeFile(file114, "orig114", "utf8")
+      const op114 = await coord.prepareOperation({
+        runId: "run-seal-114",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file114, expectedHash: sha256("orig114"), exists: true }],
+        expectedPostconditions: [{ path: file114, expectedHash: sha256("mut114"), exists: true }],
+      })
+      await coord.savePreimage("run-seal-114", op114.operationId, file114, "orig114")
+      await writeFile(file114, "mut114", "utf8")
+      await coord.operationJournal.recordCompleted(op114.operationId, "run-seal-114")
+
+      const cand114: RollbackCandidate = {
+        mutationId: op114.operationId,
+        operationId: op114.operationId,
+        path: file114,
+        beforeHash: sha256("orig114"),
+        afterHash: sha256("mut114"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      let writes114 = 0
+      mutationEngine.rollback = async (...args) => {
+        writes114++
+        return origRollback111(...args)
+      }
+      const origSaveCp114 = coord.checkpointStore.saveCheckpoint.bind(coord.checkpointStore)
+      coord.checkpointStore.saveCheckpoint = async (r) => {
+        if (r.reason === "ROLLBACK_COMPLETED") throw new Error("checkpoint failed")
+        return origSaveCp114(r)
+      }
+      const res114 = await coord.recoveryController.rollbackManager.executeRollback("run-seal-114", cand114)
+      await coord.recoveryController.rollbackManager.executeRollback("run-seal-114", cand114)
+      coord.checkpointStore.saveCheckpoint = origSaveCp114
+      mutationEngine.rollback = origRollback111
+
+      scenarioDefs.push({
+        id: "REC-RBSEAL-04",
+        category: "ROLLBACK_DURABILITY_SEAL",
+        description: "ROLLBACK_COMPLETED checkpoint failure returns RECOVERY_REQUIRED with zero replay",
+        expected: { success: false, durableSuccess: false, recoveryRequired: true, status: "RECOVERY_REQUIRED", reverseWrites: 1 },
+        actual: { success: res114.success, durableSuccess: res114.durableSuccess, recoveryRequired: res114.recoveryRequired, status: res114.status, reverseWrites: writes114 },
+      })
+
+      // Scenario 115: Reverse mutation fails and recordFailed also fails -> RECOVERY_REQUIRED, leaves conservative STARTED state
+      mutationEngine.resetStepCounter()
+      const file115 = join(wsDir, "f115.txt")
+      await writeFile(file115, "mut115", "utf8")
+      await coord.savePreimage("run-seal-115", "op-115", file115, "orig115")
+      const cand115: RollbackCandidate = {
+        mutationId: "mut-115",
+        operationId: "op-115",
+        path: file115,
+        beforeHash: sha256("orig115"),
+        afterHash: sha256("mut115"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      mutationEngine.rollback = async () => { throw new Error("engine failure") }
+      const origRecordFailed115 = coord.operationJournal.recordFailed.bind(coord.operationJournal)
+      coord.operationJournal.recordFailed = async () => { throw new Error("recordFailed failed") }
+      const res115 = await coord.recoveryController.rollbackManager.executeRollback("run-seal-115", cand115)
+      coord.operationJournal.recordFailed = origRecordFailed115
+      mutationEngine.rollback = origRollback111
+
+      const ops115 = await coord.operationJournal.getAllOperations("run-seal-115")
+      const rbOp115 = ops115.find((o) => o.kind === "ROLLBACK_MUTATION")
+
+      scenarioDefs.push({
+        id: "REC-RBSEAL-05",
+        category: "ROLLBACK_DURABILITY_SEAL",
+        description: "Reverse mutation fails and recordFailed fails -> RECOVERY_REQUIRED with conservative STARTED state",
+        expected: { success: false, status: "RECOVERY_REQUIRED", recoveryRequired: true, opStatus: "STARTED" },
+        actual: { success: res115.success, status: res115.status, recoveryRequired: res115.recoveryRequired, opStatus: rbOp115?.status },
+      })
+
+      // Scenario 116: Full lifecycle durable success passing all 6 phases
+      mutationEngine.resetStepCounter()
+      const file116 = join(wsDir, "f116.txt")
+      await writeFile(file116, "orig116", "utf8")
+      const op116 = await coord.prepareOperation({
+        runId: "run-seal-116",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file116, expectedHash: sha256("orig116"), exists: true }],
+        expectedPostconditions: [{ path: file116, expectedHash: sha256("mut116"), exists: true }],
+      })
+      await coord.savePreimage("run-seal-116", op116.operationId, file116, "orig116")
+      await writeFile(file116, "mut116", "utf8")
+      await coord.operationJournal.recordCompleted(op116.operationId, "run-seal-116")
+
+      const cand116: RollbackCandidate = {
+        mutationId: op116.operationId,
+        operationId: op116.operationId,
+        path: file116,
+        beforeHash: sha256("orig116"),
+        afterHash: sha256("mut116"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      const res116 = await coord.recoveryController.rollbackManager.executeRollback("run-seal-116", cand116)
+      const latestCp116 = await coord.checkpointStore.getLatestCheckpoint("run-seal-116")
+
+      scenarioDefs.push({
+        id: "REC-RBSEAL-06",
+        category: "ROLLBACK_DURABILITY_SEAL",
+        description: "Full lifecycle rollback achieves durable success with ROLLBACK_COMPLETED checkpoint",
+        expected: { success: true, durableSuccess: true, status: "ROLLED_BACK", checkpointReason: "ROLLBACK_COMPLETED" },
+        actual: { success: res116.success, durableSuccess: res116.durableSuccess, status: res116.status, checkpointReason: latestCp116?.reason },
+      })
+
+      // Scenario 117: Checkpoint failure analytics increments durability failures without falsely incrementing successes
+      const metricsBefore = coord.recoveryController.rollbackManager.metrics
+      mutationEngine.resetStepCounter()
+      const file117 = join(wsDir, "f117.txt")
+      await writeFile(file117, "orig117", "utf8")
+      const op117 = await coord.prepareOperation({
+        runId: "run-seal-117",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file117, expectedHash: sha256("orig117"), exists: true }],
+        expectedPostconditions: [{ path: file117, expectedHash: sha256("mut117"), exists: true }],
+      })
+      await coord.savePreimage("run-seal-117", op117.operationId, file117, "orig117")
+      await writeFile(file117, "mut117", "utf8")
+      await coord.operationJournal.recordCompleted(op117.operationId, "run-seal-117")
+
+      const cand117: RollbackCandidate = {
+        mutationId: op117.operationId,
+        operationId: op117.operationId,
+        path: file117,
+        beforeHash: sha256("orig117"),
+        afterHash: sha256("mut117"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      const origSaveCp117 = coord.checkpointStore.saveCheckpoint.bind(coord.checkpointStore)
+      coord.checkpointStore.saveCheckpoint = async (r) => {
+        if (r.reason === "ROLLBACK_COMPLETED") throw new Error("checkpoint failed")
+        return origSaveCp117(r)
+      }
+      await coord.recoveryController.rollbackManager.executeRollback("run-seal-117", cand117)
+      coord.checkpointStore.saveCheckpoint = origSaveCp117
+
+      const metricsAfter = coord.recoveryController.rollbackManager.metrics
+      const diffSuccesses = metricsAfter.rollbackSuccesses - metricsBefore.rollbackSuccesses
+      const diffDurFailures = metricsAfter.rollbackDurabilityFailures - metricsBefore.rollbackDurabilityFailures
+
+      scenarioDefs.push({
+        id: "REC-RBSEAL-07",
+        category: "ROLLBACK_DURABILITY_SEAL",
+        description: "Rollback analytics accurately records durability failure without false success on checkpoint failure",
+        expected: { successesAdded: 0, durabilityFailuresAdded: 1 },
+        actual: { successesAdded: diffSuccesses, durabilityFailuresAdded: diffDurFailures },
       })
     }
   } finally {

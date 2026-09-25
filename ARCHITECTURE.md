@@ -423,12 +423,41 @@ Sprint 4C adds durable write-ahead journaling, atomic checkpointing, and determi
 +-------------------------------------------------------------------------------+
 ```
 
+### Rollback Durability Lifecycle (Sprint 4C.4)
+
+```text
+Rollback request
+   ↓
+Durability dependencies available?
+   ├ NO → FAIL CLOSED
+   ↓ YES
+Read operation history
+   ├ FAIL → FAIL CLOSED
+   ↓
+PREPARED
+   ↓
+STARTED
+   ↓
+MutationEngine (reverse write)
+   ↓
+COMPLETED
+   ↓
+ROLLBACK_COMPLETED checkpoint
+   ↓
+DURABLE SUCCESS
+
+If failure after MutationEngine:
+RECOVERY REQUIRED
+→ NO REPLAY
+→ reconcile on restart.
+```
+
 - **Observed State Dictates Recovery**: Mutation reconciliation directly inspects disk files against precondition and expected postcondition SHA-256 hashes (`RECONCILED_APPLIED` with write replay count = 0, `RECONCILED_NOT_APPLIED`, or `AMBIGUOUS`). Interrupted verifications are never assumed to have passed (`INTERRUPTED` yielding `REVERIFY`). Completed verifications survive restart without being misclassified.
-- **Fail-Closed Durability Gates**: Pre-mutation and pre-verification journal/checkpoint persistence errors immediately halt execution before side-effects with `INTERNAL_ERROR` (`DURABILITY_UNAVAILABLE`). `resumeFromRecovery()` fails closed on `RECOVERY_RECONCILED` checkpoint persistence failure (`RECOVERY_PERSISTENCE_FAILED`). If `recordFailed()` persistence fails after an operation is `STARTED`, execution fails closed immediately. Completion checkpoints fail closed.
-- **First-Class Write-Ahead Rollback Journaling**: Rollback operations are first-class journal entries (`ROLLBACK_MUTATION`) with authority `"mutation-engine"`. Rollback adheres strictly to write-ahead journaling (`PREPARED -> STARTED -> MutationEngine -> COMPLETED -> Checkpoint`), suppresses duplicate reverse writes with 0 calls when disk is already restored, and fails with `DIVERGED` if disk state changed.
+- **Fail-Closed Durability Gates**: Pre-mutation, pre-verification, and pre-rollback journal/checkpoint persistence errors immediately halt execution before side-effects with `INTERNAL_ERROR` (`DURABILITY_UNAVAILABLE`). `resumeFromRecovery()` fails closed on `RECOVERY_RECONCILED` checkpoint persistence failure (`RECOVERY_PERSISTENCE_FAILED`). If `recordFailed()` persistence fails after an operation is `STARTED`, execution fails closed immediately and the journal remains conservatively `STARTED`. Post-mutation or post-rollback completion checkpoint failures fail closed (`RECOVERY_REQUIRED`, 0 duplicate writes).
+- **First-Class Write-Ahead Rollback Journaling**: Rollback operations are first-class journal entries (`ROLLBACK_MUTATION`) with authority `"mutation-engine"`. Rollback adheres strictly to the 6-phase write-ahead lifecycle (`Dependencies -> History -> PREPARED -> STARTED -> MutationEngine -> COMPLETED -> Checkpoint`), suppresses duplicate reverse writes with 0 calls when disk is already restored, and fails with `DIVERGED` if disk state changed.
 - **Repair Runner Propagation**: `RepairOrchestrator` propagates `CheckpointCoordinator` to all sub-runners, guaranteeing full operation journaling for automated repairs.
-- **Separation of Authorities**: `RecoveryController` is strictly non-authoritative; it never performs filesystem writes or spawns processes. Rollbacks route through `MutationEngine`, and verifications route through `VerificationEngine`.
+- **Separation of Authorities**: `RecoveryController` and `RollbackManager` are strictly non-authoritative for disk mutations; they never perform direct workspace filesystem writes. Rollbacks route exclusively through `MutationEngine`, and verifications route through `VerificationEngine`.
 - **Process Epoch Protection**: Every process invocation instantiates a unique `processEpochId`. Stale approvals from prior epochs are invalidated across process restarts (`NEW_EPOCH_AUTHORITY_REQUIRED`), preventing unauthorized execution.
 - **Fail-Closed Path Safety**: All storage operations are checked against `assertSafeStoragePath` ensuring strict workspace containment and symlink escape rejection.
-- **Two-Run Determinism & Process-Boundary Crashes**: 110 scenarios across 19 categories verified by `npm run eval:recovery` with deep equality, 13 negative comparator tests, and real process-boundary crash tests (`T-4840`, `T-4841`, `T-5114`-`T-5117`).
+- **Two-Run Determinism & Process-Boundary Crashes**: 117 scenarios across 21 categories verified by `npm run eval:recovery` with deep equality, 18 negative comparator tests, and real process-boundary crash tests (`T-4840`, `T-4841`, `T-5114`-`T-5117`, `T-5200`-`T-5222`).
 See [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) for full architectural specification.

@@ -151,6 +151,61 @@ describe("Sprint 4C — Recovery Evaluation & Strict Determinism", () => {
       },
       { name: "AssertionError" }
     )
+
+    // Negative comparator test 14 (T-5221): journalReadFailure write count mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { journalReadFailure: true, reverseWrites: 0 },
+          { journalReadFailure: true, reverseWrites: 1 }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 15 (T-5221): checkpointFailure durableSuccess mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { checkpointFailure: true, durableSuccess: false },
+          { checkpointFailure: true, durableSuccess: true }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 16 (T-5221): recordFailedFailure recoveryRequired mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { recordFailedFailure: true, recoveryRequired: true },
+          { recordFailedFailure: true, recoveryRequired: false }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 17 (T-5221): duplicateRollbackCalls mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { duplicateRollbackCalls: 0, duplicateReverseWrites: 0 },
+          { duplicateRollbackCalls: 1, duplicateReverseWrites: 1 }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 18 (T-5221): rollback reconciliation result mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { rollbackStatus: "STARTED", reconciledStatus: "RECONCILED_APPLIED" },
+          { rollbackStatus: "STARTED", reconciledStatus: "RECONCILED_NOT_APPLIED" }
+        )
+      },
+      { name: "AssertionError" }
+    )
   })
 
   test("Run 1: Evaluate all recovery scenarios", async () => {

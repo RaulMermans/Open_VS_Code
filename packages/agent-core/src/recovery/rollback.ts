@@ -17,19 +17,34 @@ import { OperationJournal, computeOperationIdempotencyKey, computeIntentHash } f
 import { CheckpointStore } from "./checkpoint-store.ts"
 import { getProcessEpochId } from "./process-epoch.ts"
 
+export type RollbackExecutionStatus = "ROLLED_BACK" | "FAILED" | "DIVERGED" | "RECOVERY_REQUIRED"
+
 export interface RollbackExecutionResult {
   readonly success: boolean
+  readonly durableSuccess: boolean
   readonly path: string
-  readonly status: "ROLLED_BACK" | "FAILED" | "DIVERGED"
+  readonly status: RollbackExecutionStatus
   readonly rollbackOperationId?: string | undefined
   readonly error?: string | undefined
+  readonly durabilityFailure?: boolean
+  readonly recoveryRequired?: boolean
+}
+
+export interface RollbackMetrics {
+  rollbackAttempts: number
+  rollbackSuccesses: number
+  rollbackFailures: number
+  rollbackDurabilityFailures: number
+  rollbackReconciledApplied: number
+  rollbackReconciledNotApplied: number
+  rollbackDuplicateWritesPrevented: number
 }
 
 export interface RollbackManagerOptions {
   readonly mutationEngine: MutationEngine
   readonly artifactStore: RecoveryArtifactStore
-  readonly operationJournal?: OperationJournal
-  readonly checkpointStore?: CheckpointStore
+  readonly operationJournal: OperationJournal
+  readonly checkpointStore: CheckpointStore
 }
 
 export class RollbackManager {
@@ -37,6 +52,15 @@ export class RollbackManager {
   readonly #artifactStore: RecoveryArtifactStore
   readonly #operationJournal: OperationJournal | undefined
   readonly #checkpointStore: CheckpointStore | undefined
+  readonly #metrics: RollbackMetrics = {
+    rollbackAttempts: 0,
+    rollbackSuccesses: 0,
+    rollbackFailures: 0,
+    rollbackDurabilityFailures: 0,
+    rollbackReconciledApplied: 0,
+    rollbackReconciledNotApplied: 0,
+    rollbackDuplicateWritesPrevented: 0,
+  }
 
   constructor(
     mutationEngineOrOptions: MutationEngine | RollbackManagerOptions,
@@ -55,6 +79,10 @@ export class RollbackManager {
       this.#operationJournal = operationJournal
       this.#checkpointStore = checkpointStore
     }
+  }
+
+  get metrics(): Readonly<RollbackMetrics> {
+    return { ...this.#metrics }
   }
 
   /**
@@ -166,18 +194,57 @@ export class RollbackManager {
 
   /**
    * Execute rollback through canonical MutationEngine authority
-   * Proposes reverse mutation to MutationEngine.
+   * Proposes reverse mutation to MutationEngine with fail-closed write-ahead durability.
    */
   async executeRollback(
     runId: string,
     candidate: RollbackCandidate
   ): Promise<RollbackExecutionResult> {
-    if (!candidate.safeToRollback) {
+    this.#metrics.rollbackAttempts++
+
+    // Fail closed if durability infrastructure is missing
+    if (!this.#operationJournal || !this.#checkpointStore) {
+      this.#metrics.rollbackFailures++
+      this.#metrics.rollbackDurabilityFailures++
       return {
         success: false,
+        durableSuccess: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: "DURABILITY_UNAVAILABLE: Rollback requires active OperationJournal and CheckpointStore",
+        durabilityFailure: true,
+        recoveryRequired: false,
+      }
+    }
+
+    if (!candidate.safeToRollback) {
+      this.#metrics.rollbackFailures++
+      return {
+        success: false,
+        durableSuccess: false,
         path: candidate.path,
         status: "DIVERGED",
         error: candidate.reason ?? "File is not safe to roll back",
+        durabilityFailure: false,
+        recoveryRequired: false,
+      }
+    }
+
+    // Fail closed if journal history lookup fails
+    let existingOps: RecoveryOperation[]
+    try {
+      existingOps = await this.#operationJournal.getAllOperations(runId)
+    } catch (err: any) {
+      this.#metrics.rollbackFailures++
+      this.#metrics.rollbackDurabilityFailures++
+      return {
+        success: false,
+        durableSuccess: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: `DURABILITY_UNAVAILABLE: Failed to read operation journal history: ${err instanceof Error ? err.message : String(err)}`,
+        durabilityFailure: true,
+        recoveryRequired: false,
       }
     }
 
@@ -188,29 +255,73 @@ export class RollbackManager {
     const isCreateRollback = candidate.beforeHash === ""
     const isDeleteRollback = candidate.afterHash === ""
     const isModifyRollback = !isCreateRollback && !isDeleteRollback
+    const isAlreadyRestored = isCreateRollback
+      ? !obs.exists
+      : isDeleteRollback
+      ? obs.exists && obs.hash === candidate.beforeHash
+      : obs.exists && obs.hash === candidate.beforeHash
 
-    // Check duplicate suppression if operationJournal is available and disk is already restored:
-    if (this.#operationJournal) {
-      const existingOps: RecoveryOperation[] = await this.#operationJournal.getAllOperations(runId).catch(() => [])
-      const alreadyCompleted = existingOps.find(
-        (op: RecoveryOperation) =>
-          op.kind === "ROLLBACK_MUTATION" &&
-          (op.payload as any)?.originatingOperationId === candidate.operationId &&
-          (op.status === "COMPLETED" || op.status === "RECONCILED_APPLIED")
-      )
-      if (alreadyCompleted) {
-        const isAlreadyRestored = isCreateRollback
-          ? !obs.exists
-          : isDeleteRollback
-          ? obs.exists && obs.hash === candidate.beforeHash
-          : obs.exists && obs.hash === candidate.beforeHash
+    // Duplicate suppression & prior operation status check
+    const priorRollbackOp = existingOps.find(
+      (op: RecoveryOperation) =>
+        op.kind === "ROLLBACK_MUTATION" &&
+        (op.payload as any)?.originatingOperationId === candidate.operationId
+    )
 
+    if (priorRollbackOp) {
+      if (priorRollbackOp.status === "COMPLETED" || priorRollbackOp.status === "RECONCILED_APPLIED") {
         if (isAlreadyRestored) {
+          this.#metrics.rollbackDuplicateWritesPrevented++
+          this.#metrics.rollbackReconciledApplied++
+          this.#metrics.rollbackSuccesses++
           return {
             success: true,
+            durableSuccess: true,
             path: candidate.path,
             status: "ROLLED_BACK",
-            rollbackOperationId: alreadyCompleted.operationId,
+            rollbackOperationId: priorRollbackOp.operationId,
+            durabilityFailure: false,
+            recoveryRequired: false,
+          }
+        } else {
+          this.#metrics.rollbackFailures++
+          return {
+            success: false,
+            durableSuccess: false,
+            path: candidate.path,
+            status: "DIVERGED",
+            error: "Rollback was previously completed but disk has diverged from restored state",
+            durabilityFailure: false,
+            recoveryRequired: false,
+          }
+        }
+      }
+
+      if (priorRollbackOp.status === "STARTED") {
+        if (isAlreadyRestored) {
+          this.#metrics.rollbackDuplicateWritesPrevented++
+          this.#metrics.rollbackReconciledApplied++
+          this.#metrics.rollbackSuccesses++
+          return {
+            success: true,
+            durableSuccess: true,
+            path: candidate.path,
+            status: "ROLLED_BACK",
+            rollbackOperationId: priorRollbackOp.operationId,
+            durabilityFailure: false,
+            recoveryRequired: false,
+          }
+        } else {
+          this.#metrics.rollbackFailures++
+          this.#metrics.rollbackReconciledNotApplied++
+          return {
+            success: false,
+            durableSuccess: false,
+            path: candidate.path,
+            status: "FAILED",
+            error: "RECOVERY_REQUIRED: Prior rollback operation is in STARTED state and disk is not restored. Canonical recovery required.",
+            durabilityFailure: false,
+            recoveryRequired: true,
           }
         }
       }
@@ -219,30 +330,42 @@ export class RollbackManager {
     // Validate current disk state before rollback
     if (isCreateRollback) {
       if (obs.hash !== candidate.afterHash) {
+        this.#metrics.rollbackFailures++
         return {
           success: false,
+          durableSuccess: false,
           path: candidate.path,
           status: "DIVERGED",
           error: "Current file content has diverged from expected post-creation state",
+          durabilityFailure: false,
+          recoveryRequired: false,
         }
       }
     } else if (isDeleteRollback) {
       if (obs.exists) {
+        this.#metrics.rollbackFailures++
         return {
           success: false,
+          durableSuccess: false,
           path: candidate.path,
           status: "DIVERGED",
           error: "Cannot restore deleted file: path already exists on disk",
+          durabilityFailure: false,
+          recoveryRequired: false,
         }
       }
     } else {
       // isModifyRollback
       if (obs.hash !== candidate.afterHash) {
+        this.#metrics.rollbackFailures++
         return {
           success: false,
+          durableSuccess: false,
           path: candidate.path,
           status: "DIVERGED",
           error: `File diverged before rollback: expected ${candidate.afterHash.slice(0, 8)}, got ${obs.hash.slice(0, 8)}`,
+          durabilityFailure: false,
+          recoveryRequired: false,
         }
       }
     }
@@ -253,20 +376,28 @@ export class RollbackManager {
     if (isDeleteRollback || isModifyRollback) {
       artifactMeta = await this.#artifactStore.findArtifactForOperation(runId, candidate.operationId)
       if (!artifactMeta) {
+        this.#metrics.rollbackFailures++
         return {
           success: false,
+          durableSuccess: false,
           path: candidate.path,
           status: "FAILED",
           error: "Recovery artifact preimage not found in storage",
+          durabilityFailure: false,
+          recoveryRequired: false,
         }
       }
       preimage = await this.#artifactStore.getPreimage(runId, artifactMeta.artifactId)
       if (!preimage) {
+        this.#metrics.rollbackFailures++
         return {
           success: false,
+          durableSuccess: false,
           path: candidate.path,
           status: "FAILED",
           error: "Could not read recovery preimage bytes",
+          durabilityFailure: false,
+          recoveryRequired: false,
         }
       }
     }
@@ -288,79 +419,103 @@ export class RollbackManager {
     }
 
     // Write-Ahead Journaling: PREPARED & STARTED
-    let rollbackOpId: string | undefined
-    if (this.#operationJournal) {
-      const latestCp = this.#checkpointStore
-        ? await this.#checkpointStore.getLatestCheckpoint(runId).catch(() => null)
-        : null
-      const evidenceVersion = (latestCp?.evidenceVersion ?? 0) + 1
-      rollbackOpId = `op_rb_${candidate.operationId.replace(/^op_/, "").slice(0, 8)}_${randomUUID().slice(0, 6)}`
-
-      const payload: Record<string, unknown> = {
-        originatingOperationId: candidate.operationId,
-        originatingMutationId: candidate.mutationId,
-        targetPath: candidate.path,
-        expectedCurrentHash: candidate.afterHash,
-        expectedRestoredHash: candidate.beforeHash,
-        isRollback: true,
-        ...(artifactMeta ? { artifactId: artifactMeta.artifactId } : {}),
+    let latestCp: any = null
+    try {
+      latestCp = await this.#checkpointStore.getLatestCheckpoint(runId)
+    } catch (err: any) {
+      this.#metrics.rollbackFailures++
+      this.#metrics.rollbackDurabilityFailures++
+      return {
+        success: false,
+        durableSuccess: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: `DURABILITY_UNAVAILABLE: Failed to read latest checkpoint: ${err instanceof Error ? err.message : String(err)}`,
+        durabilityFailure: true,
+        recoveryRequired: false,
       }
+    }
 
-      const intentHash = computeIntentHash({
+    const evidenceVersion = (latestCp?.evidenceVersion ?? 0) + 1
+    const rollbackOpId = `op_rb_${candidate.operationId.replace(/^op_/, "").slice(0, 8)}_${randomUUID().slice(0, 6)}`
+
+    const payload: Record<string, unknown> = {
+      originatingOperationId: candidate.operationId,
+      originatingMutationId: candidate.mutationId,
+      targetPath: candidate.path,
+      expectedCurrentHash: candidate.afterHash,
+      expectedRestoredHash: candidate.beforeHash,
+      isRollback: true,
+      ...(artifactMeta ? { artifactId: artifactMeta.artifactId } : {}),
+    }
+
+    const intentHash = computeIntentHash({
+      kind: "ROLLBACK_MUTATION",
+      preconditions,
+      expectedPostconditions,
+      payload,
+    })
+
+    const idempotencyKey = computeOperationIdempotencyKey(
+      runId,
+      evidenceVersion,
+      "ROLLBACK_MUTATION",
+      "mutation-engine",
+      intentHash
+    )
+
+    try {
+      await this.#operationJournal.recordPrepared({
+        schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+        operationId: rollbackOpId,
+        idempotencyKey,
+        runId,
+        processEpochId: getProcessEpochId(),
+        checkpointId: latestCp?.checkpointId ?? "init",
+        evidenceVersion,
         kind: "ROLLBACK_MUTATION",
+        authorityId: "mutation-engine",
+        intentHash,
         preconditions,
         expectedPostconditions,
         payload,
       })
-
-      const idempotencyKey = computeOperationIdempotencyKey(
-        runId,
-        evidenceVersion,
-        "ROLLBACK_MUTATION",
-        "mutation-engine",
-        intentHash
-      )
-
-      try {
-        await this.#operationJournal.recordPrepared({
-          schemaVersion: CHECKPOINT_SCHEMA_VERSION,
-          operationId: rollbackOpId,
-          idempotencyKey,
-          runId,
-          processEpochId: getProcessEpochId(),
-          checkpointId: latestCp?.checkpointId ?? "init",
-          evidenceVersion,
-          kind: "ROLLBACK_MUTATION",
-          authorityId: "mutation-engine",
-          intentHash,
-          preconditions,
-          expectedPostconditions,
-          payload,
-        })
-      } catch (err) {
-        return {
-          success: false,
-          path: candidate.path,
-          status: "FAILED",
-          error: `DURABILITY_UNAVAILABLE: Failed to prepare rollback operation: ${err instanceof Error ? err.message : String(err)}`,
-        }
+    } catch (err: any) {
+      this.#metrics.rollbackFailures++
+      this.#metrics.rollbackDurabilityFailures++
+      return {
+        success: false,
+        durableSuccess: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: `DURABILITY_UNAVAILABLE: Failed to prepare rollback operation: ${err instanceof Error ? err.message : String(err)}`,
+        durabilityFailure: true,
+        recoveryRequired: false,
       }
+    }
 
-      try {
-        await this.#operationJournal.recordStarted(rollbackOpId, runId)
-      } catch (err) {
-        return {
-          success: false,
-          path: candidate.path,
-          status: "FAILED",
-          error: `DURABILITY_UNAVAILABLE: Failed to record rollback operation started: ${err instanceof Error ? err.message : String(err)}`,
-        }
+    try {
+      await this.#operationJournal.recordStarted(rollbackOpId, runId)
+    } catch (err: any) {
+      this.#metrics.rollbackFailures++
+      this.#metrics.rollbackDurabilityFailures++
+      return {
+        success: false,
+        durableSuccess: false,
+        path: candidate.path,
+        status: "FAILED",
+        error: `DURABILITY_UNAVAILABLE: Failed to record rollback operation started: ${err instanceof Error ? err.message : String(err)}`,
+        durabilityFailure: true,
+        recoveryRequired: false,
       }
     }
 
     // Now execute reverse mutation through canonical MutationEngine
+    let res: any
+    let mutationThrew = false
+    let mutationErr: any = null
+
     try {
-      let res: any
       if (isCreateRollback) {
         let snapshot = this.#mutationEngine.getSnapshot(candidate.mutationId)
         if (!snapshot) {
@@ -402,65 +557,119 @@ export class RollbackManager {
         }
         res = await this.#mutationEngine.rollback(candidate.mutationId)
       }
+    } catch (err: any) {
+      mutationThrew = true
+      mutationErr = err
+    }
 
-      const isSuccess = res.status === "APPLIED"
+    const isMutationSuccess = !mutationThrew && res?.status === "APPLIED"
 
-      if (this.#operationJournal && rollbackOpId) {
-        if (isSuccess) {
-          await this.#operationJournal.recordCompleted(rollbackOpId, runId, res.id ?? candidate.mutationId)
-          if (this.#checkpointStore) {
-            const latestCp = await this.#checkpointStore.getLatestCheckpoint(runId).catch(() => null)
-            await this.#checkpointStore.saveCheckpoint({
-              schemaVersion: CHECKPOINT_SCHEMA_VERSION,
-              checkpointId: `cp_rb_${randomUUID().slice(0, 8)}`,
-              runId,
-              sequence: (latestCp?.sequence ?? 0) + 1,
-              createdAt: new Date().toISOString(),
-              reason: "ROLLBACK_COMPLETED",
-              phase: "MUTATION",
-              turnId: latestCp?.turnId ?? 0,
-              evidenceVersion: (latestCp?.evidenceVersion ?? 0) + 1,
-              runtimeState: { status: "OBSERVING" },
-              processEpochId: getProcessEpochId(),
-              recoveryFootprint: {
-                files: [
-                  {
-                    path: candidate.path,
-                    exists: obs.exists,
-                    hash: obs.hash,
-                  },
-                ],
-              },
-              pendingOperations: [],
-              completedOperationRefs: [rollbackOpId],
-              workspaceState: {
-                divergenceClass: "EXACT_MATCH",
-              },
-            }).catch(() => {})
-          }
-        } else {
-          await this.#operationJournal.recordFailed(rollbackOpId, runId, res.error?.message ?? "Rollback failed")
+    // If reverse mutation failed
+    if (!isMutationSuccess) {
+      const failureReason = mutationErr?.message ?? res?.error?.message ?? "Rollback mutation failed"
+      this.#metrics.rollbackFailures++
+      try {
+        await this.#operationJournal.recordFailed(rollbackOpId, runId, failureReason)
+        return {
+          success: false,
+          durableSuccess: false,
+          path: candidate.path,
+          status: "FAILED",
+          rollbackOperationId: rollbackOpId,
+          error: failureReason,
+          durabilityFailure: false,
+          recoveryRequired: false,
+        }
+      } catch (recFailedErr: any) {
+        // T-5212: recordFailed also fails!
+        this.#metrics.rollbackDurabilityFailures++
+        return {
+          success: false,
+          durableSuccess: false,
+          path: candidate.path,
+          status: "RECOVERY_REQUIRED",
+          rollbackOperationId: rollbackOpId,
+          error: `RECOVERY_PERSISTENCE_FAILED: MutationEngine rollback failed and recording failure to journal also failed: ${recFailedErr instanceof Error ? recFailedErr.message : String(recFailedErr)}`,
+          durabilityFailure: true,
+          recoveryRequired: true,
         }
       }
+    }
 
-      return {
-        success: isSuccess,
-        path: candidate.path,
-        status: isSuccess ? "ROLLED_BACK" : "FAILED",
-        rollbackOperationId: rollbackOpId,
-        ...(res.error?.message ? { error: res.error.message } : {}),
-      }
+    // Post-Write Durability Step 1: recordCompleted in journal (T-5207)
+    try {
+      await this.#operationJournal.recordCompleted(rollbackOpId, runId, res.id ?? candidate.mutationId)
     } catch (err: any) {
-      if (this.#operationJournal && rollbackOpId) {
-        await this.#operationJournal.recordFailed(rollbackOpId, runId, err.message).catch(() => {})
-      }
+      this.#metrics.rollbackFailures++
+      this.#metrics.rollbackDurabilityFailures++
       return {
         success: false,
+        durableSuccess: false,
         path: candidate.path,
-        status: "FAILED",
+        status: "RECOVERY_REQUIRED",
         rollbackOperationId: rollbackOpId,
-        error: err.message,
+        error: `DURABILITY_UNAVAILABLE: Reverse mutation applied but recording COMPLETED to journal failed: ${err instanceof Error ? err.message : String(err)}`,
+        durabilityFailure: true,
+        recoveryRequired: true,
       }
+    }
+
+    // Post-Write Durability Step 2: save ROLLBACK_COMPLETED checkpoint (T-5209)
+    try {
+      const latestCpAfterWrite = await this.#checkpointStore.getLatestCheckpoint(runId)
+      const postObs = await observeFilePath(candidate.path)
+      await this.#checkpointStore.saveCheckpoint({
+        schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+        checkpointId: `cp_rb_${randomUUID().slice(0, 8)}`,
+        runId,
+        sequence: (latestCpAfterWrite?.sequence ?? 0) + 1,
+        createdAt: new Date().toISOString(),
+        reason: "ROLLBACK_COMPLETED",
+        phase: "MUTATION",
+        turnId: latestCpAfterWrite?.turnId ?? 0,
+        evidenceVersion: (latestCpAfterWrite?.evidenceVersion ?? 0) + 1,
+        runtimeState: { status: "OBSERVING" },
+        processEpochId: getProcessEpochId(),
+        recoveryFootprint: {
+          files: [
+            {
+              path: candidate.path,
+              exists: postObs.exists,
+              hash: postObs.hash,
+            },
+          ],
+        },
+        pendingOperations: [],
+        completedOperationRefs: [rollbackOpId],
+        workspaceState: {
+          divergenceClass: "EXACT_MATCH",
+        },
+      })
+    } catch (err: any) {
+      this.#metrics.rollbackFailures++
+      this.#metrics.rollbackDurabilityFailures++
+      return {
+        success: false,
+        durableSuccess: false,
+        path: candidate.path,
+        status: "RECOVERY_REQUIRED",
+        rollbackOperationId: rollbackOpId,
+        error: `DURABILITY_UNAVAILABLE: Rollback completed mutation and journaled COMPLETED but failed to save ROLLBACK_COMPLETED checkpoint: ${err instanceof Error ? err.message : String(err)}`,
+        durabilityFailure: true,
+        recoveryRequired: true,
+      }
+    }
+
+    // Final Durable Success: All durability and write stages succeeded
+    this.#metrics.rollbackSuccesses++
+    return {
+      success: true,
+      durableSuccess: true,
+      path: candidate.path,
+      status: "ROLLED_BACK",
+      rollbackOperationId: rollbackOpId,
+      durabilityFailure: false,
+      recoveryRequired: false,
     }
   }
 }

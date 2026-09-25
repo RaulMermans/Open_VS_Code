@@ -224,8 +224,12 @@ export interface RecoveryAnalyticsMetrics {
   blockedDivergence: number
   interruptedVerifications: number
   rollbacksProposed: number
+  rollbackAttempts?: number
   rollbackSuccesses: number
   rollbackFailures: number
+  rollbackDurabilityFailures?: number
+  rollbackReconciledApplied?: number
+  rollbackReconciledNotApplied?: number
   rollbackOperationsRecovered: number
   rollbackDuplicateWritesPrevented: number
   recoveryPersistenceFailures: number
