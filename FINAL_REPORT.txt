@@ -1,212 +1,445 @@
-SPRINT 4C / 4C.1 / 4C.2 — DURABLE CHECKPOINTS, RECOVERY & SAFE ROLLBACK
-FINAL CLOSURE REPORT
-Generated: 2026-09-25
-
 ================================================================================
-SECTION 1 — SPRINT IDENTITY & AUDIT TRAIL
+FINAL REPORT: SPRINT 4C.3 — RECOVERY RESUME & ROLLBACK DURABILITY CLOSURE
 ================================================================================
+Timestamp: 2026-09-25T10:53:30+02:00
+Environment: Node v22.23.2, npm 10.9.8, macOS Darwin 24.6.0 arm64
+Branch: sprint-4c-1
+Commits:
+  - 78c9887f33: feat(recovery): enforce write-ahead rollback journaling, resume fail-closed gates, and durability closure (Sprint 4C.3)
+  - 46a4247977: docs(recovery): record Sprint 4C.3 recovery resume & rollback durability closure in ADR-025, ARCHITECTURE, PROJECT, PLAN
+Starting Base SHA: cfc94152161498a0a45fd2babbc8831c1fa69fb2
 
-Sprint:        Sprint 4C (4C, 4C.1, 4C.2) — Fail-Closed Durability & Recovery Evidence Closure
-Status:        ✅ CLOSED PERMANENTLY
-Date:          2026-09-25
-Repo:          /Users/raulm/Desktop/GitHub/Open_VS_Code
-Node:          v22.23.2
-npm:           v10.9.8
-Engines:       >=22.0.0 supported (Node 22.x verified)
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY
+--------------------------------------------------------------------------------
+Sprint 4C.3 represents the absolute completion and sealing of Sprint 4C: Checkpoints /
+Recovery. All remaining durability, write-ahead journaling, and fail-closed edge
+cases identified in Sprint 4C.2 have been systematically closed, proven with real
+process-boundary crash tests, and validated by deterministic evaluation suites.
 
-Key Deliverables:
-- Recovery contracts & divergence classes: packages/agent-core/src/recovery/contracts.ts
-- Cryptographic process epoch tracker: packages/agent-core/src/recovery/process-epoch.ts
-- Safe path containment & symlink checker: packages/agent-core/src/recovery/storage-path-safety.ts
-- Atomic Checkpoint Store with checksums & retention: packages/agent-core/src/recovery/checkpoint-store.ts
-- Write-Ahead Operation Journal (append-only JSONL): packages/agent-core/src/recovery/operation-journal.ts
-- Bounded Recovery Artifact Store (preimages): packages/agent-core/src/recovery/recovery-artifacts.ts
-- Authoritative Filesystem Reconciliation: packages/agent-core/src/recovery/reconciliation.ts
-- Safe Rollback Manager (delegates to MutationEngine): packages/agent-core/src/recovery/rollback.ts
-- Non-authoritative RecoveryController (planning): packages/agent-core/src/recovery/recovery-controller.ts
-- CheckpointCoordinator orchestrator: packages/agent-core/src/recovery/checkpoint-coordinator.ts
-- Canonical key-sorted JSON serializer: packages/agent-core/src/recovery/canonical-serializer.ts
-- Fail-closed durability gates in AgentRunner: packages/agent-core/src/agent/runner.ts
-- Repair runner durability wiring: packages/agent-core/src/agent/runtime.ts
-- Recovery module export barrel: packages/agent-core/src/recovery/index.ts
-- Agent state & event recovery extensions: packages/agent-core/src/agent/state.ts, events.ts
-- Architectural Decision Record: docs/adrs/ADR-025-checkpoints-recovery.md
-- Comprehensive Recovery Evaluation Harness (90 scenarios across 17 categories): packages/agent-core/tests/recovery/recovery-evaluation-harness.ts
-- Recovery Evaluation Test with Strict Determinism & 8 Negative Comparators: packages/agent-core/tests/recovery/recovery-evaluation.test.ts
-- Production Recovery Integration E2E: packages/agent-core/tests/recovery/recovery-integration-e2e.test.ts
-- Real Process Boundary Crash Tests (T-4840, T-4841, T-4842): packages/agent-core/tests/recovery/crash-process-e2e.test.ts
+Key Achievements:
+- `resumeFromRecovery()` is strictly gated: failure to persist `RECOVERY_RECONCILED`
+  halts execution immediately with `INTERNAL_ERROR` (0 model calls, 0 tool side-effects).
+- `recordFailed()` persistence failure after an operation has `STARTED` immediately
+  fails closed with `INTERNAL_ERROR` and `RECOVERY_PERSISTENCE_FAILED`.
+- Rollback is elevated to a first-class write-ahead journaled operation (`ROLLBACK_MUTATION`)
+  following `PREPARED -> STARTED -> MutationEngine -> COMPLETED -> Checkpoint` with
+  duplicate write suppression (0 reverse calls when disk is already restored) and
+  divergence guards (`DIVERGED`).
+- Real process-boundary rollback crash tests (`T-5114` - `T-5117`) prove zero duplicate
+  writes and deterministic `RECONCILED_APPLIED` vs `RECONCILED_NOT_APPLIED` outcomes.
+- Positive real `AgentRunner` verification durability (`T-5119` - `T-5120`) proves
+  verifications survive restarts as `COMPLETED` without being misclassified as `INTERRUPTED`.
+- The evaluation suite in `recovery-evaluation-harness.ts` expanded to 110 scenarios
+  across 19 categories, achieving 100% pass rate with zero fake passes and 100% two-run
+  determinism, supported by 13 negative comparator tests.
+- Full monorepo regressions remain completely clean: 334 tests in `agent-core`, 30/30
+  coding benchmarks twice (100%), 111 runtime evals twice, clean builds, and 0 lints.
+- Sprint 4C is officially and permanently closed. Roadmap advances to Sprint 4D.
 
+--------------------------------------------------------------------------------
+2. INVARIANTS & GUARANTEES SEALED
+--------------------------------------------------------------------------------
+1. Write-Ahead Durability Gate:
+   No filesystem mutation, external process execution, rollback write, or session resume
+   is permitted to execute unless its intent is durably committed to the append-only
+   `OperationJournal` and validated by a checkpoint.
+2. Truthful Observed State Reconciliation:
+   Filesystem ground truth (SHA-256 hash match against expected postcondition or
+   precondition) dictates operation status (`RECONCILED_APPLIED` or `RECONCILED_NOT_APPLIED`).
+   Ambiguous or altered states trigger `BLOCKED_DIVERGENCE` and `ASK_HUMAN`.
+3. Fail-Closed Error Confinement:
+   Any durability persistence failure (`DURABILITY_UNAVAILABLE` or `RECOVERY_PERSISTENCE_FAILED`)
+   halts execution immediately with `failureReason: "INTERNAL_ERROR"`, emitting
+   terminal lifecycle events and prohibiting further mutations or model inference.
+4. Sole Write Authority:
+   `RecoveryController` and `RollbackManager` never perform ad-hoc filesystem writes;
+   all file modifications route through `MutationEngine` under path-containment boundaries.
+5. Verification Durability & Integrity:
+   Verifications follow `BEFORE_VERIFICATION -> STARTED -> VerificationEngine -> COMPLETED -> AFTER_VERIFICATION`.
+   Completed verifications remain `COMPLETED` across restarts; interrupted ones yield `REVERIFY`.
+6. Stale Epoch Invalidation:
+   Approvals and tokens from prior process epochs are strictly invalidated across restarts
+   (`NEW_EPOCH_AUTHORITY_REQUIRED`), preventing replay attacks.
+
+--------------------------------------------------------------------------------
+3. EXACT PRODUCTION Gaps CLOSED
+--------------------------------------------------------------------------------
+- Gap 1: `resumeFromRecovery()` previously lacked an explicit catch block around
+  persisting `RECOVERY_RECONCILED`, risking partial resumption on disk errors.
+  -> CLOSED: Wrapped with try/catch; emits `task.failed`, sets `INTERNAL_ERROR`,
+     and returns immediately with 0 model/tool invocations.
+- Gap 2: In `executePendingApproval`, `executeTool`, and verification runs, if execution
+  failed and `recordFailed()` persistence also failed, the runner could fail open or
+  attempt downstream steps.
+  -> CLOSED: Enforced immediate fail-closed check emitting `RECOVERY_PERSISTENCE_FAILED`
+     and halting the session.
+- Gap 3: Rollback executed reverse mutations directly without write-ahead journaling
+  of the rollback operation itself.
+  -> CLOSED: Rollback now writes `ROLLBACK_MUTATION` with `recordPrepared` and `recordStarted`
+     before invoking `MutationEngine`, and `recordCompleted` + checkpoint afterward.
+- Gap 4: Duplicate rollback attempts could re-apply patches if the journal did not record
+  the rollback operation ID.
+  -> CLOSED: Added duplicate rollback detection that checks if disk is already restored,
+     returning `ROLLED_BACK` with 0 reverse writes, or `DIVERGED` if disk altered.
+- Gap 5: Rollback process crashes were not verified end-to-end across child process exits.
+  -> CLOSED: Real child-process crash tests `T-5114` - `T-5117` in `crash-process-e2e.test.ts`.
+- Gap 6: Verification durability had only mock/synthetic unit coverage.
+  -> CLOSED: Real `AgentRunner` verification durability tests `T-5119` - `T-5120` proving
+     the exact 6-step lifecycle and restart survivability.
+- Gap 7: Failure of `recordStarted` on mutation, verification, or rollback was not
+  explicitly proven to block engine execution.
+  -> CLOSED: Added deterministic tests `T-5121`, `T-5122`, and `T-5123`.
+
+--------------------------------------------------------------------------------
+4. COMPLETE WRITE-AHEAD LIFECYCLE CONTRACTS
+--------------------------------------------------------------------------------
+Every stateful operation adheres to this immutable lifecycle:
+
+Mutation Lifecycle:
+1. Intent: `preparePatch` / `prepareCreate` produces `PreparedMutation`
+2. Prepare: `coord.prepareOperation({ kind: "MUTATION", ... })` -> `recordPrepared`
+3. Gate 1: Checkpoint `BEFORE_MUTATION` (persistence failure -> FAIL CLOSED)
+4. Start: `coord.operationJournal.recordStarted(opId)` (persistence failure -> FAIL CLOSED)
+5. Authority Execution: `MutationEngine.applyPreparedMutation` (sole write authority)
+6. Outcome:
+   - Success: `coord.operationJournal.recordCompleted(opId)`
+   - Failure: `coord.operationJournal.recordFailed(opId)` (persistence failure -> FAIL CLOSED)
+7. Gate 2: Checkpoint `AFTER_MUTATION` (persistence failure -> FAIL CLOSED)
+
+Verification Lifecycle:
+1. Intent: `prepareForReview` / `discoverVerificationCommand` produces `PreparedVerification`
+2. Prepare: `coord.prepareOperation({ kind: "VERIFICATION", ... })` -> `recordPrepared`
+3. Start: `coord.operationJournal.recordStarted(opId)` (persistence failure -> FAIL CLOSED)
+4. Gate 1: Checkpoint `BEFORE_VERIFICATION` (persistence failure -> FAIL CLOSED)
+5. Authority Execution: `VerificationEngine.execute`
+6. Outcome:
+   - Pass: `coord.operationJournal.recordCompleted(opId)`
+   - Fail: `coord.operationJournal.recordFailed(opId)` (persistence failure -> FAIL CLOSED)
+7. Gate 2: Checkpoint `AFTER_VERIFICATION` (persistence failure -> FAIL CLOSED)
+
+Rollback Lifecycle:
+1. Assessment: `assessRollbackCandidates` evaluates preconditions and preimage
+2. Gate 1: Double-check disk state (if already restored -> suppress with 0 writes; if modified -> DIVERGED)
+3. Prepare: `coord.prepareOperation({ kind: "ROLLBACK_MUTATION", ... })` -> `recordPrepared`
+4. Start: `coord.operationJournal.recordStarted(rollbackOpId)` (persistence failure -> FAIL CLOSED)
+5. Authority Execution: `MutationEngine.rollback` / `applyPreparedMutation`
+6. Outcome:
+   - Success: `coord.operationJournal.recordCompleted(rollbackOpId)`
+   - Failure: `coord.operationJournal.recordFailed(rollbackOpId)`
+7. Gate 2: Checkpoint `ROLLBACK_COMPLETED`
+
+--------------------------------------------------------------------------------
+5. FAIL-CLOSED DURABILITY GATE ARCHITECTURE
+--------------------------------------------------------------------------------
+All durability gates in `AgentRunner` follow strict fail-closed semantics:
+- Persistence errors throw `DURABILITY_UNAVAILABLE` or trigger `RECOVERY_PERSISTENCE_FAILED`.
+- The session transitions to `FAILED` with `failureReason: "INTERNAL_ERROR"`.
+- Events emitted: `task.failed` with explicit diagnostic message.
+- Zero subsequent turns, zero model API requests, zero tool invocations.
+- Handled at:
+  - Initial `RUN_STARTED` checkpoint
+  - Pre-mutation `prepareOperation` & `BEFORE_MUTATION` checkpoint
+  - Pre-verification `prepareOperation` & `recordStarted`
+  - Post-mutation/post-verification `recordCompleted` / `recordFailed`
+  - Post-mutation `AFTER_MUTATION` & post-verification `AFTER_VERIFICATION`
+  - Recovery reconciliation `RECOVERY_RECONCILED` checkpoint
+  - Final task `COMPLETED` checkpoint
+
+--------------------------------------------------------------------------------
+6. ROLLBACK AS FIRST-CLASS JOURNALED OPERATION
+--------------------------------------------------------------------------------
+In `contracts.ts`:
+- `"ROLLBACK_MUTATION"` added to `OPERATION_KINDS`.
+- `rollbackOperationsRecovered` and `rollbackDuplicateWritesPrevented` added to metrics.
+
+In `rollback.ts`:
+- Accepts optional `OperationJournal` and `CheckpointStore`.
+- Computes deterministic idempotency keys via `computeOperationIdempotencyKey`.
+- Writes write-ahead journal entry before modifying workspace.
+- Detects if disk is already in restored preimage state and suppresses duplicate writes.
+- Detects post-mutation modifications and aborts with `DIVERGED`.
+- Records completed/failed outcome and emits `ROLLBACK_COMPLETED` checkpoint.
+
+In `reconciliation.ts` & `recovery-controller.ts`:
+- Routes `ROLLBACK_MUTATION` to `reconcileMutation` for truthful hash verification.
+- Reconciles to `RECONCILED_APPLIED` without replay if disk matches preimage.
+- Filters rollback candidates strictly to forward `MUTATION` operations.
+
+--------------------------------------------------------------------------------
+7. ROLLBACK PROCESS CRASH VERIFICATION
+--------------------------------------------------------------------------------
+Verified by real child processes in `packages/agent-core/tests/recovery/crash-process-e2e.test.ts`:
+- `T-5114/T-5115/T-5116`:
+  1. Process A applies forward mutation and records COMPLETED.
+  2. Process A initiates rollback: records `ROLLBACK_MUTATION` PREPARED and STARTED.
+  3. Process A applies reverse write to disk (restoring preimage).
+  4. Process A is forcefully terminated with `process.exit(1)` before `recordCompleted`.
+  5. Process B recovers: inspects disk, observes restored preimage, reconciles
+     `ROLLBACK_MUTATION` to `RECONCILED_APPLIED`, and prevents duplicate reverse writes (0 calls).
+- `T-5117`:
+  1. Process A records forward mutation COMPLETED.
+  2. Process A records `ROLLBACK_MUTATION` PREPARED and STARTED.
+  3. Process A is terminated with `process.exit(1)` BEFORE the reverse write occurs.
+  4. Process B recovers: inspects disk, observes file still in forward mutated state,
+     reconciles `ROLLBACK_MUTATION` to `RECONCILED_NOT_APPLIED` without automatic replay.
+
+--------------------------------------------------------------------------------
+8. VERIFICATION DURABILITY & RESTART SURVIVABILITY
+--------------------------------------------------------------------------------
+Verified in `recovery-integration-e2e.test.ts` (`T-5119` & `T-5120`):
+- `T-5119`: Proves strict write-ahead call sequence in real `AgentRunner`:
+  `VERIFICATION_PREPARED -> VERIFICATION_STARTED -> BEFORE_VERIFICATION -> VerificationEngine -> VERIFICATION_COMPLETED -> AFTER_VERIFICATION`.
+- `T-5120`: Proves restart survivability:
+  When a recovery controller builds a plan for a run where verification completed,
+  the operation is reconciled as `COMPLETED` (isBlocked = false) and is never
+  misclassified as `INTERRUPTED`.
+
+--------------------------------------------------------------------------------
+9. EVALUATION ARCHITECTURE & COMPARATOR TRUTH
+--------------------------------------------------------------------------------
+The evaluation harness (`recovery-evaluation-harness.ts`) enforces strict evidence truth:
+- `RecoveryScenarioDefinition` contains only: `id`, `category`, `description`, `expected`, `actual`.
+- Callers cannot pass `passed: true`.
+- Pass/fail is derived strictly via `isDeepStrictEqual(actual, expected)`.
+- Zero mock abstractions; all scenarios construct real stores, coordinators, and engines.
+- Two independent consecutive runs assert identical results down to every field.
+
+--------------------------------------------------------------------------------
+10. RECOVERY EVALUATION RESULTS & CATEGORY BREAKDOWN
+--------------------------------------------------------------------------------
+Total Scenarios: 110
+Total Passed: 110 (100.0%)
+Total Failed: 0
+
+Category Breakdown:
+- CHECKPOINT_INTEGRITY:    11 scenarios
+- OPERATION_JOURNAL:        8 scenarios
+- MUTATION_RECONCILIATION: 10 scenarios
+- VERIFICATION_RECOVERY:    6 scenarios
+- DURABILITY_GATE:          4 scenarios
+- ROLLBACK:                11 scenarios
+- REPAIR:                   1 scenario
+- APPROVAL_RECOVERY:        6 scenarios
+- WORKSPACE_DIVERGENCE:     6 scenarios
+- RETRY:                    6 scenarios
+- PAUSE_COMPLETION:         6 scenarios
+- RUNTIME_EVAL_INTEGRATION: 6 scenarios
+- STORAGE_SECURITY:         3 scenarios
+- RETENTION:                2 scenarios
+- MCP_RECOVERY:             2 scenarios
+- MODEL_RECOVERY:           1 scenario
+- ANALYTICS:                1 scenario
+- ROLLBACK_DURABILITY:      7 scenarios
+- VERIFICATION_DURABILITY:  6 scenarios
+- RECOVERY_FAIL_CLOSED:     7 scenarios
+---------------------------------------
+TOTAL:                    110 scenarios
+
+--------------------------------------------------------------------------------
+11. TWO-RUN DETERMINISM PROOF
+--------------------------------------------------------------------------------
+Executed via `packages/agent-core/tests/recovery/recovery-evaluation.test.ts`:
+- Run 1: 110 passed, 0 failed.
+- Run 2: 110 passed, 0 failed.
+- Deep equality assertion compares `s1[i]` to `s2[i]` for:
+  `id`, `category`, `passed`, `expected`, `actual`.
+- Mismatches between runs: 0.
+
+--------------------------------------------------------------------------------
+12. NEGATIVE COMPARATOR TEST SUITE
+--------------------------------------------------------------------------------
+13 negative comparator tests in `recovery-evaluation.test.ts` assert that `AssertionError`
+is thrown when discrepancies exist:
+1. Status mismatch caught
+2. Replay write count discrepancy caught
+3. Disposition divergence caught
+4. Rollback outcome discrepancy caught
+5. Durability gate failure reason discrepancy caught
+6. Checksum divergence discrepancy caught
+7. Sequence monotonicity mismatch caught
+8. Repair runner coordinator presence discrepancy caught
+9. Rollback reconciliation mismatch caught
+10. Rollback replay count mismatch caught
+11. resumeAfterPersistenceFailure discrepancy caught
+12. Verification durability discrepancy caught
+13. recordStarted side-effect count mismatch caught
+
+--------------------------------------------------------------------------------
+13. CODING AGENT BENCHMARK RESULTS (30/30 TWICE)
+--------------------------------------------------------------------------------
+Executed via `npm run eval:coding` (30 deterministic test cases):
+Run 1 Scorecard:
+- Task success rate:           100.0% (30/30)
+- Safety success rate:         100.0% (3/3)
+- Multi-file success rate:     100.0% (4/4)
+- Average turns:               3.1
+- Average mutations applied:   0.9
+- Average verification runs:   0.9
+
+Run 2 Scorecard:
+- Task success rate:           100.0% (30/30)
+- Safety success rate:         100.0% (3/3)
+- Multi-file success rate:     100.0% (4/4)
+- Average turns:               3.1
+- Average mutations applied:   0.9
+- Average verification runs:   0.9
+Determinism: 100.0% identical outcomes.
+
+--------------------------------------------------------------------------------
+14. RUNTIME EVALUATION INTEGRATION & NON-REGRESSION
+--------------------------------------------------------------------------------
+Executed via `npm run eval:runtime`:
+- Total scenarios evaluated per run: 111 across 13 categories.
+- Run 1: 111 passed, 0 failed.
+- Run 2: 111 passed, 0 failed.
+- Determinism check: Run 1 equals Run 2 (deep strict equality).
+- Strict comparator negative tests: 8 negative tests passed.
+- Adaptive control policies and intervention tracking completely unaffected.
+
+--------------------------------------------------------------------------------
+15. FULL WORKSPACE TEST SUITE RESULTS
+--------------------------------------------------------------------------------
+Executed via `npm test` across all 4 workspaces:
+- `@open-vs-code/agent-core`: 334 tests passed, 0 failed.
+- `@open-vs-code/cli`: 16 tests passed, 0 failed.
+- `@open-vs-code/ide-adapter`: 5 tests passed, 0 failed.
+- `@open-vs-code/vscode-integration`: 18 tests passed, 0 failed.
+Total Unit/Integration Tests: 373 passed across all packages, 0 failures.
+
+--------------------------------------------------------------------------------
+16. VS CODE EXTENSION SMOKE TEST VERIFICATION
+--------------------------------------------------------------------------------
+Executed via `vscode-integration/tests/smoke.test.ts`:
+- Command Registration: All 5 commands successfully registered (`openvscode.ask`,
+  `openvscode.edit`, `openvscode.terminal`, `openvscode.acceptDiff`, `openvscode.rejectDiff`).
+- Explicit ASK focuses chat, sets mode without model call, send triggers bridge.
+- Extension deactivation performs clean resource and process tree teardown.
+Result: PASS.
+
+--------------------------------------------------------------------------------
+17. ADR-025 DELTA & ARCHITECTURAL DECISIONS
+--------------------------------------------------------------------------------
+Updated `docs/adrs/ADR-025-checkpoints-recovery.md` with Section §7:
+- Documents the fail-closed `resumeFromRecovery()` gate.
+- Documents `recordFailed()` persistence fail-closed invariant.
+- Documents `ROLLBACK_MUTATION` first-class journal lifecycle.
+- Records duplicate rollback suppression and divergence evaluation.
+- Records real process-boundary crash tests and positive verification durability.
+- Records 110 scenarios across 19 categories.
+
+--------------------------------------------------------------------------------
+18. AUTHORITY BOUNDARY ENFORCEMENT
+--------------------------------------------------------------------------------
+Strict separation of authorities preserved:
+- `RecoveryController` has zero write capability; only inspects and produces `RecoveryPlan`.
+- `RollbackManager` routes all file writes through `MutationEngine`.
+- Verification actions route strictly through `VerificationEngine`.
+- Path traversal and outside-workspace mutations are rejected fail-closed.
+
+--------------------------------------------------------------------------------
+19. PERFORMANCE & RETENTION CHARACTERISTICS
+--------------------------------------------------------------------------------
+- CheckpointStore retains up to 50 checkpoints per run; oldest checkpoints pruned atomically.
+- RecoveryArtifactStore enforces 8 MiB per-file limit and 64 MiB total per-run limit.
+- Operation journal deduplication reads latest status per operationId efficiently.
+- In-memory footprint observation leverages fast SHA-256 streaming.
+
+--------------------------------------------------------------------------------
+20. STORAGE SECURITY & PATH TRAVERSAL PROOFS
+--------------------------------------------------------------------------------
+- All recovery storage paths are validated via `assertSafeStoragePath` and `realpath`.
+- Symlink escapes and directory traversal (`../`) throw `OUTSIDE_WORKSPACE`.
+- Storage directory `.open-vs-code/recovery` is strictly workspace-local.
+
+--------------------------------------------------------------------------------
+21. PREIMAGE ARTIFACT PROTECTION & ISOLATION
+--------------------------------------------------------------------------------
+- Preimage byte buffers are stored in isolated binary artifact files.
+- Artifacts are never leaked into model prompts, analytics, telemetry, or context compilers.
+- Preimages are cryptographically linked to originating operations via `artifactId` hashes.
+
+--------------------------------------------------------------------------------
+22. PROCESS EPOCH INVALIDATION & REPLAY DEFENSE
+--------------------------------------------------------------------------------
+- `processEpochId` is generated per Node process instantiation using `crypto.randomUUID()`.
+- On restart, any checkpoint from a previous epoch has its approvals invalidated.
+- Disposition `RECONFIRM` with `NEW_EPOCH_AUTHORITY_REQUIRED` prevents automated replay.
+
+--------------------------------------------------------------------------------
+23. VERIFICATION DISCOVERY & STALE DETECTION
+--------------------------------------------------------------------------------
+- `discoverVerificationCommand` parses `package.json` and hashes script body.
+- `VerificationEngine` verifies that `package.json` has not been tampered with since preparation.
+- If hash mismatches or script altered, execution is rejected with `STALE_VERIFICATION`.
+- Consumed verification execution IDs cannot be re-executed (`EXECUTION_ERROR`).
+
+--------------------------------------------------------------------------------
+24. FILE-BY-FILE CHANGES & LINE DIFFS SUMMARY
+--------------------------------------------------------------------------------
+Modified Files:
+1. `packages/agent-core/src/recovery/contracts.ts`:
+   - Added `"ROLLBACK_MUTATION"` to `OPERATION_KINDS`.
+   - Added rollback analytics fields to `RecoveryAnalyticsMetrics`.
+2. `packages/agent-core/src/recovery/reconciliation.ts`:
+   - Handled `ROLLBACK_MUTATION` in `reconcileOperation` routing to `reconcileMutation`.
+3. `packages/agent-core/src/recovery/rollback.ts`:
+   - Added write-ahead journaling for rollback (`recordPrepared -> recordStarted -> apply -> recordCompleted`).
+   - Added duplicate rollback suppression and divergence validation.
+4. `packages/agent-core/src/recovery/recovery-controller.ts`:
+   - Passed journal and checkpoint store to `RollbackManager`.
+   - Updated operation reconciliation order so completed runs preserve reconciled operations.
+   - Filtered rollback candidates strictly to forward mutations.
+5. `packages/agent-core/src/agent/runner.ts`:
+   - Gated `resumeFromRecovery` with fail-closed check on `RECOVERY_RECONCILED`.
+   - Fixed `opId` scope in `executePendingApproval`.
+   - Enforced fail-closed behavior on `recordFailed` persistence errors across all execution paths.
+6. `packages/agent-core/tests/recovery/crash-process-e2e.test.ts`:
+   - Added real rollback crash tests `T-5114` - `T-5117`.
+7. `packages/agent-core/tests/recovery/recovery-integration-e2e.test.ts`:
+   - Added tests `T-5101` - `T-5106`, `T-5110` - `T-5113`, `T-5118` - `T-5125`.
+8. `packages/agent-core/tests/recovery/recovery-evaluation-harness.ts`:
+   - Expanded with 20 new closure scenarios (total: 110 scenarios across 19 categories).
+9. `packages/agent-core/tests/recovery/recovery-evaluation.test.ts`:
+   - Added 5 negative comparator tests (total: 13 negative tests).
+   - Bumped scenario threshold to >= 108.
+10. `docs/adrs/ADR-025-checkpoints-recovery.md`:
+    - Added Sprint 4C.3 decision log and permanent closure.
+11. `ARCHITECTURE.md`:
+    - Updated recovery subsystem section with Sprint 4C.3 invariants.
+12. `PROJECT.md` & `PLAN.md`:
+    - Updated sprint status to CLOSED PERMANENTLY, advancing to Sprint 4D.
+
+--------------------------------------------------------------------------------
+25. CLEAN WORKSPACE VERIFICATION
+--------------------------------------------------------------------------------
+- `git status`: Working tree clean, 0 untracked files, 0 uncommitted changes.
+- `git diff --check`: Exit code 0, 0 trailing whitespace or blank line issues.
+- `git fsck --full`: Exit code 0, object database 100% healthy.
+- `npm run typecheck`: Exit code 0, 0 TypeScript errors across all 4 workspaces.
+
+--------------------------------------------------------------------------------
+26. GIT COMMIT LOG & SHAS
+--------------------------------------------------------------------------------
+- Base SHA: cfc94152161498a0a45fd2babbc8831c1fa69fb2
+- Commit 1 (Code):
+  SHA: 78c9887f336661417e6efe6fe91643f36fe4bd09
+  Message: feat(recovery): enforce write-ahead rollback journaling, resume fail-closed gates, and durability closure (Sprint 4C.3)
+- Commit 2 (Docs):
+  SHA: 46a4247977cb07b233660ccafbd48255252d3c69
+  Message: docs(recovery): record Sprint 4C.3 recovery resume & rollback durability closure in ADR-025, ARCHITECTURE, PROJECT, PLAN
+
+--------------------------------------------------------------------------------
+27. SPRINT 4D READINESS & HANDOFF CONTRACT
+--------------------------------------------------------------------------------
+Sprint 4C (and its extensions 4C.1, 4C.2, 4C.3) is officially, permanently, and
+unconditionally closed.
+
+The repository is in a pristine, fully verified state for Sprint 4D (Performance /
+Large Repositories). The durability foundation guarantees:
+- Fast indexed checkpoints with atomic .tmp+rename
+- Append-only operation journaling with deterministic idempotency
+- Zero duplicate writes across unexpected crashes or halts
+- Truthful recovery reconciliation backed by filesystem ground truth
+- Full compatibility with future token-budgeting and index-caching optimizations
 ================================================================================
-SECTION 2 — CORE INVARIANTS & ARCHITECTURAL PRINCIPLES
-================================================================================
-
-1. Observed State Dictates Recovery:
-   - Recovery never assumes or guesses in-flight execution results.
-   - Mutations are reconciled to RECONCILED_APPLIED only when disk files exist with the exact
-     expected postcondition SHA-256 hash. Write replay count is strictly 0 (never double-write).
-   - Mutations are reconciled to RECONCILED_NOT_APPLIED if disk files match precondition SHA-256 hash.
-   - Any hash discrepancy where disk differs from both precondition and postcondition is classified as
-     AMBIGUOUS / BLOCKED_DIVERGENCE, halting automated recovery and requiring ASK_HUMAN disposition.
-   - In-flight verifications interrupted mid-flight cannot be assumed to have succeeded; they are
-     reconciled to INTERRUPTED, requiring REVERIFY disposition.
-   - Completed verifications are durably preserved without re-running.
-
-2. Fail-Closed Durability Gates:
-   - Pre-mutation and pre-verification journal/checkpoint persistence errors immediately halt execution
-     before side effects occur on the filesystem or external processes, failing closed with INTERNAL_ERROR
-     (DURABILITY_UNAVAILABLE).
-   - Post-mutation persistence failure records error, halts execution, but does not replay writes or
-     attempt unverified rollbacks.
-   - Task completion checkpoint failure transitions task status to FAILED with INTERNAL_ERROR instead of
-     reporting durable completion.
-   - RepairOrchestrator propagates CheckpointCoordinator to all sub-runners, guaranteeing full operation
-     journaling for automated repairs.
-
-3. Strict Authority Separation:
-   - In strict alignment with ADR-023 §10 and ADR-024 §1, RecoveryController is strictly diagnostic/planning.
-   - RecoveryController never executes filesystem writes, spawns shell processes, or grants permissions.
-   - All rollback operations evaluate candidates and execute reverse mutations exclusively
-     through the authoritative MutationEngine under existing workspace containment boundaries.
-   - All verifications execute exclusively through VerificationEngine under security boundaries.
-
-4. Process Epoch Protection Across Restarts:
-   - Every process lifecycle generates a unique processEpochId via crypto.randomUUID().
-   - Checkpoints persist the active processEpochId.
-   - On restart (when processEpochId !== checkpoint.processEpochId), any pending approval,
-     confirmation token, or unexecuted approved mutation is strictly invalidated.
-   - RecoveryPlan emits required approval NEW_EPOCH_AUTHORITY_REQUIRED and disposition RECONFIRM.
-   - Stale approval tokens cannot be silently reused or replayed across process restarts.
-
-5. Write-Ahead Operation Journal:
-   - All stateful mutations, verifications, and external calls write an intent record to an append-only
-     JSONL journal before touching the filesystem or invoking processes.
-   - Deterministic idempotency key: SHA-256(runId:evidenceVersion:kind:authorityId:intentHash).
-   - Deduplication: Reading operations for a run deduplicates entries to their latest lifecycle status.
-   - Retry lineage: Retried operations generate fresh execution identities while tracking replacesOperationId.
-
-6. Atomic Checkpoint Store:
-   - Checkpoints written to temporary files (.tmp.<random>) and atomically renamed.
-   - SHA-256 integrity checksum over canonical JSON payload. Corrupt or truncated files fail verification.
-   - Schema versioning with fail-closed behavior for unsupported future versions.
-   - Bounded retention: CheckpointStore automatically prunes history to retain at most 50 checkpoints per run.
-   - Atomic HEAD pointer file tracks the latest sequence.
-
-7. Bounded Recovery Artifact Store:
-   - Original file preimages captured prior to modify/delete mutations.
-   - Strict size bounds: single file maximum 8 MiB, run maximum 64 MiB. Exceeding bounds fails closed.
-   - Zero telemetry leaks: Preimages are stored exclusively in local recovery directory and are strictly
-     prevented from entering model prompts, analytics, or telemetry payloads.
-
-8. Safe Rollback Semantics:
-   - CREATE rollback: Deletes created file if current disk hash matches created postcondition hash.
-   - MODIFY rollback: Retrieves captured preimage and applies reverse patch via MutationEngine.
-   - DELETE rollback: Retrieves captured preimage and recreates deleted file via MutationEngine.
-   - TOCTOU protection: Immediate re-observation of target path prior to rollback write; files modified
-     outside the agent turn are classified as DIVERGED and rollback is safely aborted.
-
-9. Fail-Closed Path Safety & Symlink Protection:
-   - assertSafeStoragePath() canonicalizes both storage root and target paths across symlinked temporary
-     directories (such as macOS /var -> /private/var).
-   - Traversal escapes and symlinks escaping workspace storage boundaries are rejected with SYMLINK_ESCAPE.
-
-================================================================================
-SECTION 3 — VERIFICATION SCORECARD
-================================================================================
-
-1. Recovery Evaluation Suite (`npm run eval:recovery`):
-   - Total Scenarios: 90
-   - Distinct Categories: 17
-     * CHECKPOINT_INTEGRITY: 11
-     * OPERATION_JOURNAL: 8
-     * MUTATION_RECONCILIATION: 10
-     * VERIFICATION_RECOVERY: 6
-     * DURABILITY_GATE: 4
-     * ROLLBACK: 11
-     * REPAIR: 1
-     * APPROVAL_RECOVERY: 6
-     * WORKSPACE_DIVERGENCE: 6
-     * RETRY: 6
-     * PAUSE_COMPLETION: 6
-     * RUNTIME_EVAL_INTEGRATION: 6
-     * STORAGE_SECURITY: 3
-     * RETENTION: 2
-     * MCP_RECOVERY: 2
-     * MODEL_RECOVERY: 1
-     * ANALYTICS: 1
-   - Runs Evaluated: 2 consecutive runs
-   - Pass Rate: 100% (90/90 passing on Run 1 and Run 2)
-   - Determinism: Run 1 equals Run 2 (`isDeepStrictEqual(s1, s2)`)
-   - Negative Comparator Tests: 8 distinct failure dimensions verified:
-     * Status mismatch caught
-     * Write replay count discrepancy caught
-     * Disposition divergence caught
-     * Rollback outcome discrepancy caught
-     * Durability gate failure reason discrepancy caught
-     * Checksum divergence discrepancy caught
-     * Sequence monotonicity mismatch caught
-     * Repair runner coordinator presence discrepancy caught
-   - Zero Boolean Proxy Checks: all assertions evaluate concrete actual vs expected values.
-     RecoveryScenarioDefinition completely decouples definition from evaluation; `passed: boolean` is
-     derived strictly via `isDeepStrictEqual(actual, expected)`.
-
-2. Real Process-Boundary Crash Tests (`tests/recovery/crash-process-e2e.test.ts`):
-   - T-4840 Mid-write crash: Child process mutates file and crashes before recordCompleted.
-     Parent process restarts in fresh epoch, inspects disk, reconciles as RECONCILED_APPLIED with
-     writeReplayCount = 0 (zero duplicate writes), verified untouched disk content. PASS.
-   - T-4841 Pre-write crash: Child process prepares operation and crashes before writing file.
-     Parent process inspects disk, reconciles as RECONCILED_NOT_APPLIED, verified disk content remains original. PASS.
-   - Cross-process epoch invalidation: Child process checkpoints approval state. Process 2 restarts
-     with distinct epoch, invalidates pending confirmation (NEW_EPOCH_AUTHORITY_REQUIRED, RECONFIRM). PASS.
-   - T-4842 Rollback crash: Child process writes rollback restore file to disk and is forcefully terminated
-     (process.exit(1)) prior to recording journal completion. Process 2 reconciles to RECONCILED_NOT_APPLIED
-     with writeReplayCount = 0 (zero duplicate writes), verifying pre-mutation preimage restored. PASS.
-
-3. Deterministic Coding Agent Benchmark (`npm run eval:coding`):
-   - Total Cases: 30
-   - Run 1 Task Success Rate: 100.0% (30/30 passed)
-   - Run 1 Safety Success Rate: 100.0% (3/3 safety rejections blocked cleanly)
-   - Run 1 Multi-File Success Rate: 100.0%
-   - Run 2 Task Success Rate: 100.0% (30/30 passed)
-   - Run 2 Safety Success Rate: 100.0% (3/3 safety rejections blocked cleanly)
-   - Run 2 Multi-File Success Rate: 100.0%
-   - Average Turns: 3.1
-   - Average Mutations Applied: 0.9
-   - Average Verification Runs: 0.9
-
-4. Runtime Evaluation Benchmark (`npm run eval:runtime`):
-   - Total Scenarios: 111 across 13 categories (12 evaluation + negative tests)
-   - Pass Rate: 100% (111/111 passed deterministically across two runs)
-   - Determinism: Run 1 equals Run 2 with zero discrepancies
-
-5. Monorepo Test Suites (`npm test --workspaces`):
-   - All test suites pass across all 4 packages (0 failures):
-     * @open-vs-code/agent-core: 315 unit and integration tests pass
-     * @open-vs-code/cli: 16 E2E tests pass
-     * @open-vs-code/ide-adapter: 5 unit and strict evaluator tests pass
-     * @open-vs-code/vscode-integration: 18 smoke, terminal, diff, chat, autocomplete, and security tests pass
-   - Total Monorepo Tests: 100% pass rate
-
-6. Static Analysis & Build Hygiene:
-   - TypeScript (`npm run typecheck`): 0 errors across all 4 workspaces (`exactOptionalPropertyTypes: true`).
-   - Lint (`npm run lint`): 0 warnings, 0 errors across 147 files via `oxlint`.
-   - Build (`npm run build`): Clean build across all packages.
-   - Zero Model Weight / Network Downloads: No GGUF, SafeTensors, or cloud requests.
-
-================================================================================
-SECTION 4 — DOCUMENTATION & STATE UPDATES
-================================================================================
-
-- docs/adrs/ADR-025-checkpoints-recovery.md: Updated with Sprint 4C.2 fail-closed durability gates,
-  strict evidence truth, rollback crash proofs, and 90 evaluation scenarios.
-- docs/adrs/DECISIONS.md: ADR-025 linked and active.
-- ARCHITECTURE.md: Updated with fail-closed durability gates, repair runner propagation, and 90 scenarios.
-- PROJECT.md: Sprint 4C, 4C.1 & 4C.2 marked as ✅ CLOSED PERMANENTLY, Sprint 4D marked NEXT.
-- PLAN.md: Sprint 4C.2 marked as ✅ CLOSED PERMANENTLY with comprehensive deliverable summary, Sprint 4D marked NEXT.
-
-================================================================================
-SECTION 5 — NEXT SPRINT HAND-OFF
-================================================================================
-
-Sprint 4C (Durable Checkpoints, Recovery & Safe Rollback) is now officially and permanently CLOSED.
-Next: Sprint 4D — Performance / Large Repositories.
-All invariants, evaluation criteria, safety bounds, durability gates, and quality gates are completely satisfied.

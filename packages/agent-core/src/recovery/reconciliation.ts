@@ -68,8 +68,8 @@ export async function reconcileOperation(
     }
   }
 
-  // Handle MUTATION reconciliation based on authoritative filesystem observation
-  if (op.kind === "MUTATION") {
+  // Handle MUTATION or ROLLBACK_MUTATION reconciliation based on authoritative filesystem observation
+  if (op.kind === "MUTATION" || op.kind === "ROLLBACK_MUTATION") {
     return reconcileMutation(op)
   }
 

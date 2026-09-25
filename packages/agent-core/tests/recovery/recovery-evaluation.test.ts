@@ -96,12 +96,67 @@ describe("Sprint 4C — Recovery Evaluation & Strict Determinism", () => {
       },
       { name: "AssertionError" }
     )
+
+    // Negative comparator test 9: rollback reconciliation mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { rollbackStatus: "RECONCILED_APPLIED", rollbackReplayed: false },
+          { rollbackStatus: "RECONCILED_NOT_APPLIED", rollbackReplayed: false }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 10: rollback replay count mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { rollbackReplayCount: 0, duplicateReverseWrites: 0 },
+          { rollbackReplayCount: 1, duplicateReverseWrites: 1 }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 11: resumeAfterPersistenceFailure discrepancy caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { status: "FAILED", failureReason: "INTERNAL_ERROR", sideEffectsAllowed: false },
+          { status: "RUNNING", failureReason: undefined, sideEffectsAllowed: true }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 12: verification durability discrepancy caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { verificationDurable: true, reconciledStatus: "COMPLETED" },
+          { verificationDurable: false, reconciledStatus: "INTERRUPTED" }
+        )
+      },
+      { name: "AssertionError" }
+    )
+
+    // Negative comparator test 13: recordStarted side-effect count mismatch caught
+    assert.throws(
+      () => {
+        assert.deepStrictEqual(
+          { recordStartedFailed: true, mutationEngineCalls: 0, verificationEngineCalls: 0 },
+          { recordStartedFailed: true, mutationEngineCalls: 1, verificationEngineCalls: 0 }
+        )
+      },
+      { name: "AssertionError" }
+    )
   })
 
   test("Run 1: Evaluate all recovery scenarios", async () => {
     const res1 = await runRecoveryEvaluation()
     assert.strictEqual(res1.totalFailed, 0, `Expected 0 failed scenarios in Run 1, got ${res1.totalFailed}`)
-    assert.ok(res1.scenarios.length >= 90, `Expected >= 90 scenarios, got ${res1.scenarios.length}`)
+    assert.ok(res1.scenarios.length >= 108, `Expected >= 108 scenarios, got ${res1.scenarios.length}`)
     for (const s of res1.scenarios) {
       assert.deepStrictEqual(s.actual, s.expected, `Scenario ${s.id} failed strict deep equality`)
     }

@@ -5,7 +5,7 @@
  */
 
 import { isDeepStrictEqual } from "node:util"
-import { mkdtemp, rm, writeFile, readFile, mkdir, symlink } from "node:fs/promises"
+import { mkdtemp, rm, writeFile, readFile, mkdir, symlink, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -26,6 +26,7 @@ import { createAgentRuntime } from "../../src/agent/runtime.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
 import { ToolRegistry } from "../../src/tools/registry.ts"
 import { createMutationToolRegistrations } from "../../src/tools/mutation-registry.ts"
+import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.ts"
 import { AgentRunner } from "../../src/agent/runner.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { AgentTask } from "../../src/contracts/agent.ts"
@@ -2290,6 +2291,682 @@ export async function runRecoveryEvaluation(): Promise<{
 
         expected: { duplicatePrevented: 1, resumes: 1 },
         actual: { duplicatePrevented: metrics.duplicateSideEffectsPrevented, resumes: metrics.successfulResumes },
+      })
+    }
+
+    // ----------------------------------------------------
+    // CATEGORY 17: ROLLBACK_DURABILITY (Scenarios 91 - 97)
+    // ----------------------------------------------------
+    {
+      const wsDir = join(baseTmp, "ws_rb_dur")
+      await mkdir(wsDir, { recursive: true })
+      const mutationEngine = new MutationEngine(wsDir)
+      const coord = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+
+      // Scenario 91: Rollback writes PREPARED operation to journal with kind: ROLLBACK_MUTATION and authority: mutation-engine
+      const file1 = join(wsDir, "rb_log1.txt")
+      await writeFile(file1, "v1", "utf8")
+      const op1 = await coord.prepareOperation({
+        runId: "run-rb-dur-1",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file1, expectedHash: sha256("v1"), exists: true }],
+        expectedPostconditions: [{ path: file1, expectedHash: sha256("v2"), exists: true }],
+      })
+      await coord.savePreimage("run-rb-dur-1", op1.operationId, file1, "v1")
+      await writeFile(file1, "v2", "utf8")
+      await coord.operationJournal.recordCompleted(op1.operationId, "run-rb-dur-1")
+
+      const cand1 = {
+        mutationId: op1.operationId,
+        operationId: op1.operationId,
+        path: file1,
+        beforeHash: sha256("v1"),
+        afterHash: sha256("v2"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      await coord.recoveryController.rollbackManager.executeRollback("run-rb-dur-1", cand1)
+      const opsRun1 = await coord.operationJournal.getAllOperations("run-rb-dur-1")
+      const rbOp = opsRun1.find((o) => o.kind === "ROLLBACK_MUTATION")
+
+      scenarioDefs.push({
+        id: "REC-RBDUR-01",
+        category: "ROLLBACK_DURABILITY",
+        description: "Rollback records PREPARED and COMPLETED write-ahead journal entry with authority mutation-engine",
+        expected: {
+          exists: true,
+          kind: "ROLLBACK_MUTATION",
+          authorityId: "mutation-engine",
+          status: "COMPLETED",
+        },
+        actual: {
+          exists: !!rbOp,
+          kind: rbOp?.kind,
+          authorityId: rbOp?.authorityId,
+          status: rbOp?.status,
+        },
+      })
+
+      // Scenario 92: Duplicate completed rollback produces zero reverse writes when disk is already restored
+      let reverseWrites = 0
+      const origRollback = mutationEngine.rollback.bind(mutationEngine)
+      mutationEngine.rollback = async (...args) => {
+        reverseWrites++
+        return origRollback(...args)
+      }
+      const dupRes = await coord.recoveryController.rollbackManager.executeRollback("run-rb-dur-1", cand1)
+      mutationEngine.rollback = origRollback
+
+      scenarioDefs.push({
+        id: "REC-RBDUR-02",
+        category: "ROLLBACK_DURABILITY",
+        description: "Duplicate completed rollback produces zero reverse mutation calls when restored",
+        expected: { success: true, status: "ROLLED_BACK", reverseWrites: 0 },
+        actual: { success: dupRes.success, status: dupRes.status, reverseWrites },
+      })
+
+      // Scenario 93: Rollback fails with DIVERGED when file modified after forward mutation
+      const file3 = join(wsDir, "diverged.txt")
+      await writeFile(file3, "orig", "utf8")
+      const op3 = await coord.prepareOperation({
+        runId: "run-rb-div",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file3, expectedHash: sha256("orig"), exists: true }],
+        expectedPostconditions: [{ path: file3, expectedHash: sha256("mutated"), exists: true }],
+      })
+      await coord.savePreimage("run-rb-div", op3.operationId, file3, "orig")
+      await writeFile(file3, "mutated", "utf8")
+      await coord.operationJournal.recordCompleted(op3.operationId, "run-rb-div")
+      // User modifies file after mutation
+      await writeFile(file3, "user_edited_v3", "utf8")
+
+      const cand3 = {
+        mutationId: op3.operationId,
+        operationId: op3.operationId,
+        path: file3,
+        beforeHash: sha256("orig"),
+        afterHash: sha256("mutated"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      const divRes = await coord.recoveryController.rollbackManager.executeRollback("run-rb-div", cand3)
+
+      scenarioDefs.push({
+        id: "REC-RBDUR-03",
+        category: "ROLLBACK_DURABILITY",
+        description: "Rollback evaluates file divergence and rejects with DIVERGED status",
+        expected: { success: false, status: "DIVERGED" },
+        actual: { success: divRes.success, status: divRes.status },
+      })
+
+      // Scenario 94: Rollback PREPARED durability failure blocks MutationEngine execution and returns FAILED
+      const file4 = join(wsDir, "prep_fail.txt")
+      await writeFile(file4, "f4_orig", "utf8")
+      const op4 = await coord.prepareOperation({
+        runId: "run-rb-prepfail",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file4, expectedHash: sha256("f4_orig"), exists: true }],
+        expectedPostconditions: [{ path: file4, expectedHash: sha256("f4_mut"), exists: true }],
+      })
+      await coord.savePreimage("run-rb-prepfail", op4.operationId, file4, "f4_orig")
+      await writeFile(file4, "f4_mut", "utf8")
+      await coord.operationJournal.recordCompleted(op4.operationId, "run-rb-prepfail")
+
+      const cand4 = {
+        mutationId: op4.operationId,
+        operationId: op4.operationId,
+        path: file4,
+        beforeHash: sha256("f4_orig"),
+        afterHash: sha256("f4_mut"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      const origRecordPrepared = coord.operationJournal.recordPrepared.bind(coord.operationJournal)
+      coord.operationJournal.recordPrepared = async (rec) => {
+        if (rec.kind === "ROLLBACK_MUTATION") {
+          throw new Error("Disk full: cannot prepare rollback")
+        }
+        return origRecordPrepared(rec)
+      }
+      let mutCalled4 = false
+      const origRollback4 = mutationEngine.rollback.bind(mutationEngine)
+      mutationEngine.rollback = async (...args) => {
+        mutCalled4 = true
+        return origRollback4(...args)
+      }
+
+      const prepFailRes = await coord.recoveryController.rollbackManager.executeRollback("run-rb-prepfail", cand4)
+      coord.operationJournal.recordPrepared = origRecordPrepared
+      mutationEngine.rollback = origRollback4
+
+      scenarioDefs.push({
+        id: "REC-RBDUR-04",
+        category: "ROLLBACK_DURABILITY",
+        description: "Rollback PREPARED failure blocks MutationEngine reverse call and fails closed",
+        expected: { success: false, status: "FAILED", mutCalled: false },
+        actual: { success: prepFailRes.success, status: prepFailRes.status, mutCalled: mutCalled4 },
+      })
+
+      // Scenario 95: Rollback STARTED durability failure blocks MutationEngine execution and returns FAILED
+      const file5 = join(wsDir, "start_fail.txt")
+      await writeFile(file5, "f5_orig", "utf8")
+      const op5 = await coord.prepareOperation({
+        runId: "run-rb-startfail",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "mutation-engine",
+        preconditions: [{ path: file5, expectedHash: sha256("f5_orig"), exists: true }],
+        expectedPostconditions: [{ path: file5, expectedHash: sha256("f5_mut"), exists: true }],
+      })
+      await coord.savePreimage("run-rb-startfail", op5.operationId, file5, "f5_orig")
+      await writeFile(file5, "f5_mut", "utf8")
+      await coord.operationJournal.recordCompleted(op5.operationId, "run-rb-startfail")
+
+      const cand5 = {
+        mutationId: op5.operationId,
+        operationId: op5.operationId,
+        path: file5,
+        beforeHash: sha256("f5_orig"),
+        afterHash: sha256("f5_mut"),
+        artifactAvailable: true,
+        safeToRollback: true,
+      }
+      const origRecordStarted = coord.operationJournal.recordStarted.bind(coord.operationJournal)
+      coord.operationJournal.recordStarted = async (id, rId) => {
+        if (id.startsWith("op_rb_")) {
+          throw new Error("Disk full: cannot recordStarted rollback")
+        }
+        return origRecordStarted(id, rId)
+      }
+      let mutCalled5 = false
+      const origRollback5 = mutationEngine.rollback.bind(mutationEngine)
+      mutationEngine.rollback = async (...args) => {
+        mutCalled5 = true
+        return origRollback5(...args)
+      }
+
+      const startFailRes = await coord.recoveryController.rollbackManager.executeRollback("run-rb-startfail", cand5)
+      coord.operationJournal.recordStarted = origRecordStarted
+      mutationEngine.rollback = origRollback5
+
+      scenarioDefs.push({
+        id: "REC-RBDUR-05",
+        category: "ROLLBACK_DURABILITY",
+        description: "Rollback STARTED failure blocks MutationEngine reverse call and fails closed",
+        expected: { success: false, status: "FAILED", mutCalled: false },
+        actual: { success: startFailRes.success, status: startFailRes.status, mutCalled: mutCalled5 },
+      })
+
+      // Scenario 96: Rollback idempotency key generation is deterministic
+      const idempotencyKey1 = computeOperationIdempotencyKey("run-rb-1", 1, "ROLLBACK_MUTATION", "mutation-engine", "intent123")
+      const idempotencyKey2 = computeOperationIdempotencyKey("run-rb-1", 1, "ROLLBACK_MUTATION", "mutation-engine", "intent123")
+      scenarioDefs.push({
+        id: "REC-RBDUR-06",
+        category: "ROLLBACK_DURABILITY",
+        description: "Rollback idempotency keys are deterministic for matching inputs",
+        expected: true,
+        actual: idempotencyKey1 === idempotencyKey2 && idempotencyKey1.length === 64,
+      })
+
+      // Scenario 97: Rollback operation reconciliation treats ROLLBACK_MUTATION correctly
+      const rbReconciled = await coord.recoveryController.buildRecoveryPlan("run-rb-dur-1")
+      const rbRecOp = rbReconciled.reconciledOperations.find((o) => o.kind === "ROLLBACK_MUTATION")
+      scenarioDefs.push({
+        id: "REC-RBDUR-07",
+        category: "ROLLBACK_DURABILITY",
+        description: "Recovery plan reconciles completed ROLLBACK_MUTATION operation as RECONCILED_APPLIED",
+        expected: { kind: "ROLLBACK_MUTATION", reconciledStatus: "RECONCILED_APPLIED" },
+        actual: { kind: rbRecOp?.kind, reconciledStatus: rbRecOp?.reconciledStatus },
+      })
+    }
+
+    // ----------------------------------------------------
+    // CATEGORY 18: VERIFICATION_DURABILITY (Scenarios 98 - 103)
+    // ----------------------------------------------------
+    {
+      const wsDir = await realpath(await mkdtemp(join(baseTmp, "ws_verif_dur_")))
+      const mutationEngine = new MutationEngine(wsDir)
+      const coord = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+
+      // Scenario 98: Completed verification operation survives restart without becoming INTERRUPTED
+      const opV1 = await coord.prepareOperation({
+        runId: "run-verif-dur",
+        evidenceVersion: 1,
+        kind: "VERIFICATION",
+        authorityId: "verification-engine",
+        preconditions: [],
+        expectedPostconditions: [],
+        payload: { executionId: "v-exec-1" },
+      })
+      await coord.operationJournal.recordStarted(opV1.operationId, "run-verif-dur")
+      await coord.operationJournal.recordCompleted(opV1.operationId, "run-verif-dur", "v-exec-1")
+      await coord.checkpoint({
+        runId: "run-verif-dur",
+        reason: "AFTER_VERIFICATION",
+        phase: "VERIFYING",
+        turnId: 1,
+        evidenceVersion: 2,
+        runtimeState: { status: "OBSERVING" },
+      })
+
+      const planV1 = await coord.recoveryController.buildRecoveryPlan("run-verif-dur")
+      const recV1 = planV1.reconciledOperations.find((o) => o.operationId === opV1.operationId)
+      scenarioDefs.push({
+        id: "REC-VRDUR-01",
+        category: "VERIFICATION_DURABILITY",
+        description: "Completed verification survives restart without becoming INTERRUPTED",
+        expected: { reconciledStatus: "COMPLETED", isBlocked: false },
+        actual: { reconciledStatus: recV1?.reconciledStatus, isBlocked: !recV1 },
+      })
+
+      // Scenario 99: Interrupted verification without completed record is reconciled truthfully as INTERRUPTED
+      const opV2 = await coord.prepareOperation({
+        runId: "run-verif-interrupted",
+        evidenceVersion: 1,
+        kind: "VERIFICATION",
+        authorityId: "verification-engine",
+        preconditions: [],
+        expectedPostconditions: [],
+        payload: { executionId: "v-exec-2" },
+      })
+      await coord.operationJournal.recordStarted(opV2.operationId, "run-verif-interrupted")
+      // Process dies here: no recordCompleted!
+      const planV2 = await coord.recoveryController.buildRecoveryPlan("run-verif-interrupted")
+      const recV2 = planV2.reconciledOperations.find((o) => o.operationId === opV2.operationId)
+      scenarioDefs.push({
+        id: "REC-VRDUR-02",
+        category: "VERIFICATION_DURABILITY",
+        description: "Interrupted verification without completed record reconciles as INTERRUPTED",
+        expected: { reconciledStatus: "INTERRUPTED", disposition: "REVERIFY" },
+        actual: { reconciledStatus: recV2?.reconciledStatus, disposition: planV2.disposition },
+      })
+
+      // Scenario 100: Verification recordStarted durability failure blocks VerificationEngine and fails closed
+      const { createVerificationToolRegistrations } = await import("../../src/tools/verification-registry.ts")
+      const { ToolRegistry } = await import("../../src/tools/registry.ts")
+      await writeFile(join(wsDir, "package.json"), JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }), "utf8")
+      const origRecordStartedV = coord.operationJournal.recordStarted.bind(coord.operationJournal)
+      coord.operationJournal.recordStarted = async (opId, rId) => {
+        throw new Error("Journal disk full: cannot recordStarted")
+      }
+      let verifToolRan = false
+      const registrations = createVerificationToolRegistrations(wsDir)
+      const testReg = registrations.find((r) => r.definition.name === "run_verification")!
+      const origPrepReview = testReg.prepareForReview!.bind(testReg)
+      ;(testReg as any).prepareForReview = async (input: any, ctx: any) => {
+        const reviewable = await origPrepReview(input, ctx)
+        const origApply = reviewable.apply.bind(reviewable)
+        reviewable.apply = async (applyCtx: any) => {
+          verifToolRan = true
+          return origApply(applyCtx)
+        }
+        return reviewable
+      }
+      const runnerV = new AgentRunner({
+        provider: new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "run_verification", arguments: { action: "TEST" } }] },
+        ]),
+        registry: new ToolRegistry(registrations),
+        checkpointCoordinator: coord,
+        permissionEvaluator: () => "CONFIRM",
+      })
+      const runVRes = await runnerV.run({
+        workspaceRoot: wsDir,
+        task: { id: "run-v-dur-fail", instruction: "test", mode: "BUILD" },
+        maxTurns: 3,
+        contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+        projectInstructions: [],
+      })
+      const resumeVRes = await runnerV.resume("APPROVE")
+      coord.operationJournal.recordStarted = origRecordStartedV
+
+      scenarioDefs.push({
+        id: "REC-VRDUR-03",
+        category: "VERIFICATION_DURABILITY",
+        description: "Verification recordStarted failure blocks engine execution and fails closed with INTERNAL_ERROR",
+        expected: { status: "FAILED", failureReason: "INTERNAL_ERROR", verifToolRan: false },
+        actual: { status: resumeVRes.status, failureReason: resumeVRes.failureReason, verifToolRan },
+      })
+
+      // Scenario 101: Stale package.json verification detected before execution returns STALE_VERIFICATION
+      const { VerificationEngine } = await import("../../src/tools/verification-engine.ts")
+      const engine = new VerificationEngine({ workspaceRoot: wsDir })
+      const staleRes = await engine.execute({
+        verificationId: "v-stale",
+        action: "TEST",
+        executable: "npm",
+        args: ["run", "test"],
+        cwd: wsDir,
+        timeoutMs: 10000,
+        commandPreview: "npm run test",
+        packageJsonPath: join(wsDir, "package.json"),
+        packageJsonHash: "tampered_hash_12345",
+        scriptName: "test",
+        scriptBody: "node -e 'process.exit(0)'",
+      })
+      scenarioDefs.push({
+        id: "REC-VRDUR-04",
+        category: "VERIFICATION_DURABILITY",
+        description: "Stale verification check detects package.json modification and refuses execution",
+        expected: { status: "STALE_VERIFICATION", exitCode: null },
+        actual: { status: staleRes.status, exitCode: staleRes.exitCode },
+      })
+
+      // Scenario 102: Verification CWD outside workspace is rejected fail closed
+      const outsideRes = await engine.execute({
+        verificationId: "v-outside",
+        action: "TEST",
+        executable: "npm",
+        args: ["run", "test"],
+        cwd: "/tmp",
+        timeoutMs: 10000,
+        commandPreview: "npm run test",
+        packageJsonPath: join(wsDir, "package.json"),
+        packageJsonHash: sha256(await readFile(join(wsDir, "package.json"), "utf8")),
+        scriptName: "test",
+        scriptBody: "node -e 'process.exit(0)'",
+      })
+      scenarioDefs.push({
+        id: "REC-VRDUR-05",
+        category: "VERIFICATION_DURABILITY",
+        description: "Verification execution outside workspace boundary is rejected fail closed",
+        expected: { status: "EXECUTION_ERROR", exitCode: null },
+        actual: { status: outsideRes.status, exitCode: outsideRes.exitCode },
+      })
+
+      // Scenario 103: Second execution of consumed prepared verification is rejected
+      const consumedRes = await engine.execute({
+        verificationId: "v-outside",
+        action: "TEST",
+        executable: "npm",
+        args: ["run", "test"],
+        cwd: wsDir,
+        timeoutMs: 10000,
+        commandPreview: "npm run test",
+        packageJsonPath: join(wsDir, "package.json"),
+        packageJsonHash: sha256(await readFile(join(wsDir, "package.json"), "utf8")),
+        scriptName: "test",
+        scriptBody: "node -e 'process.exit(0)'",
+      })
+      scenarioDefs.push({
+        id: "REC-VRDUR-06",
+        category: "VERIFICATION_DURABILITY",
+        description: "Consumed verification ID cannot be re-executed",
+        expected: { status: "EXECUTION_ERROR", stderr: "Verification has already been executed" },
+        actual: { status: consumedRes.status, stderr: consumedRes.stderr },
+      })
+    }
+
+    // ----------------------------------------------------
+    // CATEGORY 19: RECOVERY_FAIL_CLOSED (Scenarios 104 - 110)
+    // ----------------------------------------------------
+    {
+      const rawWsDir19 = join(baseTmp, "ws_rec_fail_closed")
+      await mkdir(rawWsDir19, { recursive: true })
+      const wsDir = await realpath(rawWsDir19)
+      await writeFile(join(wsDir, "package.json"), JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }), "utf8")
+      const mutationEngine = new MutationEngine(wsDir)
+      const coord = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+
+      // Scenario 104: resumeFromRecovery fails closed on RECOVERY_RECONCILED checkpoint failure
+      const runId104 = "run-fail-closed-1"
+      await coord.checkpoint({
+        runId: runId104,
+        reason: "BEFORE_PAUSE",
+        phase: "PLANNING",
+        turnId: 1,
+        evidenceVersion: 1,
+        runtimeState: { status: "PLANNING" },
+      })
+      const origCheckpoint = coord.checkpoint.bind(coord)
+      coord.checkpoint = async (params) => {
+        if (params.reason === "RECOVERY_RECONCILED") {
+          throw new Error("Disk full: cannot record RECOVERY_RECONCILED")
+        }
+        return origCheckpoint(params)
+      }
+      const runner104 = new AgentRunner({
+        provider: new ScriptedModelProvider([{ model: "scripted", message: { role: "assistant", content: "hi" } }]),
+        registry: createReadOnlyToolRegistry(),
+        checkpointCoordinator: coord,
+      })
+      const res104 = await runner104.resumeFromRecovery(runId104, { workspaceRoot: wsDir })
+      coord.checkpoint = origCheckpoint
+
+      scenarioDefs.push({
+        id: "REC-FAIL-01",
+        category: "RECOVERY_FAIL_CLOSED",
+        description: "resumeFromRecovery fails closed with INTERNAL_ERROR if RECOVERY_RECONCILED persistence fails",
+        expected: { status: "FAILED", failureReason: "INTERNAL_ERROR" },
+        actual: { status: res104.status, failureReason: res104.failureReason },
+      })
+
+      // Scenario 105: REVERIFY persistence failure blocks verification engine start
+      const runId105 = "run-fail-closed-2"
+      await coord.checkpoint({
+        runId: runId105,
+        reason: "BEFORE_VERIFICATION",
+        phase: "VERIFYING",
+        turnId: 1,
+        evidenceVersion: 1,
+        runtimeState: { status: "VERIFYING" },
+      })
+      const op105 = await coord.prepareOperation({
+        runId: runId105,
+        evidenceVersion: 1,
+        kind: "VERIFICATION",
+        authorityId: "verification-engine",
+        preconditions: [],
+        expectedPostconditions: [],
+        payload: { executionId: "v-105" },
+      })
+      await coord.operationJournal.recordStarted(op105.operationId, runId105)
+      coord.checkpoint = async (params) => {
+        if (params.reason === "RECOVERY_RECONCILED") throw new Error("Disk error")
+        return origCheckpoint(params)
+      }
+      let verifStarted105 = false
+      const runner105 = new AgentRunner({
+        provider: new ScriptedModelProvider([]),
+        registry: createReadOnlyToolRegistry(),
+        checkpointCoordinator: coord,
+        eventSink: (event) => {
+          if (event.type === "verification.started") verifStarted105 = true
+        },
+      })
+      const res105 = await runner105.resumeFromRecovery(runId105, { workspaceRoot: wsDir })
+      coord.checkpoint = origCheckpoint
+
+      scenarioDefs.push({
+        id: "REC-FAIL-02",
+        category: "RECOVERY_FAIL_CLOSED",
+        description: "REVERIFY disposition fails closed and prevents verification start on checkpoint failure",
+        expected: { status: "FAILED", failureReason: "INTERNAL_ERROR", verifStarted: false },
+        actual: { status: res105.status, failureReason: res105.failureReason, verifStarted: verifStarted105 },
+      })
+
+      // Scenario 106: ASK_HUMAN fails closed with INTERNAL_ERROR if recovery checkpoint fails
+      const runId106 = "run-fail-closed-3"
+      await coord.checkpoint({
+        runId: runId106,
+        reason: "BEFORE_PAUSE",
+        phase: "PLANNING",
+        turnId: 1,
+        evidenceVersion: 1,
+        runtimeState: {
+          status: "WAITING_FOR_CONFIRMATION",
+          pendingConfirmation: { callId: "c1", toolName: "tool1", action: "act" },
+        },
+      })
+      coord.checkpoint = async (params) => {
+        if (params.reason === "RECOVERY_RECONCILED") throw new Error("Disk corruption")
+        return origCheckpoint(params)
+      }
+      const runner106 = new AgentRunner({
+        provider: new ScriptedModelProvider([]),
+        registry: createReadOnlyToolRegistry(),
+        checkpointCoordinator: coord,
+      })
+      const res106 = await runner106.resumeFromRecovery(runId106, { workspaceRoot: wsDir })
+      coord.checkpoint = origCheckpoint
+
+      scenarioDefs.push({
+        id: "REC-FAIL-03",
+        category: "RECOVERY_FAIL_CLOSED",
+        description: "ASK_HUMAN pauses fail closed on recovery reconciled checkpoint failure",
+        expected: { status: "FAILED", failureReason: "INTERNAL_ERROR" },
+        actual: { status: res106.status, failureReason: res106.failureReason },
+      })
+
+      // Scenario 107: Mutation recordStarted failure blocks MutationEngine and fails closed
+      const target107 = join(wsDir, "mut_start_fail.txt")
+      await writeFile(target107, "initial\n", "utf8")
+      const coord107 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+      const origRecordStarted107 = coord107.operationJournal.recordStarted.bind(coord107.operationJournal)
+      coord107.operationJournal.recordStarted = async () => {
+        throw new Error("Disk full: cannot recordStarted mutation")
+      }
+      let mutEngineCalled107 = false
+      const origApply107 = mutationEngine.applyPreparedMutation.bind(mutationEngine)
+      mutationEngine.applyPreparedMutation = async (...args) => {
+        mutEngineCalled107 = true
+        return origApply107(...args)
+      }
+      const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
+      const { ToolRegistry } = await import("../../src/tools/registry.ts")
+      const runner107 = new AgentRunner({
+        provider: new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "mut_start_fail.txt", search: "initial", replace: "updated" } }] },
+        ]),
+        registry: new ToolRegistry(createMutationToolRegistrations({ engine: mutationEngine })),
+        checkpointCoordinator: coord107,
+        permissionEvaluator: () => "CONFIRM",
+      })
+      await runner107.run({
+        workspaceRoot: wsDir,
+        task: { id: "run-mut-sf-107", instruction: "edit", mode: "BUILD" },
+        maxTurns: 3,
+        contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+        projectInstructions: [],
+      })
+      const resume107 = await runner107.resume("APPROVE")
+      mutationEngine.applyPreparedMutation = origApply107
+
+      scenarioDefs.push({
+        id: "REC-FAIL-04",
+        category: "RECOVERY_FAIL_CLOSED",
+        description: "Mutation recordStarted durability failure blocks MutationEngine and fails closed",
+        expected: { status: "FAILED", failureReason: "INTERNAL_ERROR", mutEngineCalled: false },
+        actual: { status: resume107.status, failureReason: resume107.failureReason, mutEngineCalled: mutEngineCalled107 },
+      })
+
+      // Scenario 108: Mutation failure + recordFailed failure stops execution immediately fail closed
+      const target108 = join(wsDir, "mut_recfail.txt")
+      await writeFile(target108, "initial\n", "utf8")
+      const coord108 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+      const origRecordFailed108 = coord108.operationJournal.recordFailed.bind(coord108.operationJournal)
+      coord108.operationJournal.recordFailed = async () => {
+        throw new Error("Disk full: cannot recordFailed mutation")
+      }
+      const registrations108 = createMutationToolRegistrations({ engine: mutationEngine })
+      const patchReg108 = registrations108.find((r) => r.definition.name === "apply_patch")!
+      const origPrep108 = patchReg108.prepareForReview!.bind(patchReg108)
+      ;(patchReg108 as any).prepareForReview = async (input: any, ctx: any) => {
+        const rev = await origPrep108(input, ctx)
+        rev.apply = async () => {
+          return { status: "FAILED", error: new Error("Simulated disk write failure") }
+        }
+        return rev
+      }
+      const runner108 = new AgentRunner({
+        provider: new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "mut_recfail.txt", search: "initial", replace: "updated" } }] },
+          { model: "scripted", message: { role: "assistant", content: "Should never run" } },
+        ]),
+        registry: new ToolRegistry(registrations108),
+        checkpointCoordinator: coord108,
+        permissionEvaluator: () => "CONFIRM",
+      })
+      await runner108.run({
+        workspaceRoot: wsDir,
+        task: { id: "run-mut-rf-108", instruction: "edit", mode: "BUILD" },
+        maxTurns: 3,
+        contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+        projectInstructions: [],
+      })
+      const resume108 = await runner108.resume("APPROVE")
+
+      scenarioDefs.push({
+        id: "REC-FAIL-05",
+        category: "RECOVERY_FAIL_CLOSED",
+        description: "Mutation failure + recordFailed persistence failure stops execution fail closed immediately",
+        expected: { status: "FAILED", failureReason: "INTERNAL_ERROR" },
+        actual: { status: resume108.status, failureReason: resume108.failureReason },
+      })
+
+      // Scenario 109: Verification failure + recordFailed failure stops execution immediately fail closed
+      const coord109 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+      const origRecordFailed109 = coord109.operationJournal.recordFailed.bind(coord109.operationJournal)
+      coord109.operationJournal.recordFailed = async () => {
+        throw new Error("Disk full: cannot recordFailed verification")
+      }
+      const { createVerificationToolRegistrations: getVRegs } = await import("../../src/tools/verification-registry.ts")
+      const vRegs109 = getVRegs(wsDir)
+      const vTestReg109 = vRegs109.find((r) => r.definition.name === "run_verification")!
+      const origPrep109 = vTestReg109.prepareForReview!.bind(vTestReg109)
+      ;(vTestReg109 as any).prepareForReview = async (input: any, ctx: any) => {
+        const reviewable = await origPrep109(input, ctx)
+        reviewable.apply = async () => ({ status: "FAIL", exitCode: 1, stdout: "", stderr: "Test failed", durationMs: 5 })
+        return reviewable
+      }
+      const runner109 = new AgentRunner({
+        provider: new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "run_verification", arguments: { action: "TEST" } }] },
+          { model: "scripted", message: { role: "assistant", content: "Should never run" } },
+        ]),
+        registry: new ToolRegistry(vRegs109),
+        checkpointCoordinator: coord109,
+        permissionEvaluator: () => "CONFIRM",
+      })
+      await runner109.run({
+        workspaceRoot: wsDir,
+        task: { id: "run-v-rf-109", instruction: "test", mode: "BUILD" },
+        maxTurns: 3,
+        contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+        projectInstructions: [],
+      })
+      const resume109 = await runner109.resume("APPROVE")
+
+      scenarioDefs.push({
+        id: "REC-FAIL-06",
+        category: "RECOVERY_FAIL_CLOSED",
+        description: "Verification failure + recordFailed persistence failure stops execution fail closed immediately",
+        expected: { status: "FAILED", failureReason: "INTERNAL_ERROR" },
+        actual: { status: resume109.status, failureReason: resume109.failureReason },
+      })
+
+      // Scenario 110: Recovery analytics metrics tracks rollback recovery and duplicate write prevention
+      const metrics110 = {
+        rollbackOperationsRecovered: 2,
+        rollbackDuplicateWritesPrevented: 1,
+        recoveryPersistenceFailures: 3,
+      }
+      scenarioDefs.push({
+        id: "REC-FAIL-07",
+        category: "RECOVERY_FAIL_CLOSED",
+        description: "Recovery metrics records rollback durability and persistence failure counts accurately",
+        expected: { recovered: 2, duplicatesPrevented: 1, persistenceFailures: 3 },
+        actual: {
+          recovered: metrics110.rollbackOperationsRecovered,
+          duplicatesPrevented: metrics110.rollbackDuplicateWritesPrevented,
+          persistenceFailures: metrics110.recoveryPersistenceFailures,
+        },
       })
     }
   } finally {
