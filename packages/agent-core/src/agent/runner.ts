@@ -282,6 +282,7 @@ export class AgentRunner {
           ...(isVerification ? { executionId: reviewable.id } : {}),
         })
         let observation: ToolObservation
+        let opId: string | undefined
         try {
           if (isVerification) {
             this.#emit("verification.started", {
@@ -292,7 +293,6 @@ export class AgentRunner {
             })
           }
           const reviewableId = reviewable.id
-          let opId: string | undefined
           let targetFilePath = ""
           if (this.#checkpointCoordinator && !isVerification) {
             const payload = reviewable.reviewPayload as any
@@ -509,6 +509,17 @@ export class AgentRunner {
         } catch (error) {
           const message = error instanceof Error ? error.message : "Mutation apply failed"
           session.failureReason = "INTERNAL_ERROR"
+
+          if (this.#checkpointCoordinator && opId && !message.includes("DURABILITY_UNAVAILABLE")) {
+            try {
+              await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, message)
+            } catch (failDurabilityErr) {
+              const failDurabilityMsg = `RECOVERY_PERSISTENCE_FAILED: Operation failed and recordFailed persistence failed: ${failDurabilityErr instanceof Error ? failDurabilityErr.message : String(failDurabilityErr)}`
+              this.#emit("task.failed", { message: failDurabilityMsg })
+              return this.#result()
+            }
+          }
+
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, error: { category: isVerification ? "VERIFICATION_ERROR" : "MUTATION_ERROR", message }, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
           session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: "FAILED", truncated: observation.truncated })
@@ -603,18 +614,55 @@ export class AgentRunner {
     const directive = evalPolicy.determineDirective(evalResult, evidenceCollector.getEvidence())
 
     // Checkpoint recovery restored
-    await this.#checkpointCoordinator.checkpoint({
-      runId,
-      reason: "RECOVERY_RECONCILED",
-      phase: plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" ? "PLANNING" : latestCp.phase,
-      turnId: latestCp.turnId ?? 0,
-      evidenceVersion: latestCp.evidenceVersion + 1,
-      runtimeState: {
-        status: (directive.decision === "ASK_HUMAN" || plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" || plan.divergenceClass === "BLOCKED_DIVERGENCE")
-          ? "WAITING_FOR_CONFIRMATION"
-          : (plan.disposition === "STOP" || directive.decision === "STOP" ? "COMPLETED" : "PLANNING"),
-      },
-    }).catch(() => {})
+    try {
+      await this.#checkpointCoordinator.checkpoint({
+        runId,
+        reason: "RECOVERY_RECONCILED",
+        phase: plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" ? "PLANNING" : latestCp.phase,
+        turnId: latestCp.turnId ?? 0,
+        evidenceVersion: latestCp.evidenceVersion + 1,
+        runtimeState: {
+          status: (directive.decision === "ASK_HUMAN" || plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" || plan.divergenceClass === "BLOCKED_DIVERGENCE")
+            ? "WAITING_FOR_CONFIRMATION"
+            : (plan.disposition === "STOP" || directive.decision === "STOP" ? "COMPLETED" : "PLANNING"),
+        },
+      })
+    } catch (err) {
+      this.#session = {
+        input: {
+          workspaceRoot: wsRoot,
+          task: { id: runId, instruction, mode },
+          maxTurns: 10,
+          contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+          projectInstructions: [],
+          ...(options?.signal ? { signal: options.signal } : {}),
+        },
+        taskProfile,
+        evidenceLedger: new EvidenceLedger(),
+        evidenceCollector,
+        evalEngine,
+        evalPolicy,
+        evalLedger,
+        evalAnalytics,
+        evalResults: [],
+        state: {
+          status: "PLANNING",
+          task: { id: runId, instruction, mode },
+          events: [],
+        },
+        turns: latestCp.turnId ?? 0,
+        continuationAttempts: 0,
+        observations: [],
+        diagnostics: [],
+        toolCalls: [],
+        repeatedProgress: 0,
+        failureReason: "INTERNAL_ERROR",
+      }
+      const message = `RECOVERY_PERSISTENCE_FAILED: Failed to record RECOVERY_RECONCILED checkpoint: ${err instanceof Error ? err.message : String(err)}`
+      this.#emit("task.failed", { message })
+      const res = this.#result()
+      return { ...res, recoveryPlan: plan }
+    }
 
     // Check if recovery requires human escalation or reconfirmation
     if (directive.decision === "ASK_HUMAN" || plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" || plan.divergenceClass === "BLOCKED_DIVERGENCE") {
@@ -1236,7 +1284,14 @@ export class AgentRunner {
       }
       const message = error instanceof Error ? error.message : "Tool execution failed"
       if (this.#checkpointCoordinator && opId) {
-        await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, message).catch(() => {})
+        try {
+          await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, message)
+        } catch (failDurabilityErr) {
+          session.failureReason = "INTERNAL_ERROR"
+          const failDurabilityMsg = `RECOVERY_PERSISTENCE_FAILED: Tool execution failed and recordFailed persistence failed: ${failDurabilityErr instanceof Error ? failDurabilityErr.message : String(failDurabilityErr)}`
+          this.#emit("task.failed", { message: failDurabilityMsg })
+          return true
+        }
       }
       observation = createToolObservation({
         toolName: prepared.name,
@@ -1760,11 +1815,26 @@ export class AgentRunner {
               return { outcome: "FAILED" }
             }
           }
-          const result = (await reviewable.apply({
-            workspaceRoot: session.input.workspaceRoot,
-            signal: session.input.signal ?? new AbortController().signal,
-            onOutput,
-          })) as any
+          let result: any
+          try {
+            result = (await reviewable.apply({
+              workspaceRoot: session.input.workspaceRoot,
+              signal: session.input.signal ?? new AbortController().signal,
+              onOutput,
+            })) as any
+          } catch (execErr: any) {
+            if (this.#checkpointCoordinator && opId) {
+              try {
+                await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, execErr.message)
+              } catch (failDurabilityErr) {
+                session.failureReason = "INTERNAL_ERROR"
+                const failDurabilityMsg = `RECOVERY_PERSISTENCE_FAILED: Scheduled verification threw and recordFailed persistence failed: ${failDurabilityErr instanceof Error ? failDurabilityErr.message : String(failDurabilityErr)}`
+                this.#emit("task.failed", { message: failDurabilityMsg })
+                return { outcome: "FAILED" }
+              }
+            }
+            throw execErr
+          }
           let postDurabilityError: Error | undefined
           if (this.#checkpointCoordinator && opId) {
             try {
@@ -1912,7 +1982,22 @@ export class AgentRunner {
             return { outcome: "FAILED" }
           }
         }
-        const result = await this.#verificationEngine.execute(preparedVerif, session.input.signal)
+        let result: any
+        try {
+          result = await this.#verificationEngine.execute(preparedVerif, session.input.signal)
+        } catch (execErr: any) {
+          if (this.#checkpointCoordinator && opId) {
+            try {
+              await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, execErr.message)
+            } catch (failDurabilityErr) {
+              session.failureReason = "INTERNAL_ERROR"
+              const failDurabilityMsg = `RECOVERY_PERSISTENCE_FAILED: Auto test verification threw and recordFailed persistence failed: ${failDurabilityErr instanceof Error ? failDurabilityErr.message : String(failDurabilityErr)}`
+              this.#emit("task.failed", { message: failDurabilityMsg })
+              return { outcome: "FAILED" }
+            }
+          }
+          throw execErr
+        }
         let postDurabilityError: Error | undefined
         if (this.#checkpointCoordinator && opId) {
           try {

@@ -25,6 +25,7 @@ export type CheckpointReason = (typeof CHECKPOINT_REASONS)[number]
 
 export const OPERATION_KINDS = [
   "MUTATION",
+  "ROLLBACK_MUTATION",
   "VERIFICATION",
   "MCP_READ",
   "MCP_SIDE_EFFECT",
@@ -225,6 +226,9 @@ export interface RecoveryAnalyticsMetrics {
   rollbacksProposed: number
   rollbackSuccesses: number
   rollbackFailures: number
+  rollbackOperationsRecovered: number
+  rollbackDuplicateWritesPrevented: number
+  recoveryPersistenceFailures: number
   duplicateSideEffectsPrevented: number
   humanEscalations: number
 }

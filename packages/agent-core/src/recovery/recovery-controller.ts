@@ -39,7 +39,12 @@ export class RecoveryController {
     this.#checkpointStore = options.checkpointStore
     this.#operationJournal = options.operationJournal
     this.#artifactStore = options.artifactStore
-    this.#rollbackManager = new RollbackManager(options.mutationEngine, options.artifactStore)
+    this.#rollbackManager = new RollbackManager({
+      mutationEngine: options.mutationEngine,
+      artifactStore: options.artifactStore,
+      operationJournal: options.operationJournal,
+      checkpointStore: options.checkpointStore,
+    })
   }
 
   get rollbackManager(): RollbackManager {
@@ -76,38 +81,6 @@ export class RecoveryController {
     const currentEpoch = getProcessEpochId()
     const isNewEpoch = latestCheckpoint ? latestCheckpoint.processEpochId !== currentEpoch : false
 
-    // If run was already COMPLETED
-    if (latestCheckpoint && (latestCheckpoint.runtimeState.status === "COMPLETED" || latestCheckpoint.reason === "COMPLETED")) {
-      return {
-        recoveryId,
-        runId,
-        checkpointId: latestCheckpoint.checkpointId,
-        disposition: "STOP",
-        reconciledOperations: [],
-        blockedOperations: [],
-        reasons: ["Task was already completed durably before restart"],
-        rollbackCandidates: [],
-        requiredApprovals: [],
-        divergenceClass: "EXACT_MATCH",
-      }
-    }
-
-    // If run failed due to security denial, do not auto-retry
-    if (latestCheckpoint && (latestCheckpoint.runtimeState.pauseReason?.includes("SECURITY") || latestCheckpoint.runtimeState.status === "FAILED")) {
-      return {
-        recoveryId,
-        runId,
-        checkpointId: latestCheckpoint.checkpointId,
-        disposition: "STOP",
-        reconciledOperations: [],
-        blockedOperations: [],
-        reasons: ["Run previously stopped or failed; automatic retry forbidden"],
-        rollbackCandidates: [],
-        requiredApprovals: [],
-        divergenceClass: "EXACT_MATCH",
-      }
-    }
-
     // Inspect operations from journal
     const reconciledList: ReconciledOperationSummary[] = []
     const blockedList: ReconciledOperationSummary[] = []
@@ -127,7 +100,10 @@ export class RecoveryController {
       if (rec.summary.kind === "VERIFICATION" && rec.summary.reconciledStatus === "INTERRUPTED") {
         hasInterruptedVerification = true
       }
-      if (rec.summary.kind === "MUTATION" && rec.summary.reconciledStatus === "RECONCILED_APPLIED") {
+      if (
+        (rec.summary.kind === "MUTATION" || rec.summary.kind === "ROLLBACK_MUTATION") &&
+        rec.summary.reconciledStatus === "RECONCILED_APPLIED"
+      ) {
         hasReconciledApplied = true
       }
 
@@ -141,6 +117,38 @@ export class RecoveryController {
       }
     }
 
+    // If run was already COMPLETED
+    if (latestCheckpoint && (latestCheckpoint.runtimeState.status === "COMPLETED" || latestCheckpoint.reason === "COMPLETED")) {
+      return {
+        recoveryId,
+        runId,
+        checkpointId: latestCheckpoint.checkpointId,
+        disposition: "STOP",
+        reconciledOperations: reconciledList,
+        blockedOperations: blockedList,
+        reasons: ["Task was already completed durably before restart"],
+        rollbackCandidates: [],
+        requiredApprovals: [],
+        divergenceClass: "EXACT_MATCH",
+      }
+    }
+
+    // If run failed due to security denial, do not auto-retry
+    if (latestCheckpoint && (latestCheckpoint.runtimeState.pauseReason?.includes("SECURITY") || latestCheckpoint.runtimeState.status === "FAILED")) {
+      return {
+        recoveryId,
+        runId,
+        checkpointId: latestCheckpoint.checkpointId,
+        disposition: "STOP",
+        reconciledOperations: reconciledList,
+        blockedOperations: blockedList,
+        reasons: ["Run previously stopped or failed; automatic retry forbidden"],
+        rollbackCandidates: [],
+        requiredApprovals: [],
+        divergenceClass: "EXACT_MATCH",
+      }
+    }
+
     // Reconcile footprint
     const footprintCheck = latestCheckpoint
       ? await reconcileFootprint(latestCheckpoint.recoveryFootprint)
@@ -151,8 +159,9 @@ export class RecoveryController {
       divergenceClass = "BLOCKED_DIVERGENCE"
     }
 
-    // Determine rollback candidates
+    // Determine rollback candidates (forward mutations only)
     const appliedOps = allOps.filter((o) => {
+      if (o.kind !== "MUTATION") return false
       const rec = reconciledList.find((r) => r.operationId === o.operationId)
       return rec?.reconciledStatus === "RECONCILED_APPLIED" || o.status === "COMPLETED"
     })
