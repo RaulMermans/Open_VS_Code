@@ -197,4 +197,99 @@ describe("Sprint 4C.1 — Production Recovery Integration (E2E)", () => {
       await rm(wsDir, { recursive: true, force: true })
     }
   })
+
+  test("AgentRunner live mutation and completion produces strict write-ahead checkpoint order", async () => {
+    const wsDir = await mkdtemp(join(tmpdir(), "runner-order-"))
+    try {
+      const targetFile = join(wsDir, "order.txt")
+      await writeFile(targetFile, "first\n", "utf8")
+
+      const mutationEngine = new MutationEngine(wsDir)
+      const coord = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+      const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
+      const { ToolRegistry } = await import("../../src/tools/registry.ts")
+
+      const provider = new ScriptedModelProvider([
+        { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "order.txt", search: "first", replace: "second" } }] },
+        { model: "scripted", message: { role: "assistant", content: "Done" } },
+      ])
+      const runner = new AgentRunner({
+        provider,
+        registry: new ToolRegistry(createMutationToolRegistrations({ engine: mutationEngine })),
+        checkpointCoordinator: coord,
+        permissionEvaluator: () => "CONFIRM",
+      })
+
+      const runId = "runner-order-1"
+      const res = await runner.run({
+        workspaceRoot: wsDir,
+        task: { id: runId, instruction: "patch", mode: "BUILD" },
+        maxTurns: 5,
+        contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+        projectInstructions: [],
+      })
+      assert.strictEqual(res.status, "PAUSED")
+
+      const resumeRes = await runner.resume("APPROVE")
+      assert.strictEqual(resumeRes.status, "COMPLETED")
+
+      // Inspect checkpoints
+      const checkpoints = await coord.checkpointStore.listCheckpoints(runId)
+      const reasons = checkpoints.map((c) => c.reason)
+      assert.deepStrictEqual(reasons, ["RUN_STARTED", "BEFORE_MUTATION", "AFTER_MUTATION", "COMPLETED"])
+
+      // Sequences must be strictly increasing
+      const sequences = checkpoints.map((c) => c.sequence)
+      assert.deepStrictEqual(sequences, [1, 2, 3, 4])
+    } finally {
+      await rm(wsDir, { recursive: true, force: true })
+    }
+  })
+
+  test("AgentRunner durability gate blocks mutation and fails closed with INTERNAL_ERROR if prepareOperation throws", async () => {
+    const wsDir = await mkdtemp(join(tmpdir(), "runner-dur-gate-"))
+    try {
+      const targetFile = join(wsDir, "fail_closed.txt")
+      await writeFile(targetFile, "safe_data\n", "utf8")
+
+      const mutationEngine = new MutationEngine(wsDir)
+      const coord = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+      coord.prepareOperation = async () => {
+        throw new Error("Journal write failed: DURABILITY_UNAVAILABLE")
+      }
+
+      const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
+      const { ToolRegistry } = await import("../../src/tools/registry.ts")
+
+      const provider = new ScriptedModelProvider([
+        { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "fail_closed.txt", search: "safe_data", replace: "corrupted_data" } }] },
+      ])
+      const runner = new AgentRunner({
+        provider,
+        registry: new ToolRegistry(createMutationToolRegistrations({ engine: mutationEngine })),
+        checkpointCoordinator: coord,
+        permissionEvaluator: () => "CONFIRM",
+      })
+
+      const runId = "runner-dur-gate-1"
+      await runner.run({
+        workspaceRoot: wsDir,
+        task: { id: runId, instruction: "patch", mode: "BUILD" },
+        maxTurns: 5,
+        contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+        projectInstructions: [],
+      })
+
+      const resumeRes = await runner.resume("APPROVE")
+      assert.strictEqual(resumeRes.status, "FAILED")
+      assert.strictEqual(resumeRes.failureReason, "INTERNAL_ERROR")
+
+      // File on disk must remain uncorrupted and untouched
+      const { readFile } = await import("node:fs/promises")
+      const diskContent = await readFile(targetFile, "utf8")
+      assert.strictEqual(diskContent, "safe_data\n")
+    } finally {
+      await rm(wsDir, { recursive: true, force: true })
+    }
+  })
 })

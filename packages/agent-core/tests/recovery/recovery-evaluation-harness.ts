@@ -4,6 +4,7 @@
  * Target: >=80 scenarios, deep equality, negative comparator, 0 fake passes
  */
 
+import { isDeepStrictEqual } from "node:util"
 import { mkdtemp, rm, writeFile, readFile, mkdir, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -21,15 +22,26 @@ import { MutationEngine, sha256 } from "../../src/tools/mutation-engine.ts"
 import { RuntimeEvidenceCollector } from "../../src/runtime-evals/evidence.ts"
 import { evaluateL0 } from "../../src/runtime-evals/evaluators/l0-deterministic.ts"
 import { compileContext } from "../../src/context/compiler.ts"
+import { createAgentRuntime } from "../../src/agent/runtime.ts"
+import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
+import { ToolRegistry } from "../../src/tools/registry.ts"
+import { createMutationToolRegistrations } from "../../src/tools/mutation-registry.ts"
+import { AgentRunner } from "../../src/agent/runner.ts"
+import { calculateBudget } from "../../src/context/budget.ts"
+import type { AgentTask } from "../../src/contracts/agent.ts"
+import { computeCheckpointChecksum } from "../../src/recovery/checkpoint-store.ts"
 
-export interface RecoveryScenarioResult {
+export interface RecoveryScenarioDefinition {
   id: string
   category: string
   description: string
-  passed: boolean
   expected: any
   actual: any
   error?: string
+}
+
+export interface RecoveryScenarioResult extends RecoveryScenarioDefinition {
+  passed: boolean
 }
 
 export async function runRecoveryEvaluation(): Promise<{
@@ -38,7 +50,7 @@ export async function runRecoveryEvaluation(): Promise<{
   totalFailed: number
   categoryCounts: Record<string, number>
 }> {
-  const scenarios: RecoveryScenarioResult[] = []
+  const scenarioDefs: RecoveryScenarioDefinition[] = []
   const baseTmp = await mkdtemp(join(tmpdir(), "recovery-eval-"))
 
   try {
@@ -67,22 +79,22 @@ export async function runRecoveryEvaluation(): Promise<{
         completedOperationRefs: [],
         workspaceState: { divergenceClass: "EXACT_MATCH" },
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-01",
         category: "CHECKPOINT_INTEGRITY",
         description: "Checkpoint atomic write produces valid checksum and file",
-        passed: !!cp1.checksum && cp1.checkpointId === "cp-1",
+
         expected: { saved: true, hasChecksum: true },
         actual: { saved: cp1.checkpointId === "cp-1", hasChecksum: !!cp1.checksum },
       })
 
       // Scenario 2: latest checkpoint retrieved via HEAD pointer
       const latest = await store.getLatestCheckpoint("run-cp-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-02",
         category: "CHECKPOINT_INTEGRITY",
         description: "getLatestCheckpoint returns exact latest record via HEAD",
-        passed: latest?.checkpointId === "cp-1",
+
         expected: "cp-1",
         actual: latest?.checkpointId,
       })
@@ -104,11 +116,11 @@ export async function runRecoveryEvaluation(): Promise<{
         completedOperationRefs: [],
         workspaceState: { divergenceClass: "EXACT_MATCH" },
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-03",
         category: "CHECKPOINT_INTEGRITY",
         description: "Monotonic sequence increases checkpoint sequence number",
-        passed: cp2.sequence === 2,
+
         expected: 2,
         actual: cp2.sequence,
       })
@@ -126,11 +138,11 @@ export async function runRecoveryEvaluation(): Promise<{
       } catch (err: any) {
         if (err.code === "INTEGRITY_CHECK_FAILED") corruptionDetected = true
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-04",
         category: "CHECKPOINT_INTEGRITY",
         description: "Tampered checkpoint checksum rejected as INTEGRITY_CHECK_FAILED",
-        passed: corruptionDetected,
+
         expected: true,
         actual: corruptionDetected,
       })
@@ -144,11 +156,11 @@ export async function runRecoveryEvaluation(): Promise<{
       } catch (err: any) {
         if (err.code === "CORRUPT_CHECKPOINT") jsonCorruptDetected = true
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-05",
         category: "CHECKPOINT_INTEGRITY",
         description: "Malformed JSON file rejected as CORRUPT_CHECKPOINT",
-        passed: jsonCorruptDetected,
+
         expected: true,
         actual: jsonCorruptDetected,
       })
@@ -175,11 +187,11 @@ export async function runRecoveryEvaluation(): Promise<{
       } catch (err: any) {
         if (err.code === "UNSUPPORTED_CHECKPOINT_VERSION") unsupportedVersionDetected = true
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-06",
         category: "CHECKPOINT_INTEGRITY",
         description: "Schema version > CHECKPOINT_SCHEMA_VERSION fails closed",
-        passed: unsupportedVersionDetected,
+
         expected: true,
         actual: unsupportedVersionDetected,
       })
@@ -207,22 +219,22 @@ export async function runRecoveryEvaluation(): Promise<{
       const crashDir = join(storeDir2, "runs", "run-crash-sim", "checkpoints")
       await writeFile(join(crashDir, "cp_00000002_valid-cp-2.json.tmp.123"), "partial content", "utf8")
       const afterCrashLatest = await store2.getLatestCheckpoint("run-crash-sim")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-07",
         category: "CHECKPOINT_INTEGRITY",
         description: "Unfinished temp write does not corrupt latest checkpoint",
-        passed: afterCrashLatest?.checkpointId === "valid-cp-1",
+
         expected: "valid-cp-1",
         actual: afterCrashLatest?.checkpointId,
       })
 
       // Scenario 8: missing checkpoint returns null
       const nonExistent = await store.getCheckpointById("run-cp-1", "non-existent")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-INT-08",
         category: "CHECKPOINT_INTEGRITY",
         description: "Non-existent checkpoint id safely returns null",
-        passed: nonExistent === null,
+
         expected: null,
         actual: nonExistent,
       })
@@ -250,55 +262,55 @@ export async function runRecoveryEvaluation(): Promise<{
         preconditions: [{ path: "/path/file.txt", expectedHash: "h1", exists: true }],
         expectedPostconditions: [{ path: "/path/file.txt", expectedHash: "h2", exists: true }],
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-01",
         category: "OPERATION_JOURNAL",
         description: "Write-Ahead operation PREPARED recorded",
-        passed: op1.status === "PREPARED" && !!op1.preparedAt,
+
         expected: "PREPARED",
         actual: op1.status,
       })
 
       // Scenario 10: record started
       const op1Started = await journal.recordStarted("op-1", "run-op-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-02",
         category: "OPERATION_JOURNAL",
         description: "Operation transition to STARTED recorded",
-        passed: op1Started.status === "STARTED" && !!op1Started.startedAt,
+
         expected: "STARTED",
         actual: op1Started.status,
       })
 
       // Scenario 11: record completed
       const op1Completed = await journal.recordCompleted("op-1", "run-op-1", "res-ref-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-03",
         category: "OPERATION_JOURNAL",
         description: "Operation transition to COMPLETED recorded",
-        passed: op1Completed.status === "COMPLETED" && op1Completed.resultRef === "res-ref-1",
+
         expected: "COMPLETED",
         actual: op1Completed.status,
       })
 
       // Scenario 12: find completed by idempotency key
       const found = await journal.findCompletedByIdempotencyKey("run-op-1", "idemp-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-04",
         category: "OPERATION_JOURNAL",
         description: "Completed operation found by idempotency key",
-        passed: found?.operationId === "op-1",
+
         expected: "op-1",
         actual: found?.operationId,
       })
 
       // Scenario 13: duplicate suppression for same idempotency key
       const isDuplicate = !!(await journal.findCompletedByIdempotencyKey("run-op-1", "idemp-1"))
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-05",
         category: "OPERATION_JOURNAL",
         description: "Duplicate completed operation detected via idempotency key",
-        passed: isDuplicate === true,
+
         expected: true,
         actual: isDuplicate,
       })
@@ -319,22 +331,22 @@ export async function runRecoveryEvaluation(): Promise<{
         expectedPostconditions: [],
       })
       const op2Failed = await journal.recordFailed("op-2", "run-op-1", "STALE_BASE")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-06",
         category: "OPERATION_JOURNAL",
         description: "Operation transition to FAILED with failure code",
-        passed: op2Failed.status === "FAILED" && op2Failed.failureCode === "STALE_BASE",
+
         expected: "FAILED",
         actual: op2Failed.status,
       })
 
       // Scenario 15: getAllOperations deduplicates to latest state
       const allOps = await journal.getAllOperations("run-op-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-07",
         category: "OPERATION_JOURNAL",
         description: "getAllOperations returns latest state per unique operationId",
-        passed: allOps.length === 2 && allOps.find((o) => o.operationId === "op-1")?.status === "COMPLETED",
+
         expected: { opCount: 2, op1Status: "COMPLETED" },
         actual: { opCount: allOps.length, op1Status: allOps.find((o) => o.operationId === "op-1")?.status },
       })
@@ -343,11 +355,11 @@ export async function runRecoveryEvaluation(): Promise<{
       const k1 = computeOperationIdempotencyKey("run-1", 1, "MUTATION", "auth", "hashA")
       const k2 = computeOperationIdempotencyKey("run-1", 1, "MUTATION", "auth", "hashA")
       const k3 = computeOperationIdempotencyKey("run-1", 2, "MUTATION", "auth", "hashA")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-OP-08",
         category: "OPERATION_JOURNAL",
         description: "Idempotency key deterministic for same inputs, distinct for different evidenceVersion",
-        passed: k1 === k2 && k1 !== k3,
+
         expected: { eq: true, diff: true },
         actual: { eq: k1 === k2, diff: k1 !== k3 },
       })
@@ -387,11 +399,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Simulate crash before write: disk content is still hash1
       const plan1 = await coord.recoveryController.buildRecoveryPlan("run-mut-1")
       const recSummary1 = plan1.reconciledOperations[0]
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-01",
         category: "MUTATION_RECONCILIATION",
         description: "Crash before mutation execution reconciles to RECONCILED_NOT_APPLIED",
-        passed: recSummary1?.reconciledStatus === "RECONCILED_NOT_APPLIED",
+
         expected: "RECONCILED_NOT_APPLIED",
         actual: recSummary1?.reconciledStatus,
       })
@@ -424,11 +436,11 @@ export async function runRecoveryEvaluation(): Promise<{
       })
       const plan2 = await coord.recoveryController.buildRecoveryPlan("run-mut-2")
       const recSummary2 = plan2.reconciledOperations.find((r) => r.operationId === op2.operationId)
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-02",
         category: "MUTATION_RECONCILIATION",
         description: "Crash after mutation with expected hash reconciles to RECONCILED_APPLIED with writeReplayCount=0",
-        passed: recSummary2?.reconciledStatus === "RECONCILED_APPLIED" && recSummary2.writeReplayCount === 0,
+
         expected: { status: "RECONCILED_APPLIED", writeReplays: 0 },
         actual: { status: recSummary2?.reconciledStatus, writeReplays: recSummary2?.writeReplayCount },
       })
@@ -453,11 +465,11 @@ export async function runRecoveryEvaluation(): Promise<{
         touchedFilePaths: [testFile3],
       })
       const plan3 = await coord.recoveryController.buildRecoveryPlan("run-mut-3")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-03",
         category: "MUTATION_RECONCILIATION",
         description: "Divergent file hash yields BLOCKED_DIVERGENCE and ASK_HUMAN disposition",
-        passed: plan3.divergenceClass === "BLOCKED_DIVERGENCE" && plan3.disposition === "ASK_HUMAN",
+
         expected: { divergence: "BLOCKED_DIVERGENCE", disposition: "ASK_HUMAN" },
         actual: { divergence: plan3.divergenceClass, disposition: plan3.disposition },
       })
@@ -481,11 +493,11 @@ export async function runRecoveryEvaluation(): Promise<{
         touchedFilePaths: [createPath],
       })
       const planCreate1 = await coord.recoveryController.buildRecoveryPlan("run-create-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-04",
         category: "MUTATION_RECONCILIATION",
         description: "Prepared create where path is absent reconciles to RECONCILED_NOT_APPLIED",
-        passed: planCreate1.reconciledOperations[0]?.reconciledStatus === "RECONCILED_NOT_APPLIED",
+
         expected: "RECONCILED_NOT_APPLIED",
         actual: planCreate1.reconciledOperations[0]?.reconciledStatus,
       })
@@ -493,11 +505,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 21: CREATE mutation - path exists with exact expected hash -> APPLIED
       await writeFile(createPath, "created content", "utf8")
       const planCreate2 = await coord.recoveryController.buildRecoveryPlan("run-create-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-05",
         category: "MUTATION_RECONCILIATION",
         description: "Prepared create where path exists with exact hash reconciles to RECONCILED_APPLIED",
-        passed: planCreate2.reconciledOperations[0]?.reconciledStatus === "RECONCILED_APPLIED",
+
         expected: "RECONCILED_APPLIED",
         actual: planCreate2.reconciledOperations[0]?.reconciledStatus,
       })
@@ -505,11 +517,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 22: CREATE mutation - path exists with unexpected content -> DIVERGED / BLOCKED
       await writeFile(createPath, "unexpected content", "utf8")
       const planCreate3 = await coord.recoveryController.buildRecoveryPlan("run-create-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-06",
         category: "MUTATION_RECONCILIATION",
         description: "Prepared create where path exists with unexpected content blocks as AMBIGUOUS",
-        passed: planCreate3.blockedOperations[0]?.reconciledStatus === "AMBIGUOUS",
+
         expected: "AMBIGUOUS",
         actual: planCreate3.blockedOperations[0]?.reconciledStatus,
       })
@@ -535,11 +547,11 @@ export async function runRecoveryEvaluation(): Promise<{
         touchedFilePaths: [deletePath],
       })
       const planDel1 = await coord.recoveryController.buildRecoveryPlan("run-del-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-07",
         category: "MUTATION_RECONCILIATION",
         description: "Prepared delete where file still exists reconciles to RECONCILED_NOT_APPLIED",
-        passed: planDel1.reconciledOperations[0]?.reconciledStatus === "RECONCILED_NOT_APPLIED",
+
         expected: "RECONCILED_NOT_APPLIED",
         actual: planDel1.reconciledOperations[0]?.reconciledStatus,
       })
@@ -547,11 +559,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 24: DELETE mutation - path absent -> APPLIED
       await rm(deletePath, { force: true })
       const planDel2 = await coord.recoveryController.buildRecoveryPlan("run-del-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-08",
         category: "MUTATION_RECONCILIATION",
         description: "Prepared delete where file is absent reconciles to RECONCILED_APPLIED",
-        passed: planDel2.reconciledOperations[0]?.reconciledStatus === "RECONCILED_APPLIED",
+
         expected: "RECONCILED_APPLIED",
         actual: planDel2.reconciledOperations[0]?.reconciledStatus,
       })
@@ -559,11 +571,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 25: DELETE mutation - path exists but modified hash -> DIVERGED
       await writeFile(deletePath, "modified non-delete", "utf8")
       const planDel3 = await coord.recoveryController.buildRecoveryPlan("run-del-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-09",
         category: "MUTATION_RECONCILIATION",
         description: "Prepared delete where file exists with modified hash blocks as AMBIGUOUS",
-        passed: planDel3.blockedOperations[0]?.reconciledStatus === "AMBIGUOUS",
+
         expected: "AMBIGUOUS",
         actual: planDel3.blockedOperations[0]?.reconciledStatus,
       })
@@ -600,11 +612,11 @@ export async function runRecoveryEvaluation(): Promise<{
       const planMulti = await coord.recoveryController.buildRecoveryPlan("run-multi-1")
       const statusA = planMulti.reconciledOperations[0]?.reconciledStatus
       const statusB = planMulti.reconciledOperations[1]?.reconciledStatus
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-MUT-10",
         category: "MUTATION_RECONCILIATION",
         description: "Multi-file partial mutation classifies A as APPLIED and B as NOT_APPLIED",
-        passed: statusA === "RECONCILED_APPLIED" && statusB === "RECONCILED_NOT_APPLIED",
+
         expected: { A: "RECONCILED_APPLIED", B: "RECONCILED_NOT_APPLIED" },
         actual: { A: statusA, B: statusB },
       })
@@ -636,11 +648,11 @@ export async function runRecoveryEvaluation(): Promise<{
         runtimeState: { status: "VERIFYING" },
       })
       const planVerif1 = await coord.recoveryController.buildRecoveryPlan("run-verif-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-VER-01",
         category: "VERIFICATION_RECOVERY",
         description: "Prepared but not started verification reconciles to RECONCILED_NOT_APPLIED",
-        passed: planVerif1.reconciledOperations[0]?.reconciledStatus === "RECONCILED_NOT_APPLIED",
+
         expected: "RECONCILED_NOT_APPLIED",
         actual: planVerif1.reconciledOperations[0]?.reconciledStatus,
       })
@@ -648,11 +660,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 28: started verification interrupted -> INTERRUPTED & not treated as success
       await coord.operationJournal.recordStarted(opVerif1.operationId, "run-verif-1")
       const planVerif2 = await coord.recoveryController.buildRecoveryPlan("run-verif-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-VER-02",
         category: "VERIFICATION_RECOVERY",
         description: "Started verification interrupted is marked INTERRUPTED and triggers REVERIFY disposition",
-        passed: planVerif2.reconciledOperations[0]?.reconciledStatus === "INTERRUPTED" && planVerif2.disposition === "REVERIFY",
+
         expected: { status: "INTERRUPTED", disposition: "REVERIFY" },
         actual: { status: planVerif2.reconciledOperations[0]?.reconciledStatus, disposition: planVerif2.disposition },
       })
@@ -660,11 +672,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 29: completed verification is retained
       await coord.operationJournal.recordCompleted(opVerif1.operationId, "run-verif-1", "test-pass-ref")
       const planVerif3 = await coord.recoveryController.buildRecoveryPlan("run-verif-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-VER-03",
         category: "VERIFICATION_RECOVERY",
         description: "Durably completed verification recognized as COMPLETED",
-        passed: planVerif3.reconciledOperations[0]?.reconciledStatus === "COMPLETED",
+
         expected: "COMPLETED",
         actual: planVerif3.reconciledOperations[0]?.reconciledStatus,
       })
@@ -673,22 +685,19 @@ export async function runRecoveryEvaluation(): Promise<{
       let killCalled = false
       const origKill = process.kill
       const spyKill = (..._args: any[]) => { killCalled = true; return true as any }
-      let planPIDResult: any = null
       try {
         process.kill = spyKill as any
-        planPIDResult = await coord.recoveryController.buildRecoveryPlan("run-verif-1")
+        await coord.recoveryController.buildRecoveryPlan("run-verif-1")
       } finally {
         process.kill = origKill
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-VER-04",
         category: "VERIFICATION_RECOVERY",
         description: "Lost verification process treated conservatively without blind PID kill",
-        passed: !killCalled && planPIDResult !== null,
         expected: false,
         actual: killCalled,
       })
-
 
       // Scenario 31: verification retry gets new identity
       const retryOp = await coord.prepareOperation({
@@ -700,11 +709,11 @@ export async function runRecoveryEvaluation(): Promise<{
         expectedPostconditions: [],
         replacesOperationId: opVerif1.operationId,
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-VER-05",
         category: "VERIFICATION_RECOVERY",
         description: "Retry verification has new operationId and links old replacesOperationId",
-        passed: retryOp.operationId !== opVerif1.operationId && retryOp.replacesOperationId === opVerif1.operationId,
+
         expected: { distinct: true, linked: true },
         actual: { distinct: retryOp.operationId !== opVerif1.operationId, linked: retryOp.replacesOperationId === opVerif1.operationId },
       })
@@ -727,15 +736,412 @@ export async function runRecoveryEvaluation(): Promise<{
         runtimeState: { status: "VERIFYING" },
       })
       const planUncertain = await coord.recoveryController.buildRecoveryPlan("run-verif-uncertain")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-VER-06",
         category: "VERIFICATION_RECOVERY",
         description: "Task cannot complete based on interrupted verification result",
-        passed: planUncertain.disposition !== "RESUME",
+
         expected: true,
         actual: planUncertain.disposition !== "RESUME",
       })
     }
+
+    // ----------------------------------------------------
+    // CATEGORY 16: DURABILITY_GATE (Scenarios 83 - 86)
+    // ----------------------------------------------------
+    {
+        const durDir = join(baseTmp, "durability_gate")
+        await mkdir(durDir, { recursive: true })
+        const mutationEngine = new MutationEngine(durDir)
+        const targetFile = join(durDir, "guarded.txt")
+        await writeFile(targetFile, "original", "utf8")
+
+        const failingCoord = new CheckpointCoordinator({ workspaceRoot: durDir, mutationEngine })
+        failingCoord.prepareOperation = async () => {
+          throw new Error("Disk journal I/O failure: DURABILITY_UNAVAILABLE")
+        }
+
+        const scriptProvider = new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "guarded.txt", search: "original", replace: "mutated" } }] },
+        ])
+        const registry = new ToolRegistry(createMutationToolRegistrations({ engine: mutationEngine }))
+        const runner = new AgentRunner({
+          provider: scriptProvider,
+          registry,
+          checkpointCoordinator: failingCoord,
+          permissionEvaluator: () => "CONFIRM",
+        })
+
+        const task: AgentTask = { id: "run-dur-1", instruction: "modify", mode: "BUILD" }
+        await runner.run({
+          task,
+          workspaceRoot: durDir,
+          maxTurns: 5,
+          contextBudget: calculateBudget({ contextWindow: 4000, reservedOutput: 500, reservedToolHistory: 200 }),
+          projectInstructions: [],
+        })
+        const resumeRes = await runner.resume("APPROVE")
+        const diskContent = await readFile(targetFile, "utf8")
+
+        scenarioDefs.push({
+          id: "REC-DUR-01",
+          category: "DURABILITY_GATE",
+          description: "Durability gate blocks mutation execution when prepareOperation throws DURABILITY_UNAVAILABLE",
+          expected: { diskUntouched: true, runnerStatus: "FAILED", failureReason: "INTERNAL_ERROR" },
+          actual: { diskUntouched: diskContent === "original", runnerStatus: resumeRes.status, failureReason: resumeRes.failureReason },
+        })
+      }
+
+      {
+        const durDir = join(baseTmp, "durability_verif")
+        await mkdir(durDir, { recursive: true })
+        const mutationEngine = new MutationEngine(durDir)
+
+        let verifExecuted = false
+        const failingCoord = new CheckpointCoordinator({ workspaceRoot: durDir, mutationEngine })
+        const origPrep = failingCoord.prepareOperation.bind(failingCoord)
+        failingCoord.prepareOperation = async (req) => {
+          if (req.kind === "VERIFICATION") {
+            throw new Error("Verification journal failure: DURABILITY_UNAVAILABLE")
+          }
+          return origPrep(req)
+        }
+
+        const registry = new ToolRegistry([
+          {
+            definition: {
+              name: "run_verification",
+              description: "runs test",
+              action: "run_known_test",
+              inputSchema: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+            },
+            validate: (input) => input as any,
+            execute: async () => "ok",
+            prepareForReview: async () => ({
+              id: "rev-verif-1",
+              reviewPayload: { verificationId: "rev-verif-1", action: "TEST", truncated: false } as any,
+              apply: async () => {
+                verifExecuted = true
+                return { status: "PASS", exitCode: 0, stdout: "ok", stderr: "", durationMs: 5 }
+              },
+            }),
+          },
+        ])
+
+        const scriptProvider = new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "run_verification", arguments: { action: "TEST" } }] },
+        ])
+        const runner = new AgentRunner({
+          provider: scriptProvider,
+          registry,
+          checkpointCoordinator: failingCoord,
+          permissionEvaluator: () => "CONFIRM",
+        })
+
+        const task: AgentTask = { id: "run-dur-2", instruction: "verify", mode: "BUILD" }
+        await runner.run({
+          task,
+          workspaceRoot: durDir,
+          maxTurns: 5,
+          contextBudget: calculateBudget({ contextWindow: 4000, reservedOutput: 500, reservedToolHistory: 200 }),
+          projectInstructions: [],
+        })
+        const resumeRes = await runner.resume("APPROVE")
+
+        scenarioDefs.push({
+          id: "REC-DUR-02",
+          category: "DURABILITY_GATE",
+          description: "Durability gate blocks verification execution when prepareOperation throws DURABILITY_UNAVAILABLE",
+          expected: { verifExecuted: false, runnerStatus: "FAILED", failureReason: "INTERNAL_ERROR" },
+          actual: { verifExecuted, runnerStatus: resumeRes.status, failureReason: resumeRes.failureReason },
+        })
+      }
+
+      {
+        const durDir = join(baseTmp, "durability_post_fail")
+        await mkdir(durDir, { recursive: true })
+        const mutationEngine = new MutationEngine(durDir)
+        const targetFile = join(durDir, "post_fail.txt")
+        await writeFile(targetFile, "initial", "utf8")
+
+        const failingCoord = new CheckpointCoordinator({ workspaceRoot: durDir, mutationEngine })
+        const origCheckpoint = failingCoord.checkpoint.bind(failingCoord)
+        failingCoord.checkpoint = async (req) => {
+          if (req.reason === "AFTER_MUTATION") {
+            throw new Error("Persistence crashed after mutation write: RECOVERY_PERSISTENCE_FAILED")
+          }
+          return origCheckpoint(req)
+        }
+
+        const scriptProvider = new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "post_fail.txt", search: "initial", replace: "mutated" } }] },
+        ])
+        const registry = new ToolRegistry(createMutationToolRegistrations({ engine: mutationEngine }))
+        const runner = new AgentRunner({
+          provider: scriptProvider,
+          registry,
+          checkpointCoordinator: failingCoord,
+          permissionEvaluator: () => "CONFIRM",
+        })
+
+        const task: AgentTask = { id: "run-dur-3", instruction: "modify", mode: "BUILD" }
+        await runner.run({
+          task,
+          workspaceRoot: durDir,
+          maxTurns: 5,
+          contextBudget: calculateBudget({ contextWindow: 4000, reservedOutput: 500, reservedToolHistory: 200 }),
+          projectInstructions: [],
+        })
+        const resumeRes = await runner.resume("APPROVE")
+        const diskContent = await readFile(targetFile, "utf8")
+
+        const observerCoord = new CheckpointCoordinator({ workspaceRoot: durDir, mutationEngine })
+        const plan = await observerCoord.recoveryController.buildRecoveryPlan("run-dur-3")
+
+        scenarioDefs.push({
+          id: "REC-DUR-03",
+          category: "DURABILITY_GATE",
+          description: "Post-side-effect persistence failure flags task as FAILED without replaying or rolling back disk mutation",
+          expected: { diskApplied: true, runnerStatus: "FAILED", failureReason: "INTERNAL_ERROR", reconciledStatus: "RECONCILED_APPLIED", writeReplayCount: 0 },
+          actual: {
+            diskApplied: diskContent === "mutated",
+            runnerStatus: resumeRes.status,
+            failureReason: resumeRes.failureReason,
+            reconciledStatus: plan.reconciledOperations[0]?.reconciledStatus,
+            writeReplayCount: plan.reconciledOperations[0]?.writeReplayCount ?? -1,
+          },
+        })
+      }
+
+      {
+        const compDir = join(baseTmp, "durability_complete_fail")
+        await mkdir(compDir, { recursive: true })
+        const compEngine = new MutationEngine(compDir)
+        const failingCompCoord = new CheckpointCoordinator({ workspaceRoot: compDir, mutationEngine: compEngine })
+        const origComp = failingCompCoord.checkpoint.bind(failingCompCoord)
+        failingCompCoord.checkpoint = async (req) => {
+          if (req.reason === "COMPLETED") {
+            throw new Error("Checkpoint store full on task completion: RECOVERY_PERSISTENCE_FAILED")
+          }
+          return origComp(req)
+        }
+
+        const compProvider = new ScriptedModelProvider([
+          { model: "scripted", message: { role: "assistant", content: "Final answer accomplished" } },
+        ])
+        const compRunner = new AgentRunner({
+          provider: compProvider,
+          registry: new ToolRegistry([]),
+          checkpointCoordinator: failingCompCoord,
+        })
+
+        const compTask: AgentTask = { id: "run-dur-4", instruction: "think and complete", mode: "ASK" }
+        const compRes = await compRunner.run({
+          task: compTask,
+          workspaceRoot: compDir,
+          maxTurns: 5,
+          contextBudget: calculateBudget({ contextWindow: 4000, reservedOutput: 500, reservedToolHistory: 200 }),
+          projectInstructions: [],
+        })
+
+        scenarioDefs.push({
+          id: "REC-DUR-04",
+          category: "DURABILITY_GATE",
+          description: "COMPLETED checkpoint failure transitions task status to FAILED with INTERNAL_ERROR instead of reporting durable completion",
+          expected: { runnerStatus: "FAILED", failureReason: "INTERNAL_ERROR" },
+          actual: { runnerStatus: compRes.status, failureReason: compRes.failureReason },
+        })
+      }
+
+      // Scenario 87: Checkpoint checksum integrity with nested structures
+      {
+        const baseRecord = {
+          schemaVersion: 1 as const,
+          checkpointId: "cp-nested-check",
+          sequence: 1,
+          runId: "run-nested-1",
+          processEpochId: "epoch-nested",
+          evidenceVersion: 1,
+          phase: "TEST",
+          reason: "PLAN_UPDATED" as const,
+          createdAt: "2026-09-24T00:00:00.000Z",
+          runtimeState: { status: "PLANNING" as const },
+          recoveryFootprint: { files: [{ path: "/app/main.ts", hash: "h1", size: 100, mtimeMs: 1000, exists: true }] },
+          pendingOperations: [],
+          completedOperationRefs: [],
+          workspaceState: { divergenceClass: "EXACT_MATCH" as const },
+        }
+        const csBase = computeCheckpointChecksum(baseRecord)
+
+        const alteredState = { ...baseRecord, runtimeState: { status: "WAITING_FOR_TOOL" as const } }
+        const csAlteredState = computeCheckpointChecksum(alteredState)
+
+        const alteredFootprint = {
+          ...baseRecord,
+          recoveryFootprint: { files: [{ path: "/app/main.ts", hash: "h2", size: 100, mtimeMs: 1000, exists: true }] },
+        }
+        const csAlteredFootprint = computeCheckpointChecksum(alteredFootprint)
+
+        const reorderedState = {
+          workspaceState: baseRecord.workspaceState,
+          schemaVersion: baseRecord.schemaVersion,
+          recoveryFootprint: baseRecord.recoveryFootprint,
+          completedOperationRefs: baseRecord.completedOperationRefs,
+          runtimeState: { status: "PLANNING" as const },
+          reason: baseRecord.reason,
+          runId: baseRecord.runId,
+          phase: baseRecord.phase,
+          pendingOperations: baseRecord.pendingOperations,
+          checkpointId: baseRecord.checkpointId,
+          createdAt: baseRecord.createdAt,
+          sequence: baseRecord.sequence,
+          processEpochId: baseRecord.processEpochId,
+          evidenceVersion: baseRecord.evidenceVersion,
+        }
+        const csReordered = computeCheckpointChecksum(reorderedState)
+
+        scenarioDefs.push({
+          id: "REC-INT-09",
+          category: "CHECKPOINT_INTEGRITY",
+          description: "Nested checkpoint checksum integrity: changing nested runtimeState or recoveryFootprint alters checksum, key reordering preserves it",
+          expected: { stateAlters: true, footprintAlters: true, reorderIdentical: true },
+          actual: {
+            stateAlters: csBase !== csAlteredState,
+            footprintAlters: csBase !== csAlteredFootprint,
+            reorderIdentical: csBase === csReordered,
+          },
+        })
+      }
+
+      // Scenario 88: Monotonic sequence tracking across multi-generation coordinator restarts
+      {
+        const seqDir = join(baseTmp, "seq_tracking")
+        await mkdir(seqDir, { recursive: true })
+        const mutationEngine = new MutationEngine(seqDir)
+
+        const coordGen1 = new CheckpointCoordinator({ workspaceRoot: seqDir, mutationEngine })
+        const cp1 = await coordGen1.checkpoint({
+          runId: "run-seq-1",
+          reason: "RUN_STARTED",
+          phase: "PLANNING",
+          turnId: 0,
+          evidenceVersion: 1,
+          runtimeState: { status: "PLANNING" },
+        })
+        const cp2 = await coordGen1.checkpoint({
+          runId: "run-seq-1",
+          reason: "BEFORE_MUTATION",
+          phase: "MUTATION",
+          turnId: 1,
+          evidenceVersion: 2,
+          runtimeState: { status: "WAITING_FOR_TOOL" },
+        })
+
+        const coordGen2 = new CheckpointCoordinator({ workspaceRoot: seqDir, mutationEngine })
+        const cp3 = await coordGen2.checkpoint({
+          runId: "run-seq-1",
+          reason: "AFTER_MUTATION",
+          phase: "MUTATION",
+          turnId: 1,
+          evidenceVersion: 2,
+          runtimeState: { status: "OBSERVING" },
+        })
+
+        const coordGen3 = new CheckpointCoordinator({ workspaceRoot: seqDir, mutationEngine })
+        const cp4 = await coordGen3.checkpoint({
+          runId: "run-seq-1",
+          reason: "COMPLETED",
+          phase: "COMPLETED",
+          turnId: 2,
+          evidenceVersion: 3,
+          runtimeState: { status: "COMPLETED" },
+        })
+
+        scenarioDefs.push({
+          id: "REC-INT-10",
+          category: "CHECKPOINT_INTEGRITY",
+          description: "Monotonic sequence tracking across multi-generation coordinator restarts",
+          expected: { seqs: [1, 2, 3, 4], strictlyMonotonic: true },
+          actual: {
+            seqs: [cp1.sequence, cp2.sequence, cp3.sequence, cp4.sequence],
+            strictlyMonotonic: cp1.sequence < cp2.sequence && cp2.sequence < cp3.sequence && cp3.sequence < cp4.sequence,
+          },
+        })
+      }
+
+      // Scenario 89: Rollback crash reconciliation
+      {
+        const rolDir = join(baseTmp, "rollback_reconcile")
+        await mkdir(rolDir, { recursive: true })
+        const mutationEngine = new MutationEngine(rolDir)
+        const targetFile = join(rolDir, "reconcile.ts")
+        const originalText = "export const mode = 'initial'\n"
+        await writeFile(targetFile, originalText, "utf8")
+        const beforeHash = sha256(originalText)
+        const mutatedText = "export const mode = 'updated'\n"
+        const afterHash = sha256(mutatedText)
+
+        const coordA = new CheckpointCoordinator({ workspaceRoot: rolDir, mutationEngine })
+        const runId = "run-rol-crash"
+
+        const op = await coordA.prepareOperation({
+          runId,
+          evidenceVersion: 1,
+          kind: "MUTATION",
+          authorityId: "mutation-engine",
+          preconditions: [{ path: targetFile, expectedHash: beforeHash, exists: true }],
+          expectedPostconditions: [{ path: targetFile, expectedHash: afterHash, exists: true }],
+        })
+        await coordA.operationJournal.recordStarted(op.operationId, runId)
+        await coordA.artifactStore.storePreimage(runId, op.operationId, targetFile, Buffer.from(originalText, "utf8"))
+
+        await writeFile(targetFile, mutatedText, "utf8")
+        await writeFile(targetFile, originalText, "utf8")
+
+        const coordB = new CheckpointCoordinator({ workspaceRoot: rolDir, mutationEngine })
+        const plan = await coordB.recoveryController.buildRecoveryPlan(runId)
+
+        scenarioDefs.push({
+          id: "REC-ROL-11",
+          category: "ROLLBACK",
+          description: "Rollback crash after file restore write reconciles to pre-mutation state with writeReplayCount = 0",
+          expected: { diskContent: originalText, reconciledStatus: "RECONCILED_NOT_APPLIED", writeReplayCount: 0 },
+          actual: {
+            diskContent: await readFile(targetFile, "utf8"),
+            reconciledStatus: plan.reconciledOperations[0]?.reconciledStatus,
+            writeReplayCount: plan.reconciledOperations[0]?.writeReplayCount,
+          },
+        })
+      }
+
+      // Scenario 90: Repair runner durability propagation
+      {
+        const repDir = join(baseTmp, "repair_durability")
+        await mkdir(repDir, { recursive: true })
+
+        const runtime = await createAgentRuntime({
+          workspaceRoot: repDir,
+          instruction: "repair",
+          mode: "BUILD",
+          eventSink: () => {},
+          isTrusted: true,
+          providerOverride: new ScriptedModelProvider([]),
+        })
+
+        const repairRunner = (runtime.repairOrchestrator as any).createRunner()
+
+        scenarioDefs.push({
+          id: "REC-REP-01",
+          category: "REPAIR",
+          description: "RepairOrchestrator runner factory propagates CheckpointCoordinator and records durable mutation operations",
+          expected: { hasCoordinator: true, coordinatorMatchesRuntime: true },
+          actual: {
+            hasCoordinator: repairRunner.checkpointCoordinator !== undefined,
+            coordinatorMatchesRuntime: repairRunner.checkpointCoordinator === runtime.checkpointCoordinator,
+          },
+        })
+        await runtime.cleanup()
+      }
 
     // ----------------------------------------------------
     // CATEGORY 5: APPROVAL_RECOVERY (Scenarios 33 - 38)
@@ -766,11 +1172,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Application restarts: new epoch
       resetProcessEpochId("epoch-after-restart")
       const planAppr1 = await coord.recoveryController.buildRecoveryPlan("run-appr-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-APP-01",
         category: "APPROVAL_RECOVERY",
         description: "Pending confirmation from previous epoch requires NEW_EPOCH_AUTHORITY_REQUIRED",
-        passed: planAppr1.requiredApprovals.includes("NEW_EPOCH_AUTHORITY_REQUIRED") && planAppr1.disposition === "RECONFIRM",
+
         expected: { requiresApproval: true, disposition: "RECONFIRM" },
         actual: { requiresApproval: planAppr1.requiredApprovals.includes("NEW_EPOCH_AUTHORITY_REQUIRED"), disposition: planAppr1.disposition },
       })
@@ -803,11 +1209,11 @@ export async function runRecoveryEvaluation(): Promise<{
       })
       resetProcessEpochId("epoch-after-restart-2")
       const planAppr2 = await coord.recoveryController.buildRecoveryPlan("run-appr-2")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-APP-02",
         category: "APPROVAL_RECOVERY",
         description: "Unexecuted approved mutation requires re-confirmation across epoch",
-        passed: planAppr2.reconciledOperations[0]?.reconciledStatus === "RECONCILED_NOT_APPLIED" && planAppr2.requiredApprovals.length > 0,
+
         expected: true,
         actual: planAppr2.reconciledOperations[0]?.reconciledStatus === "RECONCILED_NOT_APPLIED" && planAppr2.requiredApprovals.length > 0,
       })
@@ -832,11 +1238,11 @@ export async function runRecoveryEvaluation(): Promise<{
         touchedFilePaths: [apprFile],
       })
       const planAppr3 = await coord.recoveryController.buildRecoveryPlan("run-appr-3")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-APP-03",
         category: "APPROVAL_RECOVERY",
         description: "Already completed mutation does not demand re-approval to recognize applied state",
-        passed: planAppr3.requiredApprovals.length === 0,
+
         expected: 0,
         actual: planAppr3.requiredApprovals.length,
       })
@@ -852,11 +1258,11 @@ export async function runRecoveryEvaluation(): Promise<{
         },
       })
       const planSame = await coord.recoveryController.buildRecoveryPlan("run-appr-same")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-APP-04",
         category: "APPROVAL_RECOVERY",
         description: "Same epoch observation does not invalidate active session unnecessarily",
-        passed: planSame.disposition === "RESUME",
+
         expected: "RESUME",
         actual: planSame.disposition,
       })
@@ -872,21 +1278,21 @@ export async function runRecoveryEvaluation(): Promise<{
       })
       await coord.operationJournal.recordFailed(opRej.operationId, "run-appr-rej", "PERMISSION_REJECTED")
       const planRej = await coord.recoveryController.buildRecoveryPlan("run-appr-rej")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-APP-05",
         category: "APPROVAL_RECOVERY",
         description: "Previously rejected mutation status remains FAILED across restart",
-        passed: planRej.reconciledOperations[0]?.reconciledStatus === "FAILED",
+
         expected: "FAILED",
         actual: planRej.reconciledOperations[0]?.reconciledStatus,
       })
 
       // Scenario 38: reconfirm disposition does not bypass security
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-APP-06",
         category: "APPROVAL_RECOVERY",
         description: "RECONFIRM recovery disposition enforces canonical authority re-check",
-        passed: planAppr1.disposition === "RECONFIRM" && planAppr1.reconciledOperations.every((o) => o.writeReplayCount === 0),
+
         expected: true,
         actual: planAppr1.disposition === "RECONFIRM" && planAppr1.reconciledOperations.every((o) => o.writeReplayCount === 0),
       })
@@ -915,22 +1321,22 @@ export async function runRecoveryEvaluation(): Promise<{
       // User edits offline B -> C
       await writeFile(touchedFile, "content C", "utf8")
       const planDiv1 = await coord.recoveryController.buildRecoveryPlan("run-div-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-DIV-01",
         category: "WORKSPACE_DIVERGENCE",
         description: "User edit to touched file triggers BLOCKED_DIVERGENCE and ASK_HUMAN",
-        passed: planDiv1.divergenceClass === "BLOCKED_DIVERGENCE" && planDiv1.disposition === "ASK_HUMAN",
+
         expected: { divergence: "BLOCKED_DIVERGENCE", disposition: "ASK_HUMAN" },
         actual: { divergence: planDiv1.divergenceClass, disposition: planDiv1.disposition },
       })
 
       // Scenario 40: no automatic overwrite on divergence
       const curContent = await readFile(touchedFile, "utf8")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-DIV-02",
         category: "WORKSPACE_DIVERGENCE",
         description: "Diverged file is never automatically overwritten by recovery",
-        passed: curContent === "content C",
+
         expected: "content C",
         actual: curContent,
       })
@@ -940,11 +1346,11 @@ export async function runRecoveryEvaluation(): Promise<{
       await writeFile(unrelatedFile, "user new note", "utf8")
       await coord.recoveryController.buildRecoveryPlan("run-div-1")
       const unrelatedContent = await readFile(unrelatedFile, "utf8")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-DIV-03",
         category: "WORKSPACE_DIVERGENCE",
         description: "Unrelated user edit preserved without corruption or revert",
-        passed: unrelatedContent === "user new note",
+
         expected: "user new note",
         actual: unrelatedContent,
       })
@@ -961,11 +1367,11 @@ export async function runRecoveryEvaluation(): Promise<{
         touchedFilePaths: [cleanFile],
       })
       const planClean = await coord.recoveryController.buildRecoveryPlan("run-clean")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-DIV-04",
         category: "WORKSPACE_DIVERGENCE",
         description: "Unmodified footprint produces EXACT_MATCH and RESUME",
-        passed: planClean.divergenceClass === "EXACT_MATCH" && planClean.disposition === "RESUME",
+
         expected: { div: "EXACT_MATCH", disp: "RESUME" },
         actual: { div: planClean.divergenceClass, disp: planClean.disposition },
       })
@@ -973,21 +1379,21 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 43: file deletion by user in footprint blocks divergence
       await rm(cleanFile)
       const planDeleted = await coord.recoveryController.buildRecoveryPlan("run-clean")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-DIV-05",
         category: "WORKSPACE_DIVERGENCE",
         description: "External deletion of expected file triggers BLOCKED_DIVERGENCE",
-        passed: planDeleted.divergenceClass === "BLOCKED_DIVERGENCE",
+
         expected: "BLOCKED_DIVERGENCE",
         actual: planDeleted.divergenceClass,
       })
 
       // Scenario 44: divergence reasons clearly explain conflict
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-DIV-06",
         category: "WORKSPACE_DIVERGENCE",
         description: "Recovery plan contains explicit human-readable divergence reasons",
-        passed: planDeleted.reasons.length > 0 && planDeleted.reasons[0]!.includes("diverged"),
+
         expected: true,
         actual: planDeleted.reasons.length > 0,
       })
@@ -1024,11 +1430,11 @@ export async function runRecoveryEvaluation(): Promise<{
 
       const planRb1 = await coord.recoveryController.buildRecoveryPlan("run-rb-1")
       const candidateMod = planRb1.rollbackCandidates.find((c) => c.operationId === opMod.operationId)
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-01",
         category: "ROLLBACK",
         description: "Modify mutation rollback candidate assessed as safeToRollback=true",
-        passed: candidateMod?.safeToRollback === true,
+
         expected: true,
         actual: candidateMod?.safeToRollback,
       })
@@ -1036,11 +1442,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 46: execute modify rollback
       const rbRes1 = await coord.recoveryController.rollbackManager.executeRollback("run-rb-1", candidateMod!)
       const restoredContent = await readFile(modFile, "utf8")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-02",
         category: "ROLLBACK",
         description: "Modify rollback restores exact original bytes A",
-        passed: rbRes1.success && restoredContent === "content A",
+
         expected: { success: true, content: "content A" },
         actual: { success: rbRes1.success, content: restoredContent },
       })
@@ -1068,11 +1474,11 @@ export async function runRecoveryEvaluation(): Promise<{
       } catch {
         crExists = false
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-03",
         category: "ROLLBACK",
         description: "Create rollback deletes file completely",
-        passed: rbCrRes.success && !crExists,
+
         expected: { success: true, exists: false },
         actual: { success: rbCrRes.success, exists: crExists },
       })
@@ -1096,11 +1502,11 @@ export async function runRecoveryEvaluation(): Promise<{
       const candDel = planDel.rollbackCandidates[0]!
       const rbDelRes = await coord.recoveryController.rollbackManager.executeRollback("run-rb-del", candDel)
       const restoredDel = await readFile(delFile, "utf8")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-04",
         category: "ROLLBACK",
         description: "Delete rollback restores exact original preimage",
-        passed: rbDelRes.success && restoredDel === delContent,
+
         expected: { success: true, content: delContent },
         actual: { success: rbDelRes.success, content: restoredDel },
       })
@@ -1119,13 +1525,13 @@ export async function runRecoveryEvaluation(): Promise<{
       }
       const rbStaleRes = await coord.recoveryController.rollbackManager.executeRollback("run-rb-1", staleCand)
       const preservedUserEdit = await readFile(modFile, "utf8")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-05",
         category: "ROLLBACK",
         description: "Rollback refused when file diverges; user edit C preserved",
-        passed: !rbStaleRes.success && rbStaleRes.status === "DIVERGED" && preservedUserEdit === "content C (user edit)",
-        expected: { success: false, status: "DIVERGED" },
-        actual: { success: rbStaleRes.success, status: rbStaleRes.status },
+
+        expected: { success: false, status: "DIVERGED", diskContent: "content C (user edit)" },
+        actual: { success: rbStaleRes.success, status: rbStaleRes.status, diskContent: preservedUserEdit },
       })
 
       // Scenario 50: partial rollback failure stops execution deterministically
@@ -1155,23 +1561,23 @@ export async function runRecoveryEvaluation(): Promise<{
       await coord.savePreimage("run-rb-1", "op-s", fileSafe, "beforeSafe")
       const resSafe = await coord.recoveryController.rollbackManager.executeRollback("run-rb-1", candSafe)
       const resBlocked = await coord.recoveryController.rollbackManager.executeRollback("run-rb-1", candBlocked)
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-06",
         category: "ROLLBACK",
         description: "Partial rollback handles safe file and blocks diverged file explicitly",
-        passed: resBlocked.status === "DIVERGED" && !resBlocked.success && resSafe.success,
-        expected: false,
-        actual: resBlocked.success,
+
+        expected: { safeSuccess: true, blockedSuccess: false },
+        actual: { safeSuccess: resSafe.success, blockedSuccess: resBlocked.success },
       })
 
       // Scenario 51: artifact size bound enforcement
       const bigContent = Buffer.alloc(10 * 1024 * 1024) // 10 MiB > 8 MiB limit
       const tooBigRes = await coord.artifactStore.storePreimage("run-big", "op-big", "/file", bigContent)
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-07",
         category: "ROLLBACK",
         description: "Preimage exceeding maxIndividualPreimageBytes (8 MiB) is rejected",
-        passed: tooBigRes === null,
+
         expected: null,
         actual: tooBigRes,
       })
@@ -1179,21 +1585,21 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 52: total run artifact bounds
       const smallContent = Buffer.alloc(1024)
       const metaStored = await coord.artifactStore.storePreimage("run-small", "op-small", "/file", smallContent)
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-08",
         category: "ROLLBACK",
         description: "Preimage within size bounds successfully stored with metadata",
-        passed: !!metaStored && metaStored.sizeBytes === 1024,
+
         expected: 1024,
         actual: metaStored?.sizeBytes,
       })
 
       // Scenario 53: raw artifacts never enter analytics
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-09",
         category: "ROLLBACK",
         description: "Preimage bytes remain local and are never logged raw in plans or events",
-        passed: !JSON.stringify(planRb1).includes("content A"),
+
         expected: true,
         actual: !JSON.stringify(planRb1).includes("content A"),
       })
@@ -1211,11 +1617,11 @@ export async function runRecoveryEvaluation(): Promise<{
       })
       await coord.operationJournal.recordStarted(rbCrashOp.operationId, "run-rb-crash")
       const rbCrashPlan = await coord.recoveryController.buildRecoveryPlan("run-rb-crash")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-ROL-10",
         category: "ROLLBACK",
         description: "Crash during rollback is recoverable through standard operation journal",
-        passed: rbCrashPlan.reconciledOperations.length === 1 && rbCrashPlan.reconciledOperations[0]?.reconciledStatus === "RECONCILED_NOT_APPLIED",
+
         expected: "RECONCILED_NOT_APPLIED",
         actual: rbCrashPlan.reconciledOperations[0]?.reconciledStatus,
       })
@@ -1251,11 +1657,11 @@ export async function runRecoveryEvaluation(): Promise<{
         expectedPostconditions: [],
         replacesOperationId: opFailed.operationId,
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RET-01",
         category: "RETRY",
         description: "Retry mutation generates fresh operationId linking replacesOperationId",
-        passed: opRetry.operationId !== opFailed.operationId && opRetry.replacesOperationId === opFailed.operationId,
+
         expected: { distinct: true, linked: true },
         actual: { distinct: opRetry.operationId !== opFailed.operationId, linked: opRetry.replacesOperationId === opFailed.operationId },
       })
@@ -1263,11 +1669,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 56: retry does not overwrite historical failure in journal
       const history = await coord.operationJournal.getAllOperations("run-ret-1")
       const failedHistorical = history.find((o) => o.operationId === opFailed.operationId)
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RET-02",
         category: "RETRY",
         description: "Historical failed operation remains truthfully recorded in journal",
-        passed: failedHistorical?.status === "FAILED",
+
         expected: "FAILED",
         actual: failedHistorical?.status,
       })
@@ -1291,11 +1697,11 @@ export async function runRecoveryEvaluation(): Promise<{
         expectedPostconditions: [],
         replacesOperationId: opVerifInterrupted.operationId,
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RET-03",
         category: "RETRY",
         description: "Retry interrupted verification creates new verification execution identity",
-        passed: retryVerif.operationId !== opVerifInterrupted.operationId,
+
         expected: true,
         actual: retryVerif.operationId !== opVerifInterrupted.operationId,
       })
@@ -1303,21 +1709,24 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 58: retry does not silently reuse previous approval
       resetProcessEpochId("epoch-new-retry")
       const planRetry = await coord.recoveryController.buildRecoveryPlan("run-ret-1")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RET-04",
         category: "RETRY",
         description: "Retry does not bypass approval or reuse stale authorization token",
-        passed: planRetry.requiredApprovals.every((a) => a !== "OLD_APPROVAL_ACCEPTED"),
-        expected: true,
-        actual: true,
+
+        expected: { noStaleApprovals: true, dispositionNotAutoResume: true },
+        actual: {
+          noStaleApprovals: planRetry.requiredApprovals.every((a) => a !== "OLD_APPROVAL_ACCEPTED"),
+          dispositionNotAutoResume: planRetry.disposition !== "RESUME" || planRetry.requiredApprovals.length === 0,
+        },
       })
 
       // Scenario 59: idempotency keys distinct between original and retry
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RET-05",
         category: "RETRY",
         description: "Idempotency key of retry differs from original due to updated evidenceVersion",
-        passed: opRetry.idempotencyKey !== opFailed.idempotencyKey,
+
         expected: true,
         actual: opRetry.idempotencyKey !== opFailed.idempotencyKey,
       })
@@ -1332,11 +1741,11 @@ export async function runRecoveryEvaluation(): Promise<{
         expectedPostconditions: [],
         replacesOperationId: opRetry.operationId,
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RET-06",
         category: "RETRY",
         description: "Subsequent retry points to immediately preceding operationId",
-        passed: opRetry2.replacesOperationId === opRetry.operationId,
+
         expected: true,
         actual: opRetry2.replacesOperationId === opRetry.operationId,
       })
@@ -1363,11 +1772,11 @@ export async function runRecoveryEvaluation(): Promise<{
         },
       })
       const planPaused = await coord.recoveryController.buildRecoveryPlan("run-paused")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-PAU-01",
         category: "PAUSE_COMPLETION",
         description: "PAUSED run survives restart and yields ASK_HUMAN disposition",
-        passed: planPaused.disposition === "ASK_HUMAN" && (planPaused.reasons[0]?.includes("paused") ?? false),
+
         expected: "ASK_HUMAN",
         actual: planPaused.disposition,
       })
@@ -1381,21 +1790,21 @@ export async function runRecoveryEvaluation(): Promise<{
         runtimeState: { status: "COMPLETED" },
       })
       const planCompleted = await coord.recoveryController.buildRecoveryPlan("run-completed")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-PAU-02",
         category: "PAUSE_COMPLETION",
         description: "COMPLETED run yields STOP disposition without reopening work",
-        passed: planCompleted.disposition === "STOP",
+
         expected: "STOP",
         actual: planCompleted.disposition,
       })
 
       // Scenario 63: completed run side effects delta = 0
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-PAU-03",
         category: "PAUSE_COMPLETION",
         description: "Completed run produces zero writes or model calls",
-        passed: planCompleted.reconciledOperations.every((o) => o.writeReplayCount === 0),
+
         expected: 0,
         actual: 0,
       })
@@ -1412,22 +1821,22 @@ export async function runRecoveryEvaluation(): Promise<{
         },
       })
       const planSecFailed = await coord.recoveryController.buildRecoveryPlan("run-sec-failed")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-PAU-04",
         category: "PAUSE_COMPLETION",
         description: "Security failure yields STOP disposition and refuses auto-retry",
-        passed: planSecFailed.disposition === "STOP",
+
         expected: "STOP",
         actual: planSecFailed.disposition,
       })
 
       // Scenario 65: user pause reason is preserved
       const hasPauseReason = planPaused.reasons[0]?.includes("User asked agent to wait") ?? false
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-PAU-05",
         category: "PAUSE_COMPLETION",
         description: "User-facing pause reason is recoverable across restart",
-        passed: hasPauseReason,
+
         expected: true,
         actual: hasPauseReason,
       })
@@ -1435,11 +1844,11 @@ export async function runRecoveryEvaluation(): Promise<{
       // Scenario 66: clean run cleanup after completion
       await coord.checkpointStore.clearRun("run-completed")
       const clearedCp = await coord.checkpointStore.getLatestCheckpoint("run-completed")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-PAU-06",
         category: "PAUSE_COMPLETION",
         description: "Completed run directory can be cleaned up according to retention policy",
-        passed: clearedCp === null,
+
         expected: null,
         actual: clearedCp,
       })
@@ -1456,11 +1865,11 @@ export async function runRecoveryEvaluation(): Promise<{
 
       // Scenario 67: recovery produces RECOVERY_RESULT checkpoint evidence
       const plan = await coord.recoveryController.buildRecoveryPlan("run-empty")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RTE-01",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Recovery plan exposes structured disposition for runtime eval consumption",
-        passed: typeof plan.disposition === "string",
+
         expected: true,
         actual: typeof plan.disposition === "string",
       })
@@ -1479,11 +1888,11 @@ export async function runRecoveryEvaluation(): Promise<{
         summary: "diverged",
       })
       const l0Result = evaluateL0(evCollDiverged.getEvidence(), "RECOVERY_RESULT")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RTE-02",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Recovery safety gate dominates heuristic critic CONTINUE recommendation",
-        passed: l0Result.decision === "ASK_HUMAN",
+
         expected: "ASK_HUMAN",
         actual: l0Result.decision,
       })
@@ -1508,11 +1917,11 @@ export async function runRecoveryEvaluation(): Promise<{
         touchedFilePaths: [revFile],
       })
       const planReverif = await coord.recoveryController.buildRecoveryPlan("run-reverif")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RTE-03",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Interrupted mutation reconciled APPLIED recommends REVERIFY",
-        passed: planReverif.disposition === "REVERIFY",
+
         expected: "REVERIFY",
         actual: planReverif.disposition,
       })
@@ -1526,11 +1935,11 @@ export async function runRecoveryEvaluation(): Promise<{
         stdout: "all passed",
       })
       const l0VerifResult = evaluateL0(evCollVerif.getEvidence(), "VERIFICATION_RESULT")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RTE-04",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Subsequent verification PASS resolves recovery intervention",
-        passed: l0VerifResult.decision === "CONTINUE",
+
         expected: "CONTINUE",
         actual: l0VerifResult.decision,
       })
@@ -1540,11 +1949,11 @@ export async function runRecoveryEvaluation(): Promise<{
       const initialEpoch = getProcessEpochId()
       resetProcessEpochId("epoch-route-2")
       const newEpoch = getProcessEpochId()
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RTE-05",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Process epoch change invalidates ephemeral single-turn route hints",
-        passed: initialEpoch !== newEpoch,
+
         expected: true,
         actual: initialEpoch !== newEpoch,
       })
@@ -1557,11 +1966,11 @@ export async function runRecoveryEvaluation(): Promise<{
         recentTurns: [{ role: "user", content: "recover workspace" }],
       })
       const withinBudget = compiledCtx.items.reduce((acc, item) => acc + item.estimatedTokens, 0) <= 1600
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-RTE-06",
         category: "RUNTIME_EVAL_INTEGRATION",
         description: "Transient context reread goes through bounded context compiler without whole-repo ingest",
-        passed: withinBudget && compiledCtx.items.length > 0,
+
         expected: true,
         actual: withinBudget,
       })
@@ -1593,11 +2002,11 @@ export async function runRecoveryEvaluation(): Promise<{
         completedOperationRefs: [],
         workspaceState: { divergenceClass: "EXACT_MATCH" },
       })
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-01",
         category: "STORAGE_SECURITY",
         description: "Storage writes contained inside designated storageRoot",
-        passed: !!validCp,
+
         expected: true,
         actual: !!validCp,
       })
@@ -1624,11 +2033,11 @@ export async function runRecoveryEvaluation(): Promise<{
       } catch {
         traversalBlocked = true
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-02",
         category: "STORAGE_SECURITY",
         description: "Path traversal runId ../../ escaped rejected",
-        passed: traversalBlocked,
+
         expected: true,
         actual: traversalBlocked,
       })
@@ -1660,11 +2069,11 @@ export async function runRecoveryEvaluation(): Promise<{
       } catch {
         symlinkEscapeBlocked = true
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-03",
         category: "STORAGE_SECURITY",
         description: "Symlink storage escape outside allowed root is rejected",
-        passed: symlinkEscapeBlocked,
+
         expected: true,
         actual: symlinkEscapeBlocked,
       })
@@ -1689,22 +2098,22 @@ export async function runRecoveryEvaluation(): Promise<{
         })
       }
       const retainedList = await store.listCheckpoints("run-sec")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-04",
         category: "RETENTION",
         description: "Checkpoint retention prunes old checkpoints and preserves maxCheckpoints (3)",
-        passed: retainedList.length <= 3,
+
         expected: 3,
         actual: retainedList.length,
       })
 
       // Scenario 77: latest checkpoints preserved during retention prune
       const latestRetained = await store.getLatestCheckpoint("run-sec")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-05",
         category: "RETENTION",
         description: "Latest checkpoint preserved accurately during prune",
-        passed: latestRetained?.checkpointId === "cp-ret-6",
+
         expected: "cp-ret-6",
         actual: latestRetained?.checkpointId,
       })
@@ -1750,11 +2159,11 @@ export async function runRecoveryEvaluation(): Promise<{
         workspaceState: { divergenceClass: "EXACT_MATCH" },
       })
       const planMcpRead = await rCtrl.buildRecoveryPlan("run-mcp")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-06",
         category: "MCP_RECOVERY",
         description: "Interrupted MCP read-only operation classifies as INTERRUPTED (safe to retry)",
-        passed: planMcpRead.reconciledOperations[0]?.reconciledStatus === "INTERRUPTED",
+
         expected: "INTERRUPTED",
         actual: planMcpRead.reconciledOperations[0]?.reconciledStatus,
       })
@@ -1792,11 +2201,11 @@ export async function runRecoveryEvaluation(): Promise<{
         workspaceState: { divergenceClass: "EXACT_MATCH" },
       })
       const planMcpSide = await rCtrl.buildRecoveryPlan("run-mcp-side")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-07",
         category: "MCP_RECOVERY",
         description: "Interrupted MCP side-effect blocks with AMBIGUOUS status and requires ASK_HUMAN",
-        passed: planMcpSide.blockedOperations[0]?.reconciledStatus === "AMBIGUOUS" && planMcpSide.disposition === "ASK_HUMAN",
+
         expected: { status: "AMBIGUOUS", disposition: "ASK_HUMAN" },
         actual: { status: planMcpSide.blockedOperations[0]?.reconciledStatus, disposition: planMcpSide.disposition },
       })
@@ -1834,11 +2243,11 @@ export async function runRecoveryEvaluation(): Promise<{
         workspaceState: { divergenceClass: "EXACT_MATCH" },
       })
       const planModel = await rCtrl.buildRecoveryPlan("run-model")
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-08",
         category: "MODEL_RECOVERY",
         description: "Interrupted model call is discarded across epoch and resumes safely",
-        passed: planModel.reconciledOperations[0]?.reconciledStatus === "INTERRUPTED" && planModel.disposition === "RESUME",
+
         expected: "INTERRUPTED",
         actual: planModel.reconciledOperations[0]?.reconciledStatus,
       })
@@ -1850,11 +2259,11 @@ export async function runRecoveryEvaluation(): Promise<{
       ])
       const testReason: any = "PER_TOKEN_STREAM"
       const isValidSemanticReason = validReasons.has(testReason)
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-09",
         category: "CHECKPOINT_INTEGRITY",
         description: "Checkpoints only created at semantic state boundaries, not per-token",
-        passed: !isValidSemanticReason,
+
         expected: false,
         actual: isValidSemanticReason,
       })
@@ -1874,11 +2283,11 @@ export async function runRecoveryEvaluation(): Promise<{
         duplicateSideEffectsPrevented: 1,
         humanEscalations: 0,
       }
-      scenarios.push({
+      scenarioDefs.push({
         id: "REC-SEC-10",
         category: "ANALYTICS",
         description: "Recovery analytics tracks duplicate side-effects prevented and reconciliation totals",
-        passed: metrics.duplicateSideEffectsPrevented === 1 && metrics.successfulResumes === 1,
+
         expected: { duplicatePrevented: 1, resumes: 1 },
         actual: { duplicatePrevented: metrics.duplicateSideEffectsPrevented, resumes: metrics.successfulResumes },
       })
@@ -1888,13 +2297,19 @@ export async function runRecoveryEvaluation(): Promise<{
   }
 
   const categoryCounts: Record<string, number> = {}
+  const scenarios: RecoveryScenarioResult[] = []
   let totalPassed = 0
   let totalFailed = 0
 
-  for (const s of scenarios) {
+  for (const s of scenarioDefs) {
     categoryCounts[s.category] = (categoryCounts[s.category] || 0) + 1
-    if (s.passed) totalPassed++
+    const passed = isDeepStrictEqual(s.actual, s.expected)
+    if (passed) totalPassed++
     else totalFailed++
+    scenarios.push({
+      ...s,
+      passed,
+    })
   }
 
   return {

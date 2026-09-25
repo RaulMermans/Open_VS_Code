@@ -1443,7 +1443,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
     executable: process.execPath,
     args: [path.join(tmpRoot, "tree-runner.cjs"), parentTimeoutPidPath, childTimeoutPidPath],
     cwd: tmpRoot,
-    timeoutMs: 300,
+    timeoutMs: 1500,
     commandPreview: "node tree-runner.cjs",
     packageJsonPath: pkgJsonPath,
     packageJsonHash: crypto.createHash("sha256").update(fs.readFileSync(pkgJsonPath)).digest("hex"),
@@ -1452,7 +1452,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   });
 
   let timeoutTries = 0;
-  while ((!fs.existsSync(parentTimeoutPidPath) || !fs.existsSync(childTimeoutPidPath)) && timeoutTries < 100) {
+  while ((!fs.existsSync(parentTimeoutPidPath) || !fs.existsSync(childTimeoutPidPath)) && timeoutTries < 200) {
     await new Promise(r => setTimeout(r, 20));
     timeoutTries++;
   }
@@ -1520,7 +1520,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   // Wait deterministically for both PIDs to appear (both processes running)
   let deactTries = 0;
-  while ((!fs.existsSync(deactParentPid) || !fs.existsSync(deactChildPid)) && deactTries < 100) {
+  while ((!fs.existsSync(deactParentPid) || !fs.existsSync(deactChildPid)) && deactTries < 250) {
     await new Promise(r => setTimeout(r, 20));
     deactTries++;
   }

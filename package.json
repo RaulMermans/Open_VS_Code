@@ -14,7 +14,8 @@
     "build": "npm run build --workspaces --if-present",
     "eval:model": "npm --workspace=@open-vs-code/agent-core run eval:model",
     "eval:coding": "npm --workspace=@open-vs-code/agent-core run eval:coding",
-    "eval:runtime": "npm --workspace=@open-vs-code/agent-core run eval:runtime"
+    "eval:runtime": "npm --workspace=@open-vs-code/agent-core run eval:runtime",
+    "eval:recovery": "npm --workspace=@open-vs-code/agent-core run eval:recovery"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

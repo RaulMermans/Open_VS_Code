@@ -199,4 +199,101 @@ describe("Sprint 4C — Real Process-Boundary Crash Tests (E2E)", () => {
       await rm(wsDir, { recursive: true, force: true })
     }
   })
+
+  test("T-4842: Rollback crash: Child crashes after writing rollback file before recordCompleted -> Process B reconciles without duplicate write", async () => {
+    const wsDir = await mkdtemp(join(tmpdir(), "crash-rollback-"))
+    try {
+      const targetFile = join(wsDir, "service.ts")
+      const originalContent = "export const serviceMode = 'production'\n"
+      await writeFile(targetFile, originalContent, "utf8")
+      const beforeHash = sha256(originalContent)
+      const mutatedContent = "export const serviceMode = 'staging'\n"
+      const afterHash = sha256(mutatedContent)
+
+      const runId = "run-crash-rollback-1"
+
+      // In Child process:
+      // 1. Applies mutation changing file from 'production' to 'staging'
+      // 2. Stores preimage of original content
+      // 3. Executes rollback restoring 'production' to disk
+      // 4. Immediately exits (crashes) before recording rollback completion or checkpointing
+      const workerCode = `
+        import { CheckpointCoordinator } from ${JSON.stringify(coordModuleUrl)};
+        import { MutationEngine, sha256 } from ${JSON.stringify(mutationModuleUrl)};
+
+        const mutationEngine = new MutationEngine(${JSON.stringify(wsDir)});
+        const coord = new CheckpointCoordinator({ workspaceRoot: ${JSON.stringify(wsDir)}, mutationEngine });
+
+        // 1. Prepare and apply original mutation
+        const prep = await mutationEngine.preparePatch({
+          operation: "patch",
+          path: "service.ts",
+          patch: { search: "production", replace: "staging" },
+        });
+        const op = await coord.prepareOperation({
+          runId: ${JSON.stringify(runId)},
+          evidenceVersion: 1,
+          kind: "MUTATION",
+          authorityId: "mutation-engine",
+          preconditions: [{ path: ${JSON.stringify(targetFile)}, expectedHash: ${JSON.stringify(beforeHash)}, exists: true }],
+          expectedPostconditions: [{ path: ${JSON.stringify(targetFile)}, expectedHash: ${JSON.stringify(afterHash)}, exists: true }],
+          payload: { mutationId: prep.id },
+        });
+        await coord.operationJournal.recordStarted(op.operationId, ${JSON.stringify(runId)});
+
+        // Store preimage for rollback
+        await coord.artifactStore.storePreimage(
+          ${JSON.stringify(runId)},
+          op.operationId,
+          ${JSON.stringify(targetFile)},
+          Buffer.from(${JSON.stringify(originalContent)}, "utf8")
+        );
+
+        // Apply mutation to disk
+        await mutationEngine.applyPreparedMutation(prep);
+
+        // 2. Execute rollback: propose reverse mutation to disk
+        const prepRollback = await mutationEngine.preparePatch({
+          operation: "patch",
+          path: "service.ts",
+          patch: { search: "staging", replace: "production" },
+        });
+        // Apply rollback on disk
+        await mutationEngine.applyPreparedMutation(prepRollback);
+
+        // CRASH IMMEDIATELY AFTER ROLLBACK WRITE
+        process.exit(0);
+      `
+
+      await new Promise<void>((resolve, reject) => {
+        const child = fork("-e", [workerCode], {
+          stdio: "inherit",
+          execArgv: ["--import", "tsx"],
+        })
+        child.on("exit", (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(`Child exited with code ${code}`))
+        })
+      })
+
+      // Child has crashed. Now Process B (parent) boots up in new epoch:
+      const mutationEngine = new MutationEngine(wsDir)
+      const parentCoord = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
+
+      // Build recovery plan
+      const plan = await parentCoord.recoveryController.buildRecoveryPlan(runId)
+
+      // Disk content is confirmed to be the rolled-back original content
+      const diskContent = await readFile(targetFile, "utf8")
+      assert.strictEqual(diskContent, originalContent)
+
+      // The mutation was started in the journal, but disk matches precondition (beforeHash)!
+      assert.strictEqual(plan.reconciledOperations.length, 1)
+      const rec = plan.reconciledOperations[0]!
+      assert.strictEqual(rec.reconciledStatus, "RECONCILED_NOT_APPLIED", "Must observe that file is back at precondition; not applied")
+      assert.strictEqual(rec.writeReplayCount, 0, "Must NEVER replay writes when content matches precondition")
+    } finally {
+      await rm(wsDir, { recursive: true, force: true })
+    }
+  })
 })
