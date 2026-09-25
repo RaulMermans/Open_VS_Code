@@ -17,6 +17,7 @@ import {
   CheckpointCoordinator,
   resetProcessEpochId,
   getProcessEpochId,
+  type RollbackCandidate,
   computeOperationIdempotencyKey,
 } from "../../src/recovery/index.ts"
 import { MutationEngine, sha256 } from "../../src/tools/mutation-engine.ts"
@@ -2590,10 +2591,9 @@ export async function runRecoveryEvaluation(): Promise<{
 
       // Scenario 100: Verification recordStarted durability failure blocks VerificationEngine and fails closed
       const { createVerificationToolRegistrations } = await import("../../src/tools/verification-registry.ts")
-      const { ToolRegistry } = await import("../../src/tools/registry.ts")
       await writeFile(join(wsDir, "package.json"), JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }), "utf8")
       const origRecordStartedV = coord.operationJournal.recordStarted.bind(coord.operationJournal)
-      coord.operationJournal.recordStarted = async (opId, rId) => {
+      coord.operationJournal.recordStarted = async () => {
         throw new Error("Journal disk full: cannot recordStarted")
       }
       let verifToolRan = false
@@ -2617,7 +2617,7 @@ export async function runRecoveryEvaluation(): Promise<{
         checkpointCoordinator: coord,
         permissionEvaluator: () => "CONFIRM",
       })
-      const runVRes = await runnerV.run({
+      await runnerV.run({
         workspaceRoot: wsDir,
         task: { id: "run-v-dur-fail", instruction: "test", mode: "BUILD" },
         maxTurns: 3,
@@ -2829,7 +2829,6 @@ export async function runRecoveryEvaluation(): Promise<{
       const target107 = join(wsDir, "mut_start_fail.txt")
       await writeFile(target107, "initial\n", "utf8")
       const coord107 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
-      const origRecordStarted107 = coord107.operationJournal.recordStarted.bind(coord107.operationJournal)
       coord107.operationJournal.recordStarted = async () => {
         throw new Error("Disk full: cannot recordStarted mutation")
       }
@@ -2839,8 +2838,6 @@ export async function runRecoveryEvaluation(): Promise<{
         mutEngineCalled107 = true
         return origApply107(...args)
       }
-      const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
-      const { ToolRegistry } = await import("../../src/tools/registry.ts")
       const runner107 = new AgentRunner({
         provider: new ScriptedModelProvider([
           { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id: "c1", name: "apply_patch", arguments: { path: "mut_start_fail.txt", search: "initial", replace: "updated" } }] },
@@ -2871,7 +2868,6 @@ export async function runRecoveryEvaluation(): Promise<{
       const target108 = join(wsDir, "mut_recfail.txt")
       await writeFile(target108, "initial\n", "utf8")
       const coord108 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
-      const origRecordFailed108 = coord108.operationJournal.recordFailed.bind(coord108.operationJournal)
       coord108.operationJournal.recordFailed = async () => {
         throw new Error("Disk full: cannot recordFailed mutation")
       }
@@ -2913,7 +2909,6 @@ export async function runRecoveryEvaluation(): Promise<{
 
       // Scenario 109: Verification failure + recordFailed failure stops execution immediately fail closed
       const coord109 = new CheckpointCoordinator({ workspaceRoot: wsDir, mutationEngine })
-      const origRecordFailed109 = coord109.operationJournal.recordFailed.bind(coord109.operationJournal)
       coord109.operationJournal.recordFailed = async () => {
         throw new Error("Disk full: cannot recordFailed verification")
       }

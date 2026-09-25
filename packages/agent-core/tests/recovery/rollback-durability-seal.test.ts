@@ -8,7 +8,7 @@ import { test, describe } from "node:test"
 import assert from "node:assert/strict"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises"
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
 import { CheckpointCoordinator } from "../../src/recovery/checkpoint-coordinator.ts"
 import { RollbackManager } from "../../src/recovery/rollback.ts"
 import { MutationEngine, sha256 } from "../../src/tools/mutation-engine.ts"
@@ -35,8 +35,8 @@ describe("Sprint 4C.4 — Rollback Durability Final Seal", () => {
         return origRollback(...args)
       }
 
-      const artifactStore = new RecoveryArtifactStore(join(wsDir, ".checkpoints", "artifacts"))
-      const checkpointStore = new CheckpointStore({ storageDir: join(wsDir, ".checkpoints") })
+      const artifactStore = new RecoveryArtifactStore({ storageRoot: join(wsDir, ".checkpoints", "artifacts") })
+      const checkpointStore = new CheckpointStore({ storageRoot: join(wsDir, ".checkpoints") })
 
       // Instantiate RollbackManager without OperationJournal
       const rollbackManager = new RollbackManager({
@@ -86,8 +86,8 @@ describe("Sprint 4C.4 — Rollback Durability Final Seal", () => {
         return origRollback(...args)
       }
 
-      const artifactStore = new RecoveryArtifactStore(join(wsDir, ".checkpoints", "artifacts"))
-      const operationJournal = new OperationJournal({ storageDir: join(wsDir, ".checkpoints") })
+      const artifactStore = new RecoveryArtifactStore({ storageRoot: join(wsDir, ".checkpoints", "artifacts") })
+      const operationJournal = new OperationJournal({ storageRoot: join(wsDir, ".checkpoints") })
 
       // Instantiate RollbackManager without CheckpointStore
       const rollbackManager = new RollbackManager({
@@ -429,7 +429,7 @@ describe("Sprint 4C.4 — Rollback Durability Final Seal", () => {
       assert.strictEqual(await readFile(targetFile, "utf8"), original, "Workspace restored to state A")
 
       // Second rollback attempt in same process does NOT replay reverse mutation
-      const resSecond = await coord.recoveryController.rollbackManager.executeRollback(runId, cand)
+      await coord.recoveryController.rollbackManager.executeRollback(runId, cand)
       assert.strictEqual(reverseCalls, 1, "No same-process replay")
 
       // Restart reconciliation (T-5210):
@@ -471,9 +471,9 @@ describe("Sprint 4C.4 — Rollback Durability Final Seal", () => {
       await coord.artifactStore.storePreimage(runId1, cand1.operationId, targetFile, Buffer.from("orig\n", "utf8"))
 
       const origRollback = mutationEngine.rollback.bind(mutationEngine)
-      mutationEngine.rollback = async () => {
+      mutationEngine.rollback = (async () => {
         return { status: "FAILED", error: new Error("Simulated mutation engine failure") }
-      }
+      }) as any
 
       const res1 = await coord.recoveryController.rollbackManager.executeRollback(runId1, cand1)
       assert.strictEqual(res1.success, false)
