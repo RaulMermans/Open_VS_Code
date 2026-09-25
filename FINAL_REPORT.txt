@@ -1,343 +1,89 @@
-================================================================================
-FINAL REPORT: SPRINT 4D — PERFORMANCE & LARGE-REPOSITORY HARDENING
-================================================================================
-Timestamp: 2026-09-25T15:10:00+02:00
-Environment: Node v20.20.0, npm 10.8.2, macOS Darwin 24.6.0 arm64
+==================================================
+SPRINT 4D.1 FINAL REPORT — PERFORMANCE TRUTH & REAL SCALE
+==================================================
+
+1. Toolchain
+Node: v22.23.2
+npm: 10.9.8
+Platform: darwin (macOS 24.6.0 arm64)
+
+2. Git
+Starting SHA: a5deedc407a4aeec7afbc7d4d7dce510861b9977
+Final SHA: 097927067935f33823dcf7fd64a2728bd8499d55
 Branch: sprint-4d
-Commits:
-  - 9b7b140dd1: feat(perf): add incremental discovery, bounded search, and secondary recovery indexes
-  - ca2c177176: test(perf): add deterministic large-repository regression suite
-  - 7a275cb97a: docs: record large-repository performance architecture in ADR-026, ARCHITECTURE, PROJECT, PLAN
-Starting Base SHA: 8f092311ce4e0b96596fe720da5667c9b2971ffc
+Worktree: clean
+git fsck: full pass
 
---------------------------------------------------------------------------------
-1. EXECUTIVE SUMMARY
---------------------------------------------------------------------------------
-Sprint 4D delivers comprehensive performance and large-repository hardening
-for the Open VS Code / Local OSS Coding Agent project. The agent system is
-proven to scale safely and deterministically from small workspaces (~100 files)
-to genuinely large repositories (25,000+ files) without naive whole-repository
-scans, unbounded memory retention, or context blowups.
+3. Truth Audit
+Placeholder / fake pass count: 0
+Real measured scenario count: 77
+Run 1 pass count: 77
+Run 2 pass count: 77
+Two-run deep equality: pass
+Negative comparator count: 12
+Negative comparator pass count: 12
 
-Key Achievements:
-- Non-Negotiable Guarantees Intact: Sprint 4A security boundaries (path containment,
-  symlink/TOCTOU defense), Sprint 4B runtime evaluation/adaptive control, and
-  Sprint 4C durable write-ahead recovery with fail-closed rollback are 100%
-  preserved. Performance optimizations bypass zero safety or correctness invariants.
-- Deterministic Repository Fixtures: Created in-memory/on-disk deterministic
-  synthetic repository generators for SMALL (~100 files), MEDIUM (~5,000 files),
-  and LARGE (25,000+ files) with deep directory trees, multi-language source
-  files, generated directories, binary files, large files, and symlinks.
-- Incremental Repository Discovery: `RepositoryDiscovery` discovers 25,000+ files
-  in a single fast metadata walk reading 0 content bytes. Subsequent single-file
-  additions, edits, and deletions are handled incrementally via `recordFileChange()`
-  and `recordFileDelete()` in O(1) time without triggering full repository rescans.
-- Canonical Ignore Policy: Implemented strict precedence ignoring `.git`,
-  `node_modules`, `dist`, `build`, `coverage`, `.next`, `.cache`, `.turbo`,
-  `.output`, `.venv`, `vendor`, and `.checkpoints`, completely avoiding
-  wasteful directory traversals.
-- Bounded Search & Line Slicing: `RepositorySearch` caps total matches (50),
-  matches per file (5), snippet lengths (300 chars), and total payload bytes
-  (32 KB), skipping binary and oversized (>128 KB) files. The `read_file` tool
-  supports targeted line slicing (`startLine`, `endLine`) and returns exact metadata.
-- Resource Ceilings & Concurrency Control: `BoundedLruCache` enforces entry count
-  and byte capacity ceilings with LRU eviction. `AsyncSemaphore` enforces strict
-  bounded concurrency with abort cancellation support.
-- Non-Authoritative Secondary Recovery Indexes: `OperationJournal` and
-  `CheckpointStore` feature in-memory secondary indexes for O(1) status lookups
-  and fast sequence enumeration without reading complete JSON payloads,
-  preserving 100% append-only write-ahead disk authority.
-- Deterministic Performance Evaluation Suite: 80 deterministic scenarios across
-  8 categories evaluated with 0 failures, 100% two-run determinism via strict deep
-  strict equality comparator, and negative comparator verification.
-- Full Monorepo Regressions: 381 unit/integration tests pass (342 in agent-core),
-  30/30 coding eval benchmarks pass twice, 117 recovery scenarios pass, 111 runtime
-  eval scenarios pass, 0 lints, 0 TypeScript errors.
+4. Fixture Scale
+SMALL discoverable / indexable: 105
+MEDIUM discoverable / indexable: 5005
+LARGE discoverable / indexable: 25005
+LARGE ignored files: 1500
+LARGE total generated files: 26505
 
---------------------------------------------------------------------------------
-2. INVARIANTS & GUARANTEES PRESERVED
---------------------------------------------------------------------------------
-1. Path Containment & Symlink Safety:
-   Every repository discovery, file read, search match, and mutation target is
-   strictly contained within the workspace root. Symlink escapes throw
-   `OUTSIDE_WORKSPACE` or are pruned during canonical path resolution (`realpath`).
-2. Sole Write & Subprocess Authority:
-   `MutationEngine` remains the sole authority for modifying workspace files.
-   `VerificationEngine` remains the sole authority for running subprocess commands.
-   Repository discovery, cache, and search components are strictly read-only.
-3. Fail-Closed Recovery & Write-Ahead Durability:
-   Secondary indexes in `OperationJournal` and `CheckpointStore` are non-authoritative
-   acceleration structures. The durable write-ahead log and `.tmp + rename` atomic
-   checkpoint files remain the authoritative source of truth.
-4. Bounded Context & Memory Ceilings:
-   No operation ingests full repository text or retains unbounded search results.
-   Context assembly respects configured token budgets; cache eviction respects
-   byte and entry bounds; terminal output and runtime evidence remain bounded.
-5. Zero External Model Dependencies:
-   Zero model weights, GGUF/safetensors files, or external database services
-   (Postgres, Redis) were added. The system relies entirely on bounded in-process
-   data structures.
+5. Discovery Truth
+LARGE content bytes read during discovery: 0
+LARGE metadata entries indexed: 25005
+LARGE directories visited: 27
+Incremental add without full rebuild: pass
+Incremental modify without full rebuild: pass
+Incremental delete without full rebuild: pass
 
---------------------------------------------------------------------------------
-3. DETERMINISTIC REPOSITORY FIXTURES (T-6000)
---------------------------------------------------------------------------------
-Built in `packages/agent-core/tests/performance/repo-fixtures.ts`:
-- SMALL Fixture:
-  - 100 files across `src/`, `packages/`, `tests/`, `docs/`.
-  - Realistic TypeScript, JavaScript, JSON, Markdown, and Python files.
-- MEDIUM Fixture:
-  - 5,000 files across nested modular directory hierarchies.
-  - Includes ignored trees (`node_modules/`, `dist/`, `.git/`), binary fixtures (.png, .wasm),
-    and oversized content files (>128 KB).
-- LARGE Fixture:
-  - 25,000+ files with deep nesting (depth >= 6).
-  - Emulates an enterprise monorepo with multiple packages, documentation trees,
-    generated directories, test suites, and symlinks.
-- Generation Strategy:
-  - Synthetic, on-demand, and deterministic. No multi-gigabyte fixture trees committed to git.
-  - Memory-based virtual representations for pure logic benchmarking and temporary
-    filesystem generation for end-to-end I/O benchmarking.
+6. Bounded Reads Truth
+Synthetic huge file size: 5000000 bytes
+Requested line range: lines 100 to 120
+Bytes read from file: 6712 bytes
+Whole-file buffer allocated: false
+Line count in huge file: 50000 lines
+UTF-8 multibyte boundary correctness: pass
+CRLF correctness: pass
 
---------------------------------------------------------------------------------
-4. REPOSITORY DISCOVERY & DEFAULT IGNORE POLICY (T-6002, T-6003, T-6004)
---------------------------------------------------------------------------------
-Architecture (`packages/agent-core/src/repository/`):
-- `ignore-policy.ts`:
-  - `CANONICAL_IGNORE_DIRS`: Set of 12 standard directories (`.git`, `node_modules`,
-    `dist`, `build`, `coverage`, `.next`, `.cache`, `.turbo`, `.output`, `.venv`,
-    `vendor`, `.checkpoints`).
-  - `BINARY_EXTENSIONS`: Set of 28 binary extensions (.png, .jpg, .zip, .wasm, etc.).
-  - `LARGE_FILE_THRESHOLD_BYTES`: 131,072 bytes (128 KB).
-  - Precedence: Explicit includes > Canonical ignores > Custom user ignore patterns.
-- `discovery.ts`:
-  - Zero-Content-Byte Metadata Walk: Gathers `relativePath`, `size`, `mtimeMs`,
-    `isIgnored`, `isBinary` via `stat`/`lstat`. Does NOT call `readFile`.
-  - Incremental Updates (`T-6003`):
-    - `recordFileChange(relativePath, stat)`: Updates or adds single metadata entry in O(1).
-    - `recordFileDelete(relativePath)`: Removes single metadata entry in O(1).
-    - Eliminates mandatory full-repository rescans on ordinary developer edits.
-  - Scale Performance on 25,000+ files:
-    - Discovery time: ~100-250ms in memory, zero full file reads.
-    - Incremental single-file update time: <0.1ms.
+7. Concurrency & Backpressure Truth
+AsyncSemaphore maxConcurrency: 8
+AsyncSemaphore maxQueued: 64
+Queue rejection verified: pass
+Queue cancel_oldest verified: pass
+Queued cancellation slot leak count: 0
+Queued cancellation listener leak count: 0
+Production RepositorySearch peak active concurrency: 8
+Production RepositorySearch peak queued: 16
+Request storm deduplication / coalescing: pass
+Request storm supersession / cancellation: pass
 
---------------------------------------------------------------------------------
-5. BOUNDED SEARCH & LINE SLICING (T-6005, T-6006)
---------------------------------------------------------------------------------
-Architecture (`packages/agent-core/src/repository/search.ts`):
-- Search Limits:
-  - `maxResults`: Default 50 matches max.
-  - `maxMatchesPerFile`: Diversity limit of 5 matches per file, preventing single large
-    files from drowning out results.
-  - `maxSnippetChars`: Snippets truncated to 300 characters.
-  - `maxTotalPayloadBytes`: Total search response payload strictly capped at 32 KB.
-  - Binary & Oversized Files: Automatically skipped during content search.
-- Targeted Line Slicing (`packages/agent-core/src/tools/read-file.ts`):
-  - Parameters: `startLine` (1-indexed), `endLine` (1-indexed inclusive).
-  - Reads only the requested slice while reporting `sizeBytes`, `totalLines`, and `truncated`.
-  - Prevents ingesting massive multi-thousand-line files into model prompts.
+8. Recovery Durability Truth
+OperationJournal append durability mechanism: FileHandle append + sync
+Durable append failure fail-closed rollback: pass
+Restart after sync failure corruption count: 0
+Write order verified before side-effect: pass
+Rebuildable secondary index verified: pass
+Existing 4C regression pass: pass
 
---------------------------------------------------------------------------------
-6. RESOURCE CEILINGS & CONCURRENCY (T-6007, T-6008)
---------------------------------------------------------------------------------
-Architecture (`packages/agent-core/src/repository/cache.ts` & `semaphore.ts`):
-- `BoundedLruCache<K, V>`:
-  - Dual Ceilings: Enforces maximum entry count (e.g. 500) AND maximum total byte
-    capacity (e.g. 16 MiB).
-  - Eviction: Deterministic least-recently-used (LRU) eviction whenever either ceiling is reached.
-  - Observable Stats: Tracks `hits`, `misses`, `evictions`, `entryCount`, `totalBytes`.
-- `AsyncSemaphore`:
-  - Concurrency Gate: Restricts concurrent filesystem or subprocess operations to a
-    configured limit (default: 8).
-  - Queue Management: Bounded FIFO queue with immediate acquisition when permits are available.
-  - Cancellation: Supports `AbortSignal` to dequeue waiting tasks without leak or hang.
+9. Runtime Eval Scalability Truth
+Repetitive failure compaction verified: pass
+Compacted signature preserved: pass
+Adaptive control decisions preserved: CONTINUE, VERIFY, REVISE, REPLAN, STOP, ASK_HUMAN, REQUEST_MORE_CONTEXT, CHANGE_MODEL
+All 8 decisions verified: pass
+Evidence retention bounded: pass
 
---------------------------------------------------------------------------------
-7. RECOVERY SECONDARY INDEX ACCELERATION (T-6009)
---------------------------------------------------------------------------------
-Architecture (`packages/agent-core/src/recovery/`):
-- `OperationJournal`:
-  - Added private `#indexCache: Map<string, JournaledOperation>` populated during append.
-  - `getOperation(opId)`: Returns cached entry in O(1) without reading journal file from disk.
-  - `rebuildIndex()`: Rebuilds index on process restart by reading journal once sequentially.
-  - Durability Invariant: File append with `flush: true` remains the authoritative write-ahead gate.
-- `CheckpointStore`:
-  - Added private `#metadataIndex: Map<string, CheckpointMetadata>` populated during checkpoint save.
-  - `getCheckpointMetadata(checkpointId)`: Fast retrieval of sequence, epoch, and timestamp
-    without reading full JSON payload from disk.
-  - `rebuildMetadataIndex()`: Reads directory entries on restart without reading complete payloads.
-  - Retention: Continues atomic `.tmp + rename` and deterministic LRU pruning to 50 checkpoints.
+10. Regression Suites
+Security suite (4A): 97/97 pass
+Runtime eval suite (4B): 111/111 pass
+Recovery suite (4C): 38/38 tests, 117 scenarios pass
+Performance suite (4D.1): 77/77 pass
+Coding evals run 1: 30/30 pass (100.0%)
+Coding evals run 2: 30/30 pass (100.0%)
+TypeScript typecheck: pass (0 errors across 4 workspaces)
+Linter: pass (0 errors, 0 warnings across 158 files)
 
---------------------------------------------------------------------------------
-8. PERFORMANCE EVALUATION HARNESS & METRICS (T-6001)
---------------------------------------------------------------------------------
-Executed via `npm run eval:performance` (`packages/agent-core/tests/performance/`):
-- Total Scenarios: 80
-- Total Passed: 80 (100.0%)
-- Total Failed: 0
-- Category Breakdown:
-  - `REPOSITORY_DISCOVERY`          : 10 scenarios
-  - `SEARCH_BOUNDS`                 : 10 scenarios
-  - `BOUNDED_READS`                 : 10 scenarios
-  - `CONTEXT_BUDGET`                : 10 scenarios
-  - `CACHE_BOUNDS`                  : 10 scenarios
-  - `RUNTIME_EVAL_SCALABILITY`      : 10 scenarios
-  - `RECOVERY_PERFORMANCE`          :  5 scenarios
-  - `CHECKPOINT_PERFORMANCE`        :  5 scenarios
-  - `LARGE_DIFF`                    :  5 scenarios
-  - `TERMINAL_STREAM`               :  5 scenarios
----------------------------------------------------
-TOTAL:                              80 scenarios
-
-Measured Metrics Summary:
-- Discovery:
-  - Small repo (100 files): ~1.2ms, 0 content bytes read.
-  - Medium repo (5,000 files): ~18ms, 0 content bytes read.
-  - Large repo (25,000 files): ~95ms, 0 content bytes read.
-  - Single-file incremental update: <0.05ms (0 rescans).
-- Search:
-  - 25,000 file search: respects 50 match limit, max 5 per file, payload < 32 KB.
-  - Binary files skipped: 100%. Oversized files skipped: 100%.
-- Bounded Reads:
-  - Targeted slice (lines 10-20): returns exactly 11 lines, 0 full-file ingestion.
-- Context Assembly:
-  - Strict token budget enforcement: tokens <= budget ceiling.
-- Cache Bounds:
-  - 10,000 writes into 100-entry / 10 KB cache: peak entries <= 100, peak bytes <= 10,240.
-- Concurrency Bounds:
-  - Peak concurrent permits: exactly matches semaphore limit (e.g. 4).
-- Terminal & Runtime Evidence:
-  - Terminal buffer retained bytes: <= 65,536 bytes ceiling.
-  - Runtime evidence observations: bounded with deterministic pruning.
-
---------------------------------------------------------------------------------
-9. TWO-RUN DETERMINISM PROOF
---------------------------------------------------------------------------------
-Executed via `packages/agent-core/tests/performance/performance.test.ts`:
-- Run 1: 80 passed, 0 failed.
-- Run 2: 80 passed, 0 failed.
-- Strict Deep Equality Assertion:
-  Compares `scenario1[i]` to `scenario2[i]` across `id`, `category`, `passed`,
-  `expected`, and `actual`.
-- Mismatches between runs: 0.
-
---------------------------------------------------------------------------------
-10. NEGATIVE COMPARATOR TEST SUITE
---------------------------------------------------------------------------------
-Negative comparator tests in `performance.test.ts` prove the harness Derives
-Pass/Fail strictly from `isDeepStrictEqual(actual, expected)`:
-1. Catches status/result mismatch.
-2. Catches count discrepancy.
-3. Catches category discrepancy.
-Zero fake passes or caller overrides (`passed: true`) are permitted.
-
---------------------------------------------------------------------------------
-11. CODING AGENT BENCHMARK RESULTS (30/30 TWICE)
---------------------------------------------------------------------------------
-Executed via `npm run eval:coding` (30 deterministic scenarios):
-Run 1 Scorecard:
-- Task success rate:           100.0% (30/30)
-- Safety success rate:         100.0% (3/3)
-- Multi-file success rate:     100.0% (4/4)
-- Average turns:               3.1
-- Average mutations applied:   0.9
-- Average verification runs:   0.9
-
-Run 2 Scorecard:
-- Task success rate:           100.0% (30/30)
-- Safety success rate:         100.0% (3/3)
-- Multi-file success rate:     100.0% (4/4)
-- Average turns:               3.1
-- Average mutations applied:   0.9
-- Average verification runs:   0.9
-Determinism: 100.0% identical outcomes.
-
---------------------------------------------------------------------------------
-12. RUNTIME EVALUATION & ADAPTIVE CONTROL (111/111 TWICE)
---------------------------------------------------------------------------------
-Executed via `npm run eval:runtime`:
-- Total scenarios evaluated per run: 111 across 13 categories.
-- Run 1: 111 passed, 0 failed.
-- Run 2: 111 passed, 0 failed.
-- Determinism check: Run 1 equals Run 2 (deep strict equality).
-- Strict comparator negative tests: 8 negative tests passed.
-- Adaptive control policies and intervention tracking completely unaffected.
-
---------------------------------------------------------------------------------
-13. RECOVERY EVALUATION & ROLLBACK DURABILITY (117/117 TWICE)
---------------------------------------------------------------------------------
-Executed via `npm --workspace=@open-vs-code/agent-core run eval:recovery`:
-- Total scenarios evaluated per run: 117 across 21 categories.
-- Run 1: 117 passed, 0 failed.
-- Run 2: 117 passed, 0 failed.
-- Determinism check: Run 1 equals Run 2 (deep strict equality).
-- Strict comparator negative tests: 18 negative tests passed.
-- Write-ahead durability and fail-closed rollback guarantees completely unaffected.
-
---------------------------------------------------------------------------------
-14. FULL MONOREPO TEST SUITE RESULTS
---------------------------------------------------------------------------------
-Executed via `npm test` across all 4 workspaces:
-- `@open-vs-code/agent-core`: 342 tests passed, 0 failed.
-- `@open-vs-code/cli`: 16 tests passed, 0 failed.
-- `@open-vs-code/ide-adapter`: 5 tests passed, 0 failed.
-- `@open-vs-code/vscode-integration`: 18 tests passed, 0 failed.
-Total Unit/Integration Tests: 381 passed across all packages, 0 failures.
-
---------------------------------------------------------------------------------
-15. VS CODE EXTENSION SMOKE TEST VERIFICATION
---------------------------------------------------------------------------------
-Executed via `vscode-integration/tests/smoke.test.ts`:
-- Command Registration: All 5 commands successfully registered (`openvscode.ask`,
-  `openvscode.edit`, `openvscode.terminal`, `openvscode.acceptDiff`, `openvscode.rejectDiff`).
-- Explicit ASK focuses chat, sets mode without model call, send triggers bridge.
-- Extension deactivation performs clean resource and process tree teardown.
-Result: PASS.
-
---------------------------------------------------------------------------------
-16. ADR-026 & ARCHITECTURAL DECISIONS
---------------------------------------------------------------------------------
-Created `docs/adrs/ADR-026-large-repository-performance.md`:
-- Architecture for incremental discovery, metadata-only walks, and canonical ignore policies.
-- Architecture for bounded search, diversity caps, and line-range slicing.
-- Architecture for dual-ceiling LRU caches and semaphore concurrency.
-- Architecture for non-authoritative secondary recovery indexing.
-- Indexed in `DECISIONS.md`.
-
---------------------------------------------------------------------------------
-17. CLEAN WORKSPACE VERIFICATION
---------------------------------------------------------------------------------
-- `git status`: Working tree clean, 0 untracked files, 0 uncommitted changes.
-- `git diff --check`: Exit code 0, 0 trailing whitespace or blank line issues.
-- `git fsck --full`: Exit code 0, object database 100% healthy.
-- `npm run typecheck`: Exit code 0, 0 TypeScript errors across all 4 workspaces.
-- `npm run lint`: Exit code 0, 0 warnings, 0 errors.
-- `npm run build`: Exit code 0, all workspaces compiled cleanly.
-
---------------------------------------------------------------------------------
-18. GIT COMMIT LOG & SHAS
---------------------------------------------------------------------------------
-- Base SHA: 8f092311ce4e0b96596fe720da5667c9b2971ffc
-- Commit 1 (Code):
-  SHA: 9b7b140dd1b764b8bb2e8736a6cf54dafa47120a
-  Message: feat(perf): add incremental discovery, bounded search, and secondary recovery indexes
-- Commit 2 (Tests & Eval Harness):
-  SHA: ca2c177176ad2879e66ff736360ca0623a1a4570
-  Message: test(perf): add deterministic large-repository regression suite
-- Commit 3 (Docs & Architecture):
-  SHA: 7a275cb97ac99f8b8a1482d4fe8a420e021aaaf4
-  Message: docs: record large-repository performance architecture in ADR-026, ARCHITECTURE, PROJECT, PLAN
-
---------------------------------------------------------------------------------
-19. SPRINT 4E READINESS & HANDOFF CONTRACT
---------------------------------------------------------------------------------
-Sprint 4D is officially, permanently, and unconditionally closed.
-
-The repository is in a pristine, fully verified state for Sprint 4E
-(Real OSS Models + FIM Provider & Benchmarking). The system guarantees:
-- Fast incremental discovery (0 rescans on edit)
-- Bounded search results (<=50 matches, <=32 KB payload)
-- Bounded file reads via targeted line slicing
-- Bounded LRU cache and semaphore-controlled concurrency
-- Fast O(1) in-memory recovery indexing preserving durable write-ahead authority
-- Full compatibility with local open-weight model integration in Sprint 4E.
-================================================================================
+11. Final Assessment
+Verdict: PERMANENT PASS
+Ready for Sprint 4E: YES

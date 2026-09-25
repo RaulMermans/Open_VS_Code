@@ -1,9 +1,9 @@
 /**
- * Operation Journal
- * Sprint 4C — Write-Ahead side-effect logging, deterministic idempotency, crash classification
+ * Operation Journal with Durable Synchronization & Secondary Index
+ * Sprint 4C / Sprint 4D.1 — Tasks T-6116 through T-6121
  */
 
-import { readFile, appendFile, mkdir, rm } from "node:fs/promises"
+import { readFile, open, mkdir, rm, type FileHandle } from "node:fs/promises"
 import { join } from "node:path"
 import { createHash } from "node:crypto"
 import {
@@ -33,17 +33,27 @@ export function computeIntentHash(payload: unknown): string {
 
 export interface OperationJournalOptions {
   readonly storageRoot: string
+  readonly durableSync?: boolean
+  readonly syncFn?: (handle: FileHandle) => Promise<void>
 }
 
 export class OperationJournal {
   readonly #storageRoot: string
+  readonly #durableSync: boolean
+  readonly #syncFn: ((handle: FileHandle) => Promise<void>) | undefined
 
   constructor(options: OperationJournalOptions) {
     this.#storageRoot = options.storageRoot
+    this.#durableSync = options.durableSync ?? true
+    this.#syncFn = options.syncFn
   }
 
   get storageRoot(): string {
     return this.#storageRoot
+  }
+
+  get durableSync(): boolean {
+    return this.#durableSync
   }
 
   async #getJournalPath(runId: string): Promise<string> {
@@ -161,9 +171,33 @@ export class OperationJournal {
   async #append(op: RecoveryOperation): Promise<void> {
     const journalPath = await this.#getJournalPath(op.runId)
     const line = JSON.stringify(op) + "\n"
-    await appendFile(journalPath, line, "utf8")
 
-    // Update secondary index if loaded
+    // Physical durable append: open handle, write line, sync (fsync/fdatasync), close
+    const handle = await open(journalPath, "a")
+    let initialSize = 0
+    try {
+      const stats = await handle.stat()
+      initialSize = stats.size
+      await handle.appendFile(line, "utf8")
+      if (this.#durableSync) {
+        if (this.#syncFn) {
+          await this.#syncFn(handle)
+        } else {
+          await handle.sync()
+        }
+      }
+    } catch (err) {
+      try {
+        await handle.truncate(initialSize)
+      } catch {
+        // ignore secondary truncate error
+      }
+      throw err
+    } finally {
+      await handle.close()
+    }
+
+    // Update secondary index ONLY AFTER durable write and synchronization succeed
     const runIndex = this.#indexCache.get(op.runId)
     if (runIndex) {
       runIndex.set(op.operationId, op)
