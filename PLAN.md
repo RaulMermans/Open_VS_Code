@@ -198,5 +198,15 @@ Sprint 4C.2 — Fail-Closed Durability & Recovery Evidence Closure ✅ CLOSED PE
   - Full Monorepo Regressions Clean: 315 tests pass in agent-core, all workspace tests pass across cli, ide-adapter, and vscode-integration, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals.
   - Sprint 4C / 4C.1 / 4C.2 is PERMANENTLY CLOSED.
 
+Sprint 4C.3 — Recovery Resume & Rollback Durability Closure ✅ CLOSED PERMANENTLY
+  - Fail-Closed Recovery Resume Gate: `AgentRunner.resumeFromRecovery()` strictly halts execution fail-closed with `INTERNAL_ERROR` and emits `task.failed` (`RECOVERY_PERSISTENCE_FAILED`) if recording `RECOVERY_RECONCILED` checkpoint persistence fails.
+  - `recordFailed()` Persistence Fail-Closed Invariant: Across approval execution, tool runs, scheduled verifications, and auto-verifications, failure to persist `recordFailed` after an operation is `STARTED` halts execution immediately with `INTERNAL_ERROR` and `RECOVERY_PERSISTENCE_FAILED`.
+  - First-Class Write-Ahead Rollback Journaling (`ROLLBACK_MUTATION`): Rollback is a first-class journaled operation with authority `"mutation-engine"`. Executes strictly via `recordPrepared -> recordStarted -> MutationEngine.rollback/apply -> recordCompleted -> Checkpoint`. Duplicate completed rollback suppression produces zero reverse writes when disk is already restored, and yields `DIVERGED` if the file was modified after mutation.
+  - Real Process Crash E2E Tests (`T-5114`-`T-5117` in `crash-process-e2e.test.ts`): Crash after reverse write reconciles `ROLLBACK_MUTATION` to `RECONCILED_APPLIED` with 0 duplicate writes; crash before write reconciles to `RECONCILED_NOT_APPLIED` with 0 replay writes.
+  - Positive Real AgentRunner Verification Durability (`T-5119`-`T-5120`): Strict write-ahead sequence (`VERIFICATION_PREPARED -> VERIFICATION_STARTED -> BEFORE_VERIFICATION -> VerificationEngine -> VERIFICATION_COMPLETED -> AFTER_VERIFICATION`) with completed verifications surviving restart as `COMPLETED`.
+  - 110 Deterministic Scenarios across 19 Categories: Evaluated by `npm run eval:recovery` across two independent runs with 0 failures, 100% deep strict equality, and 13 negative comparator tests.
+  - Full Monorepo Regressions Clean: 334 tests pass in agent-core, all workspace tests pass across cli, ide-adapter, and vscode-integration, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals.
+  - Sprint 4C / 4C.1 / 4C.2 / 4C.3 is PERMANENTLY CLOSED.
+
 Next:
 Sprint 4D — Performance / Large Repositories → NEXT

@@ -170,24 +170,46 @@ To complete the production integration and close Sprint 4C permanently:
 
 ## Sprint 4C.2 — Fail-Closed Durability & Recovery Evidence Closure
 
-Sprint 4C.2 permanently closes Sprint 4C with fail-closed durability guarantees and strict evidence truth:
+Sprint 4C.2 established fail-closed durability gates and strict evidence truth:
+1. **Fail-Closed Durability Gates in `AgentRunner` (`runner.ts`):** Pre-mutation and pre-verification persistence checks.
+2. **Durability Propagation to Repair Runners:** `RepairOrchestrator` wires `checkpointCoordinator` to repair runners.
+3. **Strict Evidence Truth in Recovery Evaluations:** `passed` strictly derived at evaluation time using `node:util.isDeepStrictEqual`.
+4. **Real Process-Boundary Rollback Crash Tests (`crash-process-e2e.test.ts`):** Proving zero duplicate writes across process terminations.
+5. **Evaluation Suite Expansion:** 90 scenarios across 17 categories.
 
-1. **Fail-Closed Durability Gates in `AgentRunner` (`runner.ts`):**
-   - **Pre-Mutation & Pre-Verification Persistence:** Before side effects occur on the filesystem or external processes, operations are prepared in the journal and checkpointed. If persistence throws `DURABILITY_UNAVAILABLE`, execution halts immediately without side effects, failing closed with `INTERNAL_ERROR`.
-   - **Post-Mutation Persistence Failure:** If post-mutation checkpointing or journal recording fails, the runner marks the turn failed with `INTERNAL_ERROR` and halts execution, strictly preventing duplicate re-application or unverified rollbacks.
-   - **Completion Checkpoint Gate:** If the final `COMPLETED` checkpoint fails to persist, completion is aborted and the session transitions to `FAILED` with `INTERNAL_ERROR`.
-2. **Durability Propagation to Repair Runners:**
-   - `RepairOrchestrator` (`runtime.ts`) wires `checkpointCoordinator` to newly spawned repair runners, ensuring automated repairs enforce write-ahead operation journaling and checkpointing.
-3. **Strict Evidence Truth in Recovery Evaluations:**
-   - `RecoveryScenarioDefinition` completely decouples definition from evaluation: callers cannot provide a `passed: boolean` proxy.
-   - `passed` is strictly derived at evaluation time using `node:util` `isDeepStrictEqual(actual, expected)`.
-   - All boolean proxies, synthetic stubs, and dummy passes (such as `REC-ROL-05`, `REC-ROL-06`, `REC-RET-04`) are eliminated in favor of real, deep observable state comparisons.
-4. **Real Process-Boundary Rollback Crash Test (`T-4842` in `crash-process-e2e.test.ts`):**
-   - A child process applies a rollback write to disk and is forcefully terminated with `process.exit(1)` prior to recording journal completion.
-   - A second recovery process inspects the workspace, verifies the file matches the pre-mutation preimage, and reconciles to `RECONCILED_NOT_APPLIED` with `writeReplayCount = 0`, proving zero duplicate writes even across rollback process crashes.
-5. **Evaluation Suite Expansion:**
-   - Expanded to **90 Scenarios across 17 Categories** (including `DURABILITY_GATE` and `REPAIR`).
-   - Two-run determinism and 8 negative comparator tests prove 100% strict equality and zero flakiness.
-6. **Sprint 4C Permanent Closure:**
-   - Checkpoint, Journal, Recovery, Rollback, and Durability subsystems are fully integrated, hardened, and verified with zero pending technical debt.
+---
 
+## Sprint 4C.3 — Recovery Resume & Rollback Durability Closure
+
+Sprint 4C.3 permanently seals and closes Sprint 4C with complete durability invariants across recovery resume, rollback journaling, and verification persistence:
+
+1. **`resumeFromRecovery()` Fail-Closed Persistence Gate:**
+   - In `AgentRunner.resumeFromRecovery()`, recording the `RECOVERY_RECONCILED` checkpoint is strictly gated. If persistence fails (e.g. disk corruption, full volume), resume halts immediately without side effects, failing closed with `INTERNAL_ERROR` and emitting `task.failed` with `RECOVERY_PERSISTENCE_FAILED`.
+   - All dispositions (`RESUME`, `REVERIFY`, `ASK_HUMAN`, `CONTINUE`) respect this gate: model calls and engine invocations are strictly 0.
+
+2. **`recordFailed()` Durability Fail-Closed Invariant:**
+   - Across `executePendingApproval`, `executeTool`, `executeScheduledVerification`, and `#runAutoVerification`: once an operation is `STARTED`, if execution fails and subsequent persistence of `recordFailed` fails, the runner treats this as a critical durability fault and fails closed immediately with `RECOVERY_PERSISTENCE_FAILED` and `failureReason: "INTERNAL_ERROR"`.
+
+3. **First-Class Write-Ahead Rollback Operations (`ROLLBACK_MUTATION`):**
+   - Rollback is no longer an out-of-band mutation; it is a first-class journaled operation with kind `"ROLLBACK_MUTATION"` and authority `"mutation-engine"`.
+   - Follows the complete write-ahead lifecycle: `recordPrepared -> recordStarted -> MutationEngine.rollback/apply -> recordCompleted -> ROLLBACK_COMPLETED checkpoint`.
+   - Incorporates deterministic idempotency keys (`computeOperationIdempotencyKey`).
+   - Duplicate completed rollbacks are suppressed with 0 reverse writes when disk is already restored, and yield `DIVERGED` if the file has diverged from expected postconditions.
+
+4. **Real Rollback Process Crash Verification (`T-5114` - `T-5117` in `crash-process-e2e.test.ts`):**
+   - E2E child process persists forward mutation `COMPLETED`, prepares and starts `ROLLBACK_MUTATION`, applies reverse write, and crashes before `recordCompleted`.
+   - Parent recovery process inspects workspace, reconciles `ROLLBACK_MUTATION` to `RECONCILED_APPLIED`, and avoids duplicate reverse writes.
+   - Pre-write rollback crash reconciles to `RECONCILED_NOT_APPLIED` without automatic replay.
+
+5. **Canonical Verification Durability & Restart Survivability (`T-5119` - `T-5122`):**
+   - `AgentRunner` executes verification following strict write-ahead sequence: `VERIFICATION_PREPARED -> VERIFICATION_STARTED -> BEFORE_VERIFICATION -> VerificationEngine -> VERIFICATION_COMPLETED -> AFTER_VERIFICATION`.
+   - Survives restart: completed verifications remain `COMPLETED` and are never misclassified as `INTERRUPTED`.
+   - Failure of `recordStarted` blocks `VerificationEngine` and fails closed.
+
+6. **Expanded Deterministic Evaluation Suite (110 Scenarios Across 19 Categories):**
+   - `recovery-evaluation-harness.ts` expanded to **110 scenarios** across 19 categories (adding `ROLLBACK_DURABILITY`, `VERIFICATION_DURABILITY`, and `RECOVERY_FAIL_CLOSED`).
+   - Evaluates with 100% pass rate and 100% two-run determinism using strict deep equality comparator with zero fake passes.
+   - Negative comparator suite expanded to 13 negative tests asserting discrepancies in rollback reconciliation, replay counts, persistence failures, verification durability, and side-effect counts.
+
+7. **Sprint 4C Permanent Closure:**
+   - Sprint 4C is fully and permanently closed. Roadmap advances to Sprint 4D.
