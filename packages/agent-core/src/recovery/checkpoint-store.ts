@@ -112,6 +112,7 @@ export class CheckpointStore {
 
     // 4. Bounded retention enforcement
     await this.#prune(record.runId)
+    this.#metadataIndex.delete(record.runId)
 
     return record
   }
@@ -174,6 +175,38 @@ export class CheckpointStore {
       records.push(await this.#readCheckpointFile(runId, f))
     }
     return records
+  }
+
+  // Secondary in-memory metadata index cache for rapid lookup without deserializing entire records
+  readonly #metadataIndex = new Map<string, Array<{ checkpointId: string; sequence: number; fileName: string }>>()
+
+  async getCheckpointMetadata(runId: string): Promise<readonly { checkpointId: string; sequence: number; fileName: string }[]> {
+    const cached = this.#metadataIndex.get(runId)
+    if (cached) return [...cached]
+
+    const files = await this.#listCheckpointFiles(runId)
+    const list: Array<{ checkpointId: string; sequence: number; fileName: string }> = []
+    for (const f of files) {
+      // f format: cp_00000001_cp-1.json
+      const match = f.match(/^cp_(\d+)_(.+)\.json$/)
+      if (match) {
+        list.push({
+          sequence: parseInt(match[1]!, 10),
+          checkpointId: match[2]!,
+          fileName: f,
+        })
+      }
+    }
+    this.#metadataIndex.set(runId, list)
+    return list
+  }
+
+  rebuildMetadataIndex(runId?: string): void {
+    if (runId) {
+      this.#metadataIndex.delete(runId)
+    } else {
+      this.#metadataIndex.clear()
+    }
   }
 
   async #readCheckpointFile(runId: string, fileName: string): Promise<CheckpointRecord> {
@@ -245,9 +278,11 @@ export class CheckpointStore {
         // ignore deletion failure during prune
       }
     }
+    this.#metadataIndex.delete(runId)
   }
 
   async clearRun(runId: string): Promise<void> {
+    this.#metadataIndex.delete(runId)
     const runDir = join(this.#storageRoot, "runs", runId)
     await assertSafeStoragePath(this.#storageRoot, runDir)
     try {
