@@ -1,6 +1,6 @@
 /**
- * Repository Discovery Service
- * Sprint 4D — Large Repository Performance Hardening
+ * Repository Discovery Service with Bounded Concurrency & Incremental Updates
+ * Sprint 4D.1 — Tasks T-6102, T-6104, T-6115
  */
 
 import { readdir, stat, realpath } from "node:fs/promises"
@@ -57,7 +57,7 @@ export class RepositoryDiscovery {
     const maxConcurrency = options.maxConcurrency ?? 16
     const largeThreshold = options.largeFileThresholdBytes ?? LARGE_FILE_THRESHOLD_BYTES
     const ignoredDirs = new Set(options.ignoredDirectories ?? CANONICAL_IGNORED_DIRECTORIES)
-    const semaphore = new AsyncSemaphore(maxConcurrency)
+    const semaphore = new AsyncSemaphore(maxConcurrency, { maxQueued: 2048 })
 
     const root = await realpath(this.#workspaceRoot)
     const discovered: FileMetadata[] = []
@@ -67,29 +67,30 @@ export class RepositoryDiscovery {
     let filesSkipped = 0
     let truncated = false
 
-    const visitDirectory = async (dirPath: string): Promise<void> => {
-      if (options.signal?.aborted || truncated) return
+    const dirQueue: string[] = [root]
+
+    while (dirQueue.length > 0) {
+      if (options.signal?.aborted || truncated) break
+      const dirPath = dirQueue.shift()!
       directoriesVisited++
 
       let entries
       try {
         entries = await readdir(dirPath, { withFileTypes: true })
       } catch {
-        // Unreadable directory: skip safely
-        return
+        continue
       }
 
-      const subDirs: string[] = []
-      const filePaths: string[] = []
+      entries.sort((a, b) => a.name.localeCompare(b.name))
 
+      const filePaths: string[] = []
       for (const entry of entries) {
         if (entry.isSymbolicLink()) {
-          // Reject symlinks to prevent loops / escape
           continue
         }
         if (entry.isDirectory()) {
           if (!ignoredDirs.has(entry.name)) {
-            subDirs.push(join(dirPath, entry.name))
+            dirQueue.push(join(dirPath, entry.name))
           } else {
             filesSkipped++
           }
@@ -98,51 +99,48 @@ export class RepositoryDiscovery {
         }
       }
 
-      // Process files in this directory with semaphore
-      await Promise.all(
-        filePaths.map((fp) =>
-          semaphore.run(async () => {
-            if (options.signal?.aborted || truncated) return
-            filesVisited++
-            if (discovered.length >= maxFiles) {
-              truncated = true
-              return
-            }
-
-            try {
-              const fileStat = await stat(fp)
-              const rel = relative(root, fp).replaceAll("\\", "/")
-              const ext = extname(rel)
-              const isBinary = isBinaryExtension(ext)
-              const isLarge = fileStat.size > largeThreshold
-
-              const meta: FileMetadata = {
-                path: rel,
-                sizeBytes: fileStat.size,
-                mtimeMs: fileStat.mtimeMs,
-                extension: ext,
-                isBinary,
-                isLarge,
+      // Process files in this directory with semaphore in bounded chunks
+      const fileBatchSize = maxConcurrency * 4
+      for (let i = 0; i < filePaths.length; i += fileBatchSize) {
+        if (options.signal?.aborted || truncated) break
+        const batch = filePaths.slice(i, i + fileBatchSize)
+        await Promise.all(
+          batch.map((fp) =>
+            semaphore.run(async () => {
+              if (options.signal?.aborted || truncated) return
+              filesVisited++
+              if (discovered.length >= maxFiles) {
+                truncated = true
+                return
               }
-              discovered.push(meta)
-            } catch {
-              filesSkipped++
-            }
-          }, options.signal),
-        ),
-      )
 
-      if (truncated || options.signal?.aborted) return
+              try {
+                const fileStat = await stat(fp)
+                const rel = relative(root, fp).replaceAll("\\", "/")
+                const ext = extname(rel)
+                const isBinary = isBinaryExtension(ext)
+                const isLarge = fileStat.size > largeThreshold
 
-      // Visit subdirectories with semaphore
-      await Promise.all(
-        subDirs.map((subDir) =>
-          semaphore.run(() => visitDirectory(subDir), options.signal),
-        ),
-      )
+                const meta: FileMetadata = {
+                  path: rel,
+                  sizeBytes: fileStat.size,
+                  mtimeMs: fileStat.mtimeMs,
+                  extension: ext,
+                  isBinary,
+                  isLarge,
+                }
+                discovered.push(meta)
+              } catch {
+                filesSkipped++
+              }
+            }, options.signal),
+          ),
+        )
+      }
     }
 
-    await visitDirectory(root)
+    // Sort discovered files for strictly deterministic ordering across runs and filesystems
+    discovered.sort((a, b) => a.path.localeCompare(b.path))
 
     // Update in-memory index
     this.#files.clear()
@@ -201,5 +199,45 @@ export class RepositoryDiscovery {
   recordFileDelete(relPath: string): boolean {
     const normalized = relPath.replaceAll("\\", "/")
     return this.#files.delete(normalized)
+  }
+
+  /**
+   * Process a storm of file system events with deduplication / coalescing.
+   * If multiple events target the same path, only the final state is resolved.
+   * Ensures repository index converges without full rescan.
+   */
+  async processEventStorm(
+    events: ReadonlyArray<{ type: "add" | "modify" | "delete"; path: string }>,
+  ): Promise<{
+    readonly processedCount: number
+    readonly coalescedCount: number
+    readonly appliedChanges: number
+    readonly appliedDeletions: number
+  }> {
+    const latestEventsByPath = new Map<string, "add" | "modify" | "delete">()
+    for (const ev of events) {
+      const norm = ev.path.replaceAll("\\", "/")
+      latestEventsByPath.set(norm, ev.type)
+    }
+
+    let appliedChanges = 0
+    let appliedDeletions = 0
+
+    for (const [normPath, finalType] of latestEventsByPath.entries()) {
+      if (finalType === "delete") {
+        const deleted = this.recordFileDelete(normPath)
+        if (deleted) appliedDeletions++
+      } else {
+        const meta = await this.recordFileChange(normPath)
+        if (meta) appliedChanges++
+      }
+    }
+
+    return {
+      processedCount: events.length,
+      coalescedCount: latestEventsByPath.size,
+      appliedChanges,
+      appliedDeletions,
+    }
   }
 }

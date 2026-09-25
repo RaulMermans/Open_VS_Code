@@ -1,6 +1,6 @@
 /**
  * Repository Contracts & Types
- * Sprint 4D — Performance & Large-Repository Hardening
+ * Sprint 4D.1 — Performance & Large-Repository Hardening
  */
 
 export interface FileMetadata {
@@ -37,6 +37,7 @@ export interface SearchOptions {
   readonly maxSnippetChars?: number // default 300
   readonly maxTotalPayloadBytes?: number // default 32KB
   readonly maxConcurrency?: number // default 8
+  readonly maxQueued?: number // default 64
   readonly rootPath?: string
   readonly signal?: AbortSignal
 }
@@ -55,6 +56,11 @@ export interface SearchResult {
   readonly filesSkipped: number
   readonly bytesRead: number
   readonly durationMs: number
+  readonly peakActive?: number
+  readonly peakQueued?: number
+  readonly filesStarted?: number
+  readonly filesCompleted?: number
+  readonly filesCancelled?: number
 }
 
 export interface CacheStats {
