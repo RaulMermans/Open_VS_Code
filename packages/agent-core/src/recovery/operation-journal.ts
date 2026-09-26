@@ -10,6 +10,8 @@ import {
   type RecoveryOperation,
   type OperationKind,
   type OperationStatus,
+  OPERATION_STATUSES,
+  OPERATION_KINDS,
 } from "./contracts.ts"
 import { assertSafeStoragePath } from "./storage-path-safety.ts"
 
@@ -33,19 +35,66 @@ export function computeIntentHash(payload: unknown): string {
 
 export interface OperationJournalOptions {
   readonly storageRoot: string
-  readonly durableSync?: boolean
-  readonly syncFn?: (handle: FileHandle) => Promise<void>
+  readonly durableSync?: boolean | undefined
+  readonly syncFn?: ((handle: FileHandle) => Promise<void>) | undefined
+  readonly readFileFn?: ((path: string, encoding: "utf8") => Promise<string>) | undefined
+}
+
+export function assertValidOperationRecord(record: unknown, runId: string): asserts record is RecoveryOperation {
+  if (!record || typeof record !== "object") {
+    throw new Error(`JOURNAL_CORRUPT: Operation record must be a non-null object`)
+  }
+  const r = record as Record<string, unknown>
+  if (typeof r.operationId !== "string" || r.operationId.trim().length === 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid operationId`)
+  }
+  if (typeof r.runId !== "string" || r.runId !== runId) {
+    throw new Error(`JOURNAL_CORRUPT: Mismatched or invalid runId: expected ${runId}, got ${String(r.runId)}`)
+  }
+  if (typeof r.schemaVersion !== "number" || r.schemaVersion <= 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid schemaVersion`)
+  }
+  if (typeof r.status !== "string" || !(OPERATION_STATUSES as readonly string[]).includes(r.status)) {
+    throw new Error(`JOURNAL_CORRUPT: Invalid operation status: ${String(r.status)}`)
+  }
+  if (typeof r.kind !== "string" || !(OPERATION_KINDS as readonly string[]).includes(r.kind)) {
+    throw new Error(`JOURNAL_CORRUPT: Invalid operation kind: ${String(r.kind)}`)
+  }
+  if (typeof r.processEpochId !== "string" || r.processEpochId.trim().length === 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid processEpochId`)
+  }
+  if (typeof r.checkpointId !== "string" || r.checkpointId.trim().length === 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid checkpointId`)
+  }
+  if (typeof r.authorityId !== "string" || r.authorityId.trim().length === 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid authorityId`)
+  }
+  if (typeof r.intentHash !== "string" || r.intentHash.trim().length === 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid intentHash`)
+  }
+  if (typeof r.idempotencyKey !== "string" || r.idempotencyKey.trim().length === 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid idempotencyKey`)
+  }
+  if (typeof r.preparedAt !== "string" || r.preparedAt.trim().length === 0) {
+    throw new Error(`JOURNAL_CORRUPT: Missing or invalid preparedAt`)
+  }
 }
 
 export class OperationJournal {
   readonly #storageRoot: string
   readonly #durableSync: boolean
   readonly #syncFn: ((handle: FileHandle) => Promise<void>) | undefined
+  #readFileFn: ((path: string, encoding: "utf8") => Promise<string>) | undefined
 
   constructor(options: OperationJournalOptions) {
     this.#storageRoot = options.storageRoot
     this.#durableSync = options.durableSync ?? true
     this.#syncFn = options.syncFn
+    this.#readFileFn = options.readFileFn
+  }
+
+  setReadFileFnForTesting(fn?: (path: string, encoding: "utf8") => Promise<string>): void {
+    this.#readFileFn = fn
   }
 
   get storageRoot(): string {
@@ -205,17 +254,20 @@ export class OperationJournal {
   }
 
   async getAllOperations(runId: string): Promise<RecoveryOperation[]> {
-    const cached = this.#indexCache.get(runId)
-    if (cached) {
-      return Array.from(cached.values())
-    }
-
     const journalPath = await this.#getJournalPath(runId)
     let raw: string
     try {
-      raw = await readFile(journalPath, "utf8")
-    } catch {
-      return []
+      const readFn = this.#readFileFn ?? readFile
+      raw = await readFn(journalPath, "utf8")
+    } catch (err: any) {
+      if (err?.code === "ENOENT") {
+        this.#indexCache.delete(runId)
+        return []
+      }
+      throw new Error(
+        `JOURNAL_READ_FAILURE: Failed to read operation journal for run ${runId}: ${err?.message ?? String(err)}`,
+        { cause: err }
+      )
     }
 
     const lines = raw.split("\n").filter((l) => l.trim().length > 0)
@@ -223,12 +275,17 @@ export class OperationJournal {
     const opMap = new Map<string, RecoveryOperation>()
 
     for (const line of lines) {
+      let parsed: unknown
       try {
-        const parsed = JSON.parse(line) as RecoveryOperation
-        opMap.set(parsed.operationId, parsed)
-      } catch {
-        // Skip malformed individual line in append log
+        parsed = JSON.parse(line)
+      } catch (parseErr: any) {
+        throw new Error(
+          `JOURNAL_CORRUPT: Malformed JSON line in journal for run ${runId}: ${parseErr?.message ?? String(parseErr)}`,
+          { cause: parseErr }
+        )
       }
+      assertValidOperationRecord(parsed, runId)
+      opMap.set(parsed.operationId, parsed)
     }
 
     this.#indexCache.set(runId, opMap)

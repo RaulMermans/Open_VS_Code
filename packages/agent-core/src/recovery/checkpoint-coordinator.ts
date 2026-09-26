@@ -20,11 +20,16 @@ import { getProcessEpochId } from "./process-epoch.ts"
 import { observeFilePath } from "./reconciliation.ts"
 import { MutationEngine } from "../tools/mutation-engine.ts"
 
+import type { FileHandle } from "node:fs/promises"
+
 export interface CheckpointCoordinatorOptions {
   readonly workspaceRoot: string
   readonly storageRoot?: string | undefined
   readonly mutationEngine: MutationEngine
   readonly maxCheckpoints?: number | undefined
+  readonly durableSync?: boolean | undefined
+  readonly syncFn?: ((handle: FileHandle) => Promise<void>) | undefined
+  readonly readFileFn?: ((path: string, encoding: "utf8") => Promise<string>) | undefined
 }
 
 export class CheckpointCoordinator {
@@ -48,6 +53,9 @@ export class CheckpointCoordinator {
     })
     this.#operationJournal = new OperationJournal({
       storageRoot: this.#storageRoot,
+      durableSync: options.durableSync,
+      syncFn: options.syncFn,
+      readFileFn: options.readFileFn,
     })
     this.#artifactStore = new RecoveryArtifactStore({
       storageRoot: this.#storageRoot,
