@@ -24,6 +24,60 @@ export function isProbablyBinary(path: string, content: Uint8Array): boolean {
   return sample.includes(0)
 }
 
+export function truncateUtf8ToBytes(
+  text: string,
+  maxBytes: number,
+): {
+  readonly text: string
+  readonly bytes: number
+  readonly truncated: boolean
+} {
+  if (maxBytes <= 0) {
+    return { text: "", bytes: 0, truncated: text.length > 0 }
+  }
+
+  const totalBytes = Buffer.byteLength(text, "utf8")
+  if (totalBytes <= maxBytes) {
+    return { text, bytes: totalBytes, truncated: false }
+  }
+
+  let accumulatedBytes = 0
+  let accumulatedChars = 0
+
+  for (const cp of text) {
+    const cpBytes = Buffer.byteLength(cp, "utf8")
+    if (accumulatedBytes + cpBytes > maxBytes) {
+      return {
+        text: text.slice(0, accumulatedChars),
+        bytes: accumulatedBytes,
+        truncated: true,
+      }
+    }
+    accumulatedBytes += cpBytes
+    accumulatedChars += cp.length
+  }
+
+  return {
+    text: text.slice(0, accumulatedChars),
+    bytes: accumulatedBytes,
+    truncated: true,
+  }
+}
+
+export interface ReadFileResult {
+  readonly path: string
+  readonly content: string
+  readonly sizeBytes: number
+  readonly truncated?: boolean
+  readonly totalLines?: number
+  readonly startLine?: number
+  readonly endLine?: number
+  readonly bytesReadFromFile: number
+  readonly returnedBytes: number
+  readonly chunksRead: number
+  readonly wholeFileBuffered: boolean
+}
+
 const CHUNK_SIZE = 64 * 1024
 
 export async function readRepositoryFile(
@@ -34,16 +88,7 @@ export async function readRepositoryFile(
     readonly startLine?: number
     readonly endLine?: number
   } = {},
-): Promise<{
-  readonly path: string
-  readonly content: string
-  readonly sizeBytes: number
-  readonly truncated?: boolean
-  readonly totalLines?: number
-  readonly startLine?: number
-  readonly endLine?: number
-  readonly bytesReadFromFile?: number
-}> {
+): Promise<ReadFileResult> {
   const maxBytes = options.maxBytes ?? 1024 * 1024
   if (!Number.isInteger(maxBytes) || maxBytes <= 0) {
     throw new ReadFileError("INVALID_LIMIT", "maxBytes must be a positive integer")
@@ -114,6 +159,9 @@ export async function readRepositoryFile(
         truncated: false,
         totalLines: lines.length,
         bytesReadFromFile: details.size,
+        returnedBytes: Buffer.byteLength(rawText, "utf8"),
+        chunksRead: details.size > 0 ? 1 : 0,
+        wholeFileBuffered: true,
       }
     }
 
@@ -125,6 +173,7 @@ export async function readRepositoryFile(
     const decoder = new StringDecoder("utf8")
     let fileOffset = 0
     let totalBytesRead = 0
+    let chunksRead = 0
     let currentLineNumber = 1
     let pendingLine = ""
     const collectedLines: string[] = []
@@ -138,6 +187,7 @@ export async function readRepositoryFile(
       if (bytesRead === 0) break
       fileOffset += bytesRead
       totalBytesRead += bytesRead
+      chunksRead++
 
       const text = decoder.write(chunkBuf.subarray(0, bytesRead))
       const parts = text.split("\n")
@@ -150,10 +200,13 @@ export async function readRepositoryFile(
       pendingLine = parts.pop() ?? ""
 
       // Guard against huge single-line files without newlines
-      if (pendingLine.length > maxBytes) {
+      const pendingLineBytes = Buffer.byteLength(pendingLine, "utf8")
+      if (pendingLineBytes > maxBytes) {
         truncated = true
         if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
-          collectedLines.push(pendingLine.slice(0, maxBytes) + "\n[TRUNCATED]")
+          const trunc = truncateUtf8ToBytes(pendingLine, maxBytes)
+          collectedLines.push(trunc.text)
+          outputByteLength += trunc.bytes
         }
         break
       }
@@ -162,17 +215,22 @@ export async function readRepositoryFile(
         const line = parts[i]!.replace(/\r$/, "")
 
         if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
-          const lineBytes = Buffer.byteLength(line, "utf8") + (collectedLines.length > 0 ? 1 : 0)
-          if (outputByteLength + lineBytes > maxBytes) {
-            const remaining = maxBytes - outputByteLength
+          const separatorBytes = collectedLines.length > 0 ? 1 : 0
+          const lineBytes = Buffer.byteLength(line, "utf8")
+          if (outputByteLength + separatorBytes + lineBytes > maxBytes) {
+            const remaining = maxBytes - outputByteLength - separatorBytes
             if (remaining > 0) {
-              collectedLines.push(line.slice(0, remaining))
+              const trunc = truncateUtf8ToBytes(line, remaining)
+              if (trunc.text.length > 0) {
+                collectedLines.push(trunc.text)
+                outputByteLength += separatorBytes + trunc.bytes
+              }
             }
             truncated = true
             break
           }
           collectedLines.push(line)
-          outputByteLength += lineBytes
+          outputByteLength += separatorBytes + lineBytes
         }
 
         if (currentLineNumber >= targetEnd) {
@@ -187,21 +245,22 @@ export async function readRepositoryFile(
     // Handle any final trailing pending line if EOF reached before targetEnd
     if (!truncated && !reachedTargetEnd && pendingLine.length > 0) {
       const trailing = (pendingLine + decoder.end()).replace(/\r$/, "")
-      if (trailing.length > maxBytes) {
-        truncated = true
-        if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
-          collectedLines.push(trailing.slice(0, maxBytes) + "\n[TRUNCATED]")
-        }
-      } else if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
-        const lineBytes = Buffer.byteLength(trailing, "utf8") + (collectedLines.length > 0 ? 1 : 0)
-        if (outputByteLength + lineBytes > maxBytes) {
-          const remaining = maxBytes - outputByteLength
+      const trailingBytes = Buffer.byteLength(trailing, "utf8")
+      if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
+        const separatorBytes = collectedLines.length > 0 ? 1 : 0
+        if (outputByteLength + separatorBytes + trailingBytes > maxBytes) {
+          const remaining = maxBytes - outputByteLength - separatorBytes
           if (remaining > 0) {
-            collectedLines.push(trailing.slice(0, remaining))
+            const trunc = truncateUtf8ToBytes(trailing, remaining)
+            if (trunc.text.length > 0) {
+              collectedLines.push(trunc.text)
+              outputByteLength += separatorBytes + trunc.bytes
+            }
           }
           truncated = true
         } else {
           collectedLines.push(trailing)
+          outputByteLength += separatorBytes + trailingBytes
         }
       }
     }
@@ -219,6 +278,9 @@ export async function readRepositoryFile(
       startLine: options.startLine ?? 1,
       endLine: options.endLine ?? currentLineNumber,
       bytesReadFromFile: totalBytesRead,
+      returnedBytes: Buffer.byteLength(content, "utf8"),
+      chunksRead,
+      wholeFileBuffered: false,
     }
   } finally {
     await handle.close()
