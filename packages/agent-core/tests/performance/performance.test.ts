@@ -40,15 +40,15 @@ function isStrictlyLess(val: number, bound: number): boolean {
   return val < bound
 }
 
-describe("Sprint 4D.1 — Performance Truth & Real Scale Hardening", () => {
-  test("Performance Evaluation Run 1 and Run 2 Determinism (77 Measured Scenarios)", async () => {
+describe("Sprint 4D.2 — Performance Truth & Real Scale Hardening", () => {
+  test("Performance Evaluation Run 1 and Run 2 Determinism (89 Measured Scenarios)", async () => {
     const run1 = await runPerformanceEvaluation()
     const run2 = await runPerformanceEvaluation()
 
     assert.strictEqual(run1.totalFailed, 0, `Run 1 failed ${run1.totalFailed} scenarios`)
     assert.strictEqual(run2.totalFailed, 0, `Run 2 failed ${run2.totalFailed} scenarios`)
-    assert.strictEqual(run1.scenarios.length, 77, `Expected 77 scenarios, got ${run1.scenarios.length}`)
-    assert.strictEqual(run2.scenarios.length, 77, `Expected 77 scenarios, got ${run2.scenarios.length}`)
+    assert.strictEqual(run1.scenarios.length, 89, `Expected 89 scenarios, got ${run1.scenarios.length}`)
+    assert.strictEqual(run2.scenarios.length, 89, `Expected 89 scenarios, got ${run2.scenarios.length}`)
 
     // Check that there are ZERO placeholder or fake pass scenarios
     const placeholders = run1.scenarios.filter((s) => s.id.startsWith("PERF-SCALE"))
@@ -189,6 +189,88 @@ describe("Sprint 4D.1 — Performance Truth & Real Scale Hardening", () => {
       ),
       false,
       "Negative test: secondary index treated as authority must fail architectural check",
+    )
+
+    // 13. unreadable journal reported as [] (T-6200, Section 41)
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { journalReadFailure: true, opsReturned: 0 },
+        { journalReadFailure: false, opsReturned: 0 },
+      ),
+      false,
+      "Negative test: unreadable journal reported as [] must fail comparator",
+    )
+
+    // 14. malformed journal skipped (T-6201, Section 41)
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { failClosedOnCorrupt: true, replayedPartial: false },
+        { failClosedOnCorrupt: false, replayedPartial: true },
+      ),
+      false,
+      "Negative test: malformed journal skipped must fail comparator",
+    )
+
+    // 15. UTF-8 bytes > maxBytes while string.length <= limit (T-6208, Section 41)
+    const cjkSample = "你好世界" // length: 4, bytes: 12
+    const maxByteLimit = 10
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { bytesBounded: Buffer.byteLength(cjkSample, "utf8") <= maxByteLimit }, // false
+        { bytesBounded: cjkSample.length <= maxByteLimit }, // true
+      ),
+      false,
+      "Negative test: UTF-8 bytes > maxBytes while string.length <= limit must fail comparator",
+    )
+
+    // 16. isolated surrogate (T-6211, Section 41)
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { isolatedSurrogatesCount: 0 },
+        { isolatedSurrogatesCount: 1 },
+      ),
+      false,
+      "Negative test: isolated surrogate presence must fail comparator",
+    )
+
+    // 17. 5MB claimed but actual fixture smaller (T-6215, Section 41)
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { fixtureSizeSatisfied: isAtLeast(262144, 5 * 1024 * 1024) },
+        { fixtureSizeSatisfied: true },
+      ),
+      false,
+      "Negative test: 5MB claimed with 256KB fixture must fail comparator",
+    )
+
+    // 18. bytes-read claim not equal measured result (T-6216, Section 41)
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { claimedBytesRead: 6712 },
+        { claimedBytesRead: 65536 },
+      ),
+      false,
+      "Negative test: unmeasured hardcoded bytes-read claim must fail comparator",
+    )
+
+    // 19. directory count claim not measured (T-6219, Section 41)
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { measuredDirectories: 57 },
+        { measuredDirectories: 27 },
+      ),
+      false,
+      "Negative test: unmeasured directory count claim must fail comparator",
+    )
+
+    // 20. final SHA mismatch (T-6221, Section 41)
+    assert.strictEqual(
+      isDeepStrictEqual(
+        { reportHeadSha: "0000000000000000000000000000000000000000" },
+        { reportHeadSha: "7698a0ba0950bd333a0527ad0ee31f8eb104f5a8" },
+      ),
+      false,
+      "Negative test: report SHA mismatch must fail comparator",
     )
   })
 })
