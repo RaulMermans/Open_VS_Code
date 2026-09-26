@@ -462,7 +462,7 @@ RECOVERY REQUIRED
 - **Two-Run Determinism & Process-Boundary Crashes**: 117 scenarios across 21 categories verified by `npm run eval:recovery` with deep equality, 18 negative comparator tests, and real process-boundary crash tests (`T-4840`, `T-4841`, `T-5114`-`T-5117`, `T-5200`-`T-5222`).
 See [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) for full architectural specification.
 
-## Large-Repository Performance Architecture (Sprint 4D & 4D.1 ✅ CLOSED PERMANENTLY)
+## Large-Repository Performance Architecture (Sprint 4D, 4D.1 & 4D.2 ✅ CLOSED PERMANENTLY)
 
 ```text
 Workspace (25,000+ files)
@@ -473,25 +473,25 @@ Bounded Repository Index (lightweight metadata: path, size, mtime, binary/large 
    ↓
 Targeted Search (RepositorySearch: bounded worker pool, peakActive <= maxConcurrency, peakQueued <= maxQueued, searchCoalesced)
    ↓
-Streaming Line Reads (readRepositoryFile: chunk-by-chunk line scanner, 8KB binary check, single-line ceiling, no whole-file read)
+Streaming Line Reads (readRepositoryFile: chunk-by-chunk line scanner, 8KB binary check, UTF-8 byte ceiling via truncateUtf8ToBytes, no whole-file read)
    ↓
 Bounded Context Compiler (fitContext: task-dependent tokens, independent of repo scale)
    ↓
 Agent Runtime (AsyncSemaphore with maxQueued and cancel_oldest / reject_new, AbortSignal cancellation)
    ↓
-Runtime Eval (continuous evaluation with repetitive failure compaction preserving all 8 decisions)
+Runtime Eval (continuous evaluation with repetitive failure compaction preserving all 8 decisions, large-read output bounding)
    ↓
-Bounded Durable Recovery (OperationJournal FileHandle.sync() append + CheckpointStore with rebuildable in-memory indexes)
+Bounded Durable Recovery (OperationJournal FileHandle.sync() append + fail-closed read integrity + CheckpointStore with rebuildable in-memory indexes)
 ```
 
-- **Incremental Discovery & Zero-Content Byte Indexing**: `RepositoryDiscovery` discovers files without reading contents during discovery (strictly verified across 25,000+ files: `contentBytesRead = 0`). Canonical ignores (`.git`, `node_modules`, `dist`, `build`, `coverage`, `.next`, `.cache`, `.checkpoints`) skip generated trees. Directory entries and discovered files are canonically sorted lexicographically, ensuring deterministic discovery ordering. Single file additions, modifications, or deletions update metadata incrementally without full repository rebuilds, and `processEventStorm` coalesces rapid bursts.
+- **Incremental Discovery & Zero-Content Byte Indexing**: `RepositoryDiscovery` discovers files without reading contents during discovery (strictly verified across 25,000+ files: `contentBytesRead = 0`, 58 directories visited). Canonical ignores (`.git`, `node_modules`, `dist`, `build`, `coverage`, `.next`, `.cache`, `.checkpoints`) skip generated trees. Directory entries and discovered files are canonically sorted lexicographically, ensuring deterministic discovery ordering. Single file additions, modifications, or deletions update metadata incrementally without full repository rebuilds, and `processEventStorm` coalesces rapid bursts.
 - **Production Bounded Concurrency & Targeted Search**: `RepositorySearch` operates via a bounded worker pool feeding tasks through `AsyncSemaphore`, strictly capping `peakActive <= maxConcurrency` and `peakQueued <= maxQueued`. Matches are committed in candidate index order for deterministic results. Caps total matches, restricts matches per individual file (diversity cap), bounds snippet lengths, and enforces a payload ceiling (default 32 KB), while automatically bypassing binary and giant files from broad scans. Identical queries are deduplicated via `searchCoalesced()`, and rapid query storms are handled via `SearchCoordinator.searchLatest()`.
-- **Bounded Streaming File Reads**: `readRepositoryFile` uses a chunk-streaming line reader (`open("r")`, `StringDecoder("utf8")`, chunk-by-chunk line scanner) with 8KB null-byte binary detection, per-line byte ceilings, CRLF stripping, and immediate EOF upon reaching `endLine`, completely eliminating whole-file buffer allocations and proving `bytesReadFromFile << totalFileBytes`.
+- **Bounded Streaming File Reads & UTF-8 Byte Safety**: `readRepositoryFile` uses a chunk-streaming line reader (`open("r")`, `StringDecoder("utf8")`, chunk-by-chunk line scanner) with 8KB null-byte binary detection, UTF-8 byte ceilings via `truncateUtf8ToBytes`, CRLF stripping, and immediate EOF upon reaching `endLine` or byte ceiling, completely eliminating whole-file buffer allocations and proving `bytesReadFromFile << totalFileBytes` (e.g. reading 65,536 bytes from an actual 5,000,000-byte fixture) without isolated surrogates or replacement characters (`\uFFFD`). Exposes truthful IO telemetry: `fileSizeBytes`, `bytesReadFromFile`, `chunksRead`, `returnedBytes`, `wholeFileBuffered: false`, `truncated`.
 - **Bounded Concurrency & Waiting Queue (`AsyncSemaphore`)**: Bounds concurrent executions to `maxConcurrency` and waiting queue to `maxQueued`. Supports `reject_new` (throws `SemaphoreQueueFullError`) and `cancel_oldest` overflow policies, with clean `AbortSignal` queued cancellation that never consumes running slots or leaks listeners.
 - **Context Token Ceiling**: `compileContext` and `fitContext` ensure prompt context tokens depend strictly on the task instructions and retrieved items, not repository file counts.
 - **Bounded LRU Cache**: `BoundedLruCache` bounds cached content by both entry count and retained bytes with deterministic LRU eviction and key invalidation upon file modification.
-- **Runtime Eval Compaction**: `RuntimeEvidenceCollector` compacts repeated identical failures into structured summary records with counts and bounded error signatures, maintaining continuous adaptive-control accuracy across all 8 decisions (`CONTINUE`, `VERIFY`, `REVISE`, `REPLAN`, `STOP`, `ASK_HUMAN`, `REQUEST_MORE_CONTEXT`, `CHANGE_MODEL`) without accumulating unbounded raw evidence.
-- **Physical Sync Durability & Rebuildable Secondary Indexes**: `OperationJournal` writes entries using `FileHandle.appendFile()` followed by `FileHandle.sync()`, with fail-closed rollback truncation on sync failure. `OperationJournal` and `CheckpointStore` maintain secondary in-memory metadata lookup caches (`#indexCache`, `#metadataIndex`) that accelerate lookups without weakening the durable append log or checkpoint JSON files as the sole authoritative sources of truth.
+- **Runtime Eval Compaction & Output Bounding**: `RuntimeEvidenceCollector` compacts repeated identical failures into structured summary records with counts and bounded error signatures, and bounds large tool outputs (such as 5MB reads) to <= 400 characters, maintaining continuous adaptive-control accuracy across all 8 decisions (`CONTINUE`, `VERIFY`, `REVISE`, `REPLAN`, `STOP`, `ASK_HUMAN`, `REQUEST_MORE_CONTEXT`, `CHANGE_MODEL`) without accumulating unbounded raw evidence.
+- **Physical Sync Durability & Fail-Closed Read Integrity**: `OperationJournal` writes entries using `FileHandle.appendFile()` followed by `FileHandle.sync()`, with fail-closed rollback truncation on sync failure. Reads enforce fail-closed integrity: absent journals map to empty history (`[]`), while unreadable journals (`EACCES`, `EIO`) and malformed lines throw `JOURNAL_CORRUPT` and fail closed. Schema validation strictly rejects invalid records. Secondary in-memory lookup caches (`#indexCache`, `#metadataIndex`) are strictly non-authoritative and safely rebuildable; corrupt disk records can never be rescued by an index.
 - **Bounded Presentation Limits**: Diff generation and terminal review streams adhere strictly to byte ceilings (16 KB buffer with clean UTF-8 truncation boundaries), preventing unbounded memory retention.
 - **Concurrency & Cancellation**: Operations throttle fan-out with `AsyncSemaphore` and halt cleanly upon `AbortSignal` triggering without orphaned background workers.
 See [ADR-026](docs/adrs/ADR-026-large-repository-performance.md) for full architectural specification.

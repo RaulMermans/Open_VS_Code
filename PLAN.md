@@ -219,7 +219,7 @@ Sprint 4C.4 — Rollback Durability Final Seal ✅ CLOSED PERMANENTLY
   - Full Monorepo Regressions Clean: All unit and E2E tests pass, 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals.
   - Sprint 4C / 4C.1 / 4C.2 / 4C.3 / 4C.4 is PERMANENTLY CLOSED.
 
-Sprint 4D & 4D.1 — Performance Truth, Real Scale & Backpressure Closure ✅ CLOSED PERMANENTLY
+Sprint 4D & 4D.1 — Performance Truth, Real Scale & Backpressure Closure ✅ CLOSED
   - Real Large Scale Fixtures: Deterministic synthetic repository generator creating 25,005 indexable source files across 25 modules + 1,500 ignored/build tree files.
   - Zero-Content Byte Repository Discovery: Discovery walks directory trees using iterative BFS with bounded concurrency (`AsyncSemaphore`), enforces canonical ignore policies, sorts directory entries and files for 100% determinism across runs, and reads strictly 0 content bytes (`contentBytesRead = 0`).
   - Incremental File Metadata Updates: Single file additions, modifications, and deletions update the in-memory metadata index without full repository scans.
@@ -234,7 +234,21 @@ Sprint 4D & 4D.1 — Performance Truth, Real Scale & Backpressure Closure ✅ CL
   - Zero Fake Passes: 48 placeholder/generator scenarios completely removed. Evaluated with 77 concrete, 100% measured scenarios across 10 categories.
   - Determinism & Negative Comparators: 100% deep strict equality between Run 1 and Run 2 across all 77 scenarios with 0 failures; 12 strict negative comparator tests verifying invalid scales, fake passes, cap overflows, whole-file reads, and durability violations fail.
   - Full Monorepo Regressions Clean: Verified under Node v22.23.2. All unit and E2E tests pass across agent-core, cli, ide-adapter, and vscode-integration; 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 111 runtime evals, 117 recovery evals, 97 security evals.
-  - Sprint 4D and Sprint 4D.1 are PERMANENTLY CLOSED.
+
+Sprint 4D.2 — Journal Integrity, UTF-8 Bounds & Reporting Truth ✅ CLOSED PERMANENTLY
+  - Fail-Closed Journal Read Semantics: `OperationJournal.getAllOperations(runId)` distinguishes between genuine absence (`ENOENT` returns `[]`) and read failures (`EACCES`, `EIO`, etc.), throwing `JOURNAL_READ_FAILURE` so callers (e.g. `RollbackManager`) fail closed with 0 reverse writes, 0 mutations, and 0 side effects (`T-6200`, `T-6203`, `T-6205`).
+  - Malformed Journal Line Fail-Closed: Removed silent swallow of malformed JSON lines; malformed non-empty records throw `JOURNAL_CORRUPT` without partial replay or rollback side effects (`T-6201`, `T-6204`).
+  - Runtime Schema Validation: Strict validation (`assertValidOperationRecord`) on all persisted journal records rejecting missing or invalid IDs, status, kind, schemaVersion, or processEpochId (`T-6202`).
+  - Secondary Index Non-Authority: Secondary index lookup cache `#indexCache` is non-authoritative; authoritative disk log is always verified; corrupt on-disk journal cannot be rescued by the secondary index (`T-6207`).
+  - Preserved Append-Sync Durability: Verified write-ahead sequence (`PREPARED` -> `STARTED` before side effect), sync failure fail closed, and 0 post-failure side effects (`T-6206`).
+  - True UTF-8 Byte Ceiling Semantics: Exported `truncateUtf8ToBytes(text, maxBytes)` calculating byte length via `Buffer.byteLength(text, "utf8")` rather than UTF-16 code unit `.length`, preventing split multibyte sequences and isolated surrogate pairs (`T-6208`-`T-6210`). Tested across ASCII, accented text, CJK, emoji, and mixed scripts (`T-6211`-`T-6215`).
+  - Real Deterministic 5MB Fixture & Measured I/O: Generated 5,000,000-byte fixture (`huge_dataset.txt`, 50,000 lines * 100 bytes) at LARGE scale; streaming ranged read (lines 100-120) reads exactly 1 chunk (65,536 bytes) and returns 2,099 bytes with 0 whole-file buffers; returned telemetry (`bytesReadFromFile`, `chunksRead`, `returnedBytes`, `wholeFileBuffered`) verified (`T-6216`-`T-6218`).
+  - Bounded Runtime Evidence Retention: Large file read outputs bounded to <= 400 chars in `RuntimeEvidenceCollector` (`PERF-EVAL-12`), preventing raw full-file retention while preserving all 8 adaptive control decisions.
+  - Measured Discovery Truth: Measured exactly 58 directories visited for 25,005 files across 50 modules (`mod_00`..`mod_49`) + 1,500 ignored files (26,505 total generated files).
+  - Concrete Scenario & Negative Comparator Expansion: Performance harness expanded to 89 concrete, 100% measured scenarios (added `PERF-READ-13`..`PERF-READ-18`, `PERF-EVAL-12`, `PERF-JOURN-09`..`PERF-JOURN-12`, `PERF-REPORT-01`), 0 placeholder passes, 20 strict negative comparators (tasks 13-20 covering unreadable journals, corrupt lines, UTF-8 byte breaches, isolated surrogates, fake 5MB claims, unmeasured I/O, unmeasured directory counts, and report SHA mismatch) passing deterministically across two runs (`T-6219`-`T-6223`).
+  - Authoritative Reporting Validation: Created `validate-final-report.test.ts` ensuring `FINAL_REPORT.txt` matches live runtime evidence and passes `npm test` (`T-6224`).
+  - Full Monorepo Regressions Clean: Verified under Node v22.23.2. All unit and E2E tests pass across agent-core, cli, ide-adapter, and vscode-integration; 0 TypeScript errors, 0 linter errors, clean build, 30/30 deterministic coding evals twice (100%), 97 security evals, 111 runtime evals, 117 recovery evals, 89 performance evals.
+  - Sprint 4D, 4D.1, and 4D.2 are PERMANENTLY CLOSED.
 
 Next:
 Sprint 4E — Real OSS Models + FIM Provider & Benchmarking → NEXT

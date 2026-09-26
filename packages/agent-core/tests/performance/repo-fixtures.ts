@@ -130,9 +130,10 @@ export async function createRepositoryFixture(
     }
   }
 
-  // 3. Large text file (>128KB, ~250KB)
-  const largeContent = "line " + "x".repeat(100) + "\n"
-  const largePayload = largeContent.repeat(2500) // ~250KB
+  // 3. Large text file: real deterministic 5,000,000 bytes (5MB) for LARGE scale, ~250KB for SMALL/MEDIUM
+  const lineCount = scale === "LARGE" ? 50_000 : 2500
+  const largeLine = "line " + "x".repeat(94) + "\n" // Exactly 100 bytes per line
+  const largePayload = largeLine.repeat(lineCount) // Exactly 5,000,000 bytes for LARGE
   await writeFile(join(rootDir, "src/utils", "huge_dataset.txt"), largePayload, "utf8")
   totalFiles++
   indexableFiles++

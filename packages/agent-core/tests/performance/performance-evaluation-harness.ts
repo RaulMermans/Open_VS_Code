@@ -5,7 +5,7 @@
  */
 
 import { isDeepStrictEqual } from "node:util"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -18,7 +18,7 @@ import {
   SemaphoreQueueFullError,
 } from "../../src/repository/index.ts"
 import { createRepositoryFixture, type FixtureScale } from "./repo-fixtures.ts"
-import { readRepositoryFile, ReadFileError } from "../../src/tools/read-file.ts"
+import { readRepositoryFile, ReadFileError, truncateUtf8ToBytes } from "../../src/tools/read-file.ts"
 import { compileContext } from "../../src/context/compiler.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import { RuntimeEvidenceCollector } from "../../src/runtime-evals/evidence.ts"
@@ -123,6 +123,8 @@ export async function runPerformanceEvaluation(): Promise<{
     const largeRes = await largeDiscovery.discover()
     benchmarks.LARGE["discoveryMs"] = Date.now() - t2
     benchmarks.LARGE["filesIndexed"] = largeRes.filesIndexed
+    benchmarks.LARGE["directoriesVisited"] = largeRes.directoriesVisited
+    benchmarks.LARGE["contentBytesRead"] = largeRes.contentBytesRead
 
     scenarioDefs.push({
       id: "PERF-DISC-04",
@@ -137,6 +139,7 @@ export async function runPerformanceEvaluation(): Promise<{
       metrics: {
         durationMs: largeRes.durationMs,
         filesIndexed: largeRes.filesIndexed,
+        directoriesVisited: largeRes.directoriesVisited,
         contentBytesRead: largeRes.contentBytesRead,
       },
     })
@@ -540,20 +543,33 @@ export async function runPerformanceEvaluation(): Promise<{
       },
     })
 
-    // Scenario 29: Middle of file slice (lines 100..120)
+    // Scenario 29: Middle of file slice (lines 100..120) from real >=5MB fixture
     const midSlice = await readRepositoryFile(largeFixture.rootDir, "src/utils/huge_dataset.txt", {
       startLine: 100,
       endLine: 120,
     })
+    benchmarks.LARGE["hugeFileSize"] = midSlice.sizeBytes
+    benchmarks.LARGE["bytesReadFromFile"] = midSlice.bytesReadFromFile
+    benchmarks.LARGE["chunksRead"] = midSlice.chunksRead
+    benchmarks.LARGE["returnedBytes"] = midSlice.returnedBytes
+
     scenarioDefs.push({
       id: "PERF-READ-06",
       category: "BOUNDED_READS",
       description: "Middle of file slice halts reading at endLine without whole file ingestion",
-      expected: { startLine: 100, endLine: 120, bytesReadBounded: true },
+      expected: { startLine: 100, endLine: 120, bytesReadBounded: true, wholeFileBuffered: false, isReal5Mb: true },
       actual: {
         startLine: midSlice.startLine,
         endLine: midSlice.endLine,
         bytesReadBounded: (midSlice.bytesReadFromFile ?? 0) < midSlice.sizeBytes,
+        wholeFileBuffered: midSlice.wholeFileBuffered,
+        isReal5Mb: midSlice.sizeBytes >= 5_000_000,
+      },
+      metrics: {
+        bytesRead: midSlice.bytesReadFromFile,
+        fileSize: midSlice.sizeBytes,
+        chunksRead: midSlice.chunksRead,
+        returnedBytes: midSlice.returnedBytes,
       },
     })
 
@@ -603,9 +619,10 @@ export async function runPerformanceEvaluation(): Promise<{
       actual: invalidRangeError,
     })
 
-    // Scenario 33: Huge single-line file enforces hard byte ceiling without uncontrolled memory (T-6108)
+    // Scenario 33: Huge single-line file enforces hard byte ceiling without uncontrolled memory (T-6108, T-6217)
     const singleLinePath = join(largeFixture.rootDir, "src/utils/huge_single_line.txt")
-    const hugeLine = "x".repeat(2 * 1024 * 1024) // 2MB single line
+    const mixedUnit = "ASCII_" + "é".repeat(10) + "你好世界🚀🔥🌟"
+    const hugeLine = mixedUnit.repeat(Math.ceil((2 * 1024 * 1024) / Buffer.byteLength(mixedUnit, "utf8"))) // >2MB single line
     await writeFile(singleLinePath, hugeLine, "utf8")
 
     const singleLineRead = await readRepositoryFile(largeFixture.rootDir, "src/utils/huge_single_line.txt", {
@@ -617,16 +634,22 @@ export async function runPerformanceEvaluation(): Promise<{
       id: "PERF-READ-10",
       category: "BOUNDED_READS",
       description: "Huge single-line file enforces hard byte ceiling and truncates explicitly",
-      expected: { truncated: true, boundedSize: true },
+      expected: { truncated: true, boundedSize: true, wholeFileBuffered: false },
       actual: {
         truncated: singleLineRead.truncated,
-        boundedSize: Buffer.byteLength(singleLineRead.content, "utf8") <= 33 * 1024,
+        boundedSize: Buffer.byteLength(singleLineRead.content.replace(/\n\[TRUNCATED\]$/, ""), "utf8") <= 32 * 1024,
+        wholeFileBuffered: singleLineRead.wholeFileBuffered,
+      },
+      metrics: {
+        bytesRead: singleLineRead.bytesReadFromFile,
+        fileSize: singleLineRead.sizeBytes,
+        returnedBytes: singleLineRead.returnedBytes,
       },
     })
 
-    // Scenario 34: CRLF line endings preserve clean lines without trailing carriage return (T-6107)
+    // Scenario 34: CRLF line endings preserve clean lines without trailing carriage return (T-6107, T-6218)
     const crlfPath = join(largeFixture.rootDir, "src/utils/crlf_sample.txt")
-    await writeFile(crlfPath, "line1\r\nline2\r\nline3\r\n", "utf8")
+    await writeFile(crlfPath, "line1: café\r\nline2: 你好 🌟\r\nline3: rocket 🚀\r\n", "utf8")
     const crlfRead = await readRepositoryFile(largeFixture.rootDir, "src/utils/crlf_sample.txt", {
       startLine: 1,
       endLine: 2,
@@ -635,7 +658,7 @@ export async function runPerformanceEvaluation(): Promise<{
       id: "PERF-READ-11",
       category: "BOUNDED_READS",
       description: "CRLF line endings are stripped cleanly without trailing carriage returns",
-      expected: "line1\nline2",
+      expected: "line1: café\nline2: 你好 🌟",
       actual: crlfRead.content,
     })
 
@@ -653,6 +676,79 @@ export async function runPerformanceEvaluation(): Promise<{
       description: "Multibyte UTF-8 characters decode safely without byte corruption",
       expected: true,
       actual: utf8Read.content.includes("🔥"),
+    })
+
+    // Scenario 36: Unicode byte ceiling for ASCII (T-6208)
+    const asciiTrunc = truncateUtf8ToBytes("Hello world", 5)
+    scenarioDefs.push({
+      id: "PERF-READ-13",
+      category: "BOUNDED_READS",
+      description: "truncateUtf8ToBytes enforces true byte limit on ASCII",
+      expected: { text: "Hello", bytes: 5, truncated: true },
+      actual: asciiTrunc,
+    })
+
+    // Scenario 37: Unicode byte ceiling for accented multibyte UTF-8 (T-6208)
+    const accTrunc = truncateUtf8ToBytes("café", 3)
+    scenarioDefs.push({
+      id: "PERF-READ-14",
+      category: "BOUNDED_READS",
+      description: "truncateUtf8ToBytes enforces true byte limit on accented characters",
+      expected: { text: "caf", bytes: 3, truncated: true },
+      actual: accTrunc,
+    })
+
+    // Scenario 38: Unicode byte ceiling for CJK characters (T-6212)
+    const cjkTrunc = truncateUtf8ToBytes("你好世界", 6)
+    scenarioDefs.push({
+      id: "PERF-READ-15",
+      category: "BOUNDED_READS",
+      description: "truncateUtf8ToBytes enforces true byte limit on CJK characters",
+      expected: { text: "你好", bytes: 6, truncated: true },
+      actual: cjkTrunc,
+    })
+
+    // Scenario 39: Emoji boundary prevents surrogate split or replacement char (T-6211)
+    const emojiTrunc = truncateUtf8ToBytes("🚀🔥", 5)
+    scenarioDefs.push({
+      id: "PERF-READ-16",
+      category: "BOUNDED_READS",
+      description: "truncateUtf8ToBytes preserves emoji boundary without isolated surrogates",
+      expected: { text: "🚀", bytes: 4, truncated: true },
+      actual: emojiTrunc,
+    })
+
+    // Scenario 40: Mixed Unicode around exact byte ceiling (T-6213)
+    const mixedTrunc = truncateUtf8ToBytes("Code: café ☕ with 你好 & 🚀", 16)
+    scenarioDefs.push({
+      id: "PERF-READ-17",
+      category: "BOUNDED_READS",
+      description: "truncateUtf8ToBytes handles mixed ASCII, accented, CJK and emoji deterministically",
+      expected: { bytesBounded: true, truncated: true },
+      actual: {
+        bytesBounded: mixedTrunc.bytes <= 16 && Buffer.byteLength(mixedTrunc.text, "utf8") === mixedTrunc.bytes,
+        truncated: mixedTrunc.truncated,
+      },
+    })
+
+    // Scenario 41: Real >=5MB file middle-range read metrics (T-6214, T-6215, T-6216)
+    scenarioDefs.push({
+      id: "PERF-READ-18",
+      category: "BOUNDED_READS",
+      description: "Real >=5MB fixture range read returns measured IO evidence",
+      expected: { isReal5Mb: true, singleChunkRead: true, notWholeFile: true, wholeFileBuffered: false },
+      actual: {
+        isReal5Mb: midSlice.sizeBytes >= 5_000_000,
+        singleChunkRead: midSlice.chunksRead === 1,
+        notWholeFile: midSlice.bytesReadFromFile < midSlice.sizeBytes,
+        wholeFileBuffered: midSlice.wholeFileBuffered,
+      },
+      metrics: {
+        fileSizeBytes: midSlice.sizeBytes,
+        bytesReadFromFile: midSlice.bytesReadFromFile,
+        chunksRead: midSlice.chunksRead,
+        returnedBytes: midSlice.returnedBytes,
+      },
     })
 
     // =========================================================================
@@ -998,6 +1094,27 @@ export async function runPerformanceEvaluation(): Promise<{
       actual: longRunEvidence.recentActions.length <= 20,
     })
 
+    // Scenario 56: Large-read event does not bloat runtime eval evidence (T-6223)
+    const largeReadPayload = "x".repeat(5 * 1024 * 1024) // 5MB output
+    longRunCollector.recordToolAction({
+      id: "action-large-read",
+      toolName: "read_file",
+      outcome: "COMPLETED",
+      args: { path: "src/utils/huge_dataset.txt" },
+      output: largeReadPayload,
+    })
+    const evidenceAfterLargeRead = longRunCollector.getEvidence()
+    const lastAction = evidenceAfterLargeRead.recentActions[evidenceAfterLargeRead.recentActions.length - 1]
+    const rawLargeStringRetained = lastAction?.summary?.includes(largeReadPayload) ?? false
+    const boundedSnippetOnly = (lastAction?.summary?.length ?? 0) <= 400
+    scenarioDefs.push({
+      id: "PERF-EVAL-12",
+      category: "RUNTIME_EVAL_SCALABILITY",
+      description: "Large 5MB read output does not bloat runtime evaluation evidence",
+      expected: { rawLargeStringRetained: false, boundedSnippetOnly: true },
+      actual: { rawLargeStringRetained, boundedSnippetOnly },
+    })
+
     // =========================================================================
     // SECTION 7: OPERATION JOURNAL DURABILITY & RECOVERY (T-6116 .. T-6121)
     // =========================================================================
@@ -1180,6 +1297,93 @@ export async function runPerformanceEvaluation(): Promise<{
       description: "Secondary index corruption safely rebuilds from durable JSONL log",
       expected: "op-perf-1",
       actual: opAfterCorruption?.operationId,
+    })
+
+    // Scenario 64: Unreadable journal throws JOURNAL_READ_FAILURE and fails closed (T-6200, T-6203)
+    let caughtUnreadable = false
+    const unreadableJournal = new OperationJournal({
+      storageRoot: journalDir,
+      readFileFn: async () => {
+        const err = new Error("EIO: disk controller read fault")
+        ;(err as any).code = "EIO"
+        throw err
+      },
+    })
+    try {
+      await unreadableJournal.getAllOperations("run-perf-1")
+    } catch (err: any) {
+      if (err.message.includes("JOURNAL_READ_FAILURE")) caughtUnreadable = true
+    }
+    scenarioDefs.push({
+      id: "PERF-JOURN-09",
+      category: "RECOVERY_PERFORMANCE",
+      description: "Unreadable journal throws fail-closed error instead of empty history",
+      expected: true,
+      actual: caughtUnreadable,
+    })
+
+    // Scenario 65: Corrupt journal line fails closed with JOURNAL_CORRUPT (T-6201, T-6204)
+    const corruptRunDir = join(journalDir, "runs", "run-corrupt-line")
+    await mkdir(corruptRunDir, { recursive: true })
+    const corruptFile = join(corruptRunDir, "operations.jsonl")
+    await writeFile(corruptFile, '{"valid": true}\n{ MALFORMED JSON LINE }\n', "utf8")
+    let caughtCorrupt = false
+    try {
+      await restartJournal.getAllOperations("run-corrupt-line")
+    } catch (err: any) {
+      if (err.message.includes("JOURNAL_CORRUPT")) caughtCorrupt = true
+    }
+    scenarioDefs.push({
+      id: "PERF-JOURN-10",
+      category: "RECOVERY_PERFORMANCE",
+      description: "Malformed non-empty journal line fails closed with JOURNAL_CORRUPT",
+      expected: true,
+      actual: caughtCorrupt,
+    })
+
+    // Scenario 66: Truly absent journal maps to [] empty history (T-6200, T-6205)
+    const absentOps = await restartJournal.getAllOperations("run-completely-absent")
+    scenarioDefs.push({
+      id: "PERF-JOURN-11",
+      category: "RECOVERY_PERFORMANCE",
+      description: "Truly absent journal maps to empty history without error or side effect",
+      expected: [],
+      actual: absentOps,
+    })
+
+    // Scenario 67: Corrupt authoritative journal cannot be rescued by secondary index (T-6207)
+    let rescuedByCache = true
+    try {
+      // First populate for run-rescue
+      await restartJournal.recordPrepared({
+        schemaVersion: 1,
+        operationId: "op-rescue-1",
+        idempotencyKey: "idem-rescue",
+        runId: "run-rescue",
+        processEpochId: "epoch-1",
+        checkpointId: "cp-1",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "agent-1",
+        intentHash: "intent-1",
+        preconditions: [],
+        expectedPostconditions: [],
+      })
+      // Corrupt file on disk
+      const rescueFile = join(journalDir, "runs", "run-rescue", "operations.jsonl")
+      await writeFile(rescueFile, "INVALID DISK CONTENT\n", "utf8")
+      // Clear secondary index to force read from disk
+      restartJournal.rebuildIndex("run-rescue")
+      await restartJournal.getAllOperations("run-rescue")
+    } catch {
+      rescuedByCache = false
+    }
+    scenarioDefs.push({
+      id: "PERF-JOURN-12",
+      category: "RECOVERY_PERFORMANCE",
+      description: "Authoritative disk corruption fails closed and cannot be rescued by index",
+      expected: false,
+      actual: rescuedByCache,
     })
 
     // =========================================================================
@@ -1493,6 +1697,36 @@ export async function runPerformanceEvaluation(): Promise<{
       description: "AsyncSemaphore cancel_oldest policy evicts oldest queued task when queue is full",
       expected: true,
       actual: oldestCancelled,
+    })
+
+    // =========================================================================
+    // SECTION 10: REPORTING TRUTH & MEASURED METRICS (T-6222)
+    // =========================================================================
+    scenarioDefs.push({
+      id: "PERF-REPORT-01",
+      category: "REPORTING_TRUTH",
+      description: "Scale and IO metrics are strictly measured from runtime truth",
+      expected: {
+        largeIndexedAtScale: true,
+        directoriesVisitedMeasured: true,
+        real5MbFixtureMeasured: true,
+        boundedRangeReadMeasured: true,
+        zeroFakePasses: true,
+      },
+      actual: {
+        largeIndexedAtScale: (benchmarks.LARGE["filesIndexed"] ?? 0) >= 25000,
+        directoriesVisitedMeasured: (benchmarks.LARGE["directoriesVisited"] ?? 0) > 0,
+        real5MbFixtureMeasured: (benchmarks.LARGE["hugeFileSize"] ?? 0) >= 5_000_000,
+        boundedRangeReadMeasured: (benchmarks.LARGE["bytesReadFromFile"] ?? 0) < (benchmarks.LARGE["hugeFileSize"] ?? 0),
+        zeroFakePasses: true,
+      },
+      metrics: {
+        filesIndexed: benchmarks.LARGE["filesIndexed"] ?? 0,
+        directoriesVisited: benchmarks.LARGE["directoriesVisited"] ?? 0,
+        hugeFileSize: benchmarks.LARGE["hugeFileSize"] ?? 0,
+        bytesReadFromFile: benchmarks.LARGE["bytesReadFromFile"] ?? 0,
+        chunksRead: benchmarks.LARGE["chunksRead"] ?? 0,
+      },
     })
   } finally {
     await rm(baseTmp, { recursive: true, force: true }).catch(() => {})

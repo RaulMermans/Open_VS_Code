@@ -75,8 +75,14 @@ To prevent replaying approvals across application restarts:
 ### 4. Write-Ahead Operation Journal
 
 All stateful operations (mutations, verifications, MCP interactions) write an intent record to an append-only JSONL log before touching workspace files or external processes:
-- **Append-only storage with Physical Sync:** Never rewritten in place; updates append a new entry with the updated status (`PREPARED -> STARTED -> COMPLETED | FAILED | INTERRUPTED`). Appends use `fs.promises.open("a")`, `handle.appendFile()`, and explicit `handle.sync()` before closing.
+- **Append-only storage with Physical Sync:** Never rewritten in place; updates append a new entry with the updated status (`PREPARED -> STARTED -> COMPLETED | FAILED | INTERRUPTED`). Appends use `fs.promises.open("a")`, `handle.appendFile()`, and explicit `handle.sync()` before closing. Only after physical sync succeeds may protected side effects proceed.
 - **Fail-Closed Truncation Rollback:** If physical disk synchronization (`handle.sync()`) fails, the journal handle truncates the file back to its pre-append length, preventing corrupt, unpersisted partial lines from remaining in the log.
+- **Fail-Closed Read Integrity (Sprint 4D.2):**
+  - **Absent Journal:** If no journal file exists on disk (genuine `ENOENT`), it maps truthfully to valid empty history (`[]`).
+  - **Unreadable Journal:** If the journal exists but cannot be read due to filesystem or I/O errors (`EACCES`, `EIO`, `EPERM`), reading throws `JOURNAL_READ_FAILURE` and fails closed. It is never coerced to empty history.
+  - **Malformed Lines:** Any malformed non-empty JSON line immediately throws `JOURNAL_CORRUPT` and fails closed; corrupt durable records are never silently skipped.
+  - **Schema Validation:** Records are validated against mandatory durability invariants (`operationId`, `runId`, `schemaVersion`, `status`, `kind`, `processEpochId`, `checkpointId`, `authorityId`, `intentHash`, `idempotencyKey`, `preparedAt`). Invalid records throw `JOURNAL_CORRUPT`.
+  - **Non-Authoritative Secondary Index:** In-memory lookup caches are strictly secondary and non-authoritative. Corrupted or unreadable disk journals fail closed immediately; an in-memory index can never paper over or rescue disk-level journal corruption.
 - **Deterministic Idempotency Key:** Computed as `SHA-256(runId:evidenceVersion:kind:authorityId:intentHash)`.
 - **Deduplication:** When querying journal operations for a run, entries are deduplicated by `operationId`, preserving the latest authoritative lifecycle status.
 - **Lineage Tracking:** Retried operations link to the failed/interrupted operation via `replacesOperationId`, providing an audit trail.

@@ -176,15 +176,16 @@ describe("Sprint 4C.4 — Rollback Durability Final Seal", () => {
         return origRecordPrepared(...args)
       }
 
-      const origGetAll = coord.operationJournal.getAllOperations.bind(coord.operationJournal)
-      coord.operationJournal.getAllOperations = async () => {
-        throw new Error("Disk corruption: unable to read journal operations")
-      }
+      const eioErr = new Error("EIO: hardware i/o failure on journal sector")
+      ;(eioErr as any).code = "EIO"
+      coord.operationJournal.setReadFileFnForTesting(async () => {
+        throw eioErr
+      })
 
       const res = await coord.recoveryController.rollbackManager.executeRollback(runId, cand)
 
       // Restore methods
-      coord.operationJournal.getAllOperations = origGetAll
+      coord.operationJournal.setReadFileFnForTesting(undefined)
       coord.operationJournal.recordPrepared = origRecordPrepared
       mutationEngine.rollback = origRollback
 
@@ -747,10 +748,13 @@ describe("Sprint 4C.4 — Rollback Durability Final Seal", () => {
         let writes = 0
         const orig = mutationEngine.rollback.bind(mutationEngine)
         mutationEngine.rollback = async (...a) => { writes++; return orig(...a) }
-        const origGet = coord.operationJournal.getAllOperations.bind(coord.operationJournal)
-        coord.operationJournal.getAllOperations = async () => { throw new Error("read fail") }
+        coord.operationJournal.setReadFileFnForTesting(async () => {
+          const err = new Error("EIO: disk read fault")
+          ;(err as any).code = "EIO"
+          throw err
+        })
         const res = await coord.recoveryController.rollbackManager.executeRollback("m-jread", cand)
-        coord.operationJournal.getAllOperations = origGet
+        coord.operationJournal.setReadFileFnForTesting(undefined)
         mutationEngine.rollback = orig
         assert.strictEqual(writes, 0, "Journal read failure: reverse writes must be 0")
         assert.strictEqual(res.durabilityFailure, true)
