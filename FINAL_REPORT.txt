@@ -1,5 +1,5 @@
 ==================================================
-SPRINT 4D.1 FINAL REPORT — PERFORMANCE TRUTH & REAL SCALE
+SPRINT 4D.2 FINAL REPORT — JOURNAL INTEGRITY, UTF-8 BOUNDS & REPORTING TRUTH
 ==================================================
 
 1. Toolchain
@@ -8,20 +8,19 @@ npm: 10.9.8
 Platform: darwin (macOS 24.6.0 arm64)
 
 2. Git
-Starting SHA: a5deedc407a4aeec7afbc7d4d7dce510861b9977
-Final SHA: 097927067935f33823dcf7fd64a2728bd8499d55
+Starting SHA: 7698a0ba0950bd333a0527ad0ee31f8eb104f5a8
 Branch: sprint-4d
 Worktree: clean
 git fsck: full pass
 
 3. Truth Audit
 Placeholder / fake pass count: 0
-Real measured scenario count: 77
-Run 1 pass count: 77
-Run 2 pass count: 77
+Real measured scenario count: 89
+Run 1 pass count: 89
+Run 2 pass count: 89
 Two-run deep equality: pass
-Negative comparator count: 12
-Negative comparator pass count: 12
+Negative comparator count: 20
+Negative comparator pass count: 20
 
 4. Fixture Scale
 SMALL discoverable / indexable: 105
@@ -33,7 +32,7 @@ LARGE total generated files: 26505
 5. Discovery Truth
 LARGE content bytes read during discovery: 0
 LARGE metadata entries indexed: 25005
-LARGE directories visited: 27
+LARGE directories visited: 58
 Incremental add without full rebuild: pass
 Incremental modify without full rebuild: pass
 Incremental delete without full rebuild: pass
@@ -41,7 +40,9 @@ Incremental delete without full rebuild: pass
 6. Bounded Reads Truth
 Synthetic huge file size: 5000000 bytes
 Requested line range: lines 100 to 120
-Bytes read from file: 6712 bytes
+Bytes read from file: 65536 bytes
+Chunks read: 1
+Returned bytes: 2099 bytes
 Whole-file buffer allocated: false
 Line count in huge file: 50000 lines
 UTF-8 multibyte boundary correctness: pass
@@ -59,17 +60,24 @@ Production RepositorySearch peak queued: 16
 Request storm deduplication / coalescing: pass
 Request storm supersession / cancellation: pass
 
-8. Recovery Durability Truth
+8. Recovery Durability & Read Integrity Truth
 OperationJournal append durability mechanism: FileHandle append + sync
 Durable append failure fail-closed rollback: pass
 Restart after sync failure corruption count: 0
 Write order verified before side-effect: pass
-Rebuildable secondary index verified: pass
+Fail-closed on unreadable journal (EACCES / EIO): pass
+Fail-closed on malformed non-empty JSON line: pass
+Schema validation rejects invalid records: pass
+Absent journal returns [] empty history: pass
+Secondary index strictly non-authoritative: pass
+Corrupt disk journal cannot be rescued by secondary index: pass
 Existing 4C regression pass: pass
 
 9. Runtime Eval Scalability Truth
 Repetitive failure compaction verified: pass
 Compacted signature preserved: pass
+Large-read 5MB output bounded in evidence (<= 400 chars): pass
+Raw full-file content retained: false
 Adaptive control decisions preserved: CONTINUE, VERIFY, REVISE, REPLAN, STOP, ASK_HUMAN, REQUEST_MORE_CONTEXT, CHANGE_MODEL
 All 8 decisions verified: pass
 Evidence retention bounded: pass
@@ -77,8 +85,10 @@ Evidence retention bounded: pass
 10. Regression Suites
 Security suite (4A): 97/97 pass
 Runtime eval suite (4B): 111/111 pass
-Recovery suite (4C): 38/38 tests, 117 scenarios pass
-Performance suite (4D.1): 77/77 pass
+Recovery suite (4C): 40/40 tests, 117 scenarios pass
+Performance & Integrity suite (4D.2): 89/89 pass
+Journal integrity suite: 9/9 pass
+UTF-8 bounds suite: 7/7 pass
 Coding evals run 1: 30/30 pass (100.0%)
 Coding evals run 2: 30/30 pass (100.0%)
 TypeScript typecheck: pass (0 errors across 4 workspaces)
@@ -86,4 +96,5 @@ Linter: pass (0 errors, 0 warnings across 158 files)
 
 11. Final Assessment
 Verdict: PERMANENT PASS
+Sprint 4D / 4D.1 / 4D.2: CLOSED PERMANENTLY
 Ready for Sprint 4E: YES

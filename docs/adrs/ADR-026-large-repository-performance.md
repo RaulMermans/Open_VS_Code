@@ -75,9 +75,11 @@ Bounded Durable Recovery (secondary rebuildable index; authoritative durable sou
 - `compileContext` enforces strict token budgets via `fitContext`.
 - **Truly Bounded File Reading (`readRepositoryFile`)**: Eliminates naive `readFile(entire file)` buffer allocation. Uses a chunk-streaming line reader (`open("r")`, `StringDecoder("utf8")`, chunk-by-chunk scanning):
   - Samples first 8 KB for binary null bytes.
-  - Enforces per-line byte ceilings (`MAX_LINE_CHARS = 10,000`) to protect against single gigantic lines.
-  - Handles CRLF and UTF-8 multibyte characters cleanly across chunk boundaries.
-  - Halts file I/O immediately upon reaching `endLine` or output size ceilings, proving `bytesReadFromFile << totalFileBytes` with zero full-file buffer allocation.
+  - Enforces strict UTF-8 byte ceilings using `truncateUtf8ToBytes(text, maxBytes)`, ensuring byte ceilings are calculated via `Buffer.byteLength(..., "utf8")` rather than JavaScript `string.length` or UTF-16 code units.
+  - Guarantees Unicode integrity: emojis, CJK, and accented characters are never split into isolated surrogates or replacement characters (`\uFFFD`).
+  - Handles CRLF and UTF-8 multibyte characters cleanly across chunk boundaries without stray `\r`.
+  - Halts file I/O immediately upon reaching `endLine` or output size ceilings, proving `bytesReadFromFile << totalFileBytes` with zero full-file buffer allocation (e.g. reading 65,536 bytes from an actual 5,000,000-byte fixture).
+  - Exposes measured I/O telemetry: `fileSizeBytes`, `bytesReadFromFile`, `chunksRead`, `returnedBytes`, `wholeFileBuffered: false`, `truncated`.
 
 ### 4. Bounded Concurrency & Waiting Queue (`AsyncSemaphore`)
 - `AsyncSemaphore` bounds active tasks to `maxConcurrency` and waiting tasks to `maxQueued`.
