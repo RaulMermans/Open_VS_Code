@@ -74,12 +74,17 @@ Bounded Durable Recovery (secondary rebuildable index; authoritative durable sou
 - **Context size depends strictly on the task, never on the repository size.**
 - `compileContext` enforces strict token budgets via `fitContext`.
 - **Truly Bounded File Reading (`readRepositoryFile`)**: Eliminates naive `readFile(entire file)` buffer allocation. Uses a chunk-streaming line reader (`open("r")`, `StringDecoder("utf8")`, chunk-by-chunk scanning):
-  - Samples first 8 KB for binary null bytes.
+  - Samples first 8 KB for binary null bytes **by inspecting bytes already loaded**, eliminating a prior separate offset-zero sample read:
+    - *Full-file reads:* binary detection uses the already-read `contentBuf` — no extra read.
+    - *Ranged reads:* binary detection uses the first `min(bytesRead, 8192)` bytes of the first streaming chunk — no extra read. `bytesReadFromFile` counts ALL and ONLY `handle.read()` calls; no hidden reads.
   - Enforces strict UTF-8 byte ceilings using `truncateUtf8ToBytes(text, maxBytes)`, ensuring byte ceilings are calculated via `Buffer.byteLength(..., "utf8")` rather than JavaScript `string.length` or UTF-16 code units.
+  - **Hard `maxBytes` ceiling includes truncation marker (Sprint 4D.3):** When truncation occurs, a `\n[TRUNCATED]` marker (12 UTF-8 bytes) is reserved from the `maxBytes` budget before data is collected: `dataBudget = maxBytes - 12`. `Buffer.byteLength(returnedContent, "utf8") <= maxBytes` is **always** guaranteed, including the marker. For `maxBytes < 12`, no marker is appended; an empty string is returned with `truncated: true`.
+
   - Guarantees Unicode integrity: emojis, CJK, and accented characters are never split into isolated surrogates or replacement characters (`\uFFFD`).
   - Handles CRLF and UTF-8 multibyte characters cleanly across chunk boundaries without stray `\r`.
-  - Halts file I/O immediately upon reaching `endLine` or output size ceilings, proving `bytesReadFromFile << totalFileBytes` with zero full-file buffer allocation (e.g. reading 65,536 bytes from an actual 5,000,000-byte fixture).
+  - Halts file I/O immediately upon reaching `endLine` or output size ceilings, proving `bytesReadFromFile << totalFileBytes` with zero full-file buffer allocation (e.g. reading 65,536 bytes from an actual 5,000,000-byte fixture — `bytesReadFromFile = 65,536`, not 65,536 plus a hidden 8 KB sample).
   - Exposes measured I/O telemetry: `fileSizeBytes`, `bytesReadFromFile`, `chunksRead`, `returnedBytes`, `wholeFileBuffered: false`, `truncated`.
+
 
 ### 4. Bounded Concurrency & Waiting Queue (`AsyncSemaphore`)
 - `AsyncSemaphore` bounds active tasks to `maxConcurrency` and waiting tasks to `maxQueued`.
@@ -104,6 +109,9 @@ Bounded Durable Recovery (secondary rebuildable index; authoritative durable sou
 - `OperationJournal` writes entries using explicit `FileHandle.appendFile()` followed by `FileHandle.sync()`. If physical synchronization fails, the file is truncated back to its pre-append length to fail closed without leaving unpersisted corrupt state.
 - Secondary in-memory lookup indexes (`#indexCache` in `OperationJournal` and `#metadataIndex` in `CheckpointStore`) accelerate lookups.
 - Indexes are strictly non-authoritative and safely rebuildable at any time from disk without data loss, duplicate writes, or reconciliation divergence.
+- **In-process Corruption Tracking (Sprint 4D.3):** A `#corruptedRuns` `Set<string>` in `OperationJournal` records runs whose journal was found corrupt during the current process session. `getOperation()` checks this set before serving from cache — preventing warm-cache reads from bypassing a known disk-integrity failure. `rebuildIndex()` clears both the cache and the corruption set, allowing deliberate fresh re-validation.
+- **Performance Summary Export (Sprint 4D.3):** `runPerformanceEvaluation()` returns a typed `PerformanceEvaluationSummary` struct containing all key measured metrics (`filesIndexed`, `directoriesVisited`, `bytesReadFromFile`, `chunksRead`, `returnedBytes`, etc.). The `FINAL_REPORT.txt` validator consumes this summary directly, comparing reported values against measured values — no hardcoded constants are duplicated in the validator.
+
 
 ### 8. Large Diff & Terminal Stream Ceilings
 - Diff generation in `MutationEngine` bounds unified diffs to `maxDiffBytes` with explicit truncation markers, preserving patch approval identity.
