@@ -40,15 +40,16 @@ function isStrictlyLess(val: number, bound: number): boolean {
   return val < bound
 }
 
-describe("Sprint 4D.2 — Performance Truth & Real Scale Hardening", () => {
-  test("Performance Evaluation Run 1 and Run 2 Determinism (89 Measured Scenarios)", async () => {
+describe("Sprint 4D.2/4D.3 — Performance Truth, Real Scale Hardening & Measurement Integrity", () => {
+  test("Performance Evaluation Run 1 and Run 2 Determinism (100 Measured Scenarios)", async () => {
     const run1 = await runPerformanceEvaluation()
     const run2 = await runPerformanceEvaluation()
 
     assert.strictEqual(run1.totalFailed, 0, `Run 1 failed ${run1.totalFailed} scenarios`)
     assert.strictEqual(run2.totalFailed, 0, `Run 2 failed ${run2.totalFailed} scenarios`)
-    assert.strictEqual(run1.scenarios.length, 89, `Expected 89 scenarios, got ${run1.scenarios.length}`)
-    assert.strictEqual(run2.scenarios.length, 89, `Expected 89 scenarios, got ${run2.scenarios.length}`)
+    assert.strictEqual(run1.scenarios.length, 100, `Expected 100 scenarios, got ${run1.scenarios.length}`)
+    assert.strictEqual(run2.scenarios.length, 100, `Expected 100 scenarios, got ${run2.scenarios.length}`)
+
 
     // Check that there are ZERO placeholder or fake pass scenarios
     const placeholders = run1.scenarios.filter((s) => s.id.startsWith("PERF-SCALE"))

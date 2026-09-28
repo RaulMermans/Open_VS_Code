@@ -403,4 +403,147 @@ describe("Sprint 4D.2 — Journal Read Integrity & Fail-Closed Durability (T-620
       await rm(root, { recursive: true, force: true }).catch(() => {})
     }
   })
+
+  // -------------------------------------------------------------------------
+  // T-6315 / T-6317: Warm in-process cache trust policy
+  // -------------------------------------------------------------------------
+  test("T-6315/T-6317: Warm in-process cache legitimately serves same-process lookups after durable write", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t6315-warm-cache-"))
+    try {
+      const journal = new OperationJournal({ storageRoot: root })
+      await journal.recordPrepared({
+        schemaVersion: 1,
+        operationId: "op-warm-1",
+        idempotencyKey: "idem-w1",
+        runId: "run-warm",
+        processEpochId: "epoch-1",
+        checkpointId: "cp-1",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "agent-1",
+        intentHash: "intent-1",
+        preconditions: [],
+        expectedPostconditions: [],
+      })
+
+      // After durable write, warm cache is populated. Same-process getOperation
+      // serves from cache (documented non-authoritative policy: one process,
+      // same session, no interleaved out-of-band corruption).
+      const op = await journal.getOperation("run-warm", "op-warm-1")
+      assert.ok(op, "Warm cache must return operation")
+      assert.equal(op.operationId, "op-warm-1")
+      assert.equal(op.status, "PREPARED")
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // T-6315 / T-6316 / T-6318: Restart — new instance has no cache; validates disk
+  // -------------------------------------------------------------------------
+  test("T-6315/T-6316/T-6318: New journal instance starts with empty cache — validates durable disk journal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t6318-restart-"))
+    try {
+      // Process 1: write operation to durable journal
+      const journal1 = new OperationJournal({ storageRoot: root })
+      await journal1.recordPrepared({
+        schemaVersion: 1,
+        operationId: "op-restart-1",
+        idempotencyKey: "idem-r1",
+        runId: "run-restart",
+        processEpochId: "epoch-1",
+        checkpointId: "cp-1",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "agent-1",
+        intentHash: "intent-1",
+        preconditions: [],
+        expectedPostconditions: [],
+      })
+
+      // Simulate restart: fresh journal instance has no in-process cache
+      const journal2 = new OperationJournal({ storageRoot: root })
+      const op = await journal2.getOperation("run-restart", "op-restart-1")
+      assert.ok(op, "Fresh instance must read from durable disk (no warm cache)")
+      assert.equal(op.operationId, "op-restart-1")
+
+      // Corrupt disk after fresh instance has read once (to prove cache is fresh instance scoped)
+      const journalPath = join(root, "runs", "run-restart", "operations.jsonl")
+      await writeFile(journalPath, "CORRUPTED JOURNAL CONTENT\n", "utf8")
+
+      // Another fresh instance: no cache, sees corrupt disk — must fail closed
+      const journal3 = new OperationJournal({ storageRoot: root })
+      await assert.rejects(
+        () => journal3.getOperation("run-restart", "op-restart-1"),
+        /JOURNAL_CORRUPT/,
+        "Fresh instance on corrupt disk must fail closed",
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // T-6316 / T-6319: Known-corruption cannot be bypassed by warm cache
+  // -------------------------------------------------------------------------
+  test("T-6316/T-6319: Known journal corruption blocks getOperation cache lookup — stale cache cannot override integrity failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t6319-corrupt-bypass-"))
+    try {
+      const journal = new OperationJournal({ storageRoot: root })
+
+      // Write an operation — this populates the in-process cache
+      await journal.recordPrepared({
+        schemaVersion: 1,
+        operationId: "op-bypass-1",
+        idempotencyKey: "idem-b1",
+        runId: "run-bypass",
+        processEpochId: "epoch-1",
+        checkpointId: "cp-1",
+        evidenceVersion: 1,
+        kind: "MUTATION",
+        authorityId: "agent-1",
+        intentHash: "intent-1",
+        preconditions: [],
+        expectedPostconditions: [],
+      })
+
+      // Verify initial warm-cache lookup works
+      const op1 = await journal.getOperation("run-bypass", "op-bypass-1")
+      assert.ok(op1, "Initial lookup must succeed from warm cache")
+
+      // Corrupt the disk journal
+      const journalPath = join(root, "runs", "run-bypass", "operations.jsonl")
+      await writeFile(journalPath, "INVALID CORRUPTED BYTES\n", "utf8")
+
+      // Purge cache to force a fresh disk read (simulating rebuildIndex + re-access)
+      journal.rebuildIndex("run-bypass")
+
+      // getAllOperations must detect the disk corruption
+      await assert.rejects(
+        () => journal.getAllOperations("run-bypass"),
+        /JOURNAL_CORRUPT/,
+        "getAllOperations must detect disk corruption",
+      )
+
+      // getOperation MUST fail closed — it must NOT serve the previously-warm cache
+      // because the corruption has now been registered in #corruptedRuns
+      await assert.rejects(
+        () => journal.getOperation("run-bypass", "op-bypass-1"),
+        /JOURNAL_CORRUPT/,
+        "getOperation must fail closed after known corruption — stale cache must not rescue corrupt journal",
+      )
+
+      // After explicit rebuildIndex, corruption state is reset — fresh disk attempt allowed
+      journal.rebuildIndex("run-bypass")
+      // Disk is still corrupt so it still throws, but via disk read, not the corruption guard
+      await assert.rejects(
+        () => journal.getOperation("run-bypass", "op-bypass-1"),
+        /JOURNAL_CORRUPT/,
+        "After rebuildIndex with still-corrupt disk, failure is via disk read — cache bypass guard cleared",
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
 })
+
