@@ -217,6 +217,13 @@ export class OperationJournal {
   // Secondary in-memory lookup index: runId -> (operationId -> RecoveryOperation)
   readonly #indexCache = new Map<string, Map<string, RecoveryOperation>>()
 
+  // Tracks runs whose on-disk journal was found corrupt in this process session.
+  // Any run in this set causes getOperation() to fail closed even when a warm
+  // cache entry exists, preventing stale recovery decisions on known-bad data.
+  // Call rebuildIndex(runId) to reset this after investigating the corruption.
+  readonly #corruptedRuns = new Set<string>()
+
+
   async #append(op: RecoveryOperation): Promise<void> {
     const journalPath = await this.#getJournalPath(op.runId)
     const line = JSON.stringify(op) + "\n"
@@ -274,33 +281,53 @@ export class OperationJournal {
     // Map latest state per operationId
     const opMap = new Map<string, RecoveryOperation>()
 
-    for (const line of lines) {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(line)
-      } catch (parseErr: any) {
-        throw new Error(
-          `JOURNAL_CORRUPT: Malformed JSON line in journal for run ${runId}: ${parseErr?.message ?? String(parseErr)}`,
-          { cause: parseErr }
-        )
+    try {
+      for (const line of lines) {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(line)
+        } catch (parseErr: any) {
+          throw new Error(
+            `JOURNAL_CORRUPT: Malformed JSON line in journal for run ${runId}: ${parseErr?.message ?? String(parseErr)}`,
+            { cause: parseErr }
+          )
+        }
+        assertValidOperationRecord(parsed, runId)
+        opMap.set(parsed.operationId, parsed)
       }
-      assertValidOperationRecord(parsed, runId)
-      opMap.set(parsed.operationId, parsed)
+    } catch (err: any) {
+      // If the error is JOURNAL_CORRUPT, register the run so that subsequent
+      // getOperation() calls cannot silently serve stale cached data.
+      if (typeof err?.message === "string" && err.message.startsWith("JOURNAL_CORRUPT")) {
+        this.#corruptedRuns.add(runId)
+        this.#indexCache.delete(runId)
+      }
+      throw err
     }
 
     this.#indexCache.set(runId, opMap)
     return Array.from(opMap.values())
   }
 
+
   rebuildIndex(runId?: string): void {
     if (runId) {
       this.#indexCache.delete(runId)
+      this.#corruptedRuns.delete(runId)
     } else {
       this.#indexCache.clear()
+      this.#corruptedRuns.clear()
     }
   }
 
   async getOperation(runId: string, operationId: string): Promise<RecoveryOperation | undefined> {
+    // If this run's journal is known-corrupt in this process session, block cache
+    // lookups to prevent stale recovery decisions on corrupt data.
+    if (this.#corruptedRuns.has(runId)) {
+      throw new Error(
+        `JOURNAL_CORRUPT: Run ${runId} has known journal corruption; cache lookup blocked to prevent stale recovery`
+      )
+    }
     const runIndex = this.#indexCache.get(runId)
     if (runIndex) {
       return runIndex.get(operationId)
@@ -308,6 +335,7 @@ export class OperationJournal {
     const ops = await this.getAllOperations(runId)
     return ops.find((o) => o.operationId === operationId)
   }
+
 
   async findCompletedByIdempotencyKey(
     runId: string,

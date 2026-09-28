@@ -129,26 +129,32 @@ export async function readRepositoryFile(
     throw new ReadFileError("TOO_LARGE", `File exceeds ${maxBytes} bytes: ${requestedPath}`)
   }
 
+  const realRoot = await realpath(workspaceRoot)
+  const relPath = relative(realRoot, path).replaceAll("\\", "/")
+
+  // Truncation marker reserved from the maxBytes budget so the final returned
+  // content (data + marker) always satisfies:
+  //   Buffer.byteLength(content, "utf8") <= maxBytes
+  // For maxBytes < TRUNCATION_MARKER_BYTES, no marker is appended and the data
+  // budget collapses to 0 (returns empty content with truncated=true).
+  const TRUNCATION_MARKER = "\n[TRUNCATED]"
+  const TRUNCATION_MARKER_BYTES = Buffer.byteLength(TRUNCATION_MARKER, "utf8") // 12
+  const dataBudget = Math.max(0, maxBytes - TRUNCATION_MARKER_BYTES)
+
   const handle = await open(path, "r")
   try {
-    // 1. Check binary with bounded sample (first 8KB max)
-    const sampleSize = Math.min(details.size, 8192)
-    const sampleBuf = Buffer.alloc(sampleSize)
-    if (sampleSize > 0) {
-      await handle.read(sampleBuf, 0, sampleSize, 0)
-    }
-    if (isProbablyBinary(path, sampleBuf)) {
-      throw new ReadFileError("BINARY_FILE", `Binary files cannot be read as context: ${requestedPath}`)
-    }
-
-    const realRoot = await realpath(workspaceRoot)
-    const relPath = relative(realRoot, path).replaceAll("\\", "/")
-
-    // 2. Full file read when no line range is requested (file is already confirmed <= maxBytes)
+    // --- PATH A: Full file read (no line range) ---
+    // Binary check uses the already-read buffer — no separate offset-zero sample read.
     if (!hasLineRange) {
       const contentBuf = Buffer.alloc(details.size)
+      let fileBytesRead = 0
       if (details.size > 0) {
-        await handle.read(contentBuf, 0, details.size, 0)
+        const { bytesRead } = await handle.read(contentBuf, 0, details.size, 0)
+        fileBytesRead = bytesRead
+      }
+      // Binary detection: reuse already-loaded buffer (no extra read)
+      if (isProbablyBinary(path, contentBuf.subarray(0, Math.min(contentBuf.length, 8192)))) {
+        throw new ReadFileError("BINARY_FILE", `Binary files cannot be read as context: ${requestedPath}`)
       }
       const rawText = contentBuf.toString("utf8")
       const lines = rawText.split(/\r?\n/)
@@ -158,14 +164,15 @@ export async function readRepositoryFile(
         sizeBytes: details.size,
         truncated: false,
         totalLines: lines.length,
-        bytesReadFromFile: details.size,
+        bytesReadFromFile: fileBytesRead,
         returnedBytes: Buffer.byteLength(rawText, "utf8"),
-        chunksRead: details.size > 0 ? 1 : 0,
+        chunksRead: fileBytesRead > 0 ? 1 : 0,
         wholeFileBuffered: true,
       }
     }
 
-    // 3. Truly bounded streaming chunk scanner for line ranges
+    // --- PATH B: Bounded streaming chunk scanner for line ranges ---
+    // Binary detection reuses the first streaming chunk — no separate sample read.
     const targetStart = options.startLine ?? 1
     const targetEnd = options.endLine ?? Infinity
 
@@ -180,6 +187,7 @@ export async function readRepositoryFile(
     let truncated = false
     let outputByteLength = 0
     let reachedTargetEnd = false
+    let binaryChecked = false
 
     while (fileOffset < details.size && !reachedTargetEnd && !truncated) {
       const bytesToRead = Math.min(CHUNK_SIZE, details.size - fileOffset)
@@ -188,6 +196,14 @@ export async function readRepositoryFile(
       fileOffset += bytesRead
       totalBytesRead += bytesRead
       chunksRead++
+
+      // Binary detection on first chunk — reuses streaming bytes, no extra read
+      if (!binaryChecked) {
+        binaryChecked = true
+        if (isProbablyBinary(path, chunkBuf.subarray(0, Math.min(bytesRead, 8192)))) {
+          throw new ReadFileError("BINARY_FILE", `Binary files cannot be read as context: ${requestedPath}`)
+        }
+      }
 
       const text = decoder.write(chunkBuf.subarray(0, bytesRead))
       const parts = text.split("\n")
@@ -199,12 +215,13 @@ export async function readRepositoryFile(
       // The last element is the new pendingLine (incomplete line)
       pendingLine = parts.pop() ?? ""
 
-      // Guard against huge single-line files without newlines
+      // Guard against huge single-line files without newlines.
+      // Use dataBudget so the marker fits within maxBytes if truncation occurs.
       const pendingLineBytes = Buffer.byteLength(pendingLine, "utf8")
-      if (pendingLineBytes > maxBytes) {
+      if (pendingLineBytes > dataBudget) {
         truncated = true
         if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
-          const trunc = truncateUtf8ToBytes(pendingLine, maxBytes)
+          const trunc = truncateUtf8ToBytes(pendingLine, dataBudget)
           collectedLines.push(trunc.text)
           outputByteLength += trunc.bytes
         }
@@ -217,8 +234,8 @@ export async function readRepositoryFile(
         if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
           const separatorBytes = collectedLines.length > 0 ? 1 : 0
           const lineBytes = Buffer.byteLength(line, "utf8")
-          if (outputByteLength + separatorBytes + lineBytes > maxBytes) {
-            const remaining = maxBytes - outputByteLength - separatorBytes
+          if (outputByteLength + separatorBytes + lineBytes > dataBudget) {
+            const remaining = dataBudget - outputByteLength - separatorBytes
             if (remaining > 0) {
               const trunc = truncateUtf8ToBytes(line, remaining)
               if (trunc.text.length > 0) {
@@ -248,8 +265,8 @@ export async function readRepositoryFile(
       const trailingBytes = Buffer.byteLength(trailing, "utf8")
       if (currentLineNumber >= targetStart && currentLineNumber <= targetEnd) {
         const separatorBytes = collectedLines.length > 0 ? 1 : 0
-        if (outputByteLength + separatorBytes + trailingBytes > maxBytes) {
-          const remaining = maxBytes - outputByteLength - separatorBytes
+        if (outputByteLength + separatorBytes + trailingBytes > dataBudget) {
+          const remaining = dataBudget - outputByteLength - separatorBytes
           if (remaining > 0) {
             const trunc = truncateUtf8ToBytes(trailing, remaining)
             if (trunc.text.length > 0) {
@@ -265,9 +282,13 @@ export async function readRepositoryFile(
       }
     }
 
+    // Build final content. Marker is reserved from dataBudget so the total
+    // (data bytes + marker bytes) <= maxBytes always.
+    // If maxBytes < TRUNCATION_MARKER_BYTES, dataBudget collapsed to 0 and we
+    // cannot fit even the marker — emit no marker, just return truncated=true.
     let content = collectedLines.join("\n")
-    if (truncated && !content.endsWith("[TRUNCATED]")) {
-      content += "\n[TRUNCATED]"
+    if (truncated && maxBytes >= TRUNCATION_MARKER_BYTES) {
+      content += TRUNCATION_MARKER
     }
 
     return {
@@ -277,6 +298,9 @@ export async function readRepositoryFile(
       truncated,
       startLine: options.startLine ?? 1,
       endLine: options.endLine ?? currentLineNumber,
+      // bytesReadFromFile counts ALL successful OS reads for this file.
+      // Binary detection reuses the first streaming chunk, so there are
+      // no hidden reads: bytesReadFromFile == sum of all handle.read() calls.
       bytesReadFromFile: totalBytesRead,
       returnedBytes: Buffer.byteLength(content, "utf8"),
       chunksRead,
@@ -286,3 +310,4 @@ export async function readRepositoryFile(
     await handle.close()
   }
 }
+

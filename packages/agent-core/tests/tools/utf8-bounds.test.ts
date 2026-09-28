@@ -31,7 +31,7 @@ function hasIsolatedSurrogate(str: string): boolean {
   return false
 }
 
-describe("Sprint 4D.2 — UTF-8 Byte Bounds & Streaming Range Reads (T-6208 .. T-6218)", () => {
+describe("Sprint 4D.2/4D.3 — UTF-8 Byte Bounds & Streaming Range Reads (T-6208 .. T-6218, T-6305 .. T-6308)", () => {
   // -------------------------------------------------------------------------
   // T-6208 / T-6210: truncateUtf8ToBytes with ASCII, Accented, CJK, Emoji
   // -------------------------------------------------------------------------
@@ -220,9 +220,13 @@ describe("Sprint 4D.2 — UTF-8 Byte Bounds & Streaming Range Reads (T-6208 .. T
 
       // Content ends with [TRUNCATED]
       assert.ok(res.content.endsWith("[TRUNCATED]"))
-      // Raw data bytes (excluding "\n[TRUNCATED]") must be <= maxBytes
-      const rawContent = res.content.replace(/\n\[TRUNCATED\]$/, "")
-      assert.ok(Buffer.byteLength(rawContent, "utf8") <= maxBytes)
+      // T-6305 hard invariant: full content including the marker must be <= maxBytes
+      assert.ok(
+        Buffer.byteLength(res.content, "utf8") <= maxBytes,
+        `Full content including marker (${Buffer.byteLength(res.content, "utf8")} bytes) must be <= maxBytes (${maxBytes})`,
+      )
+      // returnedBytes field must match actual content bytes
+      assert.equal(res.returnedBytes, Buffer.byteLength(res.content, "utf8"))
     } finally {
       await rm(root, { recursive: true, force: true }).catch(() => {})
     }
@@ -259,4 +263,84 @@ describe("Sprint 4D.2 — UTF-8 Byte Bounds & Streaming Range Reads (T-6208 .. T
       await rm(root, { recursive: true, force: true }).catch(() => {})
     }
   })
+
+  // -------------------------------------------------------------------------
+  // T-6305: Truncation marker reserved from dataBudget — content + marker <= maxBytes
+  // -------------------------------------------------------------------------
+  test("T-6305: Truncation marker is reserved from maxBytes budget — returnedBytes <= maxBytes always", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t6305-marker-"))
+    try {
+      // 200 ASCII lines × 50 bytes = 10 000 bytes; maxBytes = 100 forces truncation
+      const line50 = "x".repeat(49) + "\n"
+      await writeFile(join(root, "test.txt"), line50.repeat(200), "utf8")
+
+      const maxBytes = 100
+      const res = await readRepositoryFile(root, "test.txt", { startLine: 1, endLine: 200, maxBytes })
+
+      assert.equal(res.truncated, true)
+      // HARD INVARIANT: data + marker must fit inside maxBytes
+      const contentBytes = Buffer.byteLength(res.content, "utf8")
+      assert.ok(
+        contentBytes <= maxBytes,
+        `returnedBytes (${contentBytes}) must be <= maxBytes (${maxBytes})`,
+      )
+      assert.equal(res.returnedBytes, contentBytes)
+      assert.equal(hasIsolatedSurrogate(res.content), false)
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // T-6306 / T-6307: Tiny maxBytes below marker size (< 12 bytes)
+  // -------------------------------------------------------------------------
+  test("T-6306/T-6307: Tiny maxBytes below truncation-marker size does not exceed budget", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t6307-tiny-"))
+    try {
+      await writeFile(join(root, "tiny.txt"), "hello world\nsecond line\n", "utf8")
+
+      // TRUNCATION_MARKER_BYTES = 12; test budgets smaller than that
+      for (const maxBytes of [1, 5, 11]) {
+        const res = await readRepositoryFile(root, "tiny.txt", { startLine: 1, endLine: 2, maxBytes })
+        const contentBytes = Buffer.byteLength(res.content, "utf8")
+        assert.ok(
+          contentBytes <= maxBytes,
+          `Tiny budget ${maxBytes}: content (${contentBytes} bytes) must be <= ${maxBytes}`,
+        )
+        assert.equal(hasIsolatedSurrogate(res.content), false)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // T-6308: Unicode content + truncation marker within maxBytes — no surrogates
+  // -------------------------------------------------------------------------
+  test("T-6308: Unicode + truncation marker boundary — returnedBytes <= maxBytes, no isolated surrogates", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t6308-unicode-"))
+    try {
+      // Mix emoji (4 bytes), CJK (3 bytes), accented (2 bytes) per character
+      const mixedLine = "🚀".repeat(15) + "你好世界".repeat(10) + "café".repeat(8)
+      await writeFile(join(root, "unicode.txt"), (mixedLine + "\n").repeat(60), "utf8")
+
+      const maxBytes = 500
+      const res = await readRepositoryFile(root, "unicode.txt", { startLine: 1, endLine: 50, maxBytes })
+
+      const contentBytes = Buffer.byteLength(res.content, "utf8")
+      assert.ok(
+        contentBytes <= maxBytes,
+        `Unicode content (${contentBytes} bytes) must be <= maxBytes (${maxBytes})`,
+      )
+      assert.equal(hasIsolatedSurrogate(res.content), false, "No isolated surrogates at truncation boundary")
+      assert.equal(res.content.includes("\uFFFD"), false, "No replacement characters")
+      assert.equal(res.returnedBytes, contentBytes)
+      if (res.truncated) {
+        assert.ok(res.content.endsWith("[TRUNCATED]"))
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {})
+    }
+  })
 })
+
