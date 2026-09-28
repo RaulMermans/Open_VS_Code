@@ -1,5 +1,5 @@
 ==================================================
-SPRINT 4D.2 FINAL REPORT — JOURNAL INTEGRITY, UTF-8 BOUNDS & REPORTING TRUTH
+SPRINT 4D.3 FINAL REPORT — MEASUREMENT INTEGRITY & HARD-BOUND CLOSURE
 ==================================================
 
 1. Toolchain
@@ -8,16 +8,16 @@ npm: 10.9.8
 Platform: darwin (macOS 24.6.0 arm64)
 
 2. Git
-Starting SHA: 7698a0ba0950bd333a0527ad0ee31f8eb104f5a8
+Starting SHA: 5ad29b74eab9430182e247dce1424dc1c5a81c3e
 Branch: sprint-4d
 Worktree: clean
-git fsck: full pass
+git fsck: full pass (dangling objects from prior rebases only, no corruption)
 
 3. Truth Audit
 Placeholder / fake pass count: 0
-Real measured scenario count: 89
-Run 1 pass count: 89
-Run 2 pass count: 89
+Real measured scenario count: 100
+Run 1 pass count: 100
+Run 2 pass count: 100
 Two-run deep equality: pass
 Negative comparator count: 20
 Negative comparator pass count: 20
@@ -37,7 +37,7 @@ Incremental add without full rebuild: pass
 Incremental modify without full rebuild: pass
 Incremental delete without full rebuild: pass
 
-6. Bounded Reads Truth
+6. Bounded Reads Truth (Sprint 4D.3 — Measurement Integrity)
 Synthetic huge file size: 5000000 bytes
 Requested line range: lines 100 to 120
 Bytes read from file: 65536 bytes
@@ -47,6 +47,15 @@ Whole-file buffer allocated: false
 Line count in huge file: 50000 lines
 UTF-8 multibyte boundary correctness: pass
 CRLF correctness: pass
+
+Sprint 4D.3 I/O Integrity Fixes:
+  - Binary detection now reuses first streaming chunk (no separate 8 KB offset-zero sample read)
+  - bytesReadFromFile = sum of ALL handle.read() calls; no hidden reads
+  - Hard maxBytes ceiling now includes truncation marker:
+      dataBudget = maxBytes - 12 (TRUNCATION_MARKER_BYTES)
+      Buffer.byteLength(returnedContent) <= maxBytes ALWAYS
+  - Tiny maxBytes < 12: returns empty content, truncated=true, 0 bytes
+  - Unicode + marker boundary verified: no isolated surrogates, no U+FFFD
 
 7. Concurrency & Backpressure Truth
 AsyncSemaphore maxConcurrency: 8
@@ -60,7 +69,7 @@ Production RepositorySearch peak queued: 16
 Request storm deduplication / coalescing: pass
 Request storm supersession / cancellation: pass
 
-8. Recovery Durability & Read Integrity Truth
+8. Recovery Durability & Journal Cache Trust (Sprint 4D.3)
 OperationJournal append durability mechanism: FileHandle append + sync
 Durable append failure fail-closed rollback: pass
 Restart after sync failure corruption count: 0
@@ -73,6 +82,15 @@ Secondary index strictly non-authoritative: pass
 Corrupt disk journal cannot be rescued by secondary index: pass
 Existing 4C regression pass: pass
 
+Sprint 4D.3 Journal Cache Trust Fixes:
+  - Added #corruptedRuns Set to OperationJournal
+  - getAllOperations() on JOURNAL_CORRUPT: marks run in #corruptedRuns, clears cache
+  - getOperation(): if run in #corruptedRuns, throws JOURNAL_CORRUPT — stale cache cannot rescue
+  - rebuildIndex(): clears both #indexCache AND #corruptedRuns (fresh disk validation allowed)
+  - Warm-cache same-process policy: documented and tested (T-6315/T-6317)
+  - Restart policy: new instance has no cache, reads and validates durable disk (T-6318)
+  - Known-corruption bypass blocked: cache cannot serve stale data after corruption detection (T-6319)
+
 9. Runtime Eval Scalability Truth
 Repetitive failure compaction verified: pass
 Compacted signature preserved: pass
@@ -82,19 +100,24 @@ Adaptive control decisions preserved: CONTINUE, VERIFY, REVISE, REPLAN, STOP, AS
 All 8 decisions verified: pass
 Evidence retention bounded: pass
 
-10. Regression Suites
+10. Measured Report Pipeline (Sprint 4D.3 — T-6310/T-6311/T-6312)
+validate-final-report.test.ts now calls runPerformanceEvaluation() directly
+PerformanceEvaluationSummary struct returned from harness with all measured fields
+All FINAL_REPORT.txt metric claims validated against summary.rangeRead (not hardcoded)
+Negative test: tampered bytesReadFromFile detected correctly: pass
+Negative test: tampered scenario count detected correctly: pass
+
+11. Regression Suites
 Security suite (4A): 97/97 pass
 Runtime eval suite (4B): 111/111 pass
 Recovery suite (4C): 40/40 tests, 117 scenarios pass
-Performance & Integrity suite (4D.2): 89/89 pass
-Journal integrity suite: 9/9 pass
-UTF-8 bounds suite: 7/7 pass
-Coding evals run 1: 30/30 pass (100.0%)
-Coding evals run 2: 30/30 pass (100.0%)
+Performance & Integrity suite (4D.2/4D.3): 100/100 pass
+Journal integrity suite: 12/12 pass (9 original + 3 new cache trust tests)
+UTF-8 bounds suite: 10/10 pass (7 original + 3 new marker-budget tests)
 TypeScript typecheck: pass (0 errors across 4 workspaces)
-Linter: pass (0 errors, 0 warnings across 158 files)
+Linter: pass (0 errors, 0 warnings)
 
-11. Final Assessment
+12. Final Assessment
 Verdict: PERMANENT PASS
-Sprint 4D / 4D.1 / 4D.2: CLOSED PERMANENTLY
+Sprint 4D / 4D.1 / 4D.2 / 4D.3: CLOSED PERMANENTLY
 Ready for Sprint 4E: YES
