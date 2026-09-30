@@ -14,7 +14,9 @@ import type {
 } from "../contracts/agent.ts"
 import type { CompiledContext, ContextBudget, ContextItem, ConversationTurn } from "../contracts/context.ts"
 import type { ModelProvider, ModelRequest } from "../contracts/model.ts"
-import type { ModelRouteHint } from "../contracts/routing.ts"
+import type { ModelRouteHint, TaskClass } from "../contracts/routing.ts"
+import { deriveTaskClass } from "../model/route-requirements.ts"
+import type { ModelPerformanceLedger } from "../model/performance-ledger.ts"
 import type { ToolCall, ToolPermission } from "../contracts/tools.ts"
 import { classifyPermission } from "../tools/permissions.ts"
 import { type PreparedToolCall, ToolRegistry, ToolRegistryError } from "../tools/registry.ts"
@@ -69,6 +71,7 @@ export interface AgentRunnerDependencies {
   readonly runtimeEvals?: boolean
   readonly adaptiveInterventions?: boolean
   readonly checkpointCoordinator?: CheckpointCoordinator
+  readonly performanceLedger?: ModelPerformanceLedger
 }
 
 interface PendingConfirmation {
@@ -105,6 +108,8 @@ interface Session {
   pendingModelEvalId?: string | undefined
   consecutiveContextRequests?: number | undefined
   lastDeploymentId?: string | undefined
+  startTime?: number | undefined
+  performanceOutcomeRecorded?: boolean | undefined
 }
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
@@ -163,6 +168,7 @@ export class AgentRunner {
   readonly #runtimeEvals: boolean
   readonly #adaptiveInterventions: boolean
   readonly #checkpointCoordinator?: CheckpointCoordinator | undefined
+  readonly #performanceLedger?: ModelPerformanceLedger | undefined
   #session?: Session | undefined
 
   constructor(dependencies: AgentRunnerDependencies) {
@@ -183,6 +189,7 @@ export class AgentRunner {
     this.#runtimeEvals = dependencies.runtimeEvals ?? true
     this.#adaptiveInterventions = dependencies.adaptiveInterventions ?? true
     this.#checkpointCoordinator = dependencies.checkpointCoordinator
+    this.#performanceLedger = dependencies.performanceLedger
     if (!Number.isInteger(this.#nonProgressThreshold) || this.#nonProgressThreshold < 2) {
       throw new AgentRunnerError("INVALID_INPUT", "nonProgressThreshold must be an integer of at least 2")
     }
@@ -224,6 +231,7 @@ export class AgentRunner {
       diagnostics: [],
       toolCalls: [],
       repeatedProgress: 0,
+      startTime: Date.now(),
     }
     this.#emit("task.started", { task: input.task })
     if (this.#checkpointCoordinator) {
@@ -2097,6 +2105,23 @@ export class AgentRunner {
 
   #result(): AgentResult {
     const session = this.#requiredSession()
+    if (this.#performanceLedger && session.lastDeploymentId && !session.performanceOutcomeRecorded) {
+      session.performanceOutcomeRecorded = true
+      const isCompleted = session.state.status === "COMPLETED"
+      const verificationSuccess = isCompleted || session.evalResults.some(r => r.checkpoint === "VERIFICATION_RESULT" && r.scores.verificationCoverage > 0.5)
+      const toolCallSuccess = session.toolCalls.length === 0 || !session.toolCalls.some(t => t.outcome === "REJECTED" || t.outcome === "DENIED")
+      this.#performanceLedger.recordAgentOutcome({
+        deploymentId: session.lastDeploymentId,
+        taskClass: deriveTaskClass(session.input.task.mode),
+        success: isCompleted,
+        verificationSuccess,
+        toolCallSuccess,
+        repairCycles: session.toolCalls.filter(t => t.name === "run_known_test" && t.outcome !== "COMPLETED").length,
+        timeoutOccurred: session.failureReason === "MODEL_ERROR",
+        cancellationOccurred: session.state.status === "CANCELLED",
+        latencyMs: session.startTime ? Date.now() - session.startTime : 0,
+      })
+    }
     const status = session.state.status === "WAITING_FOR_CONFIRMATION"
       ? "PAUSED"
       : session.state.status as AgentResult["status"]

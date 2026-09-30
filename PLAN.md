@@ -259,5 +259,18 @@ Sprint 4D.3 — Measurement Integrity & Hard-Bound Closure ✅ CLOSED PERMANENTL
   - Full Monorepo Regressions Clean: Verified under Node v22.23.2. All unit and E2E tests pass; 0 TypeScript errors, 0 linter errors, clean build. Journal integrity suite: 12/12 (9 + 3 new), UTF-8 bounds suite: 10/10 (7 + 3 new).
   - Sprint 4D / 4D.1 / 4D.2 / 4D.3 are PERMANENTLY CLOSED.
 
+Sprint 4E — Real OSS Models, Production FIM & Evidence-Driven Routing ✅ CLOSED
+  - Designated Target-Host Safety Gate (T-7000, T-7001): Implemented `InferenceGate` (`src/model/inference-gate.ts`) requiring explicit operator authorization via `OPEN_VS_CODE_REAL_INFERENCE=1`. Default is strictly DISABLED. In un-gated development environments, real-model benchmarks exit safely with `BLOCKED_WITH_EVIDENCE` without faking numbers or making unauthorized network calls.
+  - Model Download Policy & Git Ignore Protection (T-7002): Verified and enforced strict policy against automated model weight downloads. Updated `.gitignore` to prevent weights (`*.gguf`, `*.safetensors`, `*.ggml`, `*.bin`, `*.pt`, `*.pth`) or runtime caches (`.ollama/`, `.huggingface/`, etc.) from ever entering git.
+  - Production FIM Provider (T-7003, T-7004): Implemented `LocalFimProvider` (`src/autocomplete/local-fim-provider.ts`) adhering to `AutocompleteProvider` interface. Supports provider-isolated FIM strategies (`qwen`, `starcoder`, `deepseek`, `prefix-suffix-middle`, `raw-prefix`), stop-token stripping, `AbortSignal` cancellation, bounded `maxOutputTokens`, and OpenAI-compatible `/v1/completions` interaction without cloud fallbacks.
+  - Bounded Model Performance Ledger (T-7005, T-7006, T-7007): Implemented `ModelPerformanceLedger` (`src/model/performance-ledger.ts`) storing bounded aggregate outcome profiles (EMA latency, success rates, repair cycles, timeouts) keyed by deployment ID and task class. Privacy-preserving: zero prompt bodies, terminal contents, or source code are stored. Supports safe JSON persistence with corruption recovery and bounded hysteresis-protected score adjustments ([-0.5, +0.5]).
+  - Endpoint Health Checker (T-7008): Implemented `EndpointHealthChecker` (`src/model/endpoint-health.ts`) probing local `/v1/models` endpoints with bounded probe timeouts and TTL-based caching to prevent health storms.
+  - Router & Gateway Integration (T-7009, T-7010): Integrated `ModelPerformanceLedger` into `ModelRouter`, `RoutedModelGateway`, `AutocompleteGateway`, `AutocompleteService`, and `AgentRunner` so runtime outcomes feed the ledger and adaptively adjust routing among security- and capability-eligible local candidates.
+  - Real Model Benchmark Harness & Gated CLI (T-7011, T-7012): Created `real-model-benchmark.ts` and updated `run-benchmark-cli.ts` (`npm run eval:models`). Gated by `InferenceGate`; provides 10 agent coding tasks and 8 FIM fixtures with structured JSON artifacts and hardware provenance.
+  - Deterministic Model Integration Suite (T-7013): Created 64 deterministic integration scenarios in `model-integration-eval.ts` covering FIM formatting, stop-token stripping, provider construction, mock HTTP behavior, ledger adjustments, persistence & corruption recovery, inference gate, health checks, and privacy guarantees. Verified 100% deterministic (64/64 pass, Run 1 === Run 2).
+  - Architecture Decision Record: Authored and accepted `ADR-027-real-local-models-and-adaptive-routing.md`. Updated `ARCHITECTURE.md` with Sprint 4E contracts, data flow, and invariants.
+  - Sprint 4E is CLOSED.
+
 Next:
-Sprint 4E — Real OSS Models + FIM Provider & Benchmarking → NEXT
+Sprint 4F — Code-OSS / VSCodium Desktop Packaging → NEXT
+

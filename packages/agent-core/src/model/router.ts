@@ -8,9 +8,14 @@ import type {
   ModelDeployment,
   ModelDescriptor,
 } from "../contracts/routing.ts"
+import type { ModelPerformanceLedger } from "./performance-ledger.ts"
 
 export interface HealthChecker {
   checkHealth(deploymentId: string, signal?: AbortSignal): Promise<ProviderHealthState>
+}
+
+export interface ModelRouterOptions {
+  readonly performanceLedger?: ModelPerformanceLedger | undefined
 }
 
 interface ScoredCandidate {
@@ -23,6 +28,7 @@ interface ScoredCandidate {
   isAvoided: boolean
   isPreferred: boolean
   rejectedReason?: RouteReasonCode
+  performanceAdjustment?: number
 }
 
 const candidateSorter = (a: ScoredCandidate, b: ScoredCandidate) => {
@@ -54,10 +60,12 @@ export class RouteUnavailableError extends Error {
 
 export class ModelRouter {
   readonly #config: RoutingConfiguration
+  readonly #performanceLedger?: ModelPerformanceLedger | undefined
 
-  constructor(config: RoutingConfiguration) {
+  constructor(config: RoutingConfiguration, options?: ModelRouterOptions) {
     this.#validateConfig(config)
     this.#config = config
+    this.#performanceLedger = options?.performanceLedger
   }
 
   #validateConfig(config: RoutingConfiguration) {
@@ -182,6 +190,22 @@ export class ModelRouter {
       throw new RouteUnavailableError("ROUTE_UNAVAILABLE: No compatible healthy deployment found in the permitted fallback chain", rejected)
     }
 
+    // Apply performance ledger adjustments if available and active
+    if (this.#performanceLedger && this.#performanceLedger.adaptiveRoutingActive) {
+      const adjustments = this.#performanceLedger.getRoutingAdjustments(
+        eligible.map(c => c.deployment.id),
+        requirements.taskClass,
+      )
+      const adjustmentMap = new Map(adjustments.map(a => [a.deploymentId, a.adjustment]))
+      for (const candidate of eligible) {
+        const adj = adjustmentMap.get(candidate.deployment.id)
+        if (adj !== undefined) {
+          candidate.priority += adj
+          candidate.performanceAdjustment = adj
+        }
+      }
+    }
+
     // Sort: specializationScore (desc) > priority (desc) > stable ID tie-break (asc)
     eligible.sort(candidateSorter)
 
@@ -204,6 +228,9 @@ export class ModelRouter {
     if (requirements.hint?.avoidDeploymentId && eligible.some(c => c.isAvoided && c.deployment.id !== selected.deployment.id)) {
       reasons.push("hint_avoided")
     }
+    if (selected.performanceAdjustment !== undefined && Math.abs(selected.performanceAdjustment) > 0) {
+      reasons.push(selected.performanceAdjustment > 0 ? "performance_score" : "performance_penalty")
+    }
 
     return {
       deploymentId: selected.deployment.id,
@@ -215,7 +242,8 @@ export class ModelRouter {
       fallbackLevel: Math.max(0, fallbackLevel),
       requiredContext: requirements.requiredContextWindow,
       selectedContext: selected.effectiveContext,
-      healthState: selected.health
+      healthState: selected.health,
+      ...(selected.performanceAdjustment !== undefined ? { performanceAdjustment: selected.performanceAdjustment } : {}),
     }
   }
 }

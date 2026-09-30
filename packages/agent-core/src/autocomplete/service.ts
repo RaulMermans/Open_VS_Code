@@ -22,6 +22,7 @@
 
 import type { AutocompleteRequest } from "./contracts.ts"
 import type { AutocompleteGateway } from "./gateway.ts"
+import type { ModelPerformanceLedger } from "../model/performance-ledger.ts"
 import { buildAutocompleteContext, type EditorSnapshot } from "./context-builder.ts"
 import { sanitizeCompletion } from "./sanitizer.ts"
 import {
@@ -108,6 +109,7 @@ function emptyTelemetry(): AutocompleteTelemetry {
 interface AcceptanceEntry {
   readonly requestId: string
   readonly generatedChars: number
+  readonly deploymentId: string
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +132,7 @@ export interface AutocompleteServiceOptions {
   readonly debounceMs?: number
   readonly timeoutMs?: number
   readonly scheduler?: AutocompleteScheduler
+  readonly performanceLedger?: ModelPerformanceLedger | undefined
 }
 
 export class AutocompleteService {
@@ -137,6 +140,7 @@ export class AutocompleteService {
   readonly #debounceMs: number
   readonly #timeoutMs: number
   readonly #scheduler: AutocompleteScheduler
+  readonly #performanceLedger?: ModelPerformanceLedger | undefined
 
   // Session telemetry (aggregated, no source text)
   readonly #telemetry: AutocompleteTelemetry = emptyTelemetry()
@@ -170,6 +174,7 @@ export class AutocompleteService {
     this.#debounceMs = options.debounceMs ?? 100
     this.#timeoutMs = options.timeoutMs ?? INFERENCE_TIMEOUT_MS
     this.#scheduler = options.scheduler ?? realScheduler
+    this.#performanceLedger = options.performanceLedger
   }
 
   get enabled(): boolean { return this.#enabled }
@@ -321,7 +326,17 @@ export class AutocompleteService {
           this.#telemetry.generatedChars += sanitized.length
 
           // Register in acceptance registry
-          this.#registerAcceptance(requestId, sanitized.length)
+          this.#registerAcceptance(requestId, sanitized.length, response.deploymentId)
+
+          this.#performanceLedger?.recordAutocompleteOutcome({
+            deploymentId: response.deploymentId,
+            shown: true,
+            accepted: false,
+            staleDiscarded: false,
+            emptyCompletion: false,
+            cancelled: false,
+            latencyMs: 0,
+          })
 
           resolve({
             requestId,
@@ -391,6 +406,15 @@ export class AutocompleteService {
     this.#acceptanceRegistry.splice(entryIndex, 1)
     this.#telemetry.accepted++
     this.#telemetry.acceptedChars += entry.generatedChars
+    this.#performanceLedger?.recordAutocompleteOutcome({
+      deploymentId: entry.deploymentId,
+      shown: true,
+      accepted: true,
+      staleDiscarded: false,
+      emptyCompletion: false,
+      cancelled: false,
+      latencyMs: 0,
+    })
   }
 
   /**
@@ -475,12 +499,12 @@ export class AutocompleteService {
     return false
   }
 
-  #registerAcceptance(requestId: string, chars: number): void {
+  #registerAcceptance(requestId: string, chars: number, deploymentId: string): void {
     // Bounded registry
     if (this.#acceptanceRegistry.length >= MAX_ACCEPTANCE_REGISTRY_SIZE) {
       this.#acceptanceRegistry.shift()
     }
-    this.#acceptanceRegistry.push({ requestId, generatedChars: chars })
+    this.#acceptanceRegistry.push({ requestId, generatedChars: chars, deploymentId })
   }
 }
 

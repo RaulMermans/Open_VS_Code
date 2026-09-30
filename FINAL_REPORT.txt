@@ -117,7 +117,82 @@ UTF-8 bounds suite: 10/10 pass (7 original + 3 new marker-budget tests)
 TypeScript typecheck: pass (0 errors across 4 workspaces)
 Linter: pass (0 errors, 0 warnings)
 
-12. Final Assessment
+12. Final Assessment (Sprint 4D.3)
 Verdict: PERMANENT PASS
 Sprint 4D / 4D.1 / 4D.2 / 4D.3: CLOSED PERMANENTLY
-Ready for Sprint 4E: YES
+
+==================================================
+SPRINT 4E FINAL REPORT — REAL LOCAL OSS MODELS, PRODUCTION FIM & EVIDENCE-DRIVEN ROUTING
+==================================================
+
+1. Target-Host Safety Gate & Download Policy
+- Gating mechanism: InferenceGate (src/model/inference-gate.ts)
+- Environment variable: OPEN_VS_CODE_REAL_INFERENCE=1
+- Default state: strictly DISABLED
+- Un-gated execution behavior: BLOCKED_WITH_EVIDENCE (exit 0)
+- Model download policy: strictly NO automated downloads by application
+- Git ignore protections: *.gguf, *.safetensors, *.ggml, *.bin, *.pt, *.pth, .ollama/, .huggingface/
+- Cloud fallback policy: strictly NO cloud fallbacks (no OpenAI, Anthropic, Gemini APIs)
+
+2. Production FIM Provider
+- Adapter: LocalFimProvider (src/autocomplete/local-fim-provider.ts)
+- Protocol: OpenAI-compatible /v1/completions (not /v1/chat/completions)
+- FIM strategies supported:
+    * qwen: <|fim_prefix|>, <|fim_suffix|>, <|fim_middle|>
+    * starcoder: <fim_prefix>, <fim_suffix>, <fim_middle>
+    * deepseek: <｜fim▁begin｜>, <｜fim▁hole｜>, <｜fim▁end｜>
+    * prefix-suffix-middle: <PRE>, <SUF>, <MID>
+    * raw-prefix: prefix-only fallback
+- Provider-isolated token stripping: stop-tokens removed before returning to editor
+- Cancellation: AbortSignal propagated directly with immediate abort check
+- Output bounds: maxOutputTokens enforced in request payload
+
+3. Bounded Model Performance Ledger
+- Store: ModelPerformanceLedger (src/model/performance-ledger.ts)
+- Keys: deploymentId x taskClass
+- Privacy guarantees: zero source code, prompt bodies, or terminal contents stored; metrics only
+- Metrics recorded: sampleCount, successCount, failureCount, verificationSuccessCount, toolCallSuccessCount, totalRepairCycles, timeoutCount, cancellationCount, emaLatencyMs (alpha=0.2)
+- Bounded storage: maxProfiles cap (default 50) with oldest-profile eviction
+- Persistence: atomic JSON store with schema versioning and safe corruption recovery
+- Adaptive routing: bounded adjustments [-0.5, +0.5] applied only after minimumSamples (5) with hysteresis threshold (0.1)
+
+4. Endpoint Health Checker
+- Prober: EndpointHealthChecker (src/model/endpoint-health.ts)
+- Probing method: cheap GET /v1/models (no inference tokens generated)
+- Caching: TTL-based (default 30s) to eliminate probe storms
+- State mapping: 200 -> ready, 5xx -> unavailable, 4xx -> degraded, unconfigured -> unknown
+
+5. Real Model Benchmark Harness
+- Harness: real-model-benchmark.ts (tests/evals/real-model-benchmark.ts)
+- Entry point: npm run eval:models / tests/evals/run-benchmark-cli.ts
+- Safety: gated by InferenceGate; outputs BLOCKED_WITH_EVIDENCE when unauthorized
+- Workload suite: 10 agent coding tasks + 8 FIM completion fixtures
+- Metadata captured: Git SHA, hardware specs, OS, Node version, provider runtime, model IDs
+
+6. Deterministic Integration Evaluation
+- Scenarios: 64 deterministic scenarios in model-integration-eval.ts
+- Categories covered:
+    * fim_formatting (10 scenarios)
+    * fim_stop_tokens (7 scenarios)
+    * fim_provider (4 scenarios)
+    * fim_http (5 scenarios)
+    * fim_cancellation (1 scenario)
+    * ledger (10 scenarios)
+    * ledger_persistence (4 scenarios)
+    * ledger_privacy (1 scenario)
+    * inference_gate (3 scenarios)
+    * health (6 scenarios)
+    * no_cloud_fallback (3 scenarios)
+    * autocomplete_context (6 scenarios)
+    * provider_safety (3 scenarios)
+- Two-run determinism: 64/64 passed, Run 1 === Run 2, 0 failures
+
+7. Architecture Documentation
+- ADR: ADR-027 (docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) Accepted
+- Architecture: ARCHITECTURE.md updated with Sprint 4E contracts and dataflows
+
+8. Final Assessment (Sprint 4E)
+Verdict: PASS
+Sprint 4E: CLOSED
+Ready for Sprint 4F (Code-OSS / VSCodium Desktop Packaging): YES
+
