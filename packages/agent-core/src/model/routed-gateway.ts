@@ -2,6 +2,7 @@ import type { ModelProvider, ModelRequest, ModelResponse, ModelCapability } from
 import type { RouteDecision, RoutingConfiguration, ProviderHealthState, ModelRouteHint } from "../contracts/routing.ts"
 import type { ContextBudget } from "../contracts/context.ts"
 import type { AgentMode } from "../contracts/agent.ts"
+import type { ModelPerformanceLedger } from "./performance-ledger.ts"
 import { ModelRouter, type HealthChecker } from "./router.ts"
 import { buildModelRouteRequirements, type RouteRequirementsInput } from "./route-requirements.ts"
 
@@ -68,6 +69,7 @@ export interface RoutedGatewayOptions {
   readonly config: RoutingConfiguration
   readonly providers: ProviderRegistry
   readonly healthChecker?: HealthChecker
+  readonly performanceLedger?: ModelPerformanceLedger | undefined
   readonly mode: AgentMode
   readonly hasTools: boolean
   readonly hasStructuredOutput: boolean
@@ -96,6 +98,7 @@ export class RoutedModelGateway implements ModelProvider {
   readonly #router: ModelRouter
   readonly #providers: ProviderRegistry
   readonly #healthChecker: HealthChecker
+  readonly #performanceLedger?: ModelPerformanceLedger | undefined
   readonly #mode: AgentMode
   readonly #hasTools: boolean
   readonly #hasStructuredOutput: boolean
@@ -105,9 +108,13 @@ export class RoutedModelGateway implements ModelProvider {
   #lastDiagnostics?: RouteDiagnostics
 
   constructor(options: RoutedGatewayOptions) {
-    this.#router = new ModelRouter(options.config)
+    this.#router = new ModelRouter(
+      options.config,
+      options.performanceLedger ? { performanceLedger: options.performanceLedger } : undefined,
+    )
     this.#providers = options.providers
     this.#healthChecker = options.healthChecker ?? new StaticHealthChecker()
+    this.#performanceLedger = options.performanceLedger
     this.#mode = options.mode
     this.#hasTools = options.hasTools
     this.#hasStructuredOutput = options.hasStructuredOutput
@@ -125,6 +132,7 @@ export class RoutedModelGateway implements ModelProvider {
 
   get lastDecision(): RouteDecision | undefined { return this.#lastDecision }
   get lastDiagnostics(): RouteDiagnostics | undefined { return this.#lastDiagnostics }
+  get performanceLedger(): ModelPerformanceLedger | undefined { return this.#performanceLedger }
 
   async complete(request: ModelRequest): Promise<ModelResponse> {
     // Step 1: Estimate input tokens from request

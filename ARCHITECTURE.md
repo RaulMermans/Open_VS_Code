@@ -495,3 +495,33 @@ Bounded Durable Recovery (OperationJournal FileHandle.sync() append + fail-close
 - **Bounded Presentation Limits**: Diff generation and terminal review streams adhere strictly to byte ceilings (16 KB buffer with clean UTF-8 truncation boundaries), preventing unbounded memory retention.
 - **Concurrency & Cancellation**: Operations throttle fan-out with `AsyncSemaphore` and halt cleanly upon `AbortSignal` triggering without orphaned background workers.
 See [ADR-026](docs/adrs/ADR-026-large-repository-performance.md) for full architectural specification.
+
+## Real OSS Models, Production FIM & Evidence-Driven Routing (Sprint 4E ✅ CLOSED PERMANENTLY)
+
+```text
+USER TASK / EDITOR CURSOR
+   ↓
+ModelRouter (security, context-fit, capability filtering: chat, tools, fim, autocomplete)
+   ↓
+Bounded Adaptive Score Adjustment (ModelPerformanceLedger: rolling EMA latencies, success rates, hysteresis threshold, min samples)
+   ↓
+Selected Local Model Deployment (OpenAI-compatible local endpoint or LocalFimProvider)
+   ↓
+Local Self-Hosted Inference Runtime (Ollama / vLLM / llama.cpp server; gated by OPEN_VS_CODE_REAL_INFERENCE=1)
+   ↓
+Agent Runtime / Autocomplete Service (ghost text display, accept / reject, tool calls, verifications)
+   ↓
+Runtime Eval Feedback (continuous runtime eval checkpoints + autocomplete lifecycle outcomes)
+   ↓
+ModelPerformanceLedger Persistence (.open-vs-code/model-performance.json, bounded, metrics-only, zero source code)
+   ↓
+Future Routing Improves (evidence-driven priority adjustments, bounded ±maxAdjustment, anti-flapping hysteresis)
+```
+
+- **Inference Host Authorization Gate (`InferenceGate`)**: Real local inference is strictly gated behind `OPEN_VS_CODE_REAL_INFERENCE=1`. The application never infers authorization from local processes or GPU availability, never auto-downloads weights (`*.gguf`, `*.safetensors` protected in `.gitignore`), and cleanly yields `BLOCKED_WITH_EVIDENCE` when the designated inference host is unavailable.
+- **Production FIM Provider (`LocalFimProvider`)**: Speaks `POST /v1/completions` directly to self-hosted models with provider-isolated token formatting strategies (`qwen`, `starcoder`, `deepseek`, `prefix-suffix-middle`, `raw-prefix`). Strips model-specific stop tokens, enforces `maxOutputTokens`, propagates `AbortSignal`, and isolates all FIM token syntax inside the adapter.
+- **Bounded Model Performance Ledger (`ModelPerformanceLedger`)**: Tracks per-deployment, per-task-class metrics (`sampleCount`, `successCount`, `failureCount`, `verificationSuccessCount`, `toolCallSuccessCount`, `totalRepairCycles`, `timeoutCount`, `cancellationCount`, `emaLatencyMs`, and autocomplete shown/accepted/cancelled/empty/stale counts). Never stores source code, completions, prompts, or secrets. Bounded by `maxProfiles` with safe corruption recovery.
+- **Evidence-Driven Adaptive Routing**: `ModelRouter` integrates with `ModelPerformanceLedger` to apply bounded routing adjustments (`±maxAdjustment`) with hysteresis (`hysteresisThreshold`) and a sample floor (`minimumSamples`). Reverts strictly to static configured priority when disabled or below threshold.
+- **Two Separate Evaluation Paths**: Deterministic CI integration suite (`runModelIntegrationEvaluation()`, 64 scenarios, no models required, part of `npm test`) vs. real local model benchmarking (`runRealModelBenchmark()`, gated, invoked exclusively via `npm run eval:models`).
+See [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) for full architectural specification.
+

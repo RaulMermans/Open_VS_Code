@@ -71,6 +71,8 @@ export type RouteReasonCode =
   | "health_unknown"
   | "hint_preferred"
   | "hint_avoided"
+  | "performance_score"
+  | "performance_penalty"
 
 export interface RejectedCandidate {
   readonly deploymentId: string
@@ -88,6 +90,7 @@ export interface RouteDecision {
   readonly requiredContext: number
   readonly selectedContext: number
   readonly healthState: ProviderHealthState
+  readonly performanceAdjustment?: number
 }
 
 export type ProviderHealthState = "unknown" | "ready" | "unavailable" | "degraded"

@@ -26,6 +26,7 @@
 
 import type { AutocompleteRequest, AutocompleteResponse, AutocompleteProvider } from "./contracts.ts"
 import type { RoutingConfiguration } from "../contracts/routing.ts"
+import type { ModelPerformanceLedger } from "../model/performance-ledger.ts"
 import { ModelRouter, RouteUnavailableError, type HealthChecker } from "../model/router.ts"
 import { StaticHealthChecker } from "../model/routed-gateway.ts"
 import { MAX_OUTPUT_TOKENS, estimateTokensFromChars } from "./budget.ts"
@@ -38,6 +39,7 @@ export interface AutocompleteGatewayOptions {
   readonly config: RoutingConfiguration
   readonly providers: AutocompleteProviderRegistry
   readonly healthChecker?: HealthChecker
+  readonly performanceLedger?: ModelPerformanceLedger | undefined
 }
 
 /**
@@ -51,11 +53,20 @@ export class AutocompleteGateway {
   readonly #router: ModelRouter
   readonly #providers: AutocompleteProviderRegistry
   readonly #healthChecker: HealthChecker
+  readonly #performanceLedger?: ModelPerformanceLedger | undefined
 
   constructor(options: AutocompleteGatewayOptions) {
-    this.#router = new ModelRouter(options.config)
+    this.#router = new ModelRouter(
+      options.config,
+      options.performanceLedger ? { performanceLedger: options.performanceLedger } : undefined,
+    )
     this.#providers = options.providers
     this.#healthChecker = options.healthChecker ?? new StaticHealthChecker()
+    this.#performanceLedger = options.performanceLedger
+  }
+
+  get performanceLedger(): ModelPerformanceLedger | undefined {
+    return this.#performanceLedger
   }
 
   /**
@@ -129,6 +140,7 @@ const EMPTY_ROUTING_CONFIG: RoutingConfiguration = {
 export function createProductionAutocompleteGateway(
   workspaceRoot?: string,
   customProviders?: AutocompleteProviderRegistry,
+  performanceLedger?: ModelPerformanceLedger,
 ): AutocompleteGateway {
   let config: RoutingConfiguration = EMPTY_ROUTING_CONFIG
   if (workspaceRoot) {
@@ -150,5 +162,6 @@ export function createProductionAutocompleteGateway(
   return new AutocompleteGateway({
     config,
     providers,
+    ...(performanceLedger ? { performanceLedger } : {}),
   })
 }

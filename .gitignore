@@ -34,3 +34,23 @@ packages/agent-core/.eval-tmp/
 
 # Local Memory
 .open-vs-code/
+
+# Model weights — NEVER commit
+*.gguf
+*.safetensors
+*.ggml
+*.bin
+*.pt
+*.pth
+# Provider / inference runtime caches
+.ollama/
+.huggingface/
+.cache/huggingface/
+vllm-cache/
+llama.cpp/models/
+# Benchmark artifacts (raw completions excluded)
+benchmark-results/
+!benchmark-results/*.json
+!benchmark-results/*.md
+# Inference host performance profiles
+.model-profiles/
