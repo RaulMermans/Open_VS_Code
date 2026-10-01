@@ -10,7 +10,9 @@ import type {
   ProviderKind,
   RoutingModelCapability,
   ModelSpecialization,
+  FimStrategy,
 } from "../contracts/routing.ts"
+import { resolveCanonicalEndpoints } from "./canonical-endpoint.ts"
 
 export class ConfigValidationError extends Error {
   readonly code = "INVALID_ROUTING_CONFIG"
@@ -25,7 +27,6 @@ export class ConfigValidationError extends Error {
 
 const VALID_PROVIDER_KINDS: readonly ProviderKind[] = ["scripted", "openai_compatible_local", "fake"]
 const VALID_CAPABILITIES: readonly RoutingModelCapability[] = [
-
   "toolUse",
   "structuredOutput",
   "coding",
@@ -37,6 +38,14 @@ const VALID_CAPABILITIES: readonly RoutingModelCapability[] = [
 ]
 
 const VALID_SPECIALIZATIONS: readonly ModelSpecialization[] = ["general", "coding", "reasoning"]
+
+export const VALID_FIM_STRATEGIES: readonly FimStrategy[] = [
+  "prefix-suffix-middle",
+  "qwen",
+  "starcoder",
+  "deepseek",
+  "raw-prefix",
+]
 
 /**
  * Validate a routing configuration deterministically.
@@ -94,6 +103,11 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
       if (!VALID_SPECIALIZATIONS.includes(md.specialization as ModelSpecialization)) {
         violations.push(`Invalid specialization '${md.specialization}' in model '${md.id}'`); continue
       }
+      if (md.fimStrategy !== undefined) {
+        if (typeof md.fimStrategy !== "string" || !VALID_FIM_STRATEGIES.includes(md.fimStrategy as FimStrategy)) {
+          violations.push(`Invalid fimStrategy '${String(md.fimStrategy)}' in model '${md.id}'`)
+        }
+      }
       modelIds.add(md.id as string)
       models.push({
         id: md.id as string,
@@ -104,6 +118,7 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
         ...(md.family ? { family: md.family as string } : {}),
         ...(md.maxOutputTokens && typeof md.maxOutputTokens === "number" ? { maxOutputTokens: md.maxOutputTokens } : {}),
         ...(md.provenance ? { provenance: md.provenance as string } : {}),
+        ...(md.fimStrategy && VALID_FIM_STRATEGIES.includes(md.fimStrategy as FimStrategy) ? { fimStrategy: md.fimStrategy as FimStrategy } : {}),
       })
     }
   }
@@ -128,6 +143,18 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
       if (dd.priority !== undefined && (typeof dd.priority !== "number" || !Number.isFinite(dd.priority))) {
         violations.push(`Invalid priority in deployment '${dd.id}'`); continue
       }
+      if (dd.fimStrategy !== undefined) {
+        if (typeof dd.fimStrategy !== "string" || !VALID_FIM_STRATEGIES.includes(dd.fimStrategy as FimStrategy)) {
+          violations.push(`Invalid fimStrategy '${String(dd.fimStrategy)}' in deployment '${dd.id}'`)
+        }
+      }
+      if (typeof dd.endpoint === "string" && (dd.endpoint.startsWith("http://") || dd.endpoint.startsWith("https://"))) {
+        try {
+          resolveCanonicalEndpoints(dd.endpoint)
+        } catch (err) {
+          violations.push(`Invalid endpoint in deployment '${dd.id}': ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
       deploymentIds.add(dd.id as string)
       deployments.push({
         id: dd.id as string,
@@ -138,6 +165,7 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
         ...(dd.contextWindow ? { contextWindow: dd.contextWindow as number } : {}),
         ...(dd.priority !== undefined ? { priority: dd.priority as number } : {}),
         ...(dd.tags && Array.isArray(dd.tags) ? { tags: dd.tags as string[] } : {}),
+        ...(dd.fimStrategy && VALID_FIM_STRATEGIES.includes(dd.fimStrategy as FimStrategy) ? { fimStrategy: dd.fimStrategy as FimStrategy } : {}),
       })
     }
   }

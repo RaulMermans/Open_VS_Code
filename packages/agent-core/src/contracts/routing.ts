@@ -4,10 +4,19 @@ export interface ProviderDescriptor {
   readonly id: string
   readonly kind: ProviderKind
   readonly protocol?: string
+  readonly baseUrl?: string
+  readonly apiKey?: string
 }
 
 export type RoutingModelCapability = "toolUse" | "structuredOutput" | "coding" | "reasoning" | "longContext" | "vision" | "fim" | "autocomplete"
 export type ModelSpecialization = "general" | "coding" | "reasoning"
+
+export type FimStrategy =
+  | "prefix-suffix-middle"
+  | "qwen"
+  | "starcoder"
+  | "deepseek"
+  | "raw-prefix"
 
 export interface ModelDescriptor {
   readonly id: string
@@ -18,6 +27,7 @@ export interface ModelDescriptor {
   readonly capabilities: readonly RoutingModelCapability[]
   readonly specialization: ModelSpecialization
   readonly provenance?: string
+  readonly fimStrategy?: FimStrategy
 }
 
 export interface ModelDeployment {
@@ -29,6 +39,7 @@ export interface ModelDeployment {
   readonly contextWindow?: number
   readonly priority?: number
   readonly tags?: readonly string[]
+  readonly fimStrategy?: FimStrategy
 }
 
 export type TaskClass = "general" | "planning" | "coding" | "debugging" | "review" | "structured_generation" | "tool_using" | "autocomplete"

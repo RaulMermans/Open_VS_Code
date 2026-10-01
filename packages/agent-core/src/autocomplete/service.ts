@@ -174,7 +174,7 @@ export class AutocompleteService {
     this.#debounceMs = options.debounceMs ?? 100
     this.#timeoutMs = options.timeoutMs ?? INFERENCE_TIMEOUT_MS
     this.#scheduler = options.scheduler ?? realScheduler
-    this.#performanceLedger = options.performanceLedger
+    this.#performanceLedger = options.performanceLedger ?? options.gateway.performanceLedger
   }
 
   get enabled(): boolean { return this.#enabled }

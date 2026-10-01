@@ -179,8 +179,8 @@ All security evaluations (`packages/vscode-integration/tests/security-eval.test.
 ---
 
 ## 7. Future Work
-
-- **Sprint 4B**: Runtime evaluation loop — advisory recommendations with explicit non-authority constraint documented here
-- **Sprint 4E**: Real OSS model attack surface testing and quality benchmarking
+ 
+- **Sprint 4B**: Runtime evaluation loop — advisory recommendations with explicit non-authority constraint documented here (Completed)
+- **Sprint 4E / 4E.1**: Real OSS model attack surface testing and quality benchmarking completed (`packages/agent-core/tests/model/sprint-4e-closure-eval.test.ts` & `tests/model/model-integration-eval.test.ts`). Enforced local-first canonical endpoints, zero cloud fallback, inference authorization gate (`OPEN_VS_CODE_REAL_INFERENCE=1`), adversarial model response isolation (model output cannot escalate privileges or mutate routing policies), and privacy-preserving aggregate performance ledger.
 - **Sprint 4F**: VSCodium/Code-OSS packaging with signed distribution
 - **Sprint 4G**: V1 hardening — additional entropy for IDs, CSP `connect-src` restriction for known provider endpoints, process sandboxing exploration

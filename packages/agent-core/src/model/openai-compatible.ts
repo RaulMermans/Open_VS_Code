@@ -2,6 +2,8 @@ import type { ModelCapability, ModelProvider, ModelRequest, ModelResponse } from
 import type { ToolDefinition } from "../contracts/tools.ts"
 import { validateModelRequest } from "./provider.ts"
 import { formatWireMessages, formatWireTools, normalizeWireResponse } from "./protocol.ts"
+import { resolveCanonicalEndpoints, type CanonicalEndpoints } from "./canonical-endpoint.ts"
+import { assertInferenceAuthorized, InferenceNotAuthorizedError } from "./inference-gate.ts"
 
 export type ModelProviderErrorCode =
   | "INVALID_REQUEST"
@@ -10,6 +12,7 @@ export type ModelProviderErrorCode =
   | "TIMEOUT"
   | "CANCELLED"
   | "NETWORK_ERROR"
+  | "INFERENCE_NOT_AUTHORIZED"
 
 export class ModelProviderError extends Error {
   readonly code: ModelProviderErrorCode
@@ -33,25 +36,20 @@ export interface OpenAICompatibleProviderConfig {
   readonly fetch?: typeof fetch
 }
 
-function parseBaseUrl(value: string | URL): URL {
-  const url = new URL(value)
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new TypeError("Model base URL must use HTTP or HTTPS")
-  if (url.search || url.hash) throw new TypeError("Model base URL cannot contain a query or fragment")
-  if (!url.pathname.endsWith("/")) url.pathname += "/"
-  return url
-}
-
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly capabilities: ReadonlySet<ModelCapability>
   readonly contextWindow?: number | undefined
   readonly model: string
   readonly #endpoint: URL
+  readonly #canonical: CanonicalEndpoints
   readonly #timeoutMs: number
   readonly #headers: Readonly<Record<string, string>>
   readonly #fetch: typeof fetch
+  readonly #isCustomFetch: boolean
 
   constructor(config: OpenAICompatibleProviderConfig) {
-    this.#endpoint = new URL("chat/completions", parseBaseUrl(config.baseUrl))
+    this.#canonical = resolveCanonicalEndpoints(config.baseUrl)
+    this.#endpoint = new URL(this.#canonical.chatEndpoint)
     this.model = config.model.trim()
     if (!this.model) throw new TypeError("Model ID must not be empty")
     this.#timeoutMs = config.timeoutMs ?? 30_000
@@ -64,7 +62,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ? config.capabilities
       : new Set(config.capabilities ?? ["chat", "tools"])
     this.#headers = { ...config.headers }
+    this.#isCustomFetch = config.fetch !== undefined
     this.#fetch = config.fetch ?? globalThis.fetch
+  }
+
+  get canonicalEndpoints(): CanonicalEndpoints {
+    return this.#canonical
   }
 
   async complete(request: ModelRequest): Promise<ModelResponse> {
@@ -94,6 +97,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     let response: Response
     try {
+      assertInferenceAuthorized(this.#isCustomFetch)
       response = await this.#fetch(this.#endpoint, {
         method: "POST",
         headers: { "content-type": "application/json", ...this.#headers },
@@ -101,6 +105,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
         signal,
       })
     } catch (error) {
+      if (error instanceof InferenceNotAuthorizedError) {
+        throw new ModelProviderError("INFERENCE_NOT_AUTHORIZED", error.message, undefined, { cause: error })
+      }
       if (request.signal?.aborted) throw new ModelProviderError("CANCELLED", "Model request was cancelled", undefined, { cause: error })
       if (timeoutSignal.aborted) throw new ModelProviderError("TIMEOUT", `Model request exceeded ${this.#timeoutMs}ms`, undefined, { cause: error })
       throw new ModelProviderError("NETWORK_ERROR", "Model request failed", undefined, { cause: error })

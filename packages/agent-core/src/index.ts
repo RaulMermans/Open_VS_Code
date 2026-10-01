@@ -64,3 +64,9 @@ export * from "./recovery/index.ts"
 
 // Sprint 4D — Large Repository Performance & Discovery
 export * from "./repository/index.ts"
+
+// Sprint 4E — Real OSS Models, Production FIM & Evidence-Driven Routing
+export * from "./model/canonical-endpoint.ts"
+export * from "./model/inference-gate.ts"
+export * from "./model/endpoint-health.ts"
+export * from "./model/performance-ledger.ts"

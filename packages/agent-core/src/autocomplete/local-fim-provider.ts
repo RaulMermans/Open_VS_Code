@@ -23,14 +23,11 @@
  */
 
 import type { AutocompleteProvider, AutocompleteRequest, AutocompleteResponse } from "./contracts.ts"
+import { resolveCanonicalEndpoints, type CanonicalEndpoints } from "../model/canonical-endpoint.ts"
+import { assertInferenceAuthorized, InferenceNotAuthorizedError } from "../model/inference-gate.ts"
+import type { FimStrategy } from "../contracts/routing.ts"
 
-/** FIM prompt formatting strategy. Isolated in this file — never exposed upward. */
-export type FimStrategy =
-  | "prefix-suffix-middle"
-  | "qwen"
-  | "starcoder"
-  | "deepseek"
-  | "raw-prefix"
+export type { FimStrategy }
 
 export interface LocalFimProviderConfig {
   readonly providerId: string
@@ -52,18 +49,6 @@ export interface LocalFimProviderConfig {
   readonly headers?: Readonly<Record<string, string>>
   /** Fetch implementation — injectable for tests. */
   readonly fetch?: typeof fetch
-}
-
-function parseBaseUrl(value: string | URL): URL {
-  const url = new URL(value)
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new TypeError("FIM provider base URL must use HTTP or HTTPS")
-  }
-  if (url.search || url.hash) {
-    throw new TypeError("FIM provider base URL cannot contain a query or fragment")
-  }
-  if (!url.pathname.endsWith("/")) url.pathname += "/"
-  return url
 }
 
 /**
@@ -154,17 +139,20 @@ export class LocalFimProvider implements AutocompleteProvider {
   readonly deploymentId: string
 
   readonly #endpoint: URL
+  readonly #canonical: CanonicalEndpoints
   readonly #model: string
   readonly #fimStrategy: FimStrategy
   readonly #timeoutMs: number
   readonly #headers: Readonly<Record<string, string>>
   readonly #fetch: typeof fetch
+  readonly #isCustomFetch: boolean
 
   constructor(config: LocalFimProviderConfig) {
     this.providerId = config.providerId
     this.modelId = config.modelId
     this.deploymentId = config.deploymentId
-    this.#endpoint = new URL("v1/completions", parseBaseUrl(config.baseUrl))
+    this.#canonical = resolveCanonicalEndpoints(config.baseUrl)
+    this.#endpoint = new URL(this.#canonical.completionsEndpoint)
     this.#model = config.model.trim()
     if (!this.#model) throw new TypeError("LocalFimProvider model must not be empty")
     this.#fimStrategy = config.fimStrategy ?? "prefix-suffix-middle"
@@ -173,7 +161,12 @@ export class LocalFimProvider implements AutocompleteProvider {
       throw new TypeError("LocalFimProvider timeoutMs must be a positive integer")
     }
     this.#headers = { ...config.headers }
+    this.#isCustomFetch = config.fetch !== undefined
     this.#fetch = config.fetch ?? globalThis.fetch
+  }
+
+  get canonicalEndpoints(): CanonicalEndpoints {
+    return this.#canonical
   }
 
   get fimStrategy(): FimStrategy {
@@ -182,14 +175,14 @@ export class LocalFimProvider implements AutocompleteProvider {
 
   async complete(request: AutocompleteRequest): Promise<AutocompleteResponse> {
     // Abort check before any work
-    if (request.signal.aborted) {
+    if (request.signal?.aborted) {
       throw new LocalFimProviderError("CANCELLED", "FIM request was cancelled before start")
     }
 
     const prompt = buildFimPrompt(request.prefix, request.suffix, this.#fimStrategy)
 
     const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
-    const signal = AbortSignal.any([request.signal, timeoutSignal])
+    const signal = request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal
 
     const requestBody: Record<string, unknown> = {
       model: this.#model,
@@ -201,6 +194,7 @@ export class LocalFimProvider implements AutocompleteProvider {
 
     let response: Response
     try {
+      assertInferenceAuthorized(this.#isCustomFetch)
       response = await this.#fetch(this.#endpoint, {
         method: "POST",
         headers: { "content-type": "application/json", ...this.#headers },
@@ -208,6 +202,9 @@ export class LocalFimProvider implements AutocompleteProvider {
         signal,
       })
     } catch (error) {
+      if (error instanceof InferenceNotAuthorizedError) {
+        throw new LocalFimProviderError("INFERENCE_NOT_AUTHORIZED", error.message, undefined, { cause: error })
+      }
       if (request.signal.aborted) {
         throw new LocalFimProviderError("CANCELLED", "FIM request was cancelled", undefined, { cause: error })
       }

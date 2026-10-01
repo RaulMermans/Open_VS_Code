@@ -122,20 +122,22 @@ Verdict: PERMANENT PASS
 Sprint 4D / 4D.1 / 4D.2 / 4D.3: CLOSED PERMANENTLY
 
 ==================================================
-SPRINT 4E FINAL REPORT — REAL LOCAL OSS MODELS, PRODUCTION FIM & EVIDENCE-DRIVEN ROUTING
+SPRINT 4E.1 — REAL INFERENCE PRODUCTION WIRING & EVIDENCE CLOSURE
 ==================================================
 
-1. Target-Host Safety Gate & Download Policy
-- Gating mechanism: InferenceGate (src/model/inference-gate.ts)
+1. Target-Host Safety Gate & Canonical Endpoint Contract
+- Gating mechanism: InferenceGate (src/model/inference-gate.ts) & assertInferenceAuthorized
 - Environment variable: OPEN_VS_CODE_REAL_INFERENCE=1
 - Default state: strictly DISABLED
 - Un-gated execution behavior: BLOCKED_WITH_EVIDENCE (exit 0)
 - Model download policy: strictly NO automated downloads by application
 - Git ignore protections: *.gguf, *.safetensors, *.ggml, *.bin, *.pt, *.pth, .ollama/, .huggingface/
-- Cloud fallback policy: strictly NO cloud fallbacks (no OpenAI, Anthropic, Gemini APIs)
+- Cloud fallback policy: strictly NO cloud fallbacks (no OpenAI, Anthropic, Gemini, DeepSeek cloud APIs)
+- Canonical endpoint normalization: resolveCanonicalEndpoints() deterministically normalizes host root and /v1 paths to /v1/chat/completions, /v1/completions, /v1/models with zero /v1/v1 duplication. Queries and fragments rejected.
 
-2. Production FIM Provider
+2. Production FIM Provider & Autocomplete Wiring
 - Adapter: LocalFimProvider (src/autocomplete/local-fim-provider.ts)
+- Factory: createProductionAutocompleteGateway() dynamically instantiates real LocalFimProvider instances for eligible local deployments; zero scripted providers in production.
 - Protocol: OpenAI-compatible /v1/completions (not /v1/chat/completions)
 - FIM strategies supported:
     * qwen: <|fim_prefix|>, <|fim_suffix|>, <|fim_middle|>
@@ -147,11 +149,11 @@ SPRINT 4E FINAL REPORT — REAL LOCAL OSS MODELS, PRODUCTION FIM & EVIDENCE-DRIV
 - Cancellation: AbortSignal propagated directly with immediate abort check
 - Output bounds: maxOutputTokens enforced in request payload
 
-3. Bounded Model Performance Ledger
+3. Bounded Model Performance Ledger & Agent Runtime Wiring
 - Store: ModelPerformanceLedger (src/model/performance-ledger.ts)
+- Runtime: createAgentRuntime() wires real EndpointHealthChecker and workspace-scoped ModelPerformanceLedger (.open-vs-code/model-performance-ledger.json).
 - Keys: deploymentId x taskClass
-- Privacy guarantees: zero source code, prompt bodies, or terminal contents stored; metrics only
-- Metrics recorded: sampleCount, successCount, failureCount, verificationSuccessCount, toolCallSuccessCount, totalRepairCycles, timeoutCount, cancellationCount, emaLatencyMs (alpha=0.2)
+- Privacy guarantees: zero source code, prompt bodies, completions, diffs, or secrets stored; aggregate metrics only
 - Bounded storage: maxProfiles cap (default 50) with oldest-profile eviction
 - Persistence: atomic JSON store with schema versioning and safe corruption recovery
 - Adaptive routing: bounded adjustments [-0.5, +0.5] applied only after minimumSamples (5) with hysteresis threshold (0.1)
@@ -164,35 +166,22 @@ SPRINT 4E FINAL REPORT — REAL LOCAL OSS MODELS, PRODUCTION FIM & EVIDENCE-DRIV
 
 5. Real Model Benchmark Harness
 - Harness: real-model-benchmark.ts (tests/evals/real-model-benchmark.ts)
-- Entry point: npm run eval:models / tests/evals/run-benchmark-cli.ts
+- System-level path: AgentRunner -> RoutedModelGateway -> ModelRouter -> real local provider -> bounded tools -> evidence
 - Safety: gated by InferenceGate; outputs BLOCKED_WITH_EVIDENCE when unauthorized
-- Workload suite: 10 agent coding tasks + 8 FIM completion fixtures
-- Metadata captured: Git SHA, hardware specs, OS, Node version, provider runtime, model IDs
+- Workload suite: 10 agent coding tasks + 8 FIM completion fixtures on temporary isolated repository fixtures
+- Sanitized telemetry: response length and SHA-256 hashes only; zero source code or completion leaks
 
-6. Deterministic Integration Evaluation
-- Scenarios: 64 deterministic scenarios in model-integration-eval.ts
-- Categories covered:
-    * fim_formatting (10 scenarios)
-    * fim_stop_tokens (7 scenarios)
-    * fim_provider (4 scenarios)
-    * fim_http (5 scenarios)
-    * fim_cancellation (1 scenario)
-    * ledger (10 scenarios)
-    * ledger_persistence (4 scenarios)
-    * ledger_privacy (1 scenario)
-    * inference_gate (3 scenarios)
-    * health (6 scenarios)
-    * no_cloud_fallback (3 scenarios)
-    * autocomplete_context (6 scenarios)
-    * provider_safety (3 scenarios)
-- Two-run determinism: 64/64 passed, Run 1 === Run 2, 0 failures
+6. Deterministic Evaluation Suites
+- Model integration evaluation: 64 deterministic scenarios in model-integration-eval.ts (64/64 pass, Run 1 === Run 2)
+- Sprint 4E.1 closure evaluation: 19 scenarios in sprint-4e-closure-eval.test.ts (19/19 pass)
+- Negative comparator tests: 20/20 pass
 
 7. Architecture Documentation
 - ADR: ADR-027 (docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) Accepted
-- Architecture: ARCHITECTURE.md updated with Sprint 4E contracts and dataflows
+- Architecture: ARCHITECTURE.md updated with Sprint 4E.1 contracts and dataflows
 
-8. Final Assessment (Sprint 4E)
-Verdict: PASS
-Sprint 4E: CLOSED
-Ready for Sprint 4F (Code-OSS / VSCodium Desktop Packaging): YES
+8. Closure Status
+Status: IMPLEMENTATION_COMPLETE — REAL_HOST_EVIDENCE_BLOCKED
+Permanent Closure Blocked: Awaiting real-host model benchmark execution with OPEN_VS_CODE_REAL_INFERENCE=1 against an active local OSS server on authorized hardware.
+Ready for Sprint 4F Desktop Packaging: HOLD until real-host benchmark evidence is acquired.
 

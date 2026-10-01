@@ -14,7 +14,7 @@ import type {
 } from "../contracts/agent.ts"
 import type { CompiledContext, ContextBudget, ContextItem, ConversationTurn } from "../contracts/context.ts"
 import type { ModelProvider, ModelRequest } from "../contracts/model.ts"
-import type { ModelRouteHint, TaskClass } from "../contracts/routing.ts"
+import type { ModelRouteHint } from "../contracts/routing.ts"
 import { deriveTaskClass } from "../model/route-requirements.ts"
 import type { ModelPerformanceLedger } from "../model/performance-ledger.ts"
 import type { ToolCall, ToolPermission } from "../contracts/tools.ts"
