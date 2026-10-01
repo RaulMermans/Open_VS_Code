@@ -118,9 +118,7 @@ User / Task Input
 
 ## 5. Getting Started
 
-### TARGET INFERENCE MACHINE / OPTIONAL LIVE EVALUATION
-
-### TARGET INFERENCE MACHINE / OPTIONAL LIVE EVALUATION
+### Target Inference Machine / Optional Live Evaluation
 
 * Node.js `>= 22.0.0`
 * npm `>= 10.0.0`
@@ -129,11 +127,11 @@ User / Task Input
 
 ### Local Model Configuration (`.open-vs-code/models.json`)
 
-To configure self-hosted local models for coding and editor autocomplete:
+To configure self-hosted local models for coding and editor autocomplete (see canonical example in [`config/examples/models.local.example.json`](config/examples/models.local.example.json)):
 
 ```json
 {
-  "$schema": "./models.schema.json",
+  "$schema": "../config/schemas/models.schema.json",
   "providers": [
     {
       "id": "ollama-local",
@@ -145,10 +143,12 @@ To configure self-hosted local models for coding and editor autocomplete:
     {
       "id": "qwen2.5-coder-7b",
       "displayName": "Qwen 2.5 Coder 7B",
+      "family": "qwen",
       "contextWindow": 32768,
-      "capabilities": ["chat", "tools", "coding", "autocomplete", "fim"],
+      "capabilities": ["toolUse", "coding", "autocomplete", "fim"],
       "specialization": "coding",
-      "fimStrategy": "qwen"
+      "fimStrategy": "qwen",
+      "provenance": "Qwen2.5-Coder-7B-Instruct (Apache 2.0)"
     }
   ],
   "deployments": [

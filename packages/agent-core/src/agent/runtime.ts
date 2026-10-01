@@ -7,6 +7,7 @@ import { ModelPerformanceLedger } from "../model/performance-ledger.ts";
 import { loadRoutingConfig } from "../model/config-loader.ts";
 import { ScriptedModelProvider } from "../testing/scripted-model.ts";
 import { OpenAICompatibleProvider } from "../model/openai-compatible.ts";
+import { resolveDeploymentEndpoint, resolveServedModelId } from "../model/canonical-endpoint.ts";
 import { MutationEngine } from "../tools/mutation-engine.ts";
 import { VerificationEngine } from "../tools/verification-engine.ts";
 import { createReadOnlyToolRegistry } from "../tools/read-only-registry.ts";
@@ -68,13 +69,14 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     for (const d of config.deployments as any[]) {
       const providerConfig = config.providers.find((p: any) => p.id === d.providerId);
       if (providerConfig?.kind === "openai_compatible_local") {
-        let ep = d.endpoint ?? providerConfig.baseUrl;
-        if (ep && !ep.startsWith("http://") && !ep.startsWith("https://")) ep = process.env[ep] || ep;
-        if (!ep) throw new Error(`Deployment ${d.id} missing endpoint`);
+        const ep = resolveDeploymentEndpoint(d, providerConfig);
         endpointMap.set(d.id, ep);
+        const modelConfig = config.models.find((m: any) => m.id === d.modelId);
+        const wireModel = resolveServedModelId(d, modelConfig);
         providers.set(d.id, new OpenAICompatibleProvider({
           baseUrl: ep,
-          model: d.modelId,
+          model: wireModel,
+          contextWindow: d.contextWindow ?? modelConfig?.contextWindow,
         }));
       }
     }
@@ -206,7 +208,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...(options.recentTurns ? { recentTurns: options.recentTurns } : {}),
     memory,
     selectedSkills,
-    signal: options.signal
+    ...(options.signal ? { signal: options.signal } : {}),
   };
 
   const runner = new AgentRunner({

@@ -34,6 +34,7 @@ import { EndpointHealthChecker } from "../model/endpoint-health.ts"
 import { LocalFimProvider } from "./local-fim-provider.ts"
 import { MAX_OUTPUT_TOKENS, estimateTokensFromChars } from "./budget.ts"
 import { loadRoutingConfigSync } from "../model/config-loader.ts"
+import { resolveDeploymentEndpoint, resolveServedModelId } from "../model/canonical-endpoint.ts"
 
 export type AutocompleteProviderRegistry = ReadonlyMap<string, AutocompleteProvider>
 
@@ -179,12 +180,14 @@ export function createProductionAutocompleteGateway(
 
   for (const deployment of config.deployments) {
     const providerConfig = config.providers.find(p => p.id === deployment.providerId)
-    let ep = deployment.endpoint ?? providerConfig?.baseUrl
-    if (ep && !ep.startsWith("http://") && !ep.startsWith("https://")) {
-      ep = process.env[ep] || ep
-    }
-    if (ep) {
-      endpointMap.set(deployment.id, ep)
+    let ep: string | undefined
+    try {
+      if (providerConfig?.kind === "openai_compatible_local") {
+        ep = resolveDeploymentEndpoint(deployment, providerConfig)
+        endpointMap.set(deployment.id, ep)
+      }
+    } catch {
+      // Endpoint resolution failed; deployment will not be healthy/routable
     }
 
     // Only instantiate if not already provided via customProviders
@@ -198,13 +201,16 @@ export function createProductionAutocompleteGateway(
       cap => cap === "autocomplete" || cap === "fim"
     )
 
+    const fimStrategy = deployment.fimStrategy ?? modelConfig?.fimStrategy
+
     if (
       deployment.enabled &&
       providerConfig?.kind === "openai_compatible_local" &&
       hasFimCapability &&
-      ep
+      ep &&
+      fimStrategy // Explicit strategy required — no guessing
     ) {
-      const fimStrategy = deployment.fimStrategy ?? modelConfig?.fimStrategy ?? "prefix-suffix-middle"
+      const wireModel = resolveServedModelId(deployment, modelConfig)
       providers.set(
         deployment.id,
         new LocalFimProvider({
@@ -212,7 +218,7 @@ export function createProductionAutocompleteGateway(
           modelId: deployment.modelId,
           deploymentId: deployment.id,
           baseUrl: ep,
-          model: deployment.modelId,
+          model: wireModel,
           fimStrategy,
         })
       )

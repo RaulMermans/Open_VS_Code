@@ -584,6 +584,7 @@ describe("Production Routing E2E", () => {
       const config = validateRoutingConfig(parsed)
       
       const { OpenAICompatibleProvider } = await import("../../src/model/openai-compatible.ts")
+      const { resolveDeploymentEndpoint, resolveServedModelId } = await import("../../src/model/canonical-endpoint.ts")
       const providers = new Map<string, ModelProvider>()
       
       for (const p of config.providers) {
@@ -594,18 +595,22 @@ describe("Production Routing E2E", () => {
       for (const d of config.deployments) {
         const providerConfig = config.providers.find(p => p.id === d.providerId)
         if (providerConfig?.kind === "openai_compatible_local") {
+          const ep = resolveDeploymentEndpoint(d, providerConfig)
+          const modelConfig = config.models.find(m => m.id === d.modelId)
+          const wireModel = resolveServedModelId(d, modelConfig)
           providers.set(d.id, new OpenAICompatibleProvider({
-            baseUrl: d.endpoint!,
-            model: d.modelId
+            baseUrl: ep,
+            model: wireModel,
           }))
         }
       }
       
-      const provider = providers.get("dep-llama-3")
+      const chatDep = config.deployments[0]!
+      const provider = providers.get(chatDep.id)
       assert.ok(provider instanceof OpenAICompatibleProvider)
-      assert.equal(provider.model, "llama-3-8b-instruct")
+      assert.equal(provider.model, "qwen2.5-coder:7b")
       
-      const healthChecker = new StaticHealthChecker(new Map([["dep-llama-3", "ready"]]))
+      const healthChecker = new StaticHealthChecker(new Map([[chatDep.id, "ready"]]))
       const gateway = new RoutedModelGateway({
         config,
         providers,
