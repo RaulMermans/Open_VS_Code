@@ -16,6 +16,7 @@
 
 import type { HealthChecker } from "./router.ts"
 import type { ProviderHealthState } from "../contracts/routing.ts"
+import { resolveCanonicalEndpoints } from "./canonical-endpoint.ts"
 
 export interface EndpointHealthConfig {
   /**
@@ -89,7 +90,8 @@ export class EndpointHealthChecker implements HealthChecker {
 
     try {
       // Probe via GET /v1/models — cheap, no inference, standard for Ollama/vLLM
-      const url = new URL("v1/models", endpointUrl.endsWith("/") ? endpointUrl : endpointUrl + "/")
+      const canonical = resolveCanonicalEndpoints(endpointUrl)
+      const url = new URL(canonical.modelsEndpoint)
       const response = await this.#fetch(url, { method: "GET", signal: probeSignal })
       if (response.ok) return "ready"
       if (response.status >= 500) return "unavailable"

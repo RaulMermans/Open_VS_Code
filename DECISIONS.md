@@ -16,6 +16,7 @@
 | [ADR-012](docs/adrs/ADR-012-bounded-repair-loops.md) | Bounded autonomous repair loops | Accepted |
 | [ADR-013](docs/adrs/ADR-013-bounded-session-continuity.md) | Markdown-First Project Memory & Bounded Session Continuity | Accepted |
 | [ADR-014](docs/adrs/ADR-014-metadata-first-skills.md) | Metadata-First Skills & Prompt Primitives | Accepted |
+| [ADR-015](docs/adrs/ADR-015-bounded-mcp-integration.md) | Bounded MCP Integration | Accepted |
 | [ADR-016](docs/adrs/ADR-016-deterministic-model-provider-routing.md) | Deterministic Model / Provider Routing Architecture | Accepted |
 | [ADR-017](docs/adrs/ADR-017-ide-host-adapter-boundary.md) | IDE Host Adapter Boundary | Accepted |
 | [ADR-018](docs/adrs/ADR-018-chat-ux-layer.md) | Chat UX Layer | Accepted |
@@ -23,11 +24,11 @@
 | [ADR-020](docs/adrs/ADR-020-halo-capability-provider.md) | HALO Capability Provider | Accepted |
 | [ADR-021](docs/adrs/ADR-021-controlled-terminal-execution.md) | Controlled Terminal UX and Presentation Boundary | Accepted |
 | [ADR-022](docs/adrs/ADR-022-editor-native-autocomplete.md) | Editor-Native Autocomplete | Accepted |
-
-| [ADR-023](docs/adrs/ADR-023-system-security-model.md) | System-Wide Security Hardening | Accepted |
+| [ADR-023](docs/adrs/ADR-023-system-security-boundaries.md) | System-Wide Security Boundaries | Accepted |
 | [ADR-024](docs/adrs/ADR-024-runtime-evals-adaptive-control.md) | Runtime Evaluations & Adaptive Control | Accepted |
 | [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) | Durable Checkpoints, Recovery & Safe Rollback | Accepted |
 | [ADR-026](docs/adrs/ADR-026-large-repository-performance.md) | Large-Repository Performance & Hardening | Accepted |
+| [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) | Real Local Models, Canonical Endpoints & Adaptive Routing | Accepted |
 
 Decision status changes belong in the ADR and this index.
 
@@ -44,3 +45,4 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 4B**: Runtime Evaluations & Adaptive Control complete (ADR-024).
 - **Sprint 4C**: Durable Checkpoints, Recovery & Safe Rollback complete (ADR-025).
 - **Sprint 4D**: Large-Repository Performance & Hardening complete (ADR-026).
+- **Sprint 4E / 4E.1**: Real Local Models, Production FIM & Evidence Closure (ADR-027) — Implementation Complete (Real-Host Evidence Blocked).

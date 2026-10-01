@@ -1,6 +1,9 @@
+import { join } from "node:path";
 import { AgentRunner } from "./runner.ts";
 import { RepairOrchestrator } from "./repair-loop.ts";
 import { RoutedModelGateway, StaticHealthChecker } from "../model/routed-gateway.ts";
+import { EndpointHealthChecker } from "../model/endpoint-health.ts";
+import { ModelPerformanceLedger } from "../model/performance-ledger.ts";
 import { loadRoutingConfig } from "../model/config-loader.ts";
 import { ScriptedModelProvider } from "../testing/scripted-model.ts";
 import { OpenAICompatibleProvider } from "../model/openai-compatible.ts";
@@ -22,7 +25,8 @@ import { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
 
 import type { AgentMode, AgentEvent } from "../contracts/agent.ts";
 import type { ModelProvider } from "../contracts/model.ts";
-
+import type { RoutingConfiguration } from "../contracts/routing.ts";
+import type { HealthChecker } from "../model/router.ts";
 import type { ConversationTurn } from "../contracts/context.ts";
 
 export interface CreateAgentRuntimeOptions {
@@ -34,14 +38,16 @@ export interface CreateAgentRuntimeOptions {
   eventSink: (ev: AgentEvent) => void;
   isTrusted: boolean;
   providerOverride?: ModelProvider;
+  routingConfigOverride?: RoutingConfiguration;
 }
 
 export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   let provider = options.providerOverride;
   let routedGateway: RoutedModelGateway | undefined;
+  let healthChecker: HealthChecker | undefined;
 
   if (!provider) {
-    const config = await loadRoutingConfig(options.workspaceRoot);
+    const config = options.routingConfigOverride ?? (await loadRoutingConfig(options.workspaceRoot));
     if (!config) {
       throw new Error("No model routing configuration found.");
     }
@@ -58,12 +64,14 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       }
     }
 
+    const endpointMap = new Map<string, string>();
     for (const d of config.deployments as any[]) {
-      const providerConfig = config.providers.find(p => p.id === d.providerId);
+      const providerConfig = config.providers.find((p: any) => p.id === d.providerId);
       if (providerConfig?.kind === "openai_compatible_local") {
-        let ep = d.endpoint;
-          if (ep && !ep.startsWith("http")) ep = process.env[ep] || ep;
-          if (!ep) throw new Error(`Deployment ${d.id} missing endpoint`);
+        let ep = d.endpoint ?? providerConfig.baseUrl;
+        if (ep && !ep.startsWith("http://") && !ep.startsWith("https://")) ep = process.env[ep] || ep;
+        if (!ep) throw new Error(`Deployment ${d.id} missing endpoint`);
+        endpointMap.set(d.id, ep);
         providers.set(d.id, new OpenAICompatibleProvider({
           baseUrl: ep,
           model: d.modelId,
@@ -71,21 +79,28 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       }
     }
 
-    const healthChecker = new StaticHealthChecker(
-      new Map(config.deployments.map(d => [d.id, "ready" as const]))
-    );
+    healthChecker = endpointMap.size > 0
+      ? new EndpointHealthChecker({ endpoints: endpointMap })
+      : new StaticHealthChecker(
+          new Map(config.deployments.map((d: any) => [d.id, "ready" as const]))
+        );
+
+    const ledgerPath = join(options.workspaceRoot, ".open-vs-code", "model-performance-ledger.json");
+    const performanceLedger = new ModelPerformanceLedger({ persistPath: ledgerPath });
+    void performanceLedger.load().catch(() => {});
 
     routedGateway = new RoutedModelGateway({
       config,
       providers,
       healthChecker,
+      performanceLedger,
       mode: options.mode,
       hasTools: true,
       hasStructuredOutput: false,
     });
     provider = routedGateway;
   } else {
-      routedGateway = provider instanceof RoutedModelGateway ? provider : undefined;
+    routedGateway = provider instanceof RoutedModelGateway ? provider : undefined;
   }
 
   const mutationEngine = new MutationEngine(options.workspaceRoot);
@@ -230,6 +245,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     memory,
     checkpointCoordinator,
     recoveryController: checkpointCoordinator.recoveryController,
+    performanceLedger: routedGateway?.performanceLedger,
+    healthChecker,
     cleanup: async () => {
       await mcpCatalog.close();
       (mcpStats as any).cleanupCount = ((mcpStats as any).cleanupCount || 0) + 1;

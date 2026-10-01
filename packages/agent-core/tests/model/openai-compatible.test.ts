@@ -12,9 +12,16 @@ async function withServer(
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
   const address = server.address()
   if (!address || typeof address === "string") throw new Error("Expected TCP address")
+  const prevEnv = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+  process.env["OPEN_VS_CODE_REAL_INFERENCE"] = "1"
   try {
     await run(`http://127.0.0.1:${address.port}/v1`)
   } finally {
+    if (prevEnv === undefined) {
+      delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+    } else {
+      process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prevEnv
+    }
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
   }
 }

@@ -10,3 +10,5 @@
 - [ADR-023: System Security Boundaries](ADR-023-system-security-boundaries.md)
 - [ADR-024: Runtime Evaluations & Adaptive Control](ADR-024-runtime-evals-adaptive-control.md)
 - [ADR-025: Durable Checkpoints, Recovery & Safe Rollback](ADR-025-checkpoints-recovery.md)
+- [ADR-026: Large-Repository Performance & Hardening](ADR-026-large-repository-performance.md)
+- [ADR-027: Real Local Models, Canonical Endpoints & Adaptive Routing](ADR-027-real-local-models-and-adaptive-routing.md)

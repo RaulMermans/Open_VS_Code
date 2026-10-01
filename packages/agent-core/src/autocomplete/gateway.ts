@@ -24,11 +24,14 @@
  * No cloud fallback — if no local route exists, throw.
  */
 
+import { join } from "node:path"
 import type { AutocompleteRequest, AutocompleteResponse, AutocompleteProvider } from "./contracts.ts"
 import type { RoutingConfiguration } from "../contracts/routing.ts"
-import type { ModelPerformanceLedger } from "../model/performance-ledger.ts"
+import { ModelPerformanceLedger } from "../model/performance-ledger.ts"
 import { ModelRouter, RouteUnavailableError, type HealthChecker } from "../model/router.ts"
 import { StaticHealthChecker } from "../model/routed-gateway.ts"
+import { EndpointHealthChecker } from "../model/endpoint-health.ts"
+import { LocalFimProvider } from "./local-fim-provider.ts"
 import { MAX_OUTPUT_TOKENS, estimateTokensFromChars } from "./budget.ts"
 import { loadRoutingConfigSync } from "../model/config-loader.ts"
 
@@ -67,6 +70,14 @@ export class AutocompleteGateway {
 
   get performanceLedger(): ModelPerformanceLedger | undefined {
     return this.#performanceLedger
+  }
+
+  get providerRegistry(): AutocompleteProviderRegistry {
+    return this.#providers
+  }
+
+  get healthChecker(): HealthChecker {
+    return this.#healthChecker
   }
 
   /**
@@ -138,12 +149,17 @@ const EMPTY_ROUTING_CONFIG: RoutingConfiguration = {
  *     which AutocompleteService quietly swallows without UI error or crash.
  */
 export function createProductionAutocompleteGateway(
-  workspaceRoot?: string,
+  workspaceRootOrConfig?: string | RoutingConfiguration,
   customProviders?: AutocompleteProviderRegistry,
   performanceLedger?: ModelPerformanceLedger,
+  healthChecker?: HealthChecker,
 ): AutocompleteGateway {
   let config: RoutingConfiguration = EMPTY_ROUTING_CONFIG
-  if (workspaceRoot) {
+  const workspaceRoot = typeof workspaceRootOrConfig === "string" ? workspaceRootOrConfig : undefined
+
+  if (workspaceRootOrConfig && typeof workspaceRootOrConfig === "object") {
+    config = workspaceRootOrConfig
+  } else if (workspaceRoot) {
     try {
       const loaded = loadRoutingConfigSync(workspaceRoot)
       if (loaded) {
@@ -155,13 +171,75 @@ export function createProductionAutocompleteGateway(
     }
   }
 
-  // In production with 0 configured autocomplete deployments or no provider instances,
-  // the provider registry is empty.
-  const providers = customProviders ?? new Map<string, AutocompleteProvider>()
+  // Populate providers: preserve customProviders if passed, and construct real LocalFimProvider
+  // for any eligible local autocomplete deployments configured in models.json.
+  const providers = new Map<string, AutocompleteProvider>(customProviders ?? [])
+
+  const endpointMap = new Map<string, string>()
+
+  for (const deployment of config.deployments) {
+    const providerConfig = config.providers.find(p => p.id === deployment.providerId)
+    let ep = deployment.endpoint ?? providerConfig?.baseUrl
+    if (ep && !ep.startsWith("http://") && !ep.startsWith("https://")) {
+      ep = process.env[ep] || ep
+    }
+    if (ep) {
+      endpointMap.set(deployment.id, ep)
+    }
+
+    // Only instantiate if not already provided via customProviders
+    if (providers.has(deployment.id) || providers.has(deployment.providerId)) {
+      continue
+    }
+
+    const modelConfig = config.models.find(m => m.id === deployment.modelId)
+
+    const hasFimCapability = modelConfig?.capabilities.some(
+      cap => cap === "autocomplete" || cap === "fim"
+    )
+
+    if (
+      deployment.enabled &&
+      providerConfig?.kind === "openai_compatible_local" &&
+      hasFimCapability &&
+      ep
+    ) {
+      const fimStrategy = deployment.fimStrategy ?? modelConfig?.fimStrategy ?? "prefix-suffix-middle"
+      providers.set(
+        deployment.id,
+        new LocalFimProvider({
+          providerId: deployment.providerId,
+          modelId: deployment.modelId,
+          deploymentId: deployment.id,
+          baseUrl: ep,
+          model: deployment.modelId,
+          fimStrategy,
+        })
+      )
+    }
+  }
+
+  const resolvedHealthChecker = healthChecker ?? (
+    endpointMap.size > 0
+      ? new EndpointHealthChecker({ endpoints: endpointMap })
+      : new StaticHealthChecker()
+  )
+
+  const resolvedLedger = performanceLedger ?? (
+    workspaceRoot
+      ? new ModelPerformanceLedger({
+          persistPath: join(workspaceRoot, ".open-vs-code", "model-performance-ledger.json"),
+        })
+      : new ModelPerformanceLedger()
+  )
+  if (resolvedLedger && !performanceLedger) {
+    void resolvedLedger.load().catch(() => {})
+  }
 
   return new AutocompleteGateway({
     config,
     providers,
-    ...(performanceLedger ? { performanceLedger } : {}),
+    healthChecker: resolvedHealthChecker,
+    ...(resolvedLedger ? { performanceLedger: resolvedLedger } : {}),
   })
 }

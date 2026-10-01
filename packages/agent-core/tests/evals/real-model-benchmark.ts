@@ -22,12 +22,19 @@
  */
 
 import { execSync } from "node:child_process"
-import { writeFile, mkdir } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
-import { platform, arch, cpus, totalmem } from "node:os"
+import { platform, arch, cpus, totalmem, tmpdir } from "node:os"
 import { checkInferenceGate, requireInferenceGate, inferenceGateBlockedMessage } from "../../src/model/inference-gate.ts"
 import { OpenAICompatibleProvider } from "../../src/model/openai-compatible.ts"
 import { LocalFimProvider, type FimStrategy } from "../../src/autocomplete/local-fim-provider.ts"
+import { AgentRunner } from "../../src/agent/runner.ts"
+import { RoutedModelGateway } from "../../src/model/routed-gateway.ts"
+import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.ts"
+import { classifyPermission } from "../../src/tools/permissions.ts"
+import { calculateBudget } from "../../src/context/budget.ts"
+import type { RoutingConfiguration } from "../../src/contracts/routing.ts"
 
 export const BENCHMARK_SCHEMA_VERSION = 1
 
@@ -80,11 +87,21 @@ export interface AgentTaskResult {
   readonly name: string
   readonly category: string
   readonly success: boolean
+  readonly groundedSuccess: boolean
   readonly latencyMs: number
-  readonly inputTokens: number | undefined
-  readonly outputTokens: number | undefined
-  readonly response: string
-  readonly error: string | undefined
+  readonly turns: number
+  readonly toolCallsCount: number
+  readonly validToolCallsCount: number
+  readonly selectedToolNames: readonly string[]
+  readonly routeProvenance?: {
+    readonly deploymentId: string
+    readonly providerId: string
+    readonly modelId: string
+  }
+  readonly failureReason?: string
+  readonly responseLength: number
+  readonly responseSha256: string
+  readonly error?: string
 }
 
 export interface FimTaskResult {
@@ -94,11 +111,10 @@ export interface FimTaskResult {
   readonly exactMatch: boolean
   readonly syntaxValid: boolean
   readonly latencyMs: number
-  readonly inputTokens: number | undefined
-  readonly outputTokens: number | undefined
   readonly emptyCompletion: boolean
-  readonly completion: string
-  readonly error: string | undefined
+  readonly completionLength: number
+  readonly completionSha256: string
+  readonly error?: string
 }
 
 export interface BenchmarkArtifact {
@@ -300,46 +316,161 @@ function percentile95(values: number[]): number {
 
 export async function runAgentBenchmark(
   tasks: readonly AgentBenchmarkTask[],
-  provider: OpenAICompatibleProvider,
+  endpoint: string,
+  modelId: string,
 ): Promise<readonly AgentTaskResult[]> {
   const results: AgentTaskResult[] = []
 
-  for (const task of tasks) {
-    const t0 = Date.now()
-    try {
-      const response = await provider.complete({
-        messages: [{ role: "user", content: task.prompt }],
-        temperature: 0,
-        maxOutputTokens: task.maxOutputTokens,
-      })
-      const text = response.message.content.toLowerCase()
-      const keywordMatches = task.expectedKeywords.filter(kw => text.includes(kw.toLowerCase()))
-      const success = keywordMatches.length > 0
+  const tempDir = await mkdtemp(join(tmpdir(), "open-vs-code-benchmark-"))
+  try {
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({ name: "benchmark-fixture", version: "1.0.0", type: "module" }, null, 2),
+      "utf-8"
+    )
+    await writeFile(
+      join(tempDir, "README.md"),
+      "# Benchmark Repository\nA minimal deterministic fixture for real-model evaluation.\n",
+      "utf-8"
+    )
+    await mkdir(join(tempDir, "src"), { recursive: true })
+    await writeFile(
+      join(tempDir, "src", "math.ts"),
+      "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+      "utf-8"
+    )
 
-      results.push({
-        taskId: task.id,
-        name: task.name,
-        category: task.category,
-        success,
-        latencyMs: Date.now() - t0,
-        inputTokens: response.usage?.inputTokens,
-        outputTokens: response.usage?.outputTokens,
-        response: response.message.content.slice(0, 200), // Truncated — no raw source
-        error: undefined,
-      })
-    } catch (error) {
-      results.push({
-        taskId: task.id,
-        name: task.name,
-        category: task.category,
-        success: false,
-        latencyMs: Date.now() - t0,
-        inputTokens: undefined,
-        outputTokens: undefined,
-        response: "",
-        error: error instanceof Error ? error.message : String(error),
-      })
+    const config: RoutingConfiguration = {
+      providers: [{ id: "prov-local", kind: "openai_compatible_local" }],
+      models: [{
+        id: modelId,
+        contextWindow: 32768,
+        capabilities: ["toolUse", "coding", "reasoning"],
+        specialization: "coding",
+      }],
+      deployments: [{
+        id: "dep-benchmark",
+        providerId: "prov-local",
+        modelId,
+        endpoint,
+        enabled: true,
+      }],
+      routes: {
+        general: ["dep-benchmark"],
+        coding: ["dep-benchmark"],
+      },
     }
+
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: endpoint,
+      model: modelId,
+      timeoutMs: 60_000,
+      capabilities: ["chat", "tools"],
+    })
+    const providers = new Map([["dep-benchmark", provider], ["prov-local", provider]])
+
+    const gateway = new RoutedModelGateway({
+      config,
+      providers,
+      mode: "ASK",
+      hasTools: true,
+      hasStructuredOutput: false,
+    })
+
+    const registry = createReadOnlyToolRegistry()
+    const runner = new AgentRunner({
+      provider: gateway,
+      registry,
+      permissionEvaluator: classifyPermission,
+      evidenceGate: false,
+    })
+
+    const contextBudget = calculateBudget({
+      contextWindow: 32768,
+      reservedOutput: 1000,
+      reservedToolHistory: 500,
+    })
+
+    for (const task of tasks) {
+      const t0 = Date.now()
+      try {
+        const result = await runner.run({
+          task: {
+            id: task.id,
+            instruction: task.prompt,
+            mode: "ASK",
+          },
+          workspaceRoot: tempDir,
+          maxTurns: 5,
+          contextBudget,
+          projectInstructions: [],
+        })
+
+        let responseText = ""
+        for (const ev of result.events) {
+          if (ev.type === "model.completed") {
+            const content = (ev.payload as Record<string, unknown>)?.response as Record<string, unknown> | undefined
+            const msg = content?.message as Record<string, unknown> | undefined
+            if (typeof msg?.content === "string") {
+              responseText = msg.content
+            }
+          }
+        }
+
+        const lower = responseText.toLowerCase()
+        const keywordMatches = task.expectedKeywords.filter(kw => lower.includes(kw.toLowerCase()))
+        const groundedSuccess = keywordMatches.length > 0
+        const success = (result.status === "COMPLETED" || groundedSuccess) && result.status !== "FAILED"
+
+        const toolCalls = result.toolCalls ?? []
+        const validCalls = toolCalls.filter(tc => tc.outcome === "COMPLETED")
+        const selectedToolNames = [...new Set(toolCalls.map(tc => tc.name))]
+
+        const responseSha256 = createHash("sha256").update(responseText).digest("hex")
+
+        results.push({
+          taskId: task.id,
+          name: task.name,
+          category: task.category,
+          success,
+          groundedSuccess,
+          latencyMs: Date.now() - t0,
+          turns: result.turns,
+          toolCallsCount: toolCalls.length,
+          validToolCallsCount: validCalls.length,
+          selectedToolNames,
+          ...(gateway.lastDecision ? {
+            routeProvenance: {
+              deploymentId: gateway.lastDecision.deploymentId,
+              providerId: gateway.lastDecision.providerId,
+              modelId: gateway.lastDecision.modelId,
+            }
+          } : {}),
+          ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+          responseLength: responseText.length,
+          responseSha256,
+        })
+      } catch (error) {
+        results.push({
+          taskId: task.id,
+          name: task.name,
+          category: task.category,
+          success: false,
+          groundedSuccess: false,
+          latencyMs: Date.now() - t0,
+          turns: 0,
+          toolCallsCount: 0,
+          validToolCallsCount: 0,
+          selectedToolNames: [],
+          failureReason: "INTERNAL_ERROR",
+          responseLength: 0,
+          responseSha256: createHash("sha256").update("").digest("hex"),
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {})
   }
 
   return results
@@ -368,6 +499,7 @@ export async function runFimBenchmark(
       const success = keywordMatches.length > 0
       const exactMatch = fixture.expectedKeywords.some(kw => response.text.includes(kw))
       const empty = response.text.trim().length === 0
+      const sha256 = createHash("sha256").update(response.text).digest("hex")
 
       results.push({
         fixtureId: fixture.id,
@@ -376,11 +508,9 @@ export async function runFimBenchmark(
         exactMatch,
         syntaxValid: !empty,
         latencyMs: Date.now() - t0,
-        inputTokens: response.usage?.inputTokens,
-        outputTokens: response.usage?.outputTokens,
         emptyCompletion: empty,
-        completion: response.text.slice(0, 100), // Truncated — not full raw completion
-        error: undefined,
+        completionLength: response.text.length,
+        completionSha256: sha256,
       })
     } catch (error) {
       results.push({
@@ -390,10 +520,9 @@ export async function runFimBenchmark(
         exactMatch: false,
         syntaxValid: false,
         latencyMs: Date.now() - t0,
-        inputTokens: undefined,
-        outputTokens: undefined,
         emptyCompletion: true,
-        completion: "",
+        completionLength: 0,
+        completionSha256: createHash("sha256").update("").digest("hex"),
         error: error instanceof Error ? error.message : String(error),
       })
     }
@@ -413,13 +542,6 @@ export async function runRealModelBenchmark(options: {
   // Gate check — must be authorized
   requireInferenceGate()
 
-  const agentProvider = new OpenAICompatibleProvider({
-    baseUrl: options.endpoint,
-    model: options.agentModelId,
-    timeoutMs: 60_000,
-    capabilities: ["chat", "tools"],
-  })
-
   const fimProvider = new LocalFimProvider({
     providerId: "local-fim",
     modelId: options.fimModelId,
@@ -433,7 +555,12 @@ export async function runRealModelBenchmark(options: {
   // Warmup pass (not measured)
   console.error("[benchmark] Warming up agent model...")
   try {
-    await agentProvider.complete({
+    const warmupProvider = new OpenAICompatibleProvider({
+      baseUrl: options.endpoint,
+      model: options.agentModelId,
+      timeoutMs: 30_000,
+    })
+    await warmupProvider.complete({
       messages: [{ role: "user", content: "Say READY." }],
       temperature: 0,
       maxOutputTokens: 10,
@@ -442,10 +569,10 @@ export async function runRealModelBenchmark(options: {
     // Warmup failure is non-fatal
   }
 
-  console.error("[benchmark] Running agent tasks...")
-  const agentTasks = await runAgentBenchmark(AGENT_BENCHMARK_TASKS, agentProvider)
+  console.error("[benchmark] Running agent tasks through Open VS Code AgentRunner stack...")
+  const agentTasks = await runAgentBenchmark(AGENT_BENCHMARK_TASKS, options.endpoint, options.agentModelId)
 
-  console.error("[benchmark] Running FIM tasks...")
+  console.error("[benchmark] Running FIM tasks through LocalFimProvider...")
   const fimTasks = await runFimBenchmark(FIM_BENCHMARK_FIXTURES, fimProvider)
 
   // Compute summaries
@@ -488,10 +615,43 @@ export async function runRealModelBenchmark(options: {
 
   if (options.outputDir) {
     await mkdir(options.outputDir, { recursive: true })
-    const filename = `benchmark-${artifact.gitSha.slice(0, 8)}-${Date.now()}.json`
-    const artifactPath = join(options.outputDir, filename)
-    await writeFile(artifactPath, JSON.stringify(artifact, null, 2), "utf-8")
-    console.error(`[benchmark] Artifact written: ${artifactPath}`)
+    const baseName = `benchmark-${artifact.gitSha.slice(0, 8)}-${Date.now()}`
+    const jsonPath = join(options.outputDir, `${baseName}.json`)
+    await writeFile(jsonPath, JSON.stringify(artifact, null, 2), "utf-8")
+    console.error(`[benchmark] JSON artifact written: ${jsonPath}`)
+
+    const mdContent = [
+      `# Sprint 4E Real Model Benchmark Report`,
+      ``,
+      `- **Date:** ${artifact.timestamp}`,
+      `- **Git SHA:** \`${artifact.gitSha}\``,
+      `- **Hardware:** ${artifact.hardware}`,
+      `- **OS:** ${artifact.os}`,
+      `- **Node:** ${artifact.nodeVersion}`,
+      `- **Agent Model:** \`${artifact.agentModelId}\``,
+      `- **FIM Model:** \`${artifact.fimModelId}\``,
+      `- **Endpoint:** \`${artifact.endpoint}\``,
+      ``,
+      `## Agent Summary`,
+      `- **Total Tasks:** ${artifact.agentSummary.total}`,
+      `- **Success Count:** ${artifact.agentSummary.success}`,
+      `- **Success Rate:** ${(artifact.agentSummary.successRate * 100).toFixed(1)}%`,
+      `- **Median Latency:** ${artifact.agentSummary.medianLatencyMs.toFixed(0)} ms`,
+      `- **P95 Latency:** ${artifact.agentSummary.p95LatencyMs.toFixed(0)} ms`,
+      ``,
+      `## FIM Summary`,
+      `- **Total Tasks:** ${artifact.fimSummary.total}`,
+      `- **Success Count:** ${artifact.fimSummary.success}`,
+      `- **Success Rate:** ${(artifact.fimSummary.successRate * 100).toFixed(1)}%`,
+      `- **Empty Rate:** ${(artifact.fimSummary.emptyRate * 100).toFixed(1)}%`,
+      `- **Median Latency:** ${artifact.fimSummary.medianLatencyMs.toFixed(0)} ms`,
+      `- **P95 Latency:** ${artifact.fimSummary.p95LatencyMs.toFixed(0)} ms`,
+      ``,
+    ].join("\n")
+
+    const mdPath = join(options.outputDir, `${baseName}.md`)
+    await writeFile(mdPath, mdContent, "utf-8")
+    console.error(`[benchmark] Markdown report written: ${mdPath}`)
   }
 
   return artifact

@@ -44,6 +44,42 @@ export function checkInferenceGate(): InferenceGateState {
   }
 }
 
+export class InferenceNotAuthorizedError extends Error {
+  readonly code = "INFERENCE_NOT_AUTHORIZED"
+
+  constructor(message?: string) {
+    super(
+      message ??
+      "[InferenceGate] Real inference is disabled. Set OPEN_VS_CODE_REAL_INFERENCE=1 to authorize local model inference."
+    )
+    this.name = "InferenceNotAuthorizedError"
+  }
+}
+
+/**
+ * Assert that inference is authorized.
+ * In production (when using global fetch), OPEN_VS_CODE_REAL_INFERENCE=1 is strictly required.
+ * In deterministic test suites with an injected mock fetch, authorization is bypassed to permit testing.
+ */
+export function assertInferenceAuthorized(isCustomFetch?: boolean): InferenceGateState {
+  if (isCustomFetch) {
+    return {
+      authorized: true,
+      reason: "Test seam: custom fetch mock provided",
+      endpoint: undefined,
+    }
+  }
+
+  const state = checkInferenceGate()
+  if (!state.authorized) {
+    throw new InferenceNotAuthorizedError(
+      `[InferenceGate] ${state.reason}\n` +
+      `To enable real inference on this host: export OPEN_VS_CODE_REAL_INFERENCE=1`
+    )
+  }
+  return state
+}
+
 /**
  * Assert the inference gate is open. Throws with a clear message if not authorized.
  * Use in benchmark harnesses and real model runners before any inference.
@@ -51,7 +87,7 @@ export function checkInferenceGate(): InferenceGateState {
 export function requireInferenceGate(): InferenceGateState {
   const state = checkInferenceGate()
   if (!state.authorized) {
-    throw new Error(
+    throw new InferenceNotAuthorizedError(
       `[InferenceGate] ${state.reason}\n` +
       `To enable real inference on this host: export OPEN_VS_CODE_REAL_INFERENCE=1`
     )

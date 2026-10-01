@@ -1,42 +1,18 @@
 # Scratchpad
 
-- Current state: Sprint 2D is COMPLETE.
+- Current state: Sprint 4E.1 is COMPLETE (Implementation Sealed; Real-Host Evidence Blocked).
 - Accomplishments:
-  - deterministic coding cases: 30
-  - coding eval expected outcomes: 30/30
-  - required CLI E2E: 16/16
-  - required CLI skips: 0
-  - ASK: yes
-  - PLAN: yes
-  - BUILD: yes
-  - DEBUG via RepairOrchestrator: yes
-  - REVIEW: yes
-  - controlled writes: yes
-  - controlled verification: yes
-  - bounded repair: yes
-  - project memory snapshot: yes
-  - cross-session continuity: yes
-  - metadata-first skills: yes
-  - progressive skill loading: yes
-  - Bounded MCP integration: yes
-
-  - arbitrary shell: no
-  - package install: no
-  - Git mutation: no
-  - IDE: no
-  - model weights on dev machine: no
-  - real model required: no
-Sprint 2D complete. Deterministic model routing integrated.
-# Scratchpad
-
-- Current state: Sprint 2D is COMPLETE.
-- Accomplishments:
-  - Canonical routing contracts implemented
-  - ModelRouter supports capability filtering, context compatibility, explicit local fallback, health state, and tie-breaking.
-  - ScriptedModelProvider E2E tests passing.
-  - Bounded explicit fallback; no silent cloud fallback.
-  - Retained strict model-weight-free invariant on the dev machine.
-  - 35 structural routing scenarios tested and deterministic.
+  - Canonical OpenAI-compatible endpoint contract implemented (`packages/agent-core/src/model/canonical-endpoint.ts`).
+  - Deterministic URL normalization (/v1, host root, trailing slashes, zero /v1/v1 duplication, queries/fragments rejected).
+  - Explicit local/open-weight provider invariant: known proprietary cloud endpoints (OpenAI, Anthropic, Google, DeepSeek, etc.) strictly rejected with `EndpointPolicyError`.
+  - Operator authorization boundary enforced: `OPEN_VS_CODE_REAL_INFERENCE=1` required for real HTTP calls in production, while preserving unit test seams via mock fetch.
+  - Explicit FIM strategy configuration (`qwen`, `starcoder`, `deepseek`, `prefix-suffix-middle`, `raw-prefix`) validated with `ConfigValidationError`.
+  - Production autocomplete gateway dynamically creates real `LocalFimProvider` instances for eligible local deployments; zero scripted providers in production.
+  - Production agent runtime wires real `EndpointHealthChecker` probing `/v1/models` and workspace-scoped `ModelPerformanceLedger` (`.open-vs-code/model-performance-ledger.json`).
+  - `ModelPerformanceLedger` records aggregate outcomes without source code, prompts, completions, diffs, or secrets; handles corruption recovery safely.
+  - Real model benchmark harness refactored to exercise genuine Open VS Code production pipeline (`AgentRunner` -> `RoutedModelGateway` -> `ModelRouter` -> local provider -> bounded tools -> evidence).
+  - Sprint 4E.1 closure and security evaluation suite: 19 scenarios pass 100% deterministically.
+  - Deterministic model integration suite: 64 scenarios pass 100% deterministically twice.
 
 Next:
-Sprint 3A — IDE ADAPTER / CODE-OSS INTEGRATION
+Execute real-model benchmark on designated inference host with operator authorization, then proceed to Sprint 4F (Code-OSS / VSCodium Desktop Packaging).

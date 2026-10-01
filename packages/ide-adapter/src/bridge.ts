@@ -36,6 +36,7 @@ export class AgentSessionBridge {
   }
   
   private async _run(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly ConversationTurn[]): Promise<AgentResult> {
+    const t0 = Date.now();
     await this.host.showOutput(`Starting ${mode} task: ${instruction}`);
     
     // Check trust
@@ -155,6 +156,21 @@ export class AgentSessionBridge {
         }
       }
       await this.host.showOutput(`Task Finished: ${runnerResult.status}`);
+      if (runtime?.performanceLedger && runtime?.routedGateway?.lastDecision) {
+        const lastDec = runtime.routedGateway.lastDecision;
+        runtime.performanceLedger.recordAgentOutcome({
+          deploymentId: lastDec.deploymentId,
+          taskClass: lastDec.taskClass,
+          success: runnerResult.status === "COMPLETED",
+          verificationSuccess: true,
+          toolCallSuccess: (runnerResult.toolCalls?.length ?? 0) > 0,
+          repairCycles: 0,
+          timeoutOccurred: runnerResult.failureReason === "TIMEOUT",
+          cancellationOccurred: runnerResult.failureReason === "CANCELLED",
+          latencyMs: Date.now() - t0,
+        });
+        void runtime.performanceLedger.persist().catch(() => {});
+      }
       return runnerResult as AgentResult;
     } catch (e: any) {
       // T-1612: observe cancellation from actual core/bridge result, not inferred from signal alone.

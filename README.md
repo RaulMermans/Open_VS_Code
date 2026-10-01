@@ -35,7 +35,9 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Interactive CLI** | ✅ Complete | Standalone terminal interface. |
 | **Project Memory** | ✅ Complete | Bounded Markdown-first context injection and cross-session persistence. |
 | **Skills & Primitives** | ✅ Complete | Reusable metadata-first procedural playbooks (e.g., Bug Triage, Refactoring) with progressive token disclosure. |
-| **IDE Integration** | ⏳ Planned | VS Code / Code-OSS extension integration. |
+| **IDE Integration** | ✅ Complete | Full VS Code / Code-OSS extension integration (`@open-vs-code/vscode-integration`) with native inline completions, chat webview, diff review, and terminal execution. |
+| **Local Model Runtime & FIM** | ✅ Complete | Canonical OpenAI-compatible endpoint contracts (`/v1`), explicit FIM prompt templating, local endpoint health probing, and privacy-preserving adaptive performance ledger. |
+| **Real Inference Safety Gate**| ✅ Complete | Explicit operator authorization (`OPEN_VS_CODE_REAL_INFERENCE=1`) preventing unauthorized inference, weight downloads, or proprietary cloud leaks. |
 
 ---
 
@@ -118,9 +120,70 @@ User / Task Input
 
 ### TARGET INFERENCE MACHINE / OPTIONAL LIVE EVALUATION
 
+### TARGET INFERENCE MACHINE / OPTIONAL LIVE EVALUATION
+
 * Node.js `>= 22.0.0`
 * npm `>= 10.0.0`
-* [Ollama](https://ollama.ai) with `ollama run qwen2.5-coder:7b`
+* Local OpenAI-compatible inference server: [Ollama](https://ollama.ai) (`ollama serve` with `ollama pull qwen2.5-coder:7b`) or [vLLM](https://github.com/vllm-project/vllm) / [llama.cpp](https://github.com/ggerganov/llama.cpp).
+* Explicit operator authorization: `export OPEN_VS_CODE_REAL_INFERENCE=1`
+
+### Local Model Configuration (`.open-vs-code/models.json`)
+
+To configure self-hosted local models for coding and editor autocomplete:
+
+```json
+{
+  "$schema": "./models.schema.json",
+  "providers": [
+    {
+      "id": "ollama-local",
+      "kind": "openai_compatible_local",
+      "baseUrl": "http://127.0.0.1:11434"
+    }
+  ],
+  "models": [
+    {
+      "id": "qwen2.5-coder-7b",
+      "displayName": "Qwen 2.5 Coder 7B",
+      "contextWindow": 32768,
+      "capabilities": ["chat", "tools", "coding", "autocomplete", "fim"],
+      "specialization": "coding",
+      "fimStrategy": "qwen"
+    }
+  ],
+  "deployments": [
+    {
+      "id": "qwen-chat",
+      "providerId": "ollama-local",
+      "modelId": "qwen2.5-coder-7b",
+      "modelName": "qwen2.5-coder:7b",
+      "enabled": true,
+      "priority": 10
+    },
+    {
+      "id": "qwen-fim",
+      "providerId": "ollama-local",
+      "modelId": "qwen2.5-coder-7b",
+      "modelName": "qwen2.5-coder:7b",
+      "enabled": true,
+      "priority": 10,
+      "fimStrategy": "qwen"
+    }
+  ],
+  "routes": {
+    "coding": ["qwen-chat"],
+    "autocomplete": ["qwen-fim"],
+    "default": ["qwen-chat"]
+  }
+}
+```
+
+Key invariants:
+- **No Automatic Model Downloads**: Models must be provisioned beforehand by the developer; Open VS Code never automatically pulls weights.
+- **Explicit FIM Formatting**: Models declare `fimStrategy` (`qwen`, `starcoder`, `deepseek`, `prefix-suffix-middle`, or `raw-prefix`).
+- **Endpoint Health Probing**: Endpoints are periodically checked via lightweight `/v1/models` requests with bounded TTL caching.
+- **Privacy-Preserving Adaptive Routing**: Outcome metrics are tracked locally in `.open-vs-code/model-performance-ledger.json` without storing code or prompts.
+- **Zero Cloud Fallback**: Proprietary cloud endpoints (`api.openai.com`, `api.anthropic.com`, etc.) are forbidden and rejected immediately.
 
 ### Installation
 
@@ -136,7 +199,7 @@ npm ci
 ### Verification & Testing
 
 ```bash
-# Run deterministic tests
+# Run deterministic tests (unit & integration)
 npm test
 
 # Run strict TypeScript typecheck
@@ -149,10 +212,15 @@ npm run lint
 npm run build
 ```
 
-### TARGET INFERENCE MACHINE / OPTIONAL LIVE EVALUATION
+### Live Open-Weight Model Benchmark (Requires Authorization)
 
 ```bash
-npm run eval:model
+# 1. Start local model server (e.g. Ollama)
+ollama serve
+
+# 2. Authorize real local inference and run benchmark
+export OPEN_VS_CODE_REAL_INFERENCE=1
+npm run eval:models
 ```
 
 ---
