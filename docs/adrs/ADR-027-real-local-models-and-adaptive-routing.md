@@ -248,6 +248,14 @@ priority. Useful for:
 - Debugging routing decisions.
 - Safe rollback when adaptive routing behaves unexpectedly.
 
+### 19. Configuration Truth & Endpoint Ownership (Sprint 4E.2 Refinement)
+
+Sprint 4E.2 establishes strict configuration invariants:
+- **Canonical Endpoint Precedence**: `deployment.endpoint` (explicit override or env var) takes precedence over `provider.baseUrl`. Deployments failing to resolve an endpoint fail validation fail-closed (`CONFIG_VALIDATION_ERROR`).
+- **Wire Model Identifier Separation**: Stable logical `id` is decoupled from physical wire identifier (`modelName` / `servedModelId`). Resolution order: `deployment.modelName` > `deployment.servedModelId` > `model.modelName` > `model.servedModelId` > `deployment.modelId`.
+- **Provider BaseUrl Preservation**: Config loading (`validateRoutingConfig`) strictly preserves `provider.baseUrl` without dropping it during provider reconstruction.
+- **Explicit FIM Invariant**: Any deployment or model declaring `fim` or `autocomplete` capability must specify an explicit valid `fimStrategy`. Silently defaulting to generic fallback is forbidden.
+
 ---
 
 ## Alternatives Considered

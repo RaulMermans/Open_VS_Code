@@ -1,15 +1,46 @@
 {
+  "$schema": "../schemas/models.schema.json",
   "providers": [
-    { "id": "scripted-dev", "kind": "scripted" },
-    { "id": "openai-local", "kind": "openai_compatible_local" }
+    {
+      "id": "ollama-local",
+      "kind": "openai_compatible_local",
+      "baseUrl": "http://127.0.0.1:11434"
+    }
   ],
   "models": [
-    { "id": "llama-3-8b-instruct", "contextWindow": 8192, "capabilities": ["toolUse", "coding"], "specialization": "coding" }
+    {
+      "id": "qwen2.5-coder-7b",
+      "displayName": "Qwen 2.5 Coder 7B",
+      "family": "qwen",
+      "contextWindow": 32768,
+      "capabilities": ["toolUse", "coding", "autocomplete", "fim"],
+      "specialization": "coding",
+      "fimStrategy": "qwen",
+      "provenance": "Qwen2.5-Coder-7B-Instruct (Apache 2.0)"
+    }
   ],
   "deployments": [
-    { "id": "dep-llama-3", "providerId": "openai-local", "modelId": "llama-3-8b-instruct", "endpoint": "http://127.0.0.1:11434/v1", "enabled": true }
+    {
+      "id": "qwen-chat",
+      "providerId": "ollama-local",
+      "modelId": "qwen2.5-coder-7b",
+      "modelName": "qwen2.5-coder:7b",
+      "enabled": true,
+      "priority": 10
+    },
+    {
+      "id": "qwen-fim",
+      "providerId": "ollama-local",
+      "modelId": "qwen2.5-coder-7b",
+      "modelName": "qwen2.5-coder:7b",
+      "enabled": true,
+      "priority": 10,
+      "fimStrategy": "qwen"
+    }
   ],
   "routes": {
-    "default": ["dep-llama-3"]
+    "coding": ["qwen-chat"],
+    "autocomplete": ["qwen-fim"],
+    "default": ["qwen-chat"]
   }
 }

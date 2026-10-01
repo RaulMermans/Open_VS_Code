@@ -1,18 +1,20 @@
 # Scratchpad
 
-- Current state: Sprint 4E.1 is COMPLETE (Implementation Sealed; Real-Host Evidence Blocked).
+- Current state: Sprint 4E.2 is COMPLETE (Implementation Sealed; Real-Host Evidence Blocked).
 - Accomplishments:
   - Canonical OpenAI-compatible endpoint contract implemented (`packages/agent-core/src/model/canonical-endpoint.ts`).
-  - Deterministic URL normalization (/v1, host root, trailing slashes, zero /v1/v1 duplication, queries/fragments rejected).
-  - Explicit local/open-weight provider invariant: known proprietary cloud endpoints (OpenAI, Anthropic, Google, DeepSeek, etc.) strictly rejected with `EndpointPolicyError`.
-  - Operator authorization boundary enforced: `OPEN_VS_CODE_REAL_INFERENCE=1` required for real HTTP calls in production, while preserving unit test seams via mock fetch.
-  - Explicit FIM strategy configuration (`qwen`, `starcoder`, `deepseek`, `prefix-suffix-middle`, `raw-prefix`) validated with `ConfigValidationError`.
-  - Production autocomplete gateway dynamically creates real `LocalFimProvider` instances for eligible local deployments; zero scripted providers in production.
-  - Production agent runtime wires real `EndpointHealthChecker` probing `/v1/models` and workspace-scoped `ModelPerformanceLedger` (`.open-vs-code/model-performance-ledger.json`).
-  - `ModelPerformanceLedger` records aggregate outcomes without source code, prompts, completions, diffs, or secrets; handles corruption recovery safely.
-  - Real model benchmark harness refactored to exercise genuine Open VS Code production pipeline (`AgentRunner` -> `RoutedModelGateway` -> `ModelRouter` -> local provider -> bounded tools -> evidence).
-  - Sprint 4E.1 closure and security evaluation suite: 19 scenarios pass 100% deterministically.
-  - Deterministic model integration suite: 64 scenarios pass 100% deterministically twice.
+  - Authoritative endpoint ownership: `deployment.endpoint` takes precedence over `provider.baseUrl`, failing clearly on missing/malformed/cloud endpoints.
+  - Logical model ID separated from wire identifier via `modelName` and `servedModelId`.
+  - Bug A fixed: `provider.baseUrl` and `provider.apiKey` strictly preserved through `validateRoutingConfig` and loader pipeline.
+  - Reconciled model capability vocabulary: single authoritative vocabulary matching `RoutingModelCapability` (`toolUse`, `coding`, `fim`, `autocomplete`).
+  - Created real JSON schema at `config/schemas/models.schema.json` and canonical example at `config/examples/models.local.example.json` with zero-drift regression test.
+  - Explicit FIM strategy invariant: deployments/models eligible for FIM must declare explicit strategy (`qwen`, `starcoder`, etc.); no silent default.
+  - Production agent runtime benchmark path refactored: exercises temporary workspace `.open-vs-code/models.json` -> `loadRoutingConfig` -> `createAgentRuntime` -> `RoutedModelGateway` -> `ModelRouter` -> local provider -> tools -> result.
+  - Added 4 genuine repository inspection tasks (`T001`-`T004`) requiring tools; hallucinated answers without tool calls fail fixture.
+  - Production autocomplete benchmark path refactored: exercises `.open-vs-code/models.json` -> `createProductionAutocompleteGateway`.
+  - Truthful FIM validation: `validateSyntax` parses JSON / checks delimiters, distinguishing `nonEmpty` from `syntaxValid`.
+  - Operator authorization boundary preserved: `OPEN_VS_CODE_REAL_INFERENCE=1` required for real HTTP calls in production.
+  - Deterministic evaluation suites: 64 integration scenarios pass twice with 100% determinism; 32 closure scenarios in `sprint-4e-closure-eval.test.ts` pass with zero failures.
 
 Next:
 Execute real-model benchmark on designated inference host with operator authorization, then proceed to Sprint 4F (Code-OSS / VSCodium Desktop Packaging).

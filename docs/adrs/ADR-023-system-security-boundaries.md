@@ -276,7 +276,7 @@ Sprint 4A.3 establishes complete closure integrity:
 - No enterprise secret vault integration
 - SSH key sensitivity (id_rsa etc.) added to autocomplete sensitive list — may skip legitimate SSH config editing in rare cases
 - `unsafe-inline` for CSS in webview (acceptable for VS Code theming; no script-unsafe-inline)
-- Real OSS model attack surface testing deferred to Sprint 4E
+- Real OSS model attack surface testing completed in Sprint 4E (model authority boundary, zero-cloud rejection, malformed response handling, inference authorization gate)
 - Residual filesystem race window: a symlink swap on the target path between prepare and apply is caught at apply time by base hash verification and parent realpath containment, but does not use OS-level directory fd pinning (openat/O_NOFOLLOW).
 
 ---

@@ -74,8 +74,28 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
       if (typeof pd.id !== "string" || !pd.id.trim()) { violations.push("Provider id must be a non-empty string"); continue }
       if (providerIds.has(pd.id as string)) { violations.push(`Duplicate provider ID: ${pd.id}`); continue }
       if (!VALID_PROVIDER_KINDS.includes(pd.kind as ProviderKind)) { violations.push(`Unsupported provider kind '${pd.kind}' in provider '${pd.id}'`); continue }
+      if (pd.baseUrl !== undefined) {
+        if (typeof pd.baseUrl !== "string" || !pd.baseUrl.trim()) {
+          violations.push(`Provider '${pd.id}' baseUrl must be a non-empty string`)
+        } else {
+          try {
+            resolveCanonicalEndpoints(pd.baseUrl.trim())
+          } catch (err) {
+            violations.push(`Invalid baseUrl in provider '${pd.id}': ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+      }
+      if (pd.apiKey !== undefined && (typeof pd.apiKey !== "string" || !pd.apiKey.trim())) {
+        violations.push(`Provider '${pd.id}' apiKey must be a non-empty string if specified`)
+      }
       providerIds.add(pd.id as string)
-      providers.push({ id: pd.id as string, kind: pd.kind as ProviderKind, ...(pd.protocol ? { protocol: pd.protocol as string } : {}) })
+      providers.push({
+        id: pd.id as string,
+        kind: pd.kind as ProviderKind,
+        ...(pd.protocol ? { protocol: pd.protocol as string } : {}),
+        ...(typeof pd.baseUrl === "string" && pd.baseUrl.trim() ? { baseUrl: pd.baseUrl.trim() } : {}),
+        ...(typeof pd.apiKey === "string" && pd.apiKey.trim() ? { apiKey: pd.apiKey.trim() } : {}),
+      })
     }
   }
 
@@ -108,6 +128,12 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
           violations.push(`Invalid fimStrategy '${String(md.fimStrategy)}' in model '${md.id}'`)
         }
       }
+      if (md.modelName !== undefined && (typeof md.modelName !== "string" || !md.modelName.trim())) {
+        violations.push(`Model '${md.id}' modelName must be a non-empty string if specified`)
+      }
+      if (md.servedModelId !== undefined && (typeof md.servedModelId !== "string" || !md.servedModelId.trim())) {
+        violations.push(`Model '${md.id}' servedModelId must be a non-empty string if specified`)
+      }
       modelIds.add(md.id as string)
       models.push({
         id: md.id as string,
@@ -119,6 +145,8 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
         ...(md.maxOutputTokens && typeof md.maxOutputTokens === "number" ? { maxOutputTokens: md.maxOutputTokens } : {}),
         ...(md.provenance ? { provenance: md.provenance as string } : {}),
         ...(md.fimStrategy && VALID_FIM_STRATEGIES.includes(md.fimStrategy as FimStrategy) ? { fimStrategy: md.fimStrategy as FimStrategy } : {}),
+        ...(typeof md.modelName === "string" && md.modelName.trim() ? { modelName: md.modelName.trim() } : {}),
+        ...(typeof md.servedModelId === "string" && md.servedModelId.trim() ? { servedModelId: md.servedModelId.trim() } : {}),
       })
     }
   }
@@ -148,24 +176,58 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
           violations.push(`Invalid fimStrategy '${String(dd.fimStrategy)}' in deployment '${dd.id}'`)
         }
       }
-      if (typeof dd.endpoint === "string" && (dd.endpoint.startsWith("http://") || dd.endpoint.startsWith("https://"))) {
-        try {
-          resolveCanonicalEndpoints(dd.endpoint)
-        } catch (err) {
-          violations.push(`Invalid endpoint in deployment '${dd.id}': ${err instanceof Error ? err.message : String(err)}`)
+      if (dd.modelName !== undefined && (typeof dd.modelName !== "string" || !dd.modelName.trim())) {
+        violations.push(`Deployment '${dd.id}' modelName must be a non-empty string if specified`)
+      }
+      if (dd.servedModelId !== undefined && (typeof dd.servedModelId !== "string" || !dd.servedModelId.trim())) {
+        violations.push(`Deployment '${dd.id}' servedModelId must be a non-empty string if specified`)
+      }
+      if (dd.endpoint !== undefined) {
+        if (typeof dd.endpoint !== "string" || !dd.endpoint.trim()) {
+          violations.push(`Deployment '${dd.id}' endpoint must be a non-empty string if specified`)
+        } else {
+          const epStr = (dd.endpoint as string).trim()
+          if (epStr.startsWith("http://") || epStr.startsWith("https://")) {
+            try {
+              resolveCanonicalEndpoints(epStr)
+            } catch (err) {
+              violations.push(`Invalid endpoint in deployment '${dd.id}': ${err instanceof Error ? err.message : String(err)}`)
+            }
+          } else if (epStr.includes("://")) {
+            violations.push(`Invalid endpoint in deployment '${dd.id}': Endpoint must use HTTP or HTTPS protocol`)
+          }
         }
       }
+
+      const parentProvider = providers.find(p => p.id === dd.providerId)
+      if (parentProvider?.kind === "openai_compatible_local") {
+        const hasEndpoint = (typeof dd.endpoint === "string" && dd.endpoint.trim().length > 0) ||
+                            (typeof parentProvider.baseUrl === "string" && parentProvider.baseUrl.trim().length > 0)
+        if (!hasEndpoint) {
+          violations.push(`Deployment '${dd.id}' on provider '${dd.providerId}' has no endpoint or provider baseUrl configured`)
+        }
+      }
+
+      const modelConfig = models.find(m => m.id === dd.modelId)
+      const hasFimCapability = modelConfig?.capabilities.some(c => c === "fim" || c === "autocomplete")
+      const resolvedFimStrategy = dd.fimStrategy ?? modelConfig?.fimStrategy
+      if (hasFimCapability && !resolvedFimStrategy) {
+        violations.push(`Deployment '${dd.id}' has FIM/autocomplete capability but defines no explicit fimStrategy on deployment or model`)
+      }
+
       deploymentIds.add(dd.id as string)
       deployments.push({
         id: dd.id as string,
         providerId: dd.providerId as string,
         modelId: dd.modelId as string,
         enabled: dd.enabled !== false,
-        ...(dd.endpoint ? { endpoint: dd.endpoint as string } : {}),
+        ...(dd.endpoint ? { endpoint: (dd.endpoint as string).trim() } : {}),
         ...(dd.contextWindow ? { contextWindow: dd.contextWindow as number } : {}),
         ...(dd.priority !== undefined ? { priority: dd.priority as number } : {}),
         ...(dd.tags && Array.isArray(dd.tags) ? { tags: dd.tags as string[] } : {}),
         ...(dd.fimStrategy && VALID_FIM_STRATEGIES.includes(dd.fimStrategy as FimStrategy) ? { fimStrategy: dd.fimStrategy as FimStrategy } : {}),
+        ...(typeof dd.modelName === "string" && dd.modelName.trim() ? { modelName: dd.modelName.trim() } : {}),
+        ...(typeof dd.servedModelId === "string" && dd.servedModelId.trim() ? { servedModelId: dd.servedModelId.trim() } : {}),
       })
     }
   }
@@ -181,11 +243,6 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
       for (const depId of value) {
         if (typeof depId !== "string") { violations.push(`Route '${key}' contains non-string deployment ID`); continue }
         if (!deploymentIds.has(depId)) { violations.push(`Unknown deployment '${depId}' in route '${key}'`); continue }
-        // Check for disabled deployments in routes (warn but allow)
-        const dep = deployments.find(d => d.id === depId)
-        if (dep && !dep.enabled) {
-          // Disabled deployments in routes are filtered at routing time, not config time
-        }
       }
       routes[key] = value as string[]
     }
@@ -195,7 +252,13 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
     throw new ConfigValidationError(violations)
   }
 
-  return { providers, models, deployments, routes }
+  return {
+    ...(typeof raw.$schema === "string" ? { $schema: raw.$schema } : {}),
+    providers,
+    models,
+    deployments,
+    routes,
+  }
 }
 
 /**

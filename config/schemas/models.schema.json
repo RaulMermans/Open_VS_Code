@@ -1,0 +1,196 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://open-vs-code.local/schemas/models.schema.json",
+  "title": "Open VS Code Models Configuration",
+  "description": "Authoritative schema for .open-vs-code/models.json routing configuration",
+  "type": "object",
+  "required": ["providers", "models", "deployments", "routes"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URI to this schema file"
+    },
+    "providers": {
+      "type": "array",
+      "description": "List of model providers (e.g. self-hosted OpenAI-compatible local server)",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique identifier for the provider"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["scripted", "openai_compatible_local", "fake"],
+            "description": "Provider architecture kind"
+          },
+          "protocol": {
+            "type": "string",
+            "description": "Optional protocol specification"
+          },
+          "baseUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Canonical HTTP/HTTPS base URL of the local model server (e.g. http://127.0.0.1:11434)"
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "Optional local API key token if required by server"
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "description": "Logical models and their baseline capabilities",
+      "items": {
+        "type": "object",
+        "required": ["id", "contextWindow", "capabilities", "specialization"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable logical model identifier"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Human-readable display name"
+          },
+          "family": {
+            "type": "string",
+            "description": "Model architecture family (e.g. qwen)"
+          },
+          "contextWindow": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum context window tokens"
+          },
+          "maxOutputTokens": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum tokens the model can generate per request"
+          },
+          "capabilities": {
+            "type": "array",
+            "description": "Capabilities supported by the model",
+            "items": {
+              "type": "string",
+              "enum": [
+                "toolUse",
+                "structuredOutput",
+                "coding",
+                "reasoning",
+                "longContext",
+                "vision",
+                "fim",
+                "autocomplete"
+              ]
+            }
+          },
+          "specialization": {
+            "type": "string",
+            "enum": ["general", "coding", "reasoning"],
+            "description": "Primary task specialization"
+          },
+          "provenance": {
+            "type": "string",
+            "description": "Origin, license, or distribution source"
+          },
+          "fimStrategy": {
+            "type": "string",
+            "enum": ["prefix-suffix-middle", "qwen", "starcoder", "deepseek", "raw-prefix"],
+            "description": "Fill-In-the-Middle token formatting strategy"
+          },
+          "modelName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Served model identifier sent to inference engine if different from id"
+          },
+          "servedModelId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Alias for modelName"
+          }
+        }
+      }
+    },
+    "deployments": {
+      "type": "array",
+      "description": "Configured instances of models bound to providers",
+      "items": {
+        "type": "object",
+        "required": ["id", "providerId", "modelId"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique identifier for this deployment"
+          },
+          "providerId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Reference to an entry in providers"
+          },
+          "modelId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Reference to an entry in models"
+          },
+          "modelName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact model tag sent to server (e.g. qwen2.5-coder:7b)"
+          },
+          "servedModelId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Alias for modelName"
+          },
+          "endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Per-deployment endpoint override URL or environment variable name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether this deployment is available for routing"
+          },
+          "contextWindow": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional deployment-specific context window override"
+          },
+          "priority": {
+            "type": "number",
+            "description": "Static routing priority (higher values preferred)"
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "fimStrategy": {
+            "type": "string",
+            "enum": ["prefix-suffix-middle", "qwen", "starcoder", "deepseek", "raw-prefix"],
+            "description": "FIM formatting strategy override for this deployment"
+          }
+        }
+      }
+    },
+    "routes": {
+      "type": "object",
+      "description": "Routing priority lists by task class or default",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

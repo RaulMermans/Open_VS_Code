@@ -45,4 +45,4 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 4B**: Runtime Evaluations & Adaptive Control complete (ADR-024).
 - **Sprint 4C**: Durable Checkpoints, Recovery & Safe Rollback complete (ADR-025).
 - **Sprint 4D**: Large-Repository Performance & Hardening complete (ADR-026).
-- **Sprint 4E / 4E.1**: Real Local Models, Production FIM & Evidence Closure (ADR-027) — Implementation Complete (Real-Host Evidence Blocked).
+- **Sprint 4E / 4E.1 / 4E.2**: Real Local Models, Production FIM & Evidence Closure (ADR-027) — Implementation Complete (Real-Host Evidence Blocked).

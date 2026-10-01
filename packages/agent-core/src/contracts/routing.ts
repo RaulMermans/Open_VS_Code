@@ -28,12 +28,16 @@ export interface ModelDescriptor {
   readonly specialization: ModelSpecialization
   readonly provenance?: string
   readonly fimStrategy?: FimStrategy
+  readonly modelName?: string
+  readonly servedModelId?: string
 }
 
 export interface ModelDeployment {
   readonly id: string
   readonly providerId: string
   readonly modelId: string
+  readonly modelName?: string
+  readonly servedModelId?: string
   readonly endpoint?: string // Env var reference or literal if testing
   readonly enabled: boolean
   readonly contextWindow?: number
@@ -107,6 +111,7 @@ export interface RouteDecision {
 export type ProviderHealthState = "unknown" | "ready" | "unavailable" | "degraded"
 
 export interface RoutingConfiguration {
+  readonly $schema?: string
   readonly providers: readonly ProviderDescriptor[]
   readonly models: readonly ModelDescriptor[]
   readonly deployments: readonly ModelDeployment[]

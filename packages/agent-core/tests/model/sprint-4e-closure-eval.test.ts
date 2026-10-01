@@ -1,9 +1,14 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { resolveCanonicalEndpoints, EndpointPolicyError } from "../../src/model/canonical-endpoint.ts"
+import {
+  resolveCanonicalEndpoints,
+  EndpointPolicyError,
+  resolveDeploymentEndpoint,
+  resolveServedModelId,
+} from "../../src/model/canonical-endpoint.ts"
 import {
   checkInferenceGate,
   assertInferenceAuthorized,
@@ -15,7 +20,11 @@ import { createProductionAutocompleteGateway } from "../../src/autocomplete/gate
 import { createAgentRuntime } from "../../src/agent/runtime.ts"
 import { EndpointHealthChecker } from "../../src/model/endpoint-health.ts"
 import { ModelPerformanceLedger } from "../../src/model/performance-ledger.ts"
-import { validateRoutingConfig } from "../../src/model/config-loader.ts"
+import {
+  validateRoutingConfig,
+  loadRoutingConfig,
+  ConfigValidationError,
+} from "../../src/model/config-loader.ts"
 import type { RoutingConfiguration } from "../../src/contracts/routing.ts"
 import { ModelRouter } from "../../src/model/router.ts"
 
@@ -522,6 +531,304 @@ describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation",
       } finally {
         if (savedEnv !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = savedEnv
       }
+    })
+  })
+
+  // ── 10. File-Backed Production Configuration Contract & Regression Proofs ──
+  describe("10. File-Backed Production Configuration Contract & Regression Proofs", () => {
+    test("1. provider baseUrl survives disk load and validation", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ovs-test-config-"))
+      try {
+        const configDir = join(tmp, ".open-vs-code")
+        await mkdir(configDir, { recursive: true })
+        const rawJson = {
+          providers: [{ id: "p1", kind: "openai_compatible_local", baseUrl: "http://127.0.0.1:11434" }],
+          models: [{ id: "m1", contextWindow: 8192, capabilities: ["coding"], specialization: "coding" }],
+          deployments: [{ id: "d1", providerId: "p1", modelId: "m1", enabled: true }],
+          routes: { coding: ["d1"] },
+        }
+        await writeFile(join(configDir, "models.json"), JSON.stringify(rawJson, null, 2))
+
+        const loaded = await loadRoutingConfig(tmp)
+        assert.ok(loaded !== null)
+        assert.equal(loaded.providers[0]?.baseUrl, "http://127.0.0.1:11434")
+      } finally {
+        await rm(tmp, { recursive: true, force: true })
+      }
+    })
+
+    test("2. served model ID (modelName and servedModelId) survives disk load and validation", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ovs-test-config-"))
+      try {
+        const configDir = join(tmp, ".open-vs-code")
+        await mkdir(configDir, { recursive: true })
+        const rawJson = {
+          providers: [{ id: "p1", kind: "openai_compatible_local", baseUrl: "http://127.0.0.1:11434" }],
+          models: [{
+            id: "qwen2.5-coder-7b",
+            contextWindow: 32768,
+            capabilities: ["coding", "toolUse"],
+            specialization: "coding",
+            modelName: "qwen2.5-coder:7b",
+          }],
+          deployments: [{
+            id: "d1",
+            providerId: "p1",
+            modelId: "qwen2.5-coder-7b",
+            modelName: "qwen2.5-coder:7b",
+            enabled: true,
+          }],
+          routes: { coding: ["d1"] },
+        }
+        await writeFile(join(configDir, "models.json"), JSON.stringify(rawJson, null, 2))
+
+        const loaded = await loadRoutingConfig(tmp)
+        assert.ok(loaded !== null)
+        assert.equal(loaded.models[0]?.modelName, "qwen2.5-coder:7b")
+        assert.equal(loaded.deployments[0]?.modelName, "qwen2.5-coder:7b")
+        assert.equal(resolveServedModelId(loaded.deployments[0]!, loaded.models[0]!), "qwen2.5-coder:7b")
+      } finally {
+        await rm(tmp, { recursive: true, force: true })
+      }
+    })
+
+    test("3. canonical capability values validate without error", () => {
+      const canonicalCaps = ["toolUse", "structuredOutput", "coding", "reasoning", "longContext", "vision", "fim", "autocomplete"]
+      const validated = validateRoutingConfig({
+        providers: [{ id: "p1", kind: "scripted" }],
+        models: [{
+          id: "m1",
+          contextWindow: 8192,
+          capabilities: canonicalCaps,
+          specialization: "coding",
+          fimStrategy: "qwen",
+        }],
+        deployments: [{ id: "d1", providerId: "p1", modelId: "m1", enabled: true }],
+        routes: { default: ["d1"] },
+      })
+      assert.deepEqual(validated.models[0]?.capabilities, canonicalCaps)
+    })
+
+    test("4. bad capability values (e.g. tools, chat) fail validation clearly", () => {
+      assert.throws(
+        () => validateRoutingConfig({
+          providers: [{ id: "p1", kind: "scripted" }],
+          models: [{
+            id: "m1",
+            contextWindow: 8192,
+            capabilities: ["tools", "chat"],
+            specialization: "coding",
+          }],
+          deployments: [{ id: "d1", providerId: "p1", modelId: "m1", enabled: true }],
+          routes: { default: ["d1"] },
+        }),
+        (err: unknown) =>
+          err instanceof ConfigValidationError &&
+          err.violations.some(v => v.includes("Unknown capability 'tools'")) &&
+          err.violations.some(v => v.includes("Unknown capability 'chat'")),
+      )
+    })
+
+    test("5. bad FIM strategy fails validation clearly", () => {
+      assert.throws(
+        () => validateRoutingConfig({
+          providers: [{ id: "p1", kind: "scripted" }],
+          models: [{
+            id: "m1",
+            contextWindow: 8192,
+            capabilities: ["autocomplete"],
+            specialization: "coding",
+            fimStrategy: "unsupported-strategy" as any,
+          }],
+          deployments: [{ id: "d1", providerId: "p1", modelId: "m1", enabled: true }],
+          routes: { default: ["d1"] },
+        }),
+        (err: unknown) =>
+          err instanceof ConfigValidationError &&
+          err.violations.some(v => v.includes("Invalid fimStrategy 'unsupported-strategy'")),
+      )
+    })
+
+    test("6. endpoint override precedence works: deployment endpoint overrides provider baseUrl", () => {
+      const provider = { id: "p1", kind: "openai_compatible_local" as const, baseUrl: "http://127.0.0.1:11434" }
+      const depWithOverride = { id: "d1", providerId: "p1", modelId: "m1", endpoint: "http://127.0.0.1:8000/v1", enabled: true }
+      const depWithoutOverride = { id: "d2", providerId: "p1", modelId: "m1", enabled: true }
+
+      assert.equal(resolveDeploymentEndpoint(depWithOverride, provider), "http://127.0.0.1:8000/v1")
+      assert.equal(resolveDeploymentEndpoint(depWithoutOverride, provider), "http://127.0.0.1:11434")
+    })
+
+    test("7. production autocomplete provider is instantiated from disk models.json", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ovs-test-config-"))
+      try {
+        const configDir = join(tmp, ".open-vs-code")
+        await mkdir(configDir, { recursive: true })
+        const rawJson = {
+          providers: [{ id: "p1", kind: "openai_compatible_local", baseUrl: "http://127.0.0.1:11434" }],
+          models: [{
+            id: "qwen2.5-coder-7b",
+            contextWindow: 32768,
+            capabilities: ["autocomplete", "fim"],
+            specialization: "coding",
+            fimStrategy: "qwen",
+            modelName: "qwen2.5-coder:7b",
+          }],
+          deployments: [{
+            id: "dep-fim",
+            providerId: "p1",
+            modelId: "qwen2.5-coder-7b",
+            modelName: "qwen2.5-coder:7b",
+            enabled: true,
+            fimStrategy: "qwen",
+          }],
+          routes: { autocomplete: ["dep-fim"] },
+        }
+        await writeFile(join(configDir, "models.json"), JSON.stringify(rawJson, null, 2))
+
+        const gateway = createProductionAutocompleteGateway(tmp)
+        assert.ok(gateway.providerRegistry.has("dep-fim"), "dep-fim provider must be instantiated in registry")
+        const fimProv = gateway.providerRegistry.get("dep-fim") as LocalFimProvider
+        assert.ok(fimProv instanceof LocalFimProvider)
+        assert.equal(fimProv.fimStrategy, "qwen")
+      } finally {
+        await rm(tmp, { recursive: true, force: true })
+      }
+    })
+
+    test("8. production agent provider is instantiated from disk models.json with correct wire model", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ovs-test-config-"))
+      try {
+        const configDir = join(tmp, ".open-vs-code")
+        await mkdir(configDir, { recursive: true })
+        const rawJson = {
+          providers: [{ id: "p1", kind: "openai_compatible_local", baseUrl: "http://127.0.0.1:11434" }],
+          models: [{
+            id: "qwen2.5-coder-7b",
+            contextWindow: 32768,
+            capabilities: ["coding", "toolUse"],
+            specialization: "coding",
+            modelName: "qwen2.5-coder:7b",
+          }],
+          deployments: [{
+            id: "dep-chat",
+            providerId: "p1",
+            modelId: "qwen2.5-coder-7b",
+            modelName: "qwen2.5-coder:7b",
+            enabled: true,
+          }],
+          routes: { coding: ["dep-chat"], default: ["dep-chat"] },
+        }
+        await writeFile(join(configDir, "models.json"), JSON.stringify(rawJson, null, 2))
+
+        const events: any[] = []
+        const runtime = await createAgentRuntime({
+          workspaceRoot: tmp,
+          mode: "ASK",
+          instruction: "test",
+          isTrusted: true,
+          eventSink: (ev) => events.push(ev),
+        })
+
+        assert.ok(runtime.runner !== undefined)
+        assert.ok(runtime.routedGateway !== undefined)
+      } finally {
+        await rm(tmp, { recursive: true, force: true })
+      }
+    })
+
+    test("9. requested wire model equals served model ID across chat and FIM providers", async () => {
+      const deployment = {
+        id: "d1",
+        providerId: "p1",
+        modelId: "logical-qwen",
+        modelName: "qwen2.5-coder:7b",
+        enabled: true,
+      }
+      const model = {
+        id: "logical-qwen",
+        contextWindow: 32768,
+        capabilities: ["coding" as const, "autocomplete" as const, "fim" as const],
+        specialization: "coding" as const,
+        fimStrategy: "qwen" as const,
+      }
+      const wireModel = resolveServedModelId(deployment, model)
+      assert.equal(wireModel, "qwen2.5-coder:7b")
+
+      // Test chat provider wire model
+      const chatProv = new OpenAICompatibleProvider({
+        baseUrl: "http://127.0.0.1:11434",
+        model: wireModel,
+      })
+      assert.equal(chatProv.model, "qwen2.5-coder:7b")
+
+      // Test FIM provider wire model
+      const fimProv = new LocalFimProvider({
+        providerId: "p1",
+        modelId: "logical-qwen",
+        deploymentId: "d1",
+        baseUrl: "http://127.0.0.1:11434",
+        model: wireModel,
+        fimStrategy: "qwen",
+      })
+      assert.equal(fimProv.modelId, "logical-qwen")
+    })
+
+    test("10. known cloud host is rejected at baseUrl or endpoint", () => {
+      assert.throws(
+        () => validateRoutingConfig({
+          providers: [{ id: "p1", kind: "openai_compatible_local", baseUrl: "https://api.openai.com" }],
+          models: [{ id: "m1", contextWindow: 8192, capabilities: ["coding"], specialization: "coding" }],
+          deployments: [{ id: "d1", providerId: "p1", modelId: "m1", enabled: true }],
+          routes: { default: ["d1"] },
+        }),
+        (err: unknown) =>
+          err instanceof ConfigValidationError &&
+          err.violations.some(v => v.includes("Proprietary cloud endpoint 'api.openai.com' is forbidden")),
+      )
+    })
+
+    test("11. missing endpoint fails clearly when neither deployment endpoint nor provider baseUrl is set", () => {
+      assert.throws(
+        () => validateRoutingConfig({
+          providers: [{ id: "p1", kind: "openai_compatible_local" }],
+          models: [{ id: "m1", contextWindow: 8192, capabilities: ["coding"], specialization: "coding" }],
+          deployments: [{ id: "d1", providerId: "p1", modelId: "m1", enabled: true }],
+          routes: { default: ["d1"] },
+        }),
+        (err: unknown) =>
+          err instanceof ConfigValidationError &&
+          err.violations.some(v => v.includes("has no endpoint or provider baseUrl configured")),
+      )
+    })
+
+    test("12. canonical example configuration loads through validateRoutingConfig with zero violations", async () => {
+      const examplePath = join(import.meta.dirname, "..", "..", "..", "..", "config", "examples", "models.local.example.json")
+      const raw = await readFile(examplePath, "utf-8")
+      const parsed = JSON.parse(raw)
+      const validated = validateRoutingConfig(parsed)
+
+      assert.ok(validated.providers.length >= 1)
+      assert.ok(validated.models.length >= 1)
+      assert.ok(validated.deployments.length >= 2)
+      assert.equal(validated.providers[0]?.baseUrl, "http://127.0.0.1:11434")
+      assert.equal(validated.deployments[0]?.modelName, "qwen2.5-coder:7b")
+    })
+
+    test("13. schema drift test: config/schemas/models.schema.json aligns with TypeScript contracts", async () => {
+      const schemaPath = join(import.meta.dirname, "..", "..", "..", "..", "config", "schemas", "models.schema.json")
+      const raw = await readFile(schemaPath, "utf-8")
+      const schema = JSON.parse(raw)
+
+      const providerKinds = schema.properties.providers.items.properties.kind.enum
+      assert.deepEqual(providerKinds.toSorted(), ["fake", "openai_compatible_local", "scripted"].toSorted())
+
+      const capabilities = schema.properties.models.items.properties.capabilities.items.enum
+      const expectedCaps = ["toolUse", "structuredOutput", "coding", "reasoning", "longContext", "vision", "fim", "autocomplete"]
+      assert.deepEqual(capabilities.toSorted(), expectedCaps.toSorted())
+
+      const fimStrategies = schema.properties.models.items.properties.fimStrategy.enum
+      const expectedFim = ["prefix-suffix-middle", "qwen", "starcoder", "deepseek", "raw-prefix"]
+      assert.deepEqual(fimStrategies.toSorted(), expectedFim.toSorted())
     })
   })
 })

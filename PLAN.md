@@ -260,21 +260,22 @@ Sprint 4D.3 — Measurement Integrity & Hard-Bound Closure ✅ CLOSED PERMANENTL
   - Sprint 4D / 4D.1 / 4D.2 / 4D.3 are PERMANENTLY CLOSED.
 
 Sprint 4E.1 — Real Inference Production Wiring & Evidence Closure
+STATUS: IMPLEMENTATION_COMPLETE — SUPERSEDED BY SPRINT 4E.2
+
+Sprint 4E.2 — Configuration Truth & End-to-End Real Model Closure
 STATUS: IMPLEMENTATION_COMPLETE — REAL_HOST_EVIDENCE_BLOCKED (Awaiting authorized host execution)
-  - Canonical OpenAI-Compatible Endpoint Resolution Contract: Implemented `resolveCanonicalEndpoints` in `packages/agent-core/src/model/canonical-endpoint.ts`. Deterministically resolves `/v1/chat/completions`, `/v1/completions`, `/v1/models`, and base `/v1` from host roots or `/v1` paths with/without trailing slashes. Eliminates `/v1/v1` duplication. Rejects query strings (`QUERY_NOT_ALLOWED`), fragments (`FRAGMENT_NOT_ALLOWED`), and invalid protocols (`INVALID_PROTOCOL`).
-  - Strict Local-First & Zero Cloud Fallback Policy: Rejects known proprietary cloud hosts (`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, etc.) with `EndpointPolicyError` (`PROPRIETARY_CLOUD_FORBIDDEN`). Allows self-hosted endpoints on user machines.
-  - Production Inference Authorization Boundary: Enforces `OPEN_VS_CODE_REAL_INFERENCE=1` across production callers (`OpenAICompatibleProvider`, `LocalFimProvider`). Mock fetch remains permitted as a deterministic test seam without weakening security.
-  - Explicit FIM Strategy Configuration & Validation: Model descriptors and deployments declare `fimStrategy` (`qwen`, `starcoder`, `deepseek`, `prefix-suffix-middle`, `raw-prefix`). Validated via `validateRoutingConfig`; invalid strategies throw `ConfigValidationError`.
-  - Production Autocomplete Gateway Wiring: `createProductionAutocompleteGateway` dynamically creates real `LocalFimProvider` instances for eligible local autocomplete deployments. Zero scripted providers in production. Wires real `EndpointHealthChecker` and `ModelPerformanceLedger`.
-  - Production Agent Runtime Wiring: `createAgentRuntime` replaces hardcoded static health checks with real `EndpointHealthChecker` probing configured endpoints, and wires workspace-scoped `ModelPerformanceLedger` (`.open-vs-code/model-performance-ledger.json`).
-  - Model Authority Boundary & Robustness: Model responses cannot modify routing configurations or elevate permissions. Malformed JSON, HTTP errors, timeouts, and cancellations fail safely.
-  - Privacy-Preserving Performance Ledger: Aggregates metrics only; never stores source code, prompts, completions, diffs, or secrets. Corrupt or schema-mismatched files reset safely.
-  - Real Model Benchmark Harness Refactor: Refactored `runAgentBenchmark` to exercise genuine production stack (`AgentRunner` -> `RoutedModelGateway` -> `ModelRouter` -> local provider -> bounded tools -> evidence) against temporary repository fixtures with sanitized privacy-safe telemetry.
-  - Deterministic Evaluation Suites:
-    * 64 deterministic integration scenarios in `model-integration-eval.ts` pass twice with 100% deep strict equality.
-    * 19 comprehensive closure scenarios in `sprint-4e-closure-eval.test.ts` pass with zero failures.
-  - Remaining Host Evidence Requirements: Real host inference execution with `OPEN_VS_CODE_REAL_INFERENCE=1` on designated machine with active Ollama/vLLM/llama.cpp server generating live JSON and Markdown benchmark reports.
+  - Bug A Fix: `validateRoutingConfig` preserves `pd.baseUrl` and `pd.apiKey` through validation so provider endpoints survive down to production runtime.
+  - Canonical Endpoint Ownership & Precedence: `resolveDeploymentEndpoint` establishes authoritative precedence (`deployment.endpoint` > `provider.baseUrl` > env var). Rejects cloud hosts (`PROPRIETARY_CLOUD_FORBIDDEN`), missing endpoints, and malformed URLs.
+  - Wire Model Identifier Separation: Decoupled logical `modelId` from served wire identifier via `modelName` and `servedModelId`. `resolveServedModelId` resolves: `deployment.modelName` > `deployment.servedModelId` > `model.modelName` > `model.servedModelId` > `deployment.modelId`.
+  - Reconciled Model Capability Vocabulary: Authoritative capability vocabulary matches `RoutingModelCapability` (`toolUse`, `coding`, `fim`, `autocomplete`).
+  - Authoritative JSON Schema & Canonical Example: Created deterministic JSON Schema at `config/schemas/models.schema.json` and starter config at `config/examples/models.local.example.json`. Regression tests verify 0 validation errors and 0 schema drift.
+  - Explicit FIM Invariant: Any deployment or model declaring `fim` or `autocomplete` capability must define an explicit valid `fimStrategy`. Generic fallback defaulting is prohibited.
+  - Production Agent Runtime Benchmark Path: Benchmark refactored to exercise full user path: temporary workspace -> `.open-vs-code/models.json` -> `loadRoutingConfig` -> `createAgentRuntime` -> `RoutedModelGateway` -> `ModelRouter` -> local provider -> tools -> result.
+  - Genuine Tool-Required Fixtures: Added tasks `T001`-`T004` requiring `read_file` / `search_text` against synthetic repository files (`src/config.ts`, `src/invoicing.ts`, etc.). Strict acceptance criteria: `success = runtimeCompleted && taskCorrect && requiredToolUsed`. Hallucinations without tools fail.
+  - Production Autocomplete Benchmark Path: Refactored to exercise `.open-vs-code/models.json` -> `createProductionAutocompleteGateway` -> `LocalFimProvider`.
+  - Truthful FIM Metrics: Replaced non-empty stub with `validateSyntax`, distinguishing `nonEmpty` from `syntaxValid` via JSON parsing and syntax delimiter checks.
+  - Evaluation Suites Clean: 64 deterministic integration scenarios pass twice with 100% deep strict equality; 32 comprehensive closure tests pass with 0 failures.
+  - Remaining Host Evidence Requirements: Real host inference execution with `OPEN_VS_CODE_REAL_INFERENCE=1` on designated machine with active local server (Ollama/vLLM/llama.cpp) and weights loaded.
 
 Next:
 Execute real-model benchmark on authorized inference host, then proceed to Sprint 4F (Code-OSS / VSCodium Desktop Packaging).
-

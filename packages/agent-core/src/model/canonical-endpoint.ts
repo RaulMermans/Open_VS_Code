@@ -18,6 +18,8 @@
  *      No missing /v1, no duplicated /v1/v1.
  */
 
+import type { ModelDeployment, ModelDescriptor, ProviderDescriptor } from "../contracts/routing.ts"
+
 export class EndpointPolicyError extends Error {
   readonly code: string
 
@@ -106,4 +108,53 @@ export function resolveCanonicalEndpoints(input: string | URL): CanonicalEndpoin
     completionsEndpoint: `${baseV1Url}/completions`,
     modelsEndpoint: `${baseV1Url}/models`,
   }
+}
+
+/**
+ * Resolves the effective endpoint URL string for a deployment,
+ * applying precedence: deployment.endpoint > provider.baseUrl.
+ * Resolves environment variables if deployment.endpoint is an env var name.
+ * Validates against local-first security policy (HTTP/HTTPS, no query/fragment, no proprietary cloud).
+ */
+export function resolveDeploymentEndpoint(
+  deployment: ModelDeployment,
+  provider?: ProviderDescriptor,
+): string {
+  let ep = deployment.endpoint ?? provider?.baseUrl
+  if (!ep || !ep.trim()) {
+    throw new Error(`Deployment '${deployment.id}' missing endpoint: neither deployment.endpoint nor provider.baseUrl is configured`)
+  }
+  ep = ep.trim()
+  if (!ep.startsWith("http://") && !ep.startsWith("https://")) {
+    const envVal = process.env[ep]
+    if (!envVal || !envVal.trim()) {
+      throw new Error(`Deployment '${deployment.id}' endpoint references unset or empty environment variable '${ep}'`)
+    }
+    ep = envVal.trim()
+  }
+  // Validate canonical endpoints (throws if invalid URL, protocol, query, fragment, or cloud host)
+  resolveCanonicalEndpoints(ep)
+  return ep
+}
+
+/**
+ * Resolves the wire-level model identifier to send to Ollama / vLLM / llama.cpp.
+ * Resolution precedence:
+ *   1. deployment.modelName
+ *   2. deployment.servedModelId
+ *   3. model.modelName
+ *   4. model.servedModelId
+ *   5. fallback to logical deployment.modelId
+ */
+export function resolveServedModelId(
+  deployment: ModelDeployment,
+  model?: ModelDescriptor,
+): string {
+  const served =
+    deployment.modelName ??
+    deployment.servedModelId ??
+    model?.modelName ??
+    model?.servedModelId ??
+    deployment.modelId
+  return served.trim()
 }
