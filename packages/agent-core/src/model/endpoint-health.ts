@@ -24,6 +24,8 @@ export interface EndpointHealthConfig {
    * Endpoints must be operator-configured — never constructed from model output.
    */
   readonly endpoints: ReadonlyMap<string, string>
+  /** Optional headers per deploymentId or default headers to send with probes. */
+  readonly headers?: ReadonlyMap<string, Readonly<Record<string, string>>> | Readonly<Record<string, string>>
   /** Probe timeout in ms. Default: 3000. */
   readonly probeTimeoutMs?: number
   /** Cache TTL in ms. Default: 30_000 (30s). Set to 0 to disable caching. */
@@ -92,7 +94,14 @@ export class EndpointHealthChecker implements HealthChecker {
       // Probe via GET /v1/models — cheap, no inference, standard for Ollama/vLLM
       const canonical = resolveCanonicalEndpoints(endpointUrl)
       const url = new URL(canonical.modelsEndpoint)
-      const response = await this.#fetch(url, { method: "GET", signal: probeSignal })
+      const deploymentHeaders = this.#config.headers instanceof Map
+        ? this.#config.headers.get(deploymentId)
+        : this.#config.headers
+      const response = await this.#fetch(url, {
+        method: "GET",
+        headers: deploymentHeaders ? { ...deploymentHeaders } : undefined,
+        signal: probeSignal,
+      })
       if (response.ok) return "ready"
       if (response.status >= 500) return "unavailable"
       // 4xx — endpoint is up but returns error — treat as degraded

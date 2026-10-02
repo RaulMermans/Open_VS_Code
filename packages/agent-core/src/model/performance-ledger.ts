@@ -28,7 +28,7 @@
  *   - They CANNOT modify permissions, source code, or model weights.
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises"
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises"
 import { dirname } from "node:path"
 import type { TaskClass } from "../contracts/routing.ts"
 
@@ -153,6 +153,7 @@ function profileKey(deploymentId: string, taskClass: string): string {
 export class ModelPerformanceLedger {
   readonly #profiles = new Map<string, ModelDeploymentProfile>()
   readonly #options: Required<LedgerOptions>
+  readonly #readyPromise: Promise<void>
 
   constructor(options: LedgerOptions = {}) {
     this.#options = {
@@ -163,6 +164,16 @@ export class ModelPerformanceLedger {
       adaptiveRoutingDisabled: options.adaptiveRoutingDisabled ?? false,
       maxProfiles: options.maxProfiles ?? 50,
     }
+    if (this.#options.persistPath) {
+      this.#readyPromise = this.load().then(() => {}, () => {})
+    } else {
+      this.#readyPromise = Promise.resolve()
+    }
+  }
+
+  /** Resolves when initial load from disk (if configured) has finished. */
+  get ready(): Promise<void> {
+    return this.#readyPromise
   }
 
   /** Record an agent task outcome. Never stores source code or prompt text. */
@@ -346,14 +357,45 @@ export class ModelPerformanceLedger {
   /** Persist profiles to disk. Never stores raw source/prompt content. */
   async persist(): Promise<void> {
     if (!this.#options.persistPath) return
+
+    // Merge with existing on-disk profiles so independent instances (e.g. Agent vs Autocomplete)
+    // sharing the workspace ledger path do not erase each other's profiles.
+    const mergedProfiles = new Map<string, ModelDeploymentProfile>()
+    try {
+      const raw = await readFile(this.#options.persistPath, "utf-8")
+      const parsed = JSON.parse(raw) as LedgerStore
+      if (parsed.schemaVersion === LEDGER_SCHEMA_VERSION && Array.isArray(parsed.profiles)) {
+        for (const p of parsed.profiles) {
+          if (p && typeof p.deploymentId === "string" && typeof p.taskClass === "string") {
+            const key = profileKey(p.deploymentId, p.taskClass)
+            mergedProfiles.set(key, p)
+          }
+        }
+      }
+    } catch {
+      // Disk file absent or unreadable — proceed with current in-memory profiles
+    }
+
+    // In-memory profiles take precedence for keys tracked in this ledger instance
+    for (const [key, profile] of this.#profiles.entries()) {
+      mergedProfiles.set(key, profile)
+    }
+
+    let profilesToSave = [...mergedProfiles.values()]
+    if (profilesToSave.length > this.#options.maxProfiles) {
+      profilesToSave = profilesToSave.slice(profilesToSave.length - this.#options.maxProfiles)
+    }
+
     const store: LedgerStore = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
-      profiles: [...this.#profiles.values()],
+      profiles: profilesToSave,
       lastUpdated: new Date().toISOString(),
     }
     const dir = dirname(this.#options.persistPath)
     await mkdir(dir, { recursive: true })
-    await writeFile(this.#options.persistPath, JSON.stringify(store, null, 2), "utf-8")
+    const tmpPath = `${this.#options.persistPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+    await writeFile(tmpPath, JSON.stringify(store, null, 2), "utf-8")
+    await rename(tmpPath, this.#options.persistPath)
   }
 
   /**

@@ -263,18 +263,23 @@ Sprint 4E.1 — Real Inference Production Wiring & Evidence Closure
 STATUS: IMPLEMENTATION_COMPLETE — SUPERSEDED BY SPRINT 4E.2
 
 Sprint 4E.2 — Configuration Truth & End-to-End Real Model Closure
+STATUS: IMPLEMENTATION_COMPLETE — SUPERSEDED BY SPRINT 4E.3
+
+Sprint 4E.3 — Evidence Integrity & Adaptive Routing Closure
 STATUS: IMPLEMENTATION_COMPLETE — REAL_HOST_EVIDENCE_BLOCKED (Awaiting authorized host execution)
-  - Bug A Fix: `validateRoutingConfig` preserves `pd.baseUrl` and `pd.apiKey` through validation so provider endpoints survive down to production runtime.
-  - Canonical Endpoint Ownership & Precedence: `resolveDeploymentEndpoint` establishes authoritative precedence (`deployment.endpoint` > `provider.baseUrl` > env var). Rejects cloud hosts (`PROPRIETARY_CLOUD_FORBIDDEN`), missing endpoints, and malformed URLs.
-  - Wire Model Identifier Separation: Decoupled logical `modelId` from served wire identifier via `modelName` and `servedModelId`. `resolveServedModelId` resolves: `deployment.modelName` > `deployment.servedModelId` > `model.modelName` > `model.servedModelId` > `deployment.modelId`.
-  - Reconciled Model Capability Vocabulary: Authoritative capability vocabulary matches `RoutingModelCapability` (`toolUse`, `coding`, `fim`, `autocomplete`).
-  - Authoritative JSON Schema & Canonical Example: Created deterministic JSON Schema at `config/schemas/models.schema.json` and starter config at `config/examples/models.local.example.json`. Regression tests verify 0 validation errors and 0 schema drift.
-  - Explicit FIM Invariant: Any deployment or model declaring `fim` or `autocomplete` capability must define an explicit valid `fimStrategy`. Generic fallback defaulting is prohibited.
-  - Production Agent Runtime Benchmark Path: Benchmark refactored to exercise full user path: temporary workspace -> `.open-vs-code/models.json` -> `loadRoutingConfig` -> `createAgentRuntime` -> `RoutedModelGateway` -> `ModelRouter` -> local provider -> tools -> result.
-  - Genuine Tool-Required Fixtures: Added tasks `T001`-`T004` requiring `read_file` / `search_text` against synthetic repository files (`src/config.ts`, `src/invoicing.ts`, etc.). Strict acceptance criteria: `success = runtimeCompleted && taskCorrect && requiredToolUsed`. Hallucinations without tools fail.
-  - Production Autocomplete Benchmark Path: Refactored to exercise `.open-vs-code/models.json` -> `createProductionAutocompleteGateway` -> `LocalFimProvider`.
-  - Truthful FIM Metrics: Replaced non-empty stub with `validateSyntax`, distinguishing `nonEmpty` from `syntaxValid` via JSON parsing and syntax delimiter checks.
-  - Evaluation Suites Clean: 64 deterministic integration scenarios pass twice with 100% deep strict equality; 32 comprehensive closure tests pass with 0 failures.
+  - AgentRunner Single Authority: `AgentRunner` is the authoritative component for recording agent model outcomes into `ModelPerformanceLedger`. `createAgentRuntime` injects the production ledger into primary `AgentRunner` and repair loop instances.
+  - Bridge Evidence Cleanup: Removed synthetic performance metric calculations (`verificationSuccess = true`, `toolCallSuccess = toolCalls.length > 0`, `repairCycles = 0`) from `bridge.ts`. Bridge responsibility reduced to persisting the ledger upon task completion.
+  - Paused Confirmation Invariant: Performance outcomes are strictly prohibited from being recorded during `WAITING_FOR_CONFIRMATION` or `PAUSED` states. Confirmation pause is not a failure. Outcomes record exactly once upon terminal completion (`COMPLETED`, `FAILED`, `CANCELLED`).
+  - Truthful Outcome Semantics:
+    * `verificationSuccess`: Evaluated from real verification tool executions (`run_known_test`, `run_verification`) and runtime evaluation scores; non-mutating read-only tasks default truthfully to completion status.
+    * `toolCallSuccess`: True only if all executed tool calls reached `COMPLETED`; mere invocation does not constitute success.
+    * `repairCycles`: Measures actual continuation attempts and verification failures rather than synthetic zero.
+    * `timeoutOccurred` & `cancellationOccurred`: Accurately classified from genuine runtime cause.
+  - Autocomplete Accounting & Latency: Exactly one outcome sample recorded per request. Acceptance finalizes pending shown suggestions without double-counting; unaccepted suggestions finalize upon replacement or disposal; captures empty, stale, and cancelled requests. Measured latency uses `performance.now()`. Persisted via debounced flushing and service disposal flush.
+  - Ledger Initialization & Concurrency: Awaits ledger loading before constructing routers and awaiting gateway readiness. Read-merge-write with temporary files and rename guarantees agent and autocomplete never clobber each other's profiles in shared workspace ledger stores.
+  - Benchmark Pinned Routing & Provenance: Adaptive routing explicitly disabled in benchmark harness (`disableAdaptiveRouting()`). Route provenance observed from runtime decisions (`RoutedModelGateway.lastDecision`). Structural syntax validation (`validateStructuralSyntax` / `structurallyValid`).
+  - Secure API Key Handling: Added `apiKeyEnv` across schema, config loader, provider factories, and health checks to resolve authentication headers from environment variables without plaintext storage.
+  - Comprehensive Test Matrix: 50/50 tests pass in `sprint-4e-closure-eval.test.ts` (including 18 Sprint 4E.3 closure tests); full monorepo regressions clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals (100%), 111 runtime evals (100%), 50 recovery evals (100%), 100 performance scenarios (100%).
   - Remaining Host Evidence Requirements: Real host inference execution with `OPEN_VS_CODE_REAL_INFERENCE=1` on designated machine with active local server (Ollama/vLLM/llama.cpp) and weights loaded.
 
 Next:

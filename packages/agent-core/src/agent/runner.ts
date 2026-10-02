@@ -51,6 +51,7 @@ export interface AgentRunnerInput {
   readonly recentTurns?: readonly ConversationTurn[]
   readonly signal?: AbortSignal
   readonly taskProfile?: TaskProfile
+  readonly repairCycles?: number
 }
 
 export interface AgentRunnerDependencies {
@@ -110,6 +111,7 @@ interface Session {
   lastDeploymentId?: string | undefined
   startTime?: number | undefined
   performanceOutcomeRecorded?: boolean | undefined
+  timeoutOccurred?: boolean | undefined
 }
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
@@ -897,6 +899,11 @@ export class AgentRunner {
           })
           session.pendingModelEvalId = undefined
         }
+        const isTimeout = (error instanceof Error && (error.name === "TimeoutError" || error.message.toLowerCase().includes("timeout") || (error as any).code === "ETIMEDOUT")) ||
+          Boolean(session.input.signal?.aborted && session.input.signal.reason?.name === "TimeoutError")
+        if (isTimeout) {
+          session.timeoutOccurred = true
+        }
         if (isAbortError(error, session.input.signal)) this.#cancel()
         else {
           session.failureReason = "MODEL_ERROR"
@@ -920,8 +927,8 @@ export class AgentRunner {
         })
         session.pendingModelEvalId = undefined
       }
-      if (newDeploymentId) {
-        session.lastDeploymentId = newDeploymentId
+      if (newDeploymentId || response.model) {
+        session.lastDeploymentId = newDeploymentId ?? response.model
       }
       const calls = response.toolCalls ?? []
       this.#emit("model.completed", { turn, toolCallCount: calls.length, hasAnswer: response.message.content.length > 0 })
@@ -2105,20 +2112,46 @@ export class AgentRunner {
 
   #result(): AgentResult {
     const session = this.#requiredSession()
-    if (this.#performanceLedger && session.lastDeploymentId && !session.performanceOutcomeRecorded) {
+    const isTerminal = session.state.status === "COMPLETED" ||
+      session.state.status === "FAILED" ||
+      session.state.status === "CANCELLED"
+
+    const resolvedDeploymentId = session.lastDeploymentId ?? (this.#provider as any).lastDecision?.deploymentId ?? (this.#provider as any).model
+
+    if (isTerminal && this.#performanceLedger && resolvedDeploymentId && !session.performanceOutcomeRecorded) {
       session.performanceOutcomeRecorded = true
       const isCompleted = session.state.status === "COMPLETED"
-      const verificationSuccess = isCompleted || session.evalResults.some(r => r.checkpoint === "VERIFICATION_RESULT" && r.scores.verificationCoverage > 0.5)
-      const toolCallSuccess = session.toolCalls.length === 0 || !session.toolCalls.some(t => t.outcome === "REJECTED" || t.outcome === "DENIED")
+
+      const verificationCalls = session.toolCalls.filter(t => t.name === "run_known_test" || t.name === "run_verification")
+      const verificationEvals = session.evalResults.filter(r => r.checkpoint === "VERIFICATION_RESULT")
+      let verificationSuccess: boolean
+      if (verificationCalls.length > 0) {
+        verificationSuccess = verificationCalls.every(t => t.outcome === "COMPLETED") &&
+          (!verificationEvals.length || verificationEvals.every(e => e.scores.verificationCoverage > 0.5))
+      } else if (verificationEvals.length > 0) {
+        verificationSuccess = verificationEvals.every(e => e.scores.verificationCoverage > 0.5)
+      } else {
+        // Read-only or tasks where verification was not applicable
+        verificationSuccess = isCompleted
+      }
+
+      const toolCallSuccess = session.toolCalls.length === 0 ||
+        session.toolCalls.every(t => t.outcome === "COMPLETED")
+
+      const verificationFailures = session.toolCalls.filter(t =>
+        (t.name === "run_known_test" || t.name === "run_verification") && t.outcome !== "COMPLETED"
+      ).length
+      const repairCycles = Math.max(session.continuationAttempts, verificationFailures) + (session.input.repairCycles ?? 0)
+
       this.#performanceLedger.recordAgentOutcome({
-        deploymentId: session.lastDeploymentId,
+        deploymentId: resolvedDeploymentId,
         taskClass: deriveTaskClass(session.input.task.mode),
         success: isCompleted,
         verificationSuccess,
         toolCallSuccess,
-        repairCycles: session.toolCalls.filter(t => t.name === "run_known_test" && t.outcome !== "COMPLETED").length,
-        timeoutOccurred: session.failureReason === "MODEL_ERROR",
-        cancellationOccurred: session.state.status === "CANCELLED",
+        repairCycles,
+        timeoutOccurred: Boolean(session.timeoutOccurred),
+        cancellationOccurred: session.state.status === "CANCELLED" || session.failureReason === "CANCELLED",
         latencyMs: session.startTime ? Date.now() - session.startTime : 0,
       })
     }

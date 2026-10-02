@@ -6,6 +6,7 @@ export interface ProviderDescriptor {
   readonly protocol?: string
   readonly baseUrl?: string
   readonly apiKey?: string
+  readonly apiKeyEnv?: string
 }
 
 export type RoutingModelCapability = "toolUse" | "structuredOutput" | "coding" | "reasoning" | "longContext" | "vision" | "fim" | "autocomplete"

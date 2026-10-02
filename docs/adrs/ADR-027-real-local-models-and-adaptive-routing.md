@@ -256,6 +256,24 @@ Sprint 4E.2 establishes strict configuration invariants:
 - **Provider BaseUrl Preservation**: Config loading (`validateRoutingConfig`) strictly preserves `provider.baseUrl` without dropping it during provider reconstruction.
 - **Explicit FIM Invariant**: Any deployment or model declaring `fim` or `autocomplete` capability must specify an explicit valid `fimStrategy`. Silently defaulting to generic fallback is forbidden.
 
+### 20. Evidence Integrity & Adaptive Routing Closure (Sprint 4E.3 Refinement)
+
+Sprint 4E.3 establishes deterministic evidence integrity invariants:
+- **Single Authority for Outcome Evidence**: `AgentRunner` is the single authoritative recorder of agent model outcomes. `createAgentRuntime` wires the production `ModelPerformanceLedger` into primary `AgentRunner` and repair loop instances. Synthetic outcome invention in `bridge.ts` is eliminated; bridge responsibility is reduced to persisting the ledger upon task completion.
+- **Terminal States Only**: Evidence recording is strictly prohibited during `PAUSED` / `WAITING_FOR_CONFIRMATION` states. Confirmation pause is not a failure. Outcomes are recorded exactly once when reaching a terminal state (`COMPLETED`, `FAILED`, `CANCELLED`).
+- **Truthful Outcome Semantics**:
+  - `verificationSuccess` checks real verification tool outcomes (`run_known_test`, `run_verification`) and runtime evaluation scores; non-mutating read-only tasks default truthfully to completion status.
+  - `toolCallSuccess` requires all executed tool calls to reach `COMPLETED`; mere invocation does not constitute success.
+  - `repairCycles` measures actual continuation attempts and verification failures rather than synthetic zeros.
+  - `timeoutOccurred` and `cancellationOccurred` are classified from real terminal causes rather than generic `MODEL_ERROR` assumptions.
+- **Autocomplete Outcome Accounting**: Exactly one outcome sample is recorded per request. Acceptance finalizes pending shown suggestions without double-counting; unaccepted suggestions finalize upon replacement or disposal. Empty completions, stale discards, and cancellations are recorded as negative evidence.
+- **Measured Autocomplete Latency**: Latency is measured from invocation start to completion via monotonic clocks (`performance.now()`) instead of synthetic zeros.
+- **Safe Persistence & Concurrency**: Finalized autocomplete outcomes are persisted with debounced flushing and service disposal flush. The ledger uses an atomic read-merge-write pattern with temporary files and rename, preventing agent and autocomplete profiles from overwriting each other in shared ledger stores.
+- **Initialization Race Elimination**: `createAgentRuntime` awaits `performanceLedger.load()` prior to routing, and `AutocompleteGateway` awaits its ready promise, ensuring the first route decision deterministically incorporates preloaded historical evidence.
+- **Benchmark Route Pinning & Runtime Provenance**: Benchmark runs explicitly invoke `disableAdaptiveRouting()`, guaranteeing that historical benchmark runs do not distort subsequent tests. Route provenance is measured directly from runtime decisions (`RoutedModelGateway.lastDecision`).
+- **Syntax Validation Accuracy**: Benchmark FIM validation is truthfully named `validateStructuralSyntax` / `structurallyValid` (with backward-compatible aliases) to accurately reflect delimiter balancing and JSON parsing rather than whole-program AST compilation.
+- **Secure API Key Resolution**: `apiKeyEnv` is introduced in `ProviderDescriptor` and configuration schemas to resolve authentication headers from environment variables without committing plaintext credentials.
+
 ---
 
 ## Alternatives Considered
