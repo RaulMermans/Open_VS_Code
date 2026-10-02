@@ -1,6 +1,6 @@
 # Scratchpad
 
-- Current state: Sprint 4E.4 is COMPLETE (Implementation Sealed; Real-Host Benchmark Attempted & Evidence Blocked).
+- Current state: Sprint 4E.4 IMPLEMENTATION COMPLETE — REAL HOST EVIDENCE BLOCKED
 - Accomplishments (Sprint 4E.4):
   - Corrected agent success semantics: `AgentRunner.#result()` now separates `runtimeCompleted` from `qualitySuccess = runtimeCompleted && verificationSuccess && toolCallSuccess`, recording truthful quality evidence.
   - Adaptive routing formula updated in `ModelPerformanceLedger.getRoutingAdjustments()`: uses explicit deterministic formula `qualityScore = 0.50 * successRate + 0.30 * verificationRate + 0.20 * toolRate - repairPenalty - timeoutPenalty` bounded to `[-maxAdjustment, +maxAdjustment]` with hysteresis and sample floor.
@@ -11,7 +11,7 @@
   - Durable autocomplete shutdown persistence: converted `dispose()` across `AutocompleteService` and `AutocompleteController` plus VS Code `extension.deactivate()` to return `Promise<void>`, ensuring pending shown suggestions and debounce writes are fully flushed and awaited on shutdown.
   - Truthful autocomplete failure accounting: provider failures during execution record explicit failure evidence for the selected deployment.
   - Evaluation & Test Gates: 69/69 tests in `sprint-4e-closure-eval.test.ts` pass cleanly (19 new Sprint 4E.4 tests); all monorepo test suites (`typecheck`, `lint`, `build`, `test`, `eval:coding`, `eval:runtime`, `eval:recovery`, `eval:performance`, `git diff --check`) pass with 100% determinism.
-  - Real-host benchmark executed with `OPEN_VS_CODE_REAL_INFERENCE=1`: captured host hardware (Apple M3 Pro, 18GB RAM, darwin arm64, Ollama client v0.32.15); verified safe blocked execution (`could not connect to running Ollama instance / 0 models installed`).
+  - Benchmark Preflight Acceptance: Verified preflight gate blocks execution safely with BLOCKED_WITH_EVIDENCE when models are not installed (0 served models / Ollama server unavailable), preventing fake passes and unexecuted 18-task sweeps.
 
 Next:
-Sprint 4E is sealed. Proceed to Sprint 4F (Code-OSS / VSCodium Desktop Packaging) when ready.
+Sprint 4E.4 deterministic implementation complete and verified. Awaiting operator-managed real model run with installed model weights. Do NOT create Sprint 4E.5.

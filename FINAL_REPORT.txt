@@ -187,6 +187,6 @@ SPRINT 4E / 4E.1 / 4E.2 / 4E.3 — REAL INFERENCE PRODUCTION WIRING, CONFIGURATI
 - Security Model: docs/SECURITY_MODEL.md updated with model credential boundary and Invariant 13
 
 8. Closure Status
-Status: SPRINT_4E_CLOSED_PERMANENTLY
-Real Host Benchmark Run: Executed with OPEN_VS_CODE_REAL_INFERENCE=1 on Apple M3 Pro (11 cores), 18GB RAM, darwin arm64, Ollama client v0.32.15; captured hardware provenance and safe blocked status (could not connect to running Ollama instance / 0 models installed).
-Ready for Sprint 4F Desktop Packaging: READY TO PROCEED.
+Status: Sprint 4E.4 IMPLEMENTATION COMPLETE — REAL HOST EVIDENCE BLOCKED
+Real Host Benchmark Run: Preflight gate active. Previous live command verified Ollama server unavailable / 0 served models installed (BLOCKED_WITH_EVIDENCE). Permanent closure requires status === EXECUTED and measuredTasksExecuted === true from a clean committed worktree.
+Next: Awaiting operator-managed real model run. Do NOT create Sprint 4E.5.

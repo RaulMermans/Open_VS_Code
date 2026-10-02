@@ -280,7 +280,7 @@ STATUS: IMPLEMENTATION_COMPLETE — REAL_HOST_EVIDENCE_BLOCKED (Awaiting authori
   - Benchmark Pinned Routing & Provenance: Adaptive routing explicitly disabled in benchmark harness (`disableAdaptiveRouting()`). Route provenance observed from runtime decisions (`RoutedModelGateway.lastDecision`). Structural syntax validation (`validateStructuralSyntax` / `structurallyValid`).
   - Secure API Key Handling: Added `apiKeyEnv` across schema, config loader, provider factories, and health checks to resolve authentication headers from environment variables without plaintext storage.
   - Comprehensive Test Matrix: 50/50 tests pass in `sprint-4e-closure-eval.test.ts` (including 18 Sprint 4E.3 closure tests); full monorepo regressions clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals (100%), 111 runtime evals (100%), 50 recovery evals (100%), 100 performance scenarios (100%).
-Sprint 4E.4 — Evidence Semantics, Persistence Safety & Final Closure ✅ CLOSED PERMANENTLY
+Sprint 4E.4 — Evidence Semantics, Persistence Safety & Final Closure (IMPLEMENTATION COMPLETE — REAL HOST EVIDENCE BLOCKED)
   - Corrected Agent Success Semantics: `AgentRunner` records `runtimeCompleted = isCompleted` and `qualitySuccess = runtimeCompleted && verificationSuccess && toolCallSuccess`, recording `success: qualitySuccess` so tasks with failed verifications or broken tool calls are never classified as success.
   - Transparent Adaptive Routing Formula: `ModelPerformanceLedger.getRoutingAdjustments()` uses explicit weighted formula: `qualityScore = 0.50 * successRate + 0.30 * verificationRate + 0.20 * toolRate - repairPenalty - timeoutPenalty`, bounded to `[-maxAdjustment, +maxAdjustment]` with hysteresis and sample floor.
   - Safe Schema Migration: Bumped `LEDGER_SCHEMA_VERSION = 2`. Incompatible legacy v1 ledgers are safely reset to prevent mixing inconsistent success metrics while leaving user workspace configuration intact.
@@ -290,8 +290,8 @@ Sprint 4E.4 — Evidence Semantics, Persistence Safety & Final Closure ✅ CLOSE
   - Truthful Autocomplete Failure Accounting: Selected deployment provider failures record explicit failure evidence in ledger.
   - Env-Only Credential Boundary: Literal `apiKey` completely removed from `ProviderDescriptor`, `models.schema.json`, and loader; `apiKeyEnv` is the only supported credential mechanism. Auth headers propagate to both inference requests and health probes (`/v1/models`) without leaking secrets.
   - Comprehensive Test Matrix: 69/69 tests pass in `sprint-4e-closure-eval.test.ts` (including 19 Sprint 4E.4 closure tests); full monorepo regressions clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals (100%), 111 runtime evals (100%), 50 recovery evals (100%), 100 performance scenarios (100%).
-  - Real-Host Benchmark: Executed on host (Apple M3 Pro, 18GB RAM, darwin arm64, Ollama client v0.32.15); verified safe blocked execution (`could not connect to running Ollama instance / 0 models installed`).
-  - Sprint 4E is PERMANENTLY CLOSED.
+  - Real-Host Benchmark Preflight: Preflight acceptance verifies authorization, endpoint reachability, /v1/models response, model availability, warmup inference, and clean git worktree. If any precondition fails, emits BLOCKED_WITH_EVIDENCE without running measured tasks.
+  - Status: Sprint 4E.4 IMPLEMENTATION COMPLETE — REAL HOST EVIDENCE BLOCKED: Local model qwen2.5-coder:7b not installed on host Ollama server (0 served models).
 
 Next:
-Proceed to Sprint 4F (Code-OSS / VSCodium Desktop Packaging).
+Awaiting operator-managed real model run with installed model weights. Permanent closure requires status === EXECUTED and measuredTasksExecuted === true from a clean committed worktree. Do NOT create Sprint 4E.5.
