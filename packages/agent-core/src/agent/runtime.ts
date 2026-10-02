@@ -4,7 +4,7 @@ import { RepairOrchestrator } from "./repair-loop.ts";
 import { RoutedModelGateway, StaticHealthChecker } from "../model/routed-gateway.ts";
 import { EndpointHealthChecker } from "../model/endpoint-health.ts";
 import { ModelPerformanceLedger } from "../model/performance-ledger.ts";
-import { loadRoutingConfig } from "../model/config-loader.ts";
+import { loadRoutingConfig, resolveProviderApiKey } from "../model/config-loader.ts";
 import { ScriptedModelProvider } from "../testing/scripted-model.ts";
 import { OpenAICompatibleProvider } from "../model/openai-compatible.ts";
 import { resolveDeploymentEndpoint, resolveServedModelId } from "../model/canonical-endpoint.ts";
@@ -46,6 +46,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   let provider = options.providerOverride;
   let routedGateway: RoutedModelGateway | undefined;
   let healthChecker: HealthChecker | undefined;
+  let performanceLedger: ModelPerformanceLedger | undefined;
 
   if (!provider) {
     const config = options.routingConfigOverride ?? (await loadRoutingConfig(options.workspaceRoot));
@@ -66,30 +67,35 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     }
 
     const endpointMap = new Map<string, string>();
+    const authHeadersMap = new Map<string, Record<string, string>>();
     for (const d of config.deployments as any[]) {
       const providerConfig = config.providers.find((p: any) => p.id === d.providerId);
       if (providerConfig?.kind === "openai_compatible_local") {
         const ep = resolveDeploymentEndpoint(d, providerConfig);
         endpointMap.set(d.id, ep);
+        const apiKey = resolveProviderApiKey(providerConfig);
+        const headers = apiKey ? { authorization: `Bearer ${apiKey}` } : undefined;
+        if (headers) authHeadersMap.set(d.id, headers);
         const modelConfig = config.models.find((m: any) => m.id === d.modelId);
         const wireModel = resolveServedModelId(d, modelConfig);
         providers.set(d.id, new OpenAICompatibleProvider({
           baseUrl: ep,
           model: wireModel,
           contextWindow: d.contextWindow ?? modelConfig?.contextWindow,
+          ...(headers ? { headers } : {}),
         }));
       }
     }
 
     healthChecker = endpointMap.size > 0
-      ? new EndpointHealthChecker({ endpoints: endpointMap })
+      ? new EndpointHealthChecker({ endpoints: endpointMap, headers: authHeadersMap })
       : new StaticHealthChecker(
           new Map(config.deployments.map((d: any) => [d.id, "ready" as const]))
         );
 
     const ledgerPath = join(options.workspaceRoot, ".open-vs-code", "model-performance-ledger.json");
-    const performanceLedger = new ModelPerformanceLedger({ persistPath: ledgerPath });
-    void performanceLedger.load().catch(() => {});
+    performanceLedger = new ModelPerformanceLedger({ persistPath: ledgerPath });
+    await performanceLedger.load();
 
     routedGateway = new RoutedModelGateway({
       config,
@@ -103,6 +109,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     provider = routedGateway;
   } else {
     routedGateway = provider instanceof RoutedModelGateway ? provider : undefined;
+    performanceLedger = routedGateway?.performanceLedger;
   }
 
   const mutationEngine = new MutationEngine(options.workspaceRoot);
@@ -218,6 +225,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     evidenceGate: false,
     eventSink: options.eventSink,
     checkpointCoordinator,
+    ...(performanceLedger ? { performanceLedger } : {}),
   });
 
   const repairOrchestrator = new RepairOrchestrator(
@@ -230,6 +238,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       evidenceGate: false,
       eventSink: options.eventSink,
       checkpointCoordinator,
+      ...(performanceLedger ? { performanceLedger } : {}),
     })
   );
 

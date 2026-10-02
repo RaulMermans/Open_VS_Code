@@ -122,7 +122,7 @@ Verdict: PERMANENT PASS
 Sprint 4D / 4D.1 / 4D.2 / 4D.3: CLOSED PERMANENTLY
 
 ==================================================
-SPRINT 4E.1 — REAL INFERENCE PRODUCTION WIRING & EVIDENCE CLOSURE
+SPRINT 4E / 4E.1 / 4E.2 / 4E.3 — REAL INFERENCE PRODUCTION WIRING, CONFIGURATION TRUTH & EVIDENCE INTEGRITY CLOSURE
 ==================================================
 
 1. Target-Host Safety Gate & Canonical Endpoint Contract
@@ -149,36 +149,38 @@ SPRINT 4E.1 — REAL INFERENCE PRODUCTION WIRING & EVIDENCE CLOSURE
 - Cancellation: AbortSignal propagated directly with immediate abort check
 - Output bounds: maxOutputTokens enforced in request payload
 
-3. Bounded Model Performance Ledger & Agent Runtime Wiring
-- Store: ModelPerformanceLedger (src/model/performance-ledger.ts)
-- Runtime: createAgentRuntime() wires real EndpointHealthChecker and workspace-scoped ModelPerformanceLedger (.open-vs-code/model-performance-ledger.json).
-- Keys: deploymentId x taskClass
-- Privacy guarantees: zero source code, prompt bodies, completions, diffs, or secrets stored; aggregate metrics only
-- Bounded storage: maxProfiles cap (default 50) with oldest-profile eviction
-- Persistence: atomic JSON store with schema versioning and safe corruption recovery
-- Adaptive routing: bounded adjustments [-0.5, +0.5] applied only after minimumSamples (5) with hysteresis threshold (0.1)
+3. Bounded Model Performance Ledger & Evidence Authority (Sprint 4E.3)
+- Single Authority: AgentRunner owns agent model outcome recording, injected in createAgentRuntime() across primary and repair runners; synthetic bridge calculations eliminated.
+- Terminal States Only: Outcome recording strictly blocked during WAITING_FOR_CONFIRMATION / PAUSED states; exactly one outcome recorded upon terminal completion.
+- Truthful Semantics: verificationSuccess derived from real verification tools / runtime evals; toolCallSuccess requires all calls to complete; repairCycles tracks genuine attempts.
+- Autocomplete Accounting: Exactly one outcome sample per request; acceptance finalizes pending shown suggestions without double-counting; captures empty, stale, and cancelled requests. Measured monotonic latency via performance.now().
+- Safe Concurrency & Persistence: Atomic read-merge-write using temporary files and rename guarantees agent and autocomplete never overwrite each other's profiles in shared workspace ledger. Debounced and disposal flush.
+- Race-Free Startup: createAgentRuntime awaits performanceLedger.load(); AutocompleteGateway awaits readiness promise before routing.
 
-4. Endpoint Health Checker
+4. Endpoint Health Checker & Authentication Security
 - Prober: EndpointHealthChecker (src/model/endpoint-health.ts)
 - Probing method: cheap GET /v1/models (no inference tokens generated)
 - Caching: TTL-based (default 30s) to eliminate probe storms
 - State mapping: 200 -> ready, 5xx -> unavailable, 4xx -> degraded, unconfigured -> unknown
+- Secure Auth: apiKeyEnv configured in models.schema.json and resolved from process.env without committing plaintext credentials.
 
 5. Real Model Benchmark Harness
 - Harness: real-model-benchmark.ts (tests/evals/real-model-benchmark.ts)
 - System-level path: AgentRunner -> RoutedModelGateway -> ModelRouter -> real local provider -> bounded tools -> evidence
 - Safety: gated by InferenceGate; outputs BLOCKED_WITH_EVIDENCE when unauthorized
-- Workload suite: 10 agent coding tasks + 8 FIM completion fixtures on temporary isolated repository fixtures
-- Sanitized telemetry: response length and SHA-256 hashes only; zero source code or completion leaks
+- Pinned Benchmark Route: Adaptive routing explicitly disabled in benchmark harness (disableAdaptiveRouting()) to prevent cross-task skew.
+- Route Provenance: Measured directly from runtime decisions (RoutedModelGateway.lastDecision).
+- Structural Syntax Validation: validateStructuralSyntax parses JSON and balances delimiters; accurately distinguishes nonEmpty from structurallyValid.
+- Workload suite: 10 agent coding tasks (including 4 tool-required tasks) + 8 FIM completion fixtures on temporary isolated repository fixtures.
 
 6. Deterministic Evaluation Suites
 - Model integration evaluation: 64 deterministic scenarios in model-integration-eval.ts (64/64 pass, Run 1 === Run 2)
-- Sprint 4E.1 closure evaluation: 19 scenarios in sprint-4e-closure-eval.test.ts (19/19 pass)
-- Negative comparator tests: 20/20 pass
+- Comprehensive closure evaluation: 50 scenarios in sprint-4e-closure-eval.test.ts (50/50 pass, including 18 Sprint 4E.3 closure tests)
+- Full regression ladder: coding evals 30/30 (100%), runtime evals 14/14 (100%), recovery evals 50/50 (100%), performance evals 5/5 (100%)
 
 7. Architecture Documentation
-- ADR: ADR-027 (docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) Accepted
-- Architecture: ARCHITECTURE.md updated with Sprint 4E.1 contracts and dataflows
+- ADR: ADR-027 (docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) Accepted (Sections 19 & 20 added)
+- Architecture: ARCHITECTURE.md updated with Sprint 4E.3 contracts and dataflows
 
 8. Closure Status
 Status: IMPLEMENTATION_COMPLETE — REAL_HOST_EVIDENCE_BLOCKED

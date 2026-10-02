@@ -33,7 +33,7 @@ import { StaticHealthChecker } from "../model/routed-gateway.ts"
 import { EndpointHealthChecker } from "../model/endpoint-health.ts"
 import { LocalFimProvider } from "./local-fim-provider.ts"
 import { MAX_OUTPUT_TOKENS, estimateTokensFromChars } from "./budget.ts"
-import { loadRoutingConfigSync } from "../model/config-loader.ts"
+import { loadRoutingConfigSync, resolveProviderApiKey } from "../model/config-loader.ts"
 import { resolveDeploymentEndpoint, resolveServedModelId } from "../model/canonical-endpoint.ts"
 
 export type AutocompleteProviderRegistry = ReadonlyMap<string, AutocompleteProvider>
@@ -81,6 +81,11 @@ export class AutocompleteGateway {
     return this.#healthChecker
   }
 
+  /** Resolves when performance ledger (if configured) has finished loading. */
+  get ready(): Promise<void> {
+    return this.#performanceLedger?.ready ?? Promise.resolve()
+  }
+
   /**
    * Route and complete one autocomplete request.
    *
@@ -88,6 +93,9 @@ export class AutocompleteGateway {
    * @throws Error                  Provider error, timeout, or abort.
    */
   async complete(request: AutocompleteRequest): Promise<AutocompleteResponse> {
+    // Ensure ledger evidence is loaded before routing decisions
+    await this.ready
+
     // Abort check before routing overhead
     if (request.signal.aborted) {
       throw new Error("Autocomplete request aborted before routing")
@@ -177,6 +185,7 @@ export function createProductionAutocompleteGateway(
   const providers = new Map<string, AutocompleteProvider>(customProviders ?? [])
 
   const endpointMap = new Map<string, string>()
+  const authHeadersMap = new Map<string, Record<string, string>>()
 
   for (const deployment of config.deployments) {
     const providerConfig = config.providers.find(p => p.id === deployment.providerId)
@@ -211,6 +220,9 @@ export function createProductionAutocompleteGateway(
       fimStrategy // Explicit strategy required — no guessing
     ) {
       const wireModel = resolveServedModelId(deployment, modelConfig)
+      const apiKey = resolveProviderApiKey(providerConfig)
+      const headers = apiKey ? { authorization: `Bearer ${apiKey}` } : undefined
+      if (headers) authHeadersMap.set(deployment.id, headers)
       providers.set(
         deployment.id,
         new LocalFimProvider({
@@ -220,6 +232,7 @@ export function createProductionAutocompleteGateway(
           baseUrl: ep,
           model: wireModel,
           fimStrategy,
+          ...(headers ? { headers } : {}),
         })
       )
     }
@@ -227,7 +240,7 @@ export function createProductionAutocompleteGateway(
 
   const resolvedHealthChecker = healthChecker ?? (
     endpointMap.size > 0
-      ? new EndpointHealthChecker({ endpoints: endpointMap })
+      ? new EndpointHealthChecker({ endpoints: endpointMap, headers: authHeadersMap })
       : new StaticHealthChecker()
   )
 

@@ -100,9 +100,10 @@ export async function discoverProviderRuntime(endpoint: string): Promise<string>
 
 /**
  * Deterministically validate structural syntax for FIM completions.
- * Strictly separates nonEmpty from syntaxValid.
+ * JSON uses JSON.parse grammar parsing; TypeScript/JavaScript/Python use delimiter & string balancing.
+ * Strictly separates nonEmpty from structurallyValid.
  */
-export function validateSyntax(completion: string, language: string, prefix: string, suffix: string): boolean {
+export function validateStructuralSyntax(completion: string, language: string, prefix: string, suffix: string): boolean {
   if (!completion || completion.trim().length === 0) return false
 
   if (language === "json") {
@@ -162,6 +163,9 @@ export function validateSyntax(completion: string, language: string, prefix: str
 
   return completion.trim().length > 0
 }
+
+/** Backward compatibility alias */
+export const validateSyntax = validateStructuralSyntax
 
 export interface AgentBenchmarkTask {
   readonly id: string
@@ -226,11 +230,18 @@ export interface FimTaskResult {
   readonly success: boolean
   readonly exactMatch: boolean
   readonly nonEmpty: boolean
+  readonly structurallyValid: boolean
+  /** Alias for structurallyValid for backwards compatibility */
   readonly syntaxValid: boolean
   readonly latencyMs: number
   readonly emptyCompletion: boolean
   readonly completionLength: number
   readonly completionSha256: string
+  readonly routeProvenance?: {
+    readonly deploymentId: string
+    readonly providerId: string
+    readonly modelId: string
+  }
   readonly error?: string
 }
 
@@ -267,6 +278,7 @@ export interface BenchmarkArtifact {
     readonly success: number
     readonly successRate: number
     readonly nonEmptyRate: number
+    readonly structurallyValidRate: number
     readonly syntaxValidRate: number
     readonly emptyRate: number
     readonly medianLatencyMs: number
@@ -584,6 +596,8 @@ export async function runAgentBenchmark(
           isTrusted: true,
           eventSink: (ev) => { events.push(ev) },
         })
+        runtime.performanceLedger?.disableAdaptiveRouting()
+        runtime.routedGateway?.performanceLedger?.disableAdaptiveRouting()
 
         const result = await runtime.runner.run(runtime.runnerInput)
 
@@ -621,6 +635,11 @@ export async function runAgentBenchmark(
 
         const responseSha256 = createHash("sha256").update(responseText).digest("hex")
 
+        const decision = runtime.routedGateway?.lastDecision
+        const provDeploymentId = decision?.deploymentId ?? "dep-benchmark"
+        const provProviderId = decision?.providerId ?? "prov-local"
+        const provModelId = decision?.modelId ?? modelId
+
         results.push({
           taskId: task.id,
           name: task.name,
@@ -637,9 +656,9 @@ export async function runAgentBenchmark(
           validToolCallsCount: validCalls.length,
           selectedToolNames,
           routeProvenance: {
-            deploymentId: "dep-benchmark",
-            providerId: "prov-local",
-            modelId,
+            deploymentId: provDeploymentId,
+            providerId: provProviderId,
+            modelId: provModelId,
           },
           ...(result.failureReason ? { failureReason: result.failureReason } : {}),
           responseLength: responseText.length,
@@ -736,6 +755,7 @@ export async function runFimBenchmark(
 
     // 2. Instantiate production AutocompleteGateway from workspace models.json
     const gateway = createProductionAutocompleteGateway(tempDir)
+    gateway.performanceLedger?.disableAdaptiveRouting()
 
     // 3. Complete each fixture through production gateway
     for (const fixture of fixtures) {
@@ -754,8 +774,8 @@ export async function runFimBenchmark(
         const keywordMatches = fixture.expectedKeywords.filter(kw => text.toLowerCase().includes(kw.toLowerCase()))
         const exactMatch = fixture.expectedKeywords.some(kw => text.includes(kw))
         const nonEmpty = text.trim().length > 0
-        const syntaxValid = validateSyntax(text, fixture.language, fixture.prefix, fixture.suffix)
-        const success = exactMatch || (keywordMatches.length > 0 && syntaxValid)
+        const structurallyValid = validateStructuralSyntax(text, fixture.language, fixture.prefix, fixture.suffix)
+        const success = exactMatch || (keywordMatches.length > 0 && structurallyValid)
         const sha256 = createHash("sha256").update(text).digest("hex")
 
         results.push({
@@ -764,11 +784,17 @@ export async function runFimBenchmark(
           success,
           exactMatch,
           nonEmpty,
-          syntaxValid,
+          structurallyValid,
+          syntaxValid: structurallyValid,
           latencyMs: Date.now() - t0,
           emptyCompletion: !nonEmpty,
           completionLength: text.length,
           completionSha256: sha256,
+          routeProvenance: {
+            deploymentId: response.deploymentId,
+            providerId: response.providerId,
+            modelId,
+          },
         })
       } catch (error) {
         results.push({
@@ -777,6 +803,7 @@ export async function runFimBenchmark(
           success: false,
           exactMatch: false,
           nonEmpty: false,
+          structurallyValid: false,
           syntaxValid: false,
           latencyMs: Date.now() - t0,
           emptyCompletion: true,
@@ -853,7 +880,7 @@ export async function runRealModelBenchmark(options: RealModelBenchmarkOptions):
 
   const fimSuccess = fimTasks.filter(t => t.success).length
   const fimNonEmpty = fimTasks.filter(t => t.nonEmpty).length
-  const fimSyntaxValid = fimTasks.filter(t => t.syntaxValid).length
+  const fimStructurallyValid = fimTasks.filter(t => t.structurallyValid).length
   const fimEmpty = fimTasks.filter(t => t.emptyCompletion).length
 
   const cpuModel = cpus()[0]?.model ?? "unknown"
@@ -892,7 +919,8 @@ export async function runRealModelBenchmark(options: RealModelBenchmarkOptions):
       success: fimSuccess,
       successRate: fimTasks.length > 0 ? fimSuccess / fimTasks.length : 0,
       nonEmptyRate: fimTasks.length > 0 ? fimNonEmpty / fimTasks.length : 0,
-      syntaxValidRate: fimTasks.length > 0 ? fimSyntaxValid / fimTasks.length : 0,
+      structurallyValidRate: fimTasks.length > 0 ? fimStructurallyValid / fimTasks.length : 0,
+      syntaxValidRate: fimTasks.length > 0 ? fimStructurallyValid / fimTasks.length : 0,
       emptyRate: fimTasks.length > 0 ? fimEmpty / fimTasks.length : 0,
       medianLatencyMs: median(fimLatencies),
       p95LatencyMs: percentile95(fimLatencies),
@@ -934,7 +962,7 @@ export async function runRealModelBenchmark(options: RealModelBenchmarkOptions):
       `- **Success Count:** ${artifact.fimSummary.success}`,
       `- **Success Rate:** ${(artifact.fimSummary.successRate * 100).toFixed(1)}%`,
       `- **Non-Empty Rate:** ${(artifact.fimSummary.nonEmptyRate * 100).toFixed(1)}%`,
-      `- **Syntax-Valid Rate:** ${(artifact.fimSummary.syntaxValidRate * 100).toFixed(1)}%`,
+      `- **Structurally-Valid Rate:** ${(artifact.fimSummary.structurallyValidRate * 100).toFixed(1)}%`,
       `- **Empty Rate:** ${(artifact.fimSummary.emptyRate * 100).toFixed(1)}%`,
       `- **Median Latency:** ${artifact.fimSummary.medianLatencyMs.toFixed(0)} ms`,
       `- **P95 Latency:** ${artifact.fimSummary.p95LatencyMs.toFixed(0)} ms`,

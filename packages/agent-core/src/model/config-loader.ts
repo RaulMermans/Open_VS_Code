@@ -88,6 +88,9 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
       if (pd.apiKey !== undefined && (typeof pd.apiKey !== "string" || !pd.apiKey.trim())) {
         violations.push(`Provider '${pd.id}' apiKey must be a non-empty string if specified`)
       }
+      if (pd.apiKeyEnv !== undefined && (typeof pd.apiKeyEnv !== "string" || !pd.apiKeyEnv.trim())) {
+        violations.push(`Provider '${pd.id}' apiKeyEnv must be a non-empty string if specified`)
+      }
       providerIds.add(pd.id as string)
       providers.push({
         id: pd.id as string,
@@ -95,6 +98,7 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
         ...(pd.protocol ? { protocol: pd.protocol as string } : {}),
         ...(typeof pd.baseUrl === "string" && pd.baseUrl.trim() ? { baseUrl: pd.baseUrl.trim() } : {}),
         ...(typeof pd.apiKey === "string" && pd.apiKey.trim() ? { apiKey: pd.apiKey.trim() } : {}),
+        ...(typeof pd.apiKeyEnv === "string" && pd.apiKeyEnv.trim() ? { apiKeyEnv: pd.apiKeyEnv.trim() } : {}),
       })
     }
   }
@@ -309,4 +313,20 @@ export function loadRoutingConfigSync(workspaceRoot: string): RoutingConfigurati
   }
 
   return validateRoutingConfig(parsed)
+}
+
+/**
+ * Resolves API key for a provider descriptor:
+ * Prefers process.env[provider.apiKeyEnv] if configured,
+ * then falls back to provider.apiKey if configured.
+ * Secrets never live in project files.
+ */
+export function resolveProviderApiKey(provider: { apiKey?: string; apiKeyEnv?: string }): string | undefined {
+  if (provider.apiKeyEnv && process.env[provider.apiKeyEnv]?.trim()) {
+    return process.env[provider.apiKeyEnv]!.trim()
+  }
+  if (provider.apiKey?.trim()) {
+    return provider.apiKey.trim()
+  }
+  return undefined
 }

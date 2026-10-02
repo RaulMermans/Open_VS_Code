@@ -156,20 +156,8 @@ export class AgentSessionBridge {
         }
       }
       await this.host.showOutput(`Task Finished: ${runnerResult.status}`);
-      if (runtime?.performanceLedger && runtime?.routedGateway?.lastDecision) {
-        const lastDec = runtime.routedGateway.lastDecision;
-        runtime.performanceLedger.recordAgentOutcome({
-          deploymentId: lastDec.deploymentId,
-          taskClass: lastDec.taskClass,
-          success: runnerResult.status === "COMPLETED",
-          verificationSuccess: true,
-          toolCallSuccess: (runnerResult.toolCalls?.length ?? 0) > 0,
-          repairCycles: 0,
-          timeoutOccurred: runnerResult.failureReason === "TIMEOUT",
-          cancellationOccurred: runnerResult.failureReason === "CANCELLED",
-          latencyMs: Date.now() - t0,
-        });
-        void runtime.performanceLedger.persist().catch(() => {});
+      if (runtime?.performanceLedger) {
+        await runtime.performanceLedger.persist().catch(() => {});
       }
       return runnerResult as AgentResult;
     } catch (e: any) {

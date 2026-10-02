@@ -22,7 +22,7 @@
 
 import type { AutocompleteRequest } from "./contracts.ts"
 import type { AutocompleteGateway } from "./gateway.ts"
-import type { ModelPerformanceLedger } from "../model/performance-ledger.ts"
+import type { ModelPerformanceLedger, AutocompleteOutcomeRecord } from "../model/performance-ledger.ts"
 import { buildAutocompleteContext, type EditorSnapshot } from "./context-builder.ts"
 import { sanitizeCompletion } from "./sanitizer.ts"
 import {
@@ -147,6 +147,15 @@ export class AutocompleteService {
 
   // Bounded acceptance registry (opaque IDs + char counts only)
   readonly #acceptanceRegistry: AcceptanceEntry[] = []
+
+  // Pending shown completion awaiting acceptance or supersession (at most one)
+  #pendingShownOutcome: {
+    readonly requestId: string
+    readonly deploymentId: string
+    readonly latencyMs: number
+  } | null = null
+
+  #persistTimer?: NodeJS.Timeout | undefined
 
   // Current pending debounce handle, resolver, duplicate key, and promise
   #pendingHandle: { cancel(): void } | null = null
@@ -275,6 +284,9 @@ export class AutocompleteService {
         this.#inflightAbort = ourAbort
         this.#inflightPromise = resultPromise
 
+        const t0 = performance.now()
+        let lastDeploymentId: string | undefined
+
         // Merge VS Code's cancellation token into our abort signal
         if (vsCodeAbortSignal?.aborted) {
           ourAbort.abort()
@@ -300,11 +312,22 @@ export class AutocompleteService {
 
           const response = await this.#gateway.complete(request)
           clearTimeout(timeoutHandle)
+          lastDeploymentId = response.deploymentId
+          const latencyMs = Math.max(0, Math.round(performance.now() - t0))
 
           // Stale-result checks against live editor state
           const isStaleResult = this.#isStale(identity, liveEditorSupplier, documentUri)
           if (isStaleResult) {
             this.#telemetry.staleDiscarded++
+            this.#recordOutcome({
+              deploymentId: response.deploymentId,
+              shown: false,
+              accepted: false,
+              staleDiscarded: true,
+              emptyCompletion: false,
+              cancelled: false,
+              latencyMs,
+            })
             resolve(null)
             return
           }
@@ -318,6 +341,15 @@ export class AutocompleteService {
 
           if (!sanitized) {
             this.#telemetry.empty++
+            this.#recordOutcome({
+              deploymentId: response.deploymentId,
+              shown: false,
+              accepted: false,
+              staleDiscarded: false,
+              emptyCompletion: true,
+              cancelled: false,
+              latencyMs,
+            })
             resolve(null)
             return
           }
@@ -325,18 +357,30 @@ export class AutocompleteService {
           this.#telemetry.shown++
           this.#telemetry.generatedChars += sanitized.length
 
+          // Finalize previous unaccepted shown completion before replacing it
+          if (this.#pendingShownOutcome) {
+            const prev = this.#pendingShownOutcome
+            this.#pendingShownOutcome = null
+            this.#recordOutcome({
+              deploymentId: prev.deploymentId,
+              shown: true,
+              accepted: false,
+              staleDiscarded: false,
+              emptyCompletion: false,
+              cancelled: false,
+              latencyMs: prev.latencyMs,
+            })
+          }
+
           // Register in acceptance registry
           this.#registerAcceptance(requestId, sanitized.length, response.deploymentId)
 
-          this.#performanceLedger?.recordAutocompleteOutcome({
+          // Track this shown completion as pending acceptance
+          this.#pendingShownOutcome = {
+            requestId,
             deploymentId: response.deploymentId,
-            shown: true,
-            accepted: false,
-            staleDiscarded: false,
-            emptyCompletion: false,
-            cancelled: false,
-            latencyMs: 0,
-          })
+            latencyMs,
+          }
 
           resolve({
             requestId,
@@ -346,6 +390,7 @@ export class AutocompleteService {
           })
         } catch (err) {
           clearTimeout(timeoutHandle)
+          const latencyMs = Math.max(0, Math.round(performance.now() - t0))
 
           const isAbort = err instanceof Error &&
             (err.message.includes("abort") || err.message.includes("Abort") ||
@@ -354,6 +399,16 @@ export class AutocompleteService {
 
           if (isAbort) {
             this.#telemetry.cancelled++
+            const depId = lastDeploymentId ?? (this.#gateway as any).lastDecision?.deploymentId ?? "default"
+            this.#recordOutcome({
+              deploymentId: depId,
+              shown: false,
+              accepted: false,
+              staleDiscarded: false,
+              emptyCompletion: false,
+              cancelled: true,
+              latencyMs,
+            })
           } else if (err instanceof RouteUnavailableError) {
             // Quiet — no compatible route
             this.#telemetry.empty++
@@ -406,15 +461,45 @@ export class AutocompleteService {
     this.#acceptanceRegistry.splice(entryIndex, 1)
     this.#telemetry.accepted++
     this.#telemetry.acceptedChars += entry.generatedChars
-    this.#performanceLedger?.recordAutocompleteOutcome({
-      deploymentId: entry.deploymentId,
-      shown: true,
-      accepted: true,
-      staleDiscarded: false,
-      emptyCompletion: false,
-      cancelled: false,
-      latencyMs: 0,
-    })
+
+    if (this.#pendingShownOutcome && this.#pendingShownOutcome.requestId === requestId) {
+      const pending = this.#pendingShownOutcome
+      this.#pendingShownOutcome = null
+      this.#recordOutcome({
+        deploymentId: pending.deploymentId,
+        shown: true,
+        accepted: true,
+        staleDiscarded: false,
+        emptyCompletion: false,
+        cancelled: false,
+        latencyMs: pending.latencyMs,
+      })
+    }
+  }
+
+  /**
+   * Flush pending debounced persistence.
+   */
+  async flush(): Promise<void> {
+    if (this.#persistTimer) {
+      clearTimeout(this.#persistTimer)
+      this.#persistTimer = undefined
+    }
+    await this.#performanceLedger?.persist().catch(() => {})
+  }
+
+  #recordOutcome(record: AutocompleteOutcomeRecord): void {
+    if (!this.#performanceLedger) return
+    this.#performanceLedger.recordAutocompleteOutcome(record)
+    this.#schedulePersist()
+  }
+
+  #schedulePersist(): void {
+    if (this.#persistTimer) return
+    this.#persistTimer = setTimeout(() => {
+      this.#persistTimer = undefined
+      void this.#performanceLedger?.persist().catch(() => {})
+    }, 500)
   }
 
   /**
@@ -423,14 +508,30 @@ export class AutocompleteService {
    * After dispose:
    *   - No new completions will be generated
    *   - Active in-flight request is aborted
+   *   - Pending unaccepted shown completion is finalized once
    *   - Acceptance registry is cleared
+   *   - Ledger is flushed to disk
    */
   dispose(): void {
     this.#disposed = true
     this.#cancelPending()
     this.#cancelInflight()
+    if (this.#pendingShownOutcome) {
+      const pending = this.#pendingShownOutcome
+      this.#pendingShownOutcome = null
+      this.#recordOutcome({
+        deploymentId: pending.deploymentId,
+        shown: true,
+        accepted: false,
+        staleDiscarded: false,
+        emptyCompletion: false,
+        cancelled: false,
+        latencyMs: pending.latencyMs,
+      })
+    }
     this.#acceptanceRegistry.length = 0
     this.#latestRequestId = null
+    void this.flush()
   }
 
   get disposed(): boolean { return this.#disposed }

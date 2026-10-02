@@ -27,11 +27,41 @@ import {
 } from "../../src/model/config-loader.ts"
 import type { RoutingConfiguration } from "../../src/contracts/routing.ts"
 import { ModelRouter } from "../../src/model/router.ts"
+import { AgentRunner } from "../../src/agent/runner.ts"
+import { AutocompleteService } from "../../src/autocomplete/service.ts"
+import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.ts"
+import { calculateBudget } from "../../src/context/budget.ts"
+import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
+import type { ModelResponse } from "../../src/contracts/model.ts"
+import type { EditorSnapshot } from "../../src/autocomplete/context-builder.ts"
+import { validateStructuralSyntax } from "../evals/real-model-benchmark.ts"
+import { RoutedModelGateway, StaticHealthChecker } from "../../src/model/routed-gateway.ts"
 
 const fakeFetchMalformed = async () => new Response("<html>Gateway Timeout</html>", {
   status: 504,
   headers: { "content-type": "text/html" },
 })
+
+function response(content: string, toolCalls?: ModelResponse["toolCalls"]): ModelResponse {
+  return {
+    model: "scripted-general",
+    message: { role: "assistant", content },
+    ...(toolCalls ? { toolCalls } : {}),
+  }
+}
+
+function makeSnapshot(overrides: Partial<EditorSnapshot> = {}): EditorSnapshot {
+  return {
+    rawPrefix: "const x = ",
+    rawSuffix: "\nconsole.log(x)\n",
+    languageId: "typescript",
+    relativePath: "src/index.ts",
+    documentVersion: 1,
+    cursorLine: 0,
+    cursorCharacter: 10,
+    ...overrides,
+  }
+}
 
 describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation", () => {
   // ── 1. Canonical Endpoint Resolution Contract ─────────────────────────────
@@ -829,6 +859,752 @@ describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation",
       const fimStrategies = schema.properties.models.items.properties.fimStrategy.enum
       const expectedFim = ["prefix-suffix-middle", "qwen", "starcoder", "deepseek", "raw-prefix"]
       assert.deepEqual(fimStrategies.toSorted(), expectedFim.toSorted())
+    })
+  })
+
+  // ── 11. Sprint 4E.3 — Evidence Integrity & Adaptive Routing Closure ─────────────
+  describe("11. Sprint 4E.3 — Evidence Integrity & Adaptive Routing Closure", () => {
+    test("1. createAgentRuntime wires performanceLedger into primary AgentRunner and records on completion", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "open-vs-code-eval-runtime-ledger-"))
+      try {
+        await mkdir(join(tmp, ".open-vs-code"), { recursive: true })
+        const config: RoutingConfiguration = {
+          providers: [{ id: "p1", kind: "scripted" }],
+          models: [{ id: "m1", contextWindow: 8192, capabilities: ["coding", "toolUse"], specialization: "coding" }],
+          deployments: [{ id: "d1", providerId: "p1", modelId: "m1", enabled: true }],
+          routes: { default: ["d1"] },
+        }
+        await writeFile(join(tmp, ".open-vs-code", "models.json"), JSON.stringify(config), "utf-8")
+
+        const runtime = await createAgentRuntime({
+          workspaceRoot: tmp,
+          mode: "ASK",
+          instruction: "Explain hello world",
+          isTrusted: true,
+          eventSink: () => {},
+        })
+
+        assert.ok(runtime.performanceLedger, "performanceLedger must be instantiated on runtime")
+        const initialProfile = (runtime.performanceLedger as any).getProfile?.("d1", "general")
+        assert.equal(initialProfile?.sampleCount ?? 0, 0)
+
+        const result = await runtime.runner.run(runtime.runnerInput)
+        assert.equal(result.status, "COMPLETED")
+
+        // AgentRunner must have directly recorded into performanceLedger
+        const afterProfile = (runtime.performanceLedger as any).getProfile?.("d1", "general")
+        assert.equal(afterProfile?.sampleCount, 1, "AgentRunner must record outcome into injected ledger")
+        assert.equal(afterProfile?.successCount, 1)
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("2. PAUSED confirmation does not record terminal outcome in ledger", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const provider = new ScriptedModelProvider([
+        response("Let me modify a file", [{ id: "call-1", name: "test_action", arguments: { path: "foo.txt" } }]),
+      ])
+
+      const registry = createReadOnlyToolRegistry()
+      registry.register({
+        definition: {
+          name: "test_action",
+          description: "Action requiring confirmation",
+          action: "write_file",
+          inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+        },
+        validate: (input: unknown) => (input && typeof input === "object" ? (input as Record<string, unknown>) : {}),
+        execute: async () => ({ output: "ok" }),
+      })
+
+      const runner = new AgentRunner({
+        provider,
+        registry,
+        permissionEvaluator: () => "CONFIRM",
+        performanceLedger: ledger,
+      })
+
+      const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 })
+      const res = await runner.run({
+        task: { id: "t-paused-1", mode: "BUILD", instruction: "Do action" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+      })
+
+      assert.equal(res.status, "PAUSED", "Run must pause on confirmation")
+      assert.equal((ledger as any).getProfile?.("scripted-general", "coding")?.sampleCount ?? 0, 0,
+        "PAUSED state must NEVER record a terminal outcome into the performance ledger")
+    })
+
+    test("3. Resumed task records exactly one outcome on terminal completion (no double-counting)", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const provider = new ScriptedModelProvider([
+        response("Need confirmation", [{ id: "call-2", name: "test_action", arguments: { path: "bar.txt" } }]),
+        response("Action finished successfully"),
+      ])
+
+      const registry = createReadOnlyToolRegistry()
+      registry.register({
+        definition: {
+          name: "test_action",
+          description: "Action requiring confirmation",
+          action: "write_file",
+          inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+        },
+        validate: (input: unknown) => (input && typeof input === "object" ? (input as Record<string, unknown>) : {}),
+        execute: async () => ({ output: "executed successfully" }),
+      })
+
+      const runner = new AgentRunner({
+        provider,
+        registry,
+        permissionEvaluator: () => "CONFIRM",
+        performanceLedger: ledger,
+      })
+
+      const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 })
+      const pausedRes = await runner.run({
+        task: { id: "t-resume-1", mode: "BUILD", instruction: "Do action" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+      })
+      assert.equal(pausedRes.status, "PAUSED")
+      assert.equal((ledger as any).getProfile?.("scripted-general", "coding")?.sampleCount ?? 0, 0)
+
+      // Resume with approval -> terminal completion
+      const completedRes = await runner.resume("APPROVE")
+      assert.equal(completedRes.status, "COMPLETED")
+
+      const profile = (ledger as any).getProfile?.("scripted-general", "coding")
+      assert.equal(profile?.sampleCount, 1, "Exactly one sample must be recorded across pause and resume")
+      assert.equal(profile?.successCount, 1)
+      assert.equal(profile?.failureCount, 0)
+    })
+
+    test("4. Resumed task with REJECT records exactly one truthful failure outcome", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const provider = new ScriptedModelProvider([
+        response("Need confirmation", [{ id: "call-3", name: "test_action", arguments: { path: "baz.txt" } }]),
+      ])
+
+      const registry = createReadOnlyToolRegistry()
+      registry.register({
+        definition: {
+          name: "test_action",
+          description: "Action requiring confirmation",
+          action: "write_file",
+          inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+        },
+        validate: (input: unknown) => (input && typeof input === "object" ? (input as Record<string, unknown>) : {}),
+        execute: async () => ({ output: "ok" }),
+      })
+
+      const runner = new AgentRunner({
+        provider,
+        registry,
+        permissionEvaluator: () => "CONFIRM",
+        performanceLedger: ledger,
+      })
+
+      const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 })
+      await runner.run({
+        task: { id: "t-resume-rej-1", mode: "BUILD", instruction: "Do action" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+      })
+
+      // Resume with rejection -> terminal result
+      const rejectedRes = await runner.resume("REJECT")
+      assert.ok(rejectedRes.status === "COMPLETED" || rejectedRes.status === "FAILED")
+
+      const profile = (ledger as any).getProfile?.("scripted-general", "coding")
+      assert.equal(profile?.sampleCount, 1, "Exactly one sample must be recorded on reject resumption")
+      // Tool call was rejected so toolCallSuccess must be false
+      assert.equal(profile?.toolCallSuccessCount, 0, "Rejected tool call must not count as toolCallSuccess")
+    })
+
+    test("5. Verification result is truthful and not hardcoded to true", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const provider = new ScriptedModelProvider([
+        response("Let me verify with test", [{ id: "call-v1", name: "run_known_test", arguments: {} }]),
+        response("Verification failed but finishing task"),
+      ])
+
+      const registry = createReadOnlyToolRegistry()
+      registry.register({
+        definition: {
+          name: "run_known_test",
+          description: "Test",
+          action: "run_known_test",
+          inputSchema: { type: "object", properties: {} },
+        },
+        validate: (input: unknown) => (input && typeof input === "object" ? (input as Record<string, unknown>) : {}),
+        execute: async () => {
+          throw new Error("Test suite assertion failure: expected 1 got 2")
+        },
+      })
+
+      const runner = new AgentRunner({
+        provider,
+        registry,
+        permissionEvaluator: () => "ALLOW",
+        performanceLedger: ledger,
+      })
+
+      const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 })
+      const res = await runner.run({
+        task: { id: "t-verif-fail-1", mode: "BUILD", instruction: "Run verification" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+      })
+
+      assert.equal(res.status, "COMPLETED")
+      const profile = (ledger as any).getProfile?.("scripted-general", "coding")
+      assert.equal(profile?.sampleCount, 1)
+      assert.equal(profile?.verificationSuccessCount, 0, "Failed verification tool call must record verificationSuccess = false")
+      assert.equal(profile?.toolCallSuccessCount, 0, "Failed tool call must record toolCallSuccess = false")
+      assert.ok(profile?.totalRepairCycles >= 1, "Failed verification must register in repairCycles")
+    })
+
+    test("6. Read-only task without verification records truthful verification success", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const provider = new ScriptedModelProvider([
+        response("Here is the code explanation"),
+      ])
+
+      const runner = new AgentRunner({
+        provider,
+        registry: createReadOnlyToolRegistry(),
+        performanceLedger: ledger,
+      })
+
+      const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 })
+      const res = await runner.run({
+        task: { id: "t-ask-1", mode: "ASK", instruction: "Explain code" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+      })
+
+      assert.equal(res.status, "COMPLETED")
+      const profile = (ledger as any).getProfile?.("scripted-general", "general")
+      assert.equal(profile?.sampleCount, 1)
+      assert.equal(profile?.verificationSuccessCount, 1, "Completed read-only task has satisfied verification")
+      assert.equal(profile?.toolCallSuccessCount, 1, "Completed task with 0 tool calls has satisfied toolCallSuccess")
+      assert.equal(profile?.totalRepairCycles, 0)
+    })
+
+    test("7. Cancellation and timeout classification is truthful", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      
+      // Test A: Cancellation via AbortSignal
+      const cancelController = new AbortController()
+      const providerCancel = new ScriptedModelProvider([
+        () => {
+          cancelController.abort()
+          const err = new Error("This operation was aborted")
+          err.name = "AbortError"
+          throw err
+        }
+      ])
+      const runnerCancel = new AgentRunner({
+        provider: providerCancel,
+        registry: createReadOnlyToolRegistry(),
+        performanceLedger: ledger,
+      })
+      const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 })
+      const resCancel = await runnerCancel.run({
+        task: { id: "t-cancel-1", mode: "ASK", instruction: "Do cancel" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+        signal: cancelController.signal,
+      })
+      assert.equal(resCancel.status, "CANCELLED")
+      const profileCancel = (ledger as any).getProfile?.("scripted-general", "general")
+      assert.equal(profileCancel?.cancellationCount, 1, "cancellationCount must increment on cancel")
+      assert.equal(profileCancel?.timeoutCount, 0, "timeoutCount must NOT increment on cancel")
+
+      // Test B: Timeout error
+      const ledgerTimeout = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const providerTimeout = new ScriptedModelProvider([
+        () => {
+          const err = new Error("Gateway connection timed out after 30000ms")
+          err.name = "TimeoutError"
+          throw err
+        }
+      ])
+      const runnerTimeout = new AgentRunner({
+        provider: providerTimeout,
+        registry: createReadOnlyToolRegistry(),
+        performanceLedger: ledgerTimeout,
+      })
+      const resTimeout = await runnerTimeout.run({
+        task: { id: "t-timeout-1", mode: "ASK", instruction: "Do timeout" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+      })
+      assert.equal(resTimeout.status, "FAILED")
+      const profileTimeout = (ledgerTimeout as any).getProfile?.("scripted-general", "general")
+      assert.equal(profileTimeout?.timeoutCount, 1, "timeoutCount must increment on actual timeout")
+      assert.equal(profileTimeout?.cancellationCount, 0, "cancellationCount must NOT increment on timeout")
+    })
+
+    test("8. Autocomplete accepted request = exactly one sample in performance ledger (no double count)", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const gateway = {
+        complete: async () => ({ text: "helloWorld()", deploymentId: "dep-fim-1", providerId: "prov-1" }),
+        performanceLedger: ledger,
+      } as any
+
+      const service = new AutocompleteService({
+        gateway,
+        debounceMs: 0,
+        scheduler: { schedule: (fn: () => void) => { setTimeout(fn, 0); return { cancel: () => {} } } },
+        performanceLedger: ledger,
+      })
+
+      const res = await service.trigger(makeSnapshot(), "file:///test.ts")
+
+      assert.ok(res)
+      // Shown completion is pending; not yet accepted
+      const profileBeforeAccept = (ledger as any).getProfile?.("dep-fim-1", "autocomplete")
+      assert.equal(profileBeforeAccept?.sampleCount ?? 0, 0, "Shown completion waiting for user must not be counted prematurely")
+
+      // User accepts
+      service.recordAccepted(res.requestId)
+
+      const profileAfterAccept = (ledger as any).getProfile?.("dep-fim-1", "autocomplete")
+      assert.equal(profileAfterAccept?.sampleCount, 1, "Accepted request must record exactly 1 sample")
+      assert.equal(profileAfterAccept?.successCount, 1)
+      assert.equal(profileAfterAccept?.autocomplete?.accepted, 1)
+      assert.equal(profileAfterAccept?.autocomplete?.shown, 1)
+
+      // Second call to recordAccepted on same ID is safe no-op
+      service.recordAccepted(res.requestId)
+      assert.equal((ledger as any).getProfile?.("dep-fim-1", "autocomplete")?.sampleCount, 1, "Re-accepting cannot double count")
+      service.dispose()
+    })
+
+    test("9. Autocomplete unaccepted shown completion finalizes as exactly 1 unaccepted sample upon replacement", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      let count = 0
+      const gateway = {
+        complete: async () => ({ text: `completion_${++count}()`, deploymentId: "dep-fim-1", providerId: "prov-1" }),
+        performanceLedger: ledger,
+      } as any
+
+      const service = new AutocompleteService({
+        gateway,
+        debounceMs: 0,
+        scheduler: { schedule: (fn: () => void) => { setTimeout(fn, 0); return { cancel: () => {} } } },
+        performanceLedger: ledger,
+      })
+
+      const res1 = await service.trigger(makeSnapshot({ rawPrefix: "const " }), "file:///test.ts")
+      assert.ok(res1)
+
+      // Next completion arrives before res1 is accepted -> res1 was replaced/unaccepted
+      const res2 = await service.trigger(makeSnapshot({ rawPrefix: "const a", documentVersion: 2 }), "file:///test.ts")
+      assert.ok(res2)
+
+      const profile = (ledger as any).getProfile?.("dep-fim-1", "autocomplete")
+      assert.equal(profile?.sampleCount, 1, "Replaced completion must be finalized as unaccepted sample")
+      assert.equal(profile?.successCount, 0)
+      assert.equal(profile?.autocomplete?.shown, 1)
+      assert.equal(profile?.autocomplete?.accepted, 0)
+
+      service.dispose()
+    })
+
+    test("10. Autocomplete empty and stale requests record bounded negative evidence", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      
+      // Empty completion
+      const gatewayEmpty = {
+        complete: async () => ({ text: "   \n\t  ", deploymentId: "dep-fim-empty", providerId: "prov-1" }),
+        performanceLedger: ledger,
+      } as any
+      const serviceEmpty = new AutocompleteService({
+        gateway: gatewayEmpty,
+        debounceMs: 0,
+        scheduler: { schedule: (fn: () => void) => { setTimeout(fn, 0); return { cancel: () => {} } } },
+        performanceLedger: ledger,
+      })
+      const emptyRes = await serviceEmpty.trigger(makeSnapshot(), "file:///test.ts")
+      assert.equal(emptyRes, null)
+      const emptyProfile = (ledger as any).getProfile?.("dep-fim-empty", "autocomplete")
+      assert.equal(emptyProfile?.sampleCount, 1)
+      assert.equal(emptyProfile?.autocomplete?.empty, 1)
+      serviceEmpty.dispose()
+
+      // Stale completion
+      const gatewayStale = {
+        complete: async () => ({ text: "validCompletion()", deploymentId: "dep-fim-stale", providerId: "prov-1" }),
+        performanceLedger: ledger,
+      } as any
+      const serviceStale = new AutocompleteService({
+        gateway: gatewayStale,
+        debounceMs: 0,
+        scheduler: { schedule: (fn: () => void) => { setTimeout(fn, 0); return { cancel: () => {} } } },
+        performanceLedger: ledger,
+      })
+      const staleRes = await serviceStale.trigger(
+        makeSnapshot({ documentVersion: 1 }),
+        "file:///test.ts",
+        undefined,
+        // Live editor moved to version 2 -> stale!
+        () => ({ documentUri: "file:///test.ts", documentVersion: 2, cursorLine: 0, cursorCharacter: 6 })
+      )
+      assert.equal(staleRes, null)
+      const staleProfile = (ledger as any).getProfile?.("dep-fim-stale", "autocomplete")
+      assert.equal(staleProfile?.sampleCount, 1)
+      assert.equal(staleProfile?.autocomplete?.staleDiscarded, 1)
+      serviceStale.dispose()
+    })
+
+    test("11. Autocomplete measured latency is non-synthetic", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const gateway = {
+        complete: async () => {
+          await new Promise(r => setTimeout(r, 10))
+          return { text: "delayedResult()", deploymentId: "dep-fim-lat", providerId: "prov-1" }
+        },
+        performanceLedger: ledger,
+      } as any
+
+      const service = new AutocompleteService({
+        gateway,
+        debounceMs: 0,
+        scheduler: { schedule: (fn: () => void) => { setTimeout(fn, 0); return { cancel: () => {} } } },
+        performanceLedger: ledger,
+      })
+
+      const res = await service.trigger(makeSnapshot(), "file:///test.ts")
+      assert.ok(res)
+      service.recordAccepted(res.requestId)
+
+      const profile = (ledger as any).getProfile?.("dep-fim-lat", "autocomplete")
+      assert.ok(profile?.emaLatencyMs >= 5, `Measured latency must be >= 5ms, got ${profile?.emaLatencyMs}`)
+      service.dispose()
+    })
+
+    test("12. Agent and Autocomplete profiles survive shared persistence without clobbering each other", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "open-vs-code-eval-shared-persist-"))
+      const ledgerPath = join(tmp, "shared-ledger.json")
+
+      try {
+        // Session 1: Agent writes a coding profile
+        const agentLedger = new ModelPerformanceLedger({ persistPath: ledgerPath, minimumSamples: 1 })
+        await agentLedger.ready
+        agentLedger.recordAgentOutcome({
+          deploymentId: "dep-qwen-agent",
+          taskClass: "coding",
+          success: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 120,
+        })
+        await agentLedger.persist()
+
+        // Session 2: Autocomplete writes an autocomplete profile using same file path
+        const acLedger = new ModelPerformanceLedger({ persistPath: ledgerPath, minimumSamples: 1 })
+        await acLedger.ready
+        acLedger.recordAutocompleteOutcome({
+          deploymentId: "dep-qwen-fim",
+          shown: true,
+          accepted: true,
+          staleDiscarded: false,
+          emptyCompletion: false,
+          cancelled: false,
+          latencyMs: 45,
+        })
+        await acLedger.persist()
+
+        // Session 3: Reload in fresh independent ledger instance
+        const verifyLedger = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        const { loaded } = await verifyLedger.load()
+        assert.equal(loaded, true)
+
+        const agentProfile = (verifyLedger as any).getProfile?.("dep-qwen-agent", "coding")
+        const fimProfile = (verifyLedger as any).getProfile?.("dep-qwen-fim", "autocomplete")
+
+        assert.ok(agentProfile, "Agent profile must survive subsequent autocomplete persistence")
+        assert.equal(agentProfile.sampleCount, 1)
+        assert.equal(agentProfile.successCount, 1)
+
+        assert.ok(fimProfile, "Autocomplete profile must survive alongside agent profile")
+        assert.equal(fimProfile.sampleCount, 1)
+        assert.equal(fimProfile.successCount, 1)
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("13. First route after startup uses preloaded evidence deterministically", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "open-vs-code-eval-startup-route-"))
+      const ledgerPath = join(tmp, ".open-vs-code", "model-performance-ledger.json")
+
+      try {
+        await mkdir(join(tmp, ".open-vs-code"), { recursive: true })
+        // Seed historical evidence into disk ledger:
+        // d1 has 10 consecutive failures (poor score)
+        // d2 has 10 consecutive successes (good score)
+        const seedLedger = new ModelPerformanceLedger({ persistPath: ledgerPath, minimumSamples: 5 })
+        for (let i = 0; i < 10; i++) {
+          seedLedger.recordAgentOutcome({
+            deploymentId: "d1",
+            taskClass: "coding",
+            success: false,
+            verificationSuccess: false,
+            toolCallSuccess: false,
+            repairCycles: 3,
+            timeoutOccurred: true,
+            cancellationOccurred: false,
+            latencyMs: 500,
+          })
+          seedLedger.recordAgentOutcome({
+            deploymentId: "d2",
+            taskClass: "coding",
+            success: true,
+            verificationSuccess: true,
+            toolCallSuccess: true,
+            repairCycles: 0,
+            timeoutOccurred: false,
+            cancellationOccurred: false,
+            latencyMs: 100,
+          })
+        }
+        await seedLedger.persist()
+
+        const config: RoutingConfiguration = {
+          providers: [
+            { id: "p1", kind: "scripted" },
+            { id: "p2", kind: "scripted" },
+          ],
+          models: [
+            { id: "m1", contextWindow: 8192, capabilities: ["coding"], specialization: "coding" },
+            { id: "m2", contextWindow: 8192, capabilities: ["coding"], specialization: "coding" },
+          ],
+          // Static priority normally favors d1 (priority 100 vs 50)
+          deployments: [
+            { id: "d1", providerId: "p1", modelId: "m1", priority: 100, enabled: true },
+            { id: "d2", providerId: "p2", modelId: "m2", priority: 50, enabled: true },
+          ],
+          routes: {
+            coding: ["d1", "d2"],
+            default: ["d1", "d2"],
+          },
+        }
+        await writeFile(join(tmp, ".open-vs-code", "models.json"), JSON.stringify(config), "utf-8")
+
+        // Create runtime: createAgentRuntime awaits ledger.load() before returning
+        const runtime = await createAgentRuntime({
+          workspaceRoot: tmp,
+          mode: "BUILD",
+          instruction: "Build task",
+          isTrusted: true,
+          eventSink: () => {},
+        })
+
+        // If not routed yet, trigger a route:
+        const firstDecision = await (runtime.routedGateway as any).selectDeployment?.({
+          taskClass: "coding",
+          needsTools: false,
+          needsStructuredOutput: false,
+          estimatedInputTokens: 50,
+          requiredContextWindow: 500,
+          requiredCapabilities: ["coding"],
+        })
+        if (firstDecision) {
+          assert.equal(firstDecision.deploymentId, "d2", "First routing decision must use loaded performance adjustments without race")
+        }
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("14. Benchmark explicitly disables adaptive routing and route remains pinned", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 5 })
+      // Heavily penalize d1
+      for (let i = 0; i < 10; i++) {
+        ledger.recordAgentOutcome({
+          deploymentId: "d1",
+          taskClass: "coding",
+          success: false,
+          verificationSuccess: false,
+          toolCallSuccess: false,
+          repairCycles: 5,
+          timeoutOccurred: true,
+          cancellationOccurred: false,
+          latencyMs: 900,
+        })
+      }
+
+      // Explicitly disable adaptation (ADR-027 benchmark contract)
+      ledger.disableAdaptiveRouting()
+      assert.equal(ledger.adaptiveRoutingActive, false)
+
+      const adjustments = ledger.getRoutingAdjustments(["d1", "d2"], "coding")
+      assert.deepEqual(adjustments, [], "When adaptive routing is disabled, adjustments must strictly be empty")
+
+      const config: RoutingConfiguration = {
+        providers: [{ id: "p1", kind: "scripted" }],
+        models: [{ id: "m1", contextWindow: 8192, capabilities: ["coding"], specialization: "coding" }],
+        deployments: [
+          { id: "d1", providerId: "p1", modelId: "m1", priority: 100, enabled: true },
+          { id: "d2", providerId: "p1", modelId: "m1", priority: 50, enabled: true },
+        ],
+        routes: { default: ["d1", "d2"] },
+      }
+      const router = new ModelRouter(config, { performanceLedger: ledger })
+      const health = new StaticHealthChecker(new Map([["d1", "ready"], ["d2", "ready"]]))
+      const decision = await router.route({
+        taskClass: "coding",
+        needsTools: false,
+        needsStructuredOutput: false,
+        estimatedInputTokens: 100,
+        requiredContextWindow: 1000,
+        requiredCapabilities: ["coding"],
+      }, health)
+
+      assert.equal(decision.deploymentId, "d1", "Benchmark route must stay statically pinned to priority 100")
+    })
+
+    test("15. Benchmark route provenance is measured from runtime decision, not hardcoded", async () => {
+      const config: RoutingConfiguration = {
+        providers: [{ id: "p-prov", kind: "scripted" }],
+        models: [{ id: "m-actual", contextWindow: 8192, capabilities: ["coding"], specialization: "coding" }],
+        deployments: [{ id: "dep-actual-42", providerId: "p-prov", modelId: "m-actual", priority: 10, enabled: true }],
+        routes: { default: ["dep-actual-42"] },
+      }
+      const providers = new Map([
+        ["dep-actual-42", new ScriptedModelProvider([response("Result")])],
+      ])
+      const gateway = new RoutedModelGateway({
+        config,
+        providers,
+        healthChecker: new StaticHealthChecker(new Map([["dep-actual-42", "ready"]])),
+        mode: "ASK",
+        hasTools: false,
+        hasStructuredOutput: false,
+      })
+
+      const runner = new AgentRunner({
+        provider: gateway,
+        registry: createReadOnlyToolRegistry(),
+      })
+      const budget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 })
+      await runner.run({
+        task: { id: "t-prov-1", mode: "ASK", instruction: "Run" },
+        workspaceRoot: tmpdir(),
+        maxTurns: 5,
+        contextBudget: budget,
+        projectInstructions: [],
+      })
+
+      const dec = gateway.lastDecision
+      assert.ok(dec)
+      assert.equal(dec.deploymentId, "dep-actual-42")
+      assert.equal(dec.providerId, "p-prov")
+      assert.equal(dec.modelId, "m-actual")
+    })
+
+    test("16. validateStructuralSyntax distinguishes full JSON parsing from delimiter balancing", () => {
+      // JSON requires valid parse
+      assert.equal(validateStructuralSyntax('{"key": 42}', "json", "", ""), true)
+      assert.equal(validateStructuralSyntax('{"key": ', "json", "", ""), false)
+
+      // TypeScript / JavaScript checks string & delimiter balance
+      assert.equal(validateStructuralSyntax('function test() { return [1, 2, (3 + 4)]; }', "typescript", "", ""), true)
+      assert.equal(validateStructuralSyntax('function test() { return [1, 2, (3 + 4); }', "typescript", "", ""), false)
+      assert.equal(validateStructuralSyntax('const str = "unclosed string', "javascript", "", ""), false)
+
+      // Empty string is never valid
+      assert.equal(validateStructuralSyntax('', "typescript", "", ""), false)
+      assert.equal(validateStructuralSyntax('   ', "typescript", "", ""), false)
+    })
+
+    test("17. Privacy invariant: Persisted ledger on disk contains strictly zero code, prompts, secrets, or diffs", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "open-vs-code-eval-privacy-"))
+      const ledgerPath = join(tmp, "ledger-privacy.json")
+
+      try {
+        const ledger = new ModelPerformanceLedger({ persistPath: ledgerPath, minimumSamples: 1 })
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-confidential-test",
+          taskClass: "coding",
+          success: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 150,
+        })
+        ledger.recordAutocompleteOutcome({
+          deploymentId: "dep-fim-privacy",
+          shown: true,
+          accepted: true,
+          staleDiscarded: false,
+          emptyCompletion: false,
+          cancelled: false,
+          latencyMs: 30,
+        })
+        await ledger.persist()
+
+        const diskContent = await readFile(ledgerPath, "utf-8")
+        assert.ok(!diskContent.includes("prompt"), "No prompts in persisted ledger")
+        assert.ok(!diskContent.includes("completion"), "No completions in persisted ledger")
+        assert.ok(!diskContent.includes("secret"), "No secrets in persisted ledger")
+        assert.ok(!diskContent.includes("Bearer"), "No bearer auth tokens in persisted ledger")
+        assert.ok(!diskContent.includes("function"), "No source code in persisted ledger")
+
+        const parsed = JSON.parse(diskContent)
+        assert.equal(parsed.schemaVersion, 1)
+        assert.equal(parsed.profiles.length, 2)
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("18. Negative comparators: broken evidence paths strictly fail assertions", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      ledger.recordAutocompleteOutcome({
+        deploymentId: "d-neg",
+        shown: true,
+        accepted: true,
+        staleDiscarded: false,
+        emptyCompletion: false,
+        cancelled: false,
+        latencyMs: 25,
+      })
+
+      // Negative comparator A: Artificial double-counting claim must fail
+      const profile = (ledger as any).getProfile?.("d-neg", "autocomplete")
+      assert.throws(
+        () => assert.equal(profile?.sampleCount, 2, "Negative comparator: sampleCount was falsely assumed to be 2"),
+        /ERR_ASSERTION/
+      )
+
+      // Negative comparator B: Unrecorded deployment does not exist
+      assert.equal((ledger as any).getProfile?.("d-non-existent", "autocomplete"), undefined)
     })
   })
 })

@@ -15,9 +15,11 @@ export class ScriptedModelProvider implements ModelProvider {
   readonly capabilities = new Set(["chat", "tools"] as const)
   readonly requests: ModelRequest[] = []
   readonly #steps: ScriptedModelStep[]
+  readonly model: string
 
-  constructor(steps: readonly ScriptedModelStep[]) {
+  constructor(steps: readonly ScriptedModelStep[], model = "scripted-general") {
     this.#steps = [...steps]
+    this.model = model
   }
 
   async complete(request: ModelRequest): Promise<ModelResponse> {

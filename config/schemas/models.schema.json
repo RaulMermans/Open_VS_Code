@@ -41,6 +41,10 @@
           "apiKey": {
             "type": "string",
             "description": "Optional local API key token if required by server"
+          },
+          "apiKeyEnv": {
+            "type": "string",
+            "description": "Environment variable name containing the API key for authentication"
           }
         }
       }
