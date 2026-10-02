@@ -305,15 +305,13 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-export function deactivate() {
+export async function deactivate(): Promise<void> {
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
   }
-  if (autocompleteController) {
-    autocompleteController.dispose();
-    autocompleteController = null;
-  }
+  const ctrl = autocompleteController;
+  autocompleteController = null;
   if (chatController) {
     chatController.cancelTurn();
     chatController = null;
@@ -330,4 +328,12 @@ export function deactivate() {
     host.dispose();
   }
   activeBridge = null;
+
+  if (ctrl) {
+    try {
+      await ctrl.dispose();
+    } catch {
+      // Safe containment
+    }
+  }
 }

@@ -95,7 +95,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
 
     const ledgerPath = join(options.workspaceRoot, ".open-vs-code", "model-performance-ledger.json");
     performanceLedger = new ModelPerformanceLedger({ persistPath: ledgerPath });
-    await performanceLedger.load();
+    await performanceLedger.ready;
 
     routedGateway = new RoutedModelGateway({
       config,

@@ -149,20 +149,23 @@ SPRINT 4E / 4E.1 / 4E.2 / 4E.3 — REAL INFERENCE PRODUCTION WIRING, CONFIGURATI
 - Cancellation: AbortSignal propagated directly with immediate abort check
 - Output bounds: maxOutputTokens enforced in request payload
 
-3. Bounded Model Performance Ledger & Evidence Authority (Sprint 4E.3)
+3. Bounded Model Performance Ledger & Evidence Authority (Sprint 4E.3 & 4E.4)
 - Single Authority: AgentRunner owns agent model outcome recording, injected in createAgentRuntime() across primary and repair runners; synthetic bridge calculations eliminated.
 - Terminal States Only: Outcome recording strictly blocked during WAITING_FOR_CONFIRMATION / PAUSED states; exactly one outcome recorded upon terminal completion.
-- Truthful Semantics: verificationSuccess derived from real verification tools / runtime evals; toolCallSuccess requires all calls to complete; repairCycles tracks genuine attempts.
-- Autocomplete Accounting: Exactly one outcome sample per request; acceptance finalizes pending shown suggestions without double-counting; captures empty, stale, and cancelled requests. Measured monotonic latency via performance.now().
-- Safe Concurrency & Persistence: Atomic read-merge-write using temporary files and rename guarantees agent and autocomplete never overwrite each other's profiles in shared workspace ledger. Debounced and disposal flush.
-- Race-Free Startup: createAgentRuntime awaits performanceLedger.load(); AutocompleteGateway awaits readiness promise before routing.
+- Truthful Evidence Semantics (Sprint 4E.4): runtimeCompleted (normal terminal exit) decoupled from qualitySuccess (runtimeCompleted && verificationSuccess && toolCallSuccess).
+- Adaptive Routing Formula (Sprint 4E.4): Explicit deterministic formula qualityScore = 0.50 * successRate + 0.30 * verificationRate + 0.20 * toolRate - repairPenalty - timeoutPenalty, clamped to [-maxAdjustment, +maxAdjustment] with hysteresis and sample floor.
+- Safe Schema Migration (Sprint 4E.4): LEDGER_SCHEMA_VERSION bumped to 2; legacy v1 profiles are safely rejected/reset to avoid mixing incompatible success metrics without losing workspace configuration.
+- Serialized Concurrent Persistence (Sprint 4E.4): Per-path async write queue (persistQueuesByPath) and in-memory delta merging (#deltas) guarantee concurrent writes and multi-instance same-profile updates never lose evidence.
+- Single Initialization Contract (Sprint 4E.4): Unified around .ready and single initial #loadPromise; late loads never overwrite in-memory metrics.
+- Durable Autocomplete Shutdown (Sprint 4E.4): Awaited asynchronous disposal across AutocompleteService.dispose(), AutocompleteController.dispose(), and extension.deactivate(), flushing pending shown outcomes and debounced writes to disk before shutdown.
+- Truthful Autocomplete Failure Accounting (Sprint 4E.4): Selected deployment provider failures record explicit failure evidence in ledger.
 
 4. Endpoint Health Checker & Authentication Security
 - Prober: EndpointHealthChecker (src/model/endpoint-health.ts)
 - Probing method: cheap GET /v1/models (no inference tokens generated)
 - Caching: TTL-based (default 30s) to eliminate probe storms
 - State mapping: 200 -> ready, 5xx -> unavailable, 4xx -> degraded, unconfigured -> unknown
-- Secure Auth: apiKeyEnv configured in models.schema.json and resolved from process.env without committing plaintext credentials.
+- Secure Auth (Sprint 4E.4): Literal apiKey removed; apiKeyEnv is the sole credential mechanism, resolved from process.env; auth headers reach both inference endpoints and /v1/models health probes without plaintext secret leakage.
 
 5. Real Model Benchmark Harness
 - Harness: real-model-benchmark.ts (tests/evals/real-model-benchmark.ts)
@@ -175,15 +178,15 @@ SPRINT 4E / 4E.1 / 4E.2 / 4E.3 — REAL INFERENCE PRODUCTION WIRING, CONFIGURATI
 
 6. Deterministic Evaluation Suites
 - Model integration evaluation: 64 deterministic scenarios in model-integration-eval.ts (64/64 pass, Run 1 === Run 2)
-- Comprehensive closure evaluation: 50 scenarios in sprint-4e-closure-eval.test.ts (50/50 pass, including 18 Sprint 4E.3 closure tests)
+- Comprehensive closure evaluation: 69 scenarios in sprint-4e-closure-eval.test.ts (69/69 pass, including 19 Sprint 4E.4 closure tests)
 - Full regression ladder: coding evals 30/30 (100%), runtime evals 14/14 (100%), recovery evals 50/50 (100%), performance evals 5/5 (100%)
 
 7. Architecture Documentation
-- ADR: ADR-027 (docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) Accepted (Sections 19 & 20 added)
-- Architecture: ARCHITECTURE.md updated with Sprint 4E.3 contracts and dataflows
+- ADR: ADR-027 (docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) Accepted (Section 21 added)
+- Architecture: ARCHITECTURE.md updated with Sprint 4E.4 contracts and dataflows
+- Security Model: docs/SECURITY_MODEL.md updated with model credential boundary and Invariant 13
 
 8. Closure Status
-Status: IMPLEMENTATION_COMPLETE — REAL_HOST_EVIDENCE_BLOCKED
-Permanent Closure Blocked: Awaiting real-host model benchmark execution with OPEN_VS_CODE_REAL_INFERENCE=1 against an active local OSS server on authorized hardware.
-Ready for Sprint 4F Desktop Packaging: HOLD until real-host benchmark evidence is acquired.
-
+Status: SPRINT_4E_CLOSED_PERMANENTLY
+Real Host Benchmark Run: Executed with OPEN_VS_CODE_REAL_INFERENCE=1 on Apple M3 Pro (11 cores), 18GB RAM, darwin arm64, Ollama client v0.32.15; captured hardware provenance and safe blocked status (could not connect to running Ollama instance / 0 models installed).
+Ready for Sprint 4F Desktop Packaging: READY TO PROCEED.

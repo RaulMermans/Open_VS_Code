@@ -274,6 +274,20 @@ Sprint 4E.3 establishes deterministic evidence integrity invariants:
 - **Syntax Validation Accuracy**: Benchmark FIM validation is truthfully named `validateStructuralSyntax` / `structurallyValid` (with backward-compatible aliases) to accurately reflect delimiter balancing and JSON parsing rather than whole-program AST compilation.
 - **Secure API Key Resolution**: `apiKeyEnv` is introduced in `ProviderDescriptor` and configuration schemas to resolve authentication headers from environment variables without committing plaintext credentials.
 
+### 21. Sprint 4E.4 — Evidence Semantics, Persistence Safety & Final Closure
+
+Sprint 4E.4 completes the evidence and persistence lifecycle:
+- **Truthful Agent Success Definition**: `AgentRunner` decouples `runtimeCompleted` (normal terminal exit) from `qualitySuccess = runtimeCompleted && verificationSuccess && toolCallSuccess`, recording `success: qualitySuccess` so tasks that completed but failed required verifications or tool executions are never classified as success.
+- **Deterministic Adaptive Routing Formula**: `ModelPerformanceLedger.getRoutingAdjustments()` uses an explicit weighted scoring formula:
+  `qualityScore = 0.50 * successRate + 0.30 * verificationRate + 0.20 * toolRate - repairPenalty - timeoutPenalty`
+  clamped to `[-maxAdjustment, +maxAdjustment]` with hysteresis and sample floor. Models with passing verification and reliable tool usage score higher than models that merely terminate without verification.
+- **Safe Schema Migration (v2)**: `LEDGER_SCHEMA_VERSION` bumped to 2. Old v1 ledgers are safely rejected/reset to prevent mixing inconsistent historical success definitions without corrupting or deleting user workspace settings.
+- **Serialized Concurrent Persistence**: Introduces process-local per-path async serialization queues (`persistQueuesByPath`) combined with in-memory delta merging (`#deltas`), guaranteeing concurrent writes and multi-instance same-profile updates never lose data.
+- **Single Initialization Ownership**: Unified contract around `.ready` and single initial `#loadPromise`; late loads never clobber in-memory metrics.
+- **Awaited Autocomplete Disposal**: `AutocompleteService.dispose()`, `AutocompleteController.dispose()`, and `extension.deactivate()` are asynchronous and awaited, ensuring pending shown outcomes and debounce writes are fully flushed to disk before extension termination.
+- **Truthful Autocomplete Failure Accounting**: Selected deployment provider failures record explicit failure evidence in the ledger.
+- **Env-Only Credential Boundary**: Literal `apiKey` completely removed from `ProviderDescriptor`, `models.schema.json`, and loader; `apiKeyEnv` is the only supported credential mechanism. Auth headers propagate to both inference requests and health probes (`/v1/models`) without leaking secrets.
+
 ---
 
 ## Alternatives Considered

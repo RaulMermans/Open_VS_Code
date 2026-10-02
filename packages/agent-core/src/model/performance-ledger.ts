@@ -32,13 +32,18 @@ import { readFile, writeFile, mkdir, rename } from "node:fs/promises"
 import { dirname } from "node:path"
 import type { TaskClass } from "../contracts/routing.ts"
 
-export const LEDGER_SCHEMA_VERSION = 1
+export const LEDGER_SCHEMA_VERSION = 2
 
 /** Agent task outcome record — metrics only, no source or prompt text. */
 export interface AgentOutcomeRecord {
   readonly deploymentId: string
   readonly taskClass: TaskClass
+  /** Quality success: runtimeCompleted AND verificationSuccess AND toolCallSuccess. */
   readonly success: boolean
+  /** Did the agent reach normal terminal completion? */
+  readonly runtimeCompleted?: boolean
+  /** Explicit quality success indicator. */
+  readonly qualitySuccess?: boolean
   readonly verificationSuccess: boolean
   readonly toolCallSuccess: boolean
   readonly repairCycles: number
@@ -56,6 +61,7 @@ export interface AutocompleteOutcomeRecord {
   readonly staleDiscarded: boolean
   readonly emptyCompletion: boolean
   readonly cancelled: boolean
+  readonly failed?: boolean
   readonly latencyMs: number
 }
 
@@ -66,6 +72,7 @@ export interface ModelDeploymentProfile {
   sampleCount: number
   successCount: number
   failureCount: number
+  runtimeCompletedCount?: number
   verificationSuccessCount: number
   toolCallSuccessCount: number
   totalRepairCycles: number
@@ -80,6 +87,7 @@ export interface ModelDeploymentProfile {
     staleDiscarded: number
     empty: number
     cancelled: number
+    failed?: number
     emaLatencyMs: number
   }
 }
@@ -147,13 +155,41 @@ function profileKey(deploymentId: string, taskClass: string): string {
   return `${deploymentId}::${taskClass}`
 }
 
+/** Process-local write serialization queue per ledger persistence path. */
+const persistQueuesByPath = new Map<string, Promise<void>>()
+
+interface ProfileDelta {
+  sampleCount: number
+  successCount: number
+  failureCount: number
+  runtimeCompletedCount: number
+  verificationSuccessCount: number
+  toolCallSuccessCount: number
+  totalRepairCycles: number
+  timeoutCount: number
+  cancellationCount: number
+  latencies: number[]
+  autocomplete?: {
+    shown: number
+    accepted: number
+    staleDiscarded: number
+    empty: number
+    cancelled: number
+    failed: number
+    latencies: number[]
+  }
+}
+
 /**
  * ModelPerformanceLedger: bounded, privacy-preserving model outcome store.
  */
 export class ModelPerformanceLedger {
   readonly #profiles = new Map<string, ModelDeploymentProfile>()
+  readonly #deltas = new Map<string, ProfileDelta>()
   readonly #options: Required<LedgerOptions>
   readonly #readyPromise: Promise<void>
+  #initialLoadPromise: Promise<{ loaded: boolean; resetDueToCorruption: boolean }> | null = null
+  #loadCount = 0
 
   constructor(options: LedgerOptions = {}) {
     this.#options = {
@@ -176,6 +212,11 @@ export class ModelPerformanceLedger {
     return this.#readyPromise
   }
 
+  /** Total load invocations executed by this ledger instance (for testing). */
+  get loadCount(): number {
+    return this.#loadCount
+  }
+
   /** Record an agent task outcome. Never stores source code or prompt text. */
   recordAgentOutcome(record: AgentOutcomeRecord): void {
     const key = profileKey(record.deploymentId, record.taskClass)
@@ -192,6 +233,7 @@ export class ModelPerformanceLedger {
         sampleCount: 0,
         successCount: 0,
         failureCount: 0,
+        runtimeCompletedCount: 0,
         verificationSuccessCount: 0,
         toolCallSuccessCount: 0,
         totalRepairCycles: 0,
@@ -201,11 +243,15 @@ export class ModelPerformanceLedger {
       }
     }
 
+    const qualitySuccess = record.qualitySuccess !== undefined ? record.qualitySuccess : record.success
+    const runtimeCompleted = record.runtimeCompleted !== undefined ? record.runtimeCompleted : record.success
+
     const updated: ModelDeploymentProfile = {
       ...profile,
       sampleCount: profile.sampleCount + 1,
-      successCount: profile.successCount + (record.success ? 1 : 0),
-      failureCount: profile.failureCount + (record.success ? 0 : 1),
+      successCount: profile.successCount + (qualitySuccess ? 1 : 0),
+      failureCount: profile.failureCount + (qualitySuccess ? 0 : 1),
+      runtimeCompletedCount: (profile.runtimeCompletedCount ?? 0) + (runtimeCompleted ? 1 : 0),
       verificationSuccessCount: profile.verificationSuccessCount + (record.verificationSuccess ? 1 : 0),
       toolCallSuccessCount: profile.toolCallSuccessCount + (record.toolCallSuccess ? 1 : 0),
       totalRepairCycles: profile.totalRepairCycles + record.repairCycles,
@@ -214,6 +260,34 @@ export class ModelPerformanceLedger {
       emaLatencyMs: updateEma(profile.emaLatencyMs, record.latencyMs),
     }
     this.#profiles.set(key, updated)
+
+    // Accumulate delta for safe concurrent persistence merging
+    let delta = this.#deltas.get(key)
+    if (!delta) {
+      delta = {
+        sampleCount: 0,
+        successCount: 0,
+        failureCount: 0,
+        runtimeCompletedCount: 0,
+        verificationSuccessCount: 0,
+        toolCallSuccessCount: 0,
+        totalRepairCycles: 0,
+        timeoutCount: 0,
+        cancellationCount: 0,
+        latencies: [],
+      }
+      this.#deltas.set(key, delta)
+    }
+    delta.sampleCount += 1
+    delta.successCount += qualitySuccess ? 1 : 0
+    delta.failureCount += qualitySuccess ? 0 : 1
+    delta.runtimeCompletedCount += runtimeCompleted ? 1 : 0
+    delta.verificationSuccessCount += record.verificationSuccess ? 1 : 0
+    delta.toolCallSuccessCount += record.toolCallSuccess ? 1 : 0
+    delta.totalRepairCycles += record.repairCycles
+    delta.timeoutCount += record.timeoutOccurred ? 1 : 0
+    delta.cancellationCount += record.cancellationOccurred ? 1 : 0
+    delta.latencies.push(record.latencyMs)
   }
 
   /** Record an autocomplete/FIM outcome. Never stores completion text. */
@@ -237,16 +311,19 @@ export class ModelPerformanceLedger {
         timeoutCount: 0,
         cancellationCount: 0,
         emaLatencyMs: 0,
-        autocomplete: { shown: 0, accepted: 0, staleDiscarded: 0, empty: 0, cancelled: 0, emaLatencyMs: 0 },
+        autocomplete: { shown: 0, accepted: 0, staleDiscarded: 0, empty: 0, cancelled: 0, failed: 0, emaLatencyMs: 0 },
       }
     }
 
-    const ac = profile.autocomplete ?? { shown: 0, accepted: 0, staleDiscarded: 0, empty: 0, cancelled: 0, emaLatencyMs: 0 }
+    const isSuccess = record.accepted
+    const isFailure = record.emptyCompletion || record.staleDiscarded || Boolean(record.failed)
+
+    const ac = profile.autocomplete ?? { shown: 0, accepted: 0, staleDiscarded: 0, empty: 0, cancelled: 0, failed: 0, emaLatencyMs: 0 }
     const updated: ModelDeploymentProfile = {
       ...profile,
       sampleCount: profile.sampleCount + 1,
-      successCount: profile.successCount + (record.accepted ? 1 : 0),
-      failureCount: profile.failureCount + (record.emptyCompletion || record.staleDiscarded ? 1 : 0),
+      successCount: profile.successCount + (isSuccess ? 1 : 0),
+      failureCount: profile.failureCount + (isFailure ? 1 : 0),
       cancellationCount: profile.cancellationCount + (record.cancelled ? 1 : 0),
       emaLatencyMs: updateEma(profile.emaLatencyMs, record.latencyMs),
       autocomplete: {
@@ -255,10 +332,45 @@ export class ModelPerformanceLedger {
         staleDiscarded: ac.staleDiscarded + (record.staleDiscarded ? 1 : 0),
         empty: ac.empty + (record.emptyCompletion ? 1 : 0),
         cancelled: ac.cancelled + (record.cancelled ? 1 : 0),
+        failed: (ac.failed ?? 0) + (record.failed ? 1 : 0),
         emaLatencyMs: updateEma(ac.emaLatencyMs, record.latencyMs),
       },
     }
     this.#profiles.set(key, updated)
+
+    // Accumulate delta for persistence
+    let delta = this.#deltas.get(key)
+    if (!delta) {
+      delta = {
+        sampleCount: 0,
+        successCount: 0,
+        failureCount: 0,
+        runtimeCompletedCount: 0,
+        verificationSuccessCount: 0,
+        toolCallSuccessCount: 0,
+        totalRepairCycles: 0,
+        timeoutCount: 0,
+        cancellationCount: 0,
+        latencies: [],
+        autocomplete: { shown: 0, accepted: 0, staleDiscarded: 0, empty: 0, cancelled: 0, failed: 0, latencies: [] },
+      }
+      this.#deltas.set(key, delta)
+    }
+    delta.sampleCount += 1
+    delta.successCount += isSuccess ? 1 : 0
+    delta.failureCount += isFailure ? 1 : 0
+    delta.cancellationCount += record.cancelled ? 1 : 0
+    delta.latencies.push(record.latencyMs)
+    if (!delta.autocomplete) {
+      delta.autocomplete = { shown: 0, accepted: 0, staleDiscarded: 0, empty: 0, cancelled: 0, failed: 0, latencies: [] }
+    }
+    delta.autocomplete.shown += record.shown ? 1 : 0
+    delta.autocomplete.accepted += record.accepted ? 1 : 0
+    delta.autocomplete.staleDiscarded += record.staleDiscarded ? 1 : 0
+    delta.autocomplete.empty += record.emptyCompletion ? 1 : 0
+    delta.autocomplete.cancelled += record.cancelled ? 1 : 0
+    delta.autocomplete.failed += record.failed ? 1 : 0
+    delta.autocomplete.latencies.push(record.latencyMs)
   }
 
   /**
@@ -266,6 +378,13 @@ export class ModelPerformanceLedger {
    *
    * Security and capability filters happen BEFORE this is called.
    * This function only adjusts the relative ordering of already-eligible candidates.
+   *
+   * Formula:
+   *   For Agent tasks:
+   *     rawScore = (0.50 * qualitySuccessRate + 0.30 * verificationSuccessRate + 0.20 * toolSuccessRate)
+   *                - repairPenalty - timeoutPenalty
+   *   For Autocomplete tasks:
+   *     rawScore = acceptanceRate - timeoutPenalty
    *
    * Returns empty array if adaptiveRoutingDisabled or insufficient samples.
    */
@@ -285,16 +404,24 @@ export class ModelPerformanceLedger {
         continue
       }
 
-      const successRate = profile.successCount / profile.sampleCount
       const timeoutRate = profile.timeoutCount / profile.sampleCount
 
-      // Score: success rate - penalty for timeouts - penalty for repairs
-      const avgRepairs = profile.totalRepairCycles / profile.sampleCount
-      const repairPenalty = Math.min(0.3, avgRepairs * 0.1)
-      const timeoutPenalty = Math.min(0.3, timeoutRate * 0.5)
-      const rawScore = successRate - repairPenalty - timeoutPenalty
+      let rawScore: number
+      if (taskClass === "autocomplete") {
+        const acceptanceRate = profile.successCount / profile.sampleCount
+        const timeoutPenalty = Math.min(0.25, timeoutRate * 0.5)
+        rawScore = acceptanceRate - timeoutPenalty
+      } else {
+        const successRate = profile.successCount / profile.sampleCount
+        const verificationRate = profile.verificationSuccessCount / profile.sampleCount
+        const toolRate = profile.toolCallSuccessCount / profile.sampleCount
+        const avgRepairs = profile.totalRepairCycles / profile.sampleCount
+        const repairPenalty = Math.min(0.25, avgRepairs * 0.05)
+        const timeoutPenalty = Math.min(0.25, timeoutRate * 0.5)
+        rawScore = (0.50 * successRate + 0.30 * verificationRate + 0.20 * toolRate) - repairPenalty - timeoutPenalty
+      }
 
-      // Normalize to [-1, +1] range (0.5 success = 0 adjustment)
+      // Normalize to [-1, +1] range (0.5 success baseline = 0 adjustment)
       const normalizedScore = (rawScore - 0.5) * 2
       const adjustment = Math.max(
         -this.#options.maxAdjustment,
@@ -304,12 +431,16 @@ export class ModelPerformanceLedger {
       // Hysteresis: only apply if adjustment magnitude exceeds threshold
       if (Math.abs(adjustment) < this.#options.hysteresisThreshold) continue
 
+      const reason = taskClass === "autocomplete"
+        ? `acceptanceRate=${((profile.successCount / profile.sampleCount) * 100).toFixed(1)}% timeoutRate=${(timeoutRate * 100).toFixed(1)}%`
+        : `qualitySuccess=${((profile.successCount / profile.sampleCount) * 100).toFixed(1)}% verificationRate=${((profile.verificationSuccessCount / profile.sampleCount) * 100).toFixed(1)}% toolRate=${((profile.toolCallSuccessCount / profile.sampleCount) * 100).toFixed(1)}% avgRepairs=${(profile.totalRepairCycles / profile.sampleCount).toFixed(2)}`
+
       adjustments.push({
         deploymentId,
         taskClass,
         adjustment,
         sampleCount: profile.sampleCount,
-        reason: `successRate=${(successRate * 100).toFixed(1)}% timeoutRate=${(timeoutRate * 100).toFixed(1)}% avgRepairs=${avgRepairs.toFixed(2)}`,
+        reason,
       })
     }
 
@@ -352,14 +483,38 @@ export class ModelPerformanceLedger {
    */
   reset(): void {
     this.#profiles.clear()
+    this.#deltas.clear()
   }
 
-  /** Persist profiles to disk. Never stores raw source/prompt content. */
+  /**
+   * Persist profiles to disk with per-path serialization.
+   * Concurrent writes to the same path serialize safely without losing updates.
+   * Different workspace paths never block each other.
+   */
   async persist(): Promise<void> {
     if (!this.#options.persistPath) return
+    const pathKey = this.#options.persistPath
+    const prev = persistQueuesByPath.get(pathKey) ?? Promise.resolve()
 
-    // Merge with existing on-disk profiles so independent instances (e.g. Agent vs Autocomplete)
-    // sharing the workspace ledger path do not erase each other's profiles.
+    const current = prev
+      .catch(() => {}) // Failed write does not permanently poison the queue
+      .then(async () => {
+        await this.#executePersist()
+      })
+
+    persistQueuesByPath.set(pathKey, current)
+    try {
+      await current
+    } finally {
+      if (persistQueuesByPath.get(pathKey) === current) {
+        persistQueuesByPath.delete(pathKey)
+      }
+    }
+  }
+
+  async #executePersist(): Promise<void> {
+    if (!this.#options.persistPath) return
+
     const mergedProfiles = new Map<string, ModelDeploymentProfile>()
     try {
       const raw = await readFile(this.#options.persistPath, "utf-8")
@@ -368,17 +523,53 @@ export class ModelPerformanceLedger {
         for (const p of parsed.profiles) {
           if (p && typeof p.deploymentId === "string" && typeof p.taskClass === "string") {
             const key = profileKey(p.deploymentId, p.taskClass)
-            mergedProfiles.set(key, p)
+            mergedProfiles.set(key, { ...p })
           }
         }
       }
     } catch {
-      // Disk file absent or unreadable — proceed with current in-memory profiles
+      // Disk file absent, unreadable, or schema mismatch — proceed with empty base
     }
 
-    // In-memory profiles take precedence for keys tracked in this ledger instance
+    // Snapshot pending deltas for atomic commit
+    const pendingDeltas = new Map(this.#deltas)
+
     for (const [key, profile] of this.#profiles.entries()) {
-      mergedProfiles.set(key, profile)
+      const existing = mergedProfiles.get(key)
+      const delta = pendingDeltas.get(key)
+      if (existing && delta) {
+        // Merge delta into existing on-disk profile to prevent lost updates across instances
+        existing.sampleCount += delta.sampleCount
+        existing.successCount += delta.successCount
+        existing.failureCount += delta.failureCount
+        existing.runtimeCompletedCount = (existing.runtimeCompletedCount ?? 0) + delta.runtimeCompletedCount
+        existing.verificationSuccessCount += delta.verificationSuccessCount
+        existing.toolCallSuccessCount += delta.toolCallSuccessCount
+        existing.totalRepairCycles += delta.totalRepairCycles
+        existing.timeoutCount += delta.timeoutCount
+        existing.cancellationCount += delta.cancellationCount
+        for (const lat of delta.latencies) {
+          existing.emaLatencyMs = updateEma(existing.emaLatencyMs, lat)
+        }
+        if (delta.autocomplete) {
+          const ac = existing.autocomplete ?? { shown: 0, accepted: 0, staleDiscarded: 0, empty: 0, cancelled: 0, failed: 0, emaLatencyMs: 0 }
+          ac.shown += delta.autocomplete.shown
+          ac.accepted += delta.autocomplete.accepted
+          ac.staleDiscarded += delta.autocomplete.staleDiscarded
+          ac.empty += delta.autocomplete.empty
+          ac.cancelled += delta.autocomplete.cancelled
+          ac.failed = (ac.failed ?? 0) + delta.autocomplete.failed
+          for (const lat of delta.autocomplete.latencies) {
+            ac.emaLatencyMs = updateEma(ac.emaLatencyMs, lat)
+          }
+          existing.autocomplete = ac
+        }
+        // Sync local in-memory profile with merged state
+        this.#profiles.set(key, { ...existing })
+      } else if (!existing) {
+        // New profile from this instance
+        mergedProfiles.set(key, { ...profile })
+      }
     }
 
     let profilesToSave = [...mergedProfiles.values()]
@@ -396,14 +587,29 @@ export class ModelPerformanceLedger {
     const tmpPath = `${this.#options.persistPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
     await writeFile(tmpPath, JSON.stringify(store, null, 2), "utf-8")
     await rename(tmpPath, this.#options.persistPath)
+
+    // Clear successfully persisted deltas
+    for (const key of pendingDeltas.keys()) {
+      this.#deltas.delete(key)
+    }
   }
 
   /**
    * Load profiles from disk.
-   * On corrupt/invalid store: resets to empty and continues safely.
-   * Core routing remains usable even when profile load fails.
+   * Initial load is initiated on construction; callers awaiting .ready or .load()
+   * share the same in-flight load promise.
+   * On corrupt/invalid store: resets safely without throwing.
    */
   async load(): Promise<{ loaded: boolean; resetDueToCorruption: boolean }> {
+    if (!this.#options.persistPath) return { loaded: false, resetDueToCorruption: false }
+    if (this.#initialLoadPromise) return this.#initialLoadPromise
+
+    this.#initialLoadPromise = this.#executeLoad()
+    return this.#initialLoadPromise
+  }
+
+  async #executeLoad(): Promise<{ loaded: boolean; resetDueToCorruption: boolean }> {
+    this.#loadCount++
     if (!this.#options.persistPath) return { loaded: false, resetDueToCorruption: false }
     let raw: string
     try {
@@ -412,6 +618,7 @@ export class ModelPerformanceLedger {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { loaded: false, resetDueToCorruption: false }
       // Unreadable — safe reset
       this.#profiles.clear()
+      this.#deltas.clear()
       return { loaded: false, resetDueToCorruption: true }
     }
 
@@ -420,10 +627,12 @@ export class ModelPerformanceLedger {
       if (parsed.schemaVersion !== LEDGER_SCHEMA_VERSION) {
         // Schema mismatch — safe reset, do not block routing
         this.#profiles.clear()
+        this.#deltas.clear()
         return { loaded: false, resetDueToCorruption: true }
       }
       if (!Array.isArray(parsed.profiles)) {
         this.#profiles.clear()
+        this.#deltas.clear()
         return { loaded: false, resetDueToCorruption: true }
       }
       // Validate and load profiles — bounded by maxProfiles
@@ -434,13 +643,17 @@ export class ModelPerformanceLedger {
           continue // Skip malformed entries
         }
         const key = profileKey(p.deploymentId, p.taskClass)
-        this.#profiles.set(key, p)
+        // Newly recorded in-memory entries take precedence over stale disk data
+        if (!this.#profiles.has(key)) {
+          this.#profiles.set(key, p)
+        }
         loaded++
       }
       return { loaded: true, resetDueToCorruption: false }
     } catch {
       // JSON parse failure — safe reset
       this.#profiles.clear()
+      this.#deltas.clear()
       return { loaded: false, resetDueToCorruption: true }
     }
   }

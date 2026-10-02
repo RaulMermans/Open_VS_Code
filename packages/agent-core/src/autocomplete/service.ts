@@ -399,21 +399,37 @@ export class AutocompleteService {
 
           if (isAbort) {
             this.#telemetry.cancelled++
-            const depId = lastDeploymentId ?? (this.#gateway as any).lastDecision?.deploymentId ?? "default"
-            this.#recordOutcome({
-              deploymentId: depId,
-              shown: false,
-              accepted: false,
-              staleDiscarded: false,
-              emptyCompletion: false,
-              cancelled: true,
-              latencyMs,
-            })
+            const depId = lastDeploymentId ?? (this.#gateway as any).lastDecision?.deploymentId
+            if (depId) {
+              this.#recordOutcome({
+                deploymentId: depId,
+                shown: false,
+                accepted: false,
+                staleDiscarded: false,
+                emptyCompletion: false,
+                cancelled: true,
+                failed: false,
+                latencyMs,
+              })
+            }
           } else if (err instanceof RouteUnavailableError) {
-            // Quiet — no compatible route
+            // Quiet — no compatible route; no deployment was selected, so no model failure recorded
             this.#telemetry.empty++
           } else {
             this.#telemetry.failed++
+            const depId = lastDeploymentId ?? (this.#gateway as any).lastDecision?.deploymentId
+            if (depId) {
+              this.#recordOutcome({
+                deploymentId: depId,
+                shown: false,
+                accepted: false,
+                staleDiscarded: false,
+                emptyCompletion: false,
+                cancelled: false,
+                failed: true,
+                latencyMs,
+              })
+            }
           }
 
           resolve(null)
@@ -512,7 +528,7 @@ export class AutocompleteService {
    *   - Acceptance registry is cleared
    *   - Ledger is flushed to disk
    */
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.#disposed = true
     this.#cancelPending()
     this.#cancelInflight()
@@ -531,7 +547,11 @@ export class AutocompleteService {
     }
     this.#acceptanceRegistry.length = 0
     this.#latestRequestId = null
-    void this.flush()
+    try {
+      await this.flush()
+    } catch {
+      // Safe error containment
+    }
   }
 
   get disposed(): boolean { return this.#disposed }

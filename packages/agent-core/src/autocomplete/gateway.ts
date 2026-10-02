@@ -251,9 +251,6 @@ export function createProductionAutocompleteGateway(
         })
       : new ModelPerformanceLedger()
   )
-  if (resolvedLedger && !performanceLedger) {
-    void resolvedLedger.load().catch(() => {})
-  }
 
   return new AutocompleteGateway({
     config,

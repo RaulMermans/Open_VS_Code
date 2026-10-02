@@ -85,8 +85,8 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
           }
         }
       }
-      if (pd.apiKey !== undefined && (typeof pd.apiKey !== "string" || !pd.apiKey.trim())) {
-        violations.push(`Provider '${pd.id}' apiKey must be a non-empty string if specified`)
+      if (pd.apiKey !== undefined) {
+        violations.push(`Provider '${pd.id}' contains forbidden literal 'apiKey'. Credentials must use 'apiKeyEnv' referencing an environment variable.`)
       }
       if (pd.apiKeyEnv !== undefined && (typeof pd.apiKeyEnv !== "string" || !pd.apiKeyEnv.trim())) {
         violations.push(`Provider '${pd.id}' apiKeyEnv must be a non-empty string if specified`)
@@ -97,7 +97,6 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
         kind: pd.kind as ProviderKind,
         ...(pd.protocol ? { protocol: pd.protocol as string } : {}),
         ...(typeof pd.baseUrl === "string" && pd.baseUrl.trim() ? { baseUrl: pd.baseUrl.trim() } : {}),
-        ...(typeof pd.apiKey === "string" && pd.apiKey.trim() ? { apiKey: pd.apiKey.trim() } : {}),
         ...(typeof pd.apiKeyEnv === "string" && pd.apiKeyEnv.trim() ? { apiKeyEnv: pd.apiKeyEnv.trim() } : {}),
       })
     }
@@ -316,17 +315,20 @@ export function loadRoutingConfigSync(workspaceRoot: string): RoutingConfigurati
 }
 
 /**
- * Resolves API key for a provider descriptor:
- * Prefers process.env[provider.apiKeyEnv] if configured,
- * then falls back to provider.apiKey if configured.
+ * Resolves API key for a provider descriptor.
+ * Only resolves from process.env[provider.apiKeyEnv].
+ * Literal API keys in configuration are forbidden.
  * Secrets never live in project files.
+ * Throws AUTHENTICATION_REQUIRED if apiKeyEnv is configured but missing/empty in environment.
  */
-export function resolveProviderApiKey(provider: { apiKey?: string; apiKeyEnv?: string }): string | undefined {
-  if (provider.apiKeyEnv && process.env[provider.apiKeyEnv]?.trim()) {
-    return process.env[provider.apiKeyEnv]!.trim()
+export function resolveProviderApiKey(provider: { apiKeyEnv?: string }): string | undefined {
+  if (!provider.apiKeyEnv) {
+    return undefined
   }
-  if (provider.apiKey?.trim()) {
-    return provider.apiKey.trim()
+  const envKey = provider.apiKeyEnv.trim()
+  const secret = process.env[envKey]?.trim()
+  if (!secret) {
+    throw new Error(`AUTHENTICATION_REQUIRED: Environment variable '${envKey}' configured for provider is not set or empty`)
   }
-  return undefined
+  return secret
 }

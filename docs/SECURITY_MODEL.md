@@ -126,6 +126,11 @@ UI / future Runtime Evals:
 - **Control**: subprocess env is `{ PATH, NODE_ENV, npm_config_* }` only; MCP env is `safeBaseEnvNames` + explicit allowlist
 - **Result**: `SECRET_TOKEN` in host env does not reach controlled subprocesses
 
+### Model Credential Boundary (Sprint 4E.4)
+- **Input**: model provider authentication tokens
+- **Control**: literal `apiKey` is strictly forbidden in contracts, configurations, and schemas (`models.schema.json` enforces `additionalProperties: false` without `apiKey`); providers configure `apiKeyEnv` pointing to an environment variable; runtime resolves `process.env[apiKeyEnv]` at invocation time; missing keys fail closed with `AUTHENTICATION_REQUIRED`
+- **Result**: zero literal credentials stored in workspace configuration, ledger, logs, or benchmark artifacts; auth headers reach both inference endpoints and `/v1/models` health probes
+
 ### Autocomplete Side Effects
 - **Input**: editor buffer in a sensitive file (`.env`, `*.pem`, `id_rsa`, etc.)
 - **Control**: `SENSITIVE_FILE_PATTERNS` checked before any provider call
@@ -147,6 +152,7 @@ UI / future Runtime Evals:
 10. **Corrupt memory fails closed**: `hasCorruption: true` → `SKIPPED_CORRUPT_STATE`, not partial trust.
 11. **Future runtime evals have no direct authority**: they may only recommend actions.
 12. **Evaluation truth requires structured runtime evidence**: security assertions compare deep runtime evidence (`actual` vs `expected`), rejecting synthetic boolean flags (`passed: true`).
+13. **Model credentials are env-only**: configuration contracts reject literal API keys; credentials resolve exclusively from environment variables via `apiKeyEnv`.
 
 ---
 
