@@ -185,8 +185,12 @@ export class AutocompleteController implements vscode.InlineCompletionItemProvid
   /**
    * Dispose on extension deactivation.
    */
-  dispose(): void {
-    this.service.dispose();
+  async dispose(): Promise<void> {
+    try {
+      await this.service.dispose();
+    } catch {
+      // Safe error containment
+    }
     for (const d of this.#disposables) {
       d.dispose();
     }

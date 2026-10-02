@@ -2143,10 +2143,15 @@ export class AgentRunner {
       ).length
       const repairCycles = Math.max(session.continuationAttempts, verificationFailures) + (session.input.repairCycles ?? 0)
 
+      const runtimeCompleted = isCompleted
+      const qualitySuccess = runtimeCompleted && verificationSuccess && toolCallSuccess
+
       this.#performanceLedger.recordAgentOutcome({
         deploymentId: resolvedDeploymentId,
         taskClass: deriveTaskClass(session.input.task.mode),
-        success: isCompleted,
+        success: qualitySuccess,
+        runtimeCompleted,
+        qualitySuccess,
         verificationSuccess,
         toolCallSuccess,
         repairCycles,

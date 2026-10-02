@@ -38,10 +38,6 @@
             "format": "uri",
             "description": "Canonical HTTP/HTTPS base URL of the local model server (e.g. http://127.0.0.1:11434)"
           },
-          "apiKey": {
-            "type": "string",
-            "description": "Optional local API key token if required by server"
-          },
           "apiKeyEnv": {
             "type": "string",
             "description": "Environment variable name containing the API key for authentication"

@@ -5,7 +5,6 @@ export interface ProviderDescriptor {
   readonly kind: ProviderKind
   readonly protocol?: string
   readonly baseUrl?: string
-  readonly apiKey?: string
   readonly apiKeyEnv?: string
 }
 

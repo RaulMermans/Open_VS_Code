@@ -19,11 +19,12 @@ import { LocalFimProvider, LocalFimProviderError } from "../../src/autocomplete/
 import { createProductionAutocompleteGateway } from "../../src/autocomplete/gateway.ts"
 import { createAgentRuntime } from "../../src/agent/runtime.ts"
 import { EndpointHealthChecker } from "../../src/model/endpoint-health.ts"
-import { ModelPerformanceLedger } from "../../src/model/performance-ledger.ts"
+import { ModelPerformanceLedger, LEDGER_SCHEMA_VERSION } from "../../src/model/performance-ledger.ts"
 import {
   validateRoutingConfig,
   loadRoutingConfig,
   ConfigValidationError,
+  resolveProviderApiKey,
 } from "../../src/model/config-loader.ts"
 import type { RoutingConfiguration } from "../../src/contracts/routing.ts"
 import { ModelRouter } from "../../src/model/router.ts"
@@ -410,7 +411,7 @@ describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation",
         const content = await readFile(ledgerFile, "utf-8")
         const parsed = JSON.parse(content)
 
-        assert.equal(parsed.schemaVersion, 1)
+        assert.equal(parsed.schemaVersion, LEDGER_SCHEMA_VERSION)
         assert.ok(Array.isArray(parsed.profiles))
 
         // Privacy checks: ensure forbidden fields and leaked code are absent
@@ -1577,7 +1578,7 @@ describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation",
         assert.ok(!diskContent.includes("function"), "No source code in persisted ledger")
 
         const parsed = JSON.parse(diskContent)
-        assert.equal(parsed.schemaVersion, 1)
+        assert.equal(parsed.schemaVersion, LEDGER_SCHEMA_VERSION)
         assert.equal(parsed.profiles.length, 2)
       } finally {
         await rm(tmp, { recursive: true, force: true }).catch(() => {})
@@ -1605,6 +1606,675 @@ describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation",
 
       // Negative comparator B: Unrecorded deployment does not exist
       assert.equal((ledger as any).getProfile?.("d-non-existent", "autocomplete"), undefined)
+    })
+  })
+
+  describe("12. Sprint 4E.4 — Evidence Semantics, Persistence Safety & Final Closure", () => {
+    test("1. Formula: Verification matters — passed verification receives higher score than failed verification", () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 5 })
+      for (let i = 0; i < 10; i++) {
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-verified-fail",
+          taskClass: "coding",
+          success: false,
+          qualitySuccess: false,
+          runtimeCompleted: true,
+          verificationSuccess: false,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 100,
+        })
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-verified-pass",
+          taskClass: "coding",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 100,
+        })
+      }
+
+      const adjustments = ledger.getRoutingAdjustments(
+        ["dep-verified-fail", "dep-verified-pass"],
+        "coding",
+      )
+      const adjFail = adjustments.find(a => a.deploymentId === "dep-verified-fail")?.adjustment ?? 0
+      const adjPass = adjustments.find(a => a.deploymentId === "dep-verified-pass")?.adjustment ?? 0
+
+      assert.ok(adjPass > 0, `Expected positive adjustment for passed verification, got ${adjPass}`)
+      assert.ok(adjFail < 0, `Expected negative adjustment for failed verification, got ${adjFail}`)
+      assert.ok(adjPass > adjFail, "Passed verification must score strictly higher than failed verification")
+    })
+
+    test("2. Formula: Tool reliability matters — successful tool calls score better than failed tool calls", () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 5 })
+      for (let i = 0; i < 10; i++) {
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-tool-fail",
+          taskClass: "coding",
+          success: false,
+          qualitySuccess: false,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: false,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 100,
+        })
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-tool-pass",
+          taskClass: "coding",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 100,
+        })
+      }
+
+      const adjustments = ledger.getRoutingAdjustments(["dep-tool-fail", "dep-tool-pass"], "coding")
+      const adjFail = adjustments.find(a => a.deploymentId === "dep-tool-fail")?.adjustment ?? 0
+      const adjPass = adjustments.find(a => a.deploymentId === "dep-tool-pass")?.adjustment ?? 0
+
+      assert.ok(adjPass > adjFail, "Successful tool execution must score higher than failed tool execution")
+    })
+
+    test("3. Formula: Runtime completion alone is insufficient for quality success", () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      ledger.recordAgentOutcome({
+        deploymentId: "dep-unverified",
+        taskClass: "coding",
+        success: false,
+        qualitySuccess: false,
+        runtimeCompleted: true,
+        verificationSuccess: false,
+        toolCallSuccess: true,
+        repairCycles: 0,
+        timeoutOccurred: false,
+        cancellationOccurred: false,
+        latencyMs: 200,
+      })
+
+      const profile = ledger.getProfile("dep-unverified", "coding")
+      assert.ok(profile)
+      assert.equal(profile.sampleCount, 1)
+      assert.equal(profile.successCount, 0, "Failed verification cannot count as quality success")
+      assert.equal(profile.failureCount, 1)
+      assert.equal(profile.runtimeCompletedCount, 1, "Runtime completed should be recorded")
+      assert.equal(profile.verificationSuccessCount, 0)
+    })
+
+    test("4. Formula: Read-only tasks remain valid without penalty", () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 5 })
+      for (let i = 0; i < 5; i++) {
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-readonly",
+          taskClass: "general",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 50,
+        })
+      }
+
+      const adjustments = ledger.getRoutingAdjustments(["dep-readonly"], "general")
+      const adj = adjustments.find(a => a.deploymentId === "dep-readonly")?.adjustment ?? 0
+      assert.ok(adj > 0, `Read-only completed task must receive positive score, got ${adj}`)
+    })
+
+    test("5. Formula: Capability and security filters remain absolute prior to adaptive scoring", async () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 5 })
+      for (let i = 0; i < 10; i++) {
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-high-perf-chat-only",
+          taskClass: "coding",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 50,
+        })
+      }
+
+      const config: RoutingConfiguration = {
+        providers: [
+          { id: "p1", kind: "fake" },
+        ],
+        models: [
+          { id: "m-chat", capabilities: ["coding"], specialization: "coding", contextWindow: 8192 },
+          { id: "m-tools", capabilities: ["coding", "toolUse"], specialization: "coding", contextWindow: 8192 },
+        ],
+        deployments: [
+          { id: "dep-high-perf-chat-only", providerId: "p1", modelId: "m-chat", priority: 10, enabled: true },
+          { id: "dep-eligible-tools", providerId: "p1", modelId: "m-tools", priority: 5, enabled: true },
+        ],
+        routes: {
+          coding: ["dep-high-perf-chat-only", "dep-eligible-tools"],
+        },
+      }
+
+      const health = new StaticHealthChecker(new Map([
+        ["dep-high-perf-chat-only", "ready"],
+        ["dep-eligible-tools", "ready"],
+      ]))
+      const router = new ModelRouter(config, {
+        performanceLedger: ledger,
+      })
+
+      // Request requiring toolUse capability
+      const decision = await router.route({
+        taskClass: "coding",
+        needsTools: true,
+        needsStructuredOutput: false,
+        estimatedInputTokens: 100,
+        requiredContextWindow: 1000,
+        requiredCapabilities: ["toolUse"],
+      }, health)
+
+      assert.equal(decision.deploymentId, "dep-eligible-tools", "Ineligible high-perf candidate must never be chosen")
+    })
+
+    test("6. Persistence: True concurrent disjoint writes via Promise.all() do not lose updates", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ledger-concurrent-disjoint-"))
+      const ledgerPath = join(tmp, "ledger.json")
+
+      try {
+        for (let iteration = 0; iteration < 3; iteration++) {
+          const ledgerAgent = new ModelPerformanceLedger({ persistPath: ledgerPath })
+          const ledgerAc = new ModelPerformanceLedger({ persistPath: ledgerPath })
+
+          ledgerAgent.recordAgentOutcome({
+            deploymentId: `dep-agent-${iteration}`,
+            taskClass: "coding",
+            success: true,
+            qualitySuccess: true,
+            runtimeCompleted: true,
+            verificationSuccess: true,
+            toolCallSuccess: true,
+            repairCycles: 0,
+            timeoutOccurred: false,
+            cancellationOccurred: false,
+            latencyMs: 100,
+          })
+
+          ledgerAc.recordAutocompleteOutcome({
+            deploymentId: `dep-ac-${iteration}`,
+            shown: true,
+            accepted: true,
+            staleDiscarded: false,
+            emptyCompletion: false,
+            cancelled: false,
+            latencyMs: 25,
+          })
+
+          // Concurrent persistence
+          await Promise.all([ledgerAgent.persist(), ledgerAc.persist()])
+
+          const fresh = new ModelPerformanceLedger({ persistPath: ledgerPath })
+          await fresh.ready
+
+          assert.ok(fresh.getProfile(`dep-agent-${iteration}`, "coding"), `Expected agent profile ${iteration} to exist`)
+          assert.ok(fresh.getProfile(`dep-ac-${iteration}`, "autocomplete"), `Expected autocomplete profile ${iteration} to exist`)
+        }
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("7. Persistence: True concurrent updates to SAME profile do not lose updates", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ledger-concurrent-same-"))
+      const ledgerPath = join(tmp, "ledger.json")
+
+      try {
+        const inst1 = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        const inst2 = new ModelPerformanceLedger({ persistPath: ledgerPath })
+
+        // Instance 1 records 5 samples
+        for (let i = 0; i < 5; i++) {
+          inst1.recordAgentOutcome({
+            deploymentId: "dep-shared",
+            taskClass: "coding",
+            success: true,
+            qualitySuccess: true,
+            runtimeCompleted: true,
+            verificationSuccess: true,
+            toolCallSuccess: true,
+            repairCycles: 0,
+            timeoutOccurred: false,
+            cancellationOccurred: false,
+            latencyMs: 50,
+          })
+        }
+
+        // Instance 2 records 7 samples
+        for (let i = 0; i < 7; i++) {
+          inst2.recordAgentOutcome({
+            deploymentId: "dep-shared",
+            taskClass: "coding",
+            success: true,
+            qualitySuccess: true,
+            runtimeCompleted: true,
+            verificationSuccess: true,
+            toolCallSuccess: true,
+            repairCycles: 0,
+            timeoutOccurred: false,
+            cancellationOccurred: false,
+            latencyMs: 70,
+          })
+        }
+
+        // Persist concurrently
+        await Promise.all([inst1.persist(), inst2.persist()])
+
+        const reloaded = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        await reloaded.ready
+
+        const profile = reloaded.getProfile("dep-shared", "coding")
+        assert.ok(profile)
+        assert.equal(profile.sampleCount, 12, "All 12 samples from both instances must be preserved")
+        assert.equal(profile.successCount, 12)
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("8. Persistence: Schema-version reset safely resets legacy stores to schema 2", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ledger-schema-reset-"))
+      const ledgerPath = join(tmp, "ledger.json")
+
+      try {
+        // Write old schema v1 file
+        const oldStore = {
+          schemaVersion: 1,
+          profiles: [{
+            deploymentId: "legacy-dep",
+            taskClass: "coding",
+            sampleCount: 50,
+            successCount: 50,
+          }],
+          lastUpdated: new Date().toISOString(),
+        }
+        await writeFile(ledgerPath, JSON.stringify(oldStore, null, 2), "utf-8")
+
+        const ledger = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        const loadRes = await ledger.load()
+
+        assert.equal(loadRes.resetDueToCorruption, true, "Old schema version must trigger safe reset")
+        assert.equal(ledger.profileCount, 0, "In-memory profiles must be cleared on schema mismatch")
+
+        // Record a new sample and persist
+        ledger.recordAgentOutcome({
+          deploymentId: "new-dep",
+          taskClass: "coding",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 100,
+        })
+        await ledger.persist()
+
+        const raw = await readFile(ledgerPath, "utf-8")
+        const parsed = JSON.parse(raw)
+        assert.equal(parsed.schemaVersion, LEDGER_SCHEMA_VERSION)
+        assert.equal(parsed.profiles.length, 1)
+        assert.equal(parsed.profiles[0].deploymentId, "new-dep")
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("9. Persistence: Corrupt file recovery safely resets to empty without throwing", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ledger-corrupt-"))
+      const ledgerPath = join(tmp, "ledger.json")
+
+      try {
+        await writeFile(ledgerPath, "NOT_VALID_JSON{{{", "utf-8")
+        const ledger = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        const res = await ledger.load()
+
+        assert.equal(res.resetDueToCorruption, true)
+        assert.equal(ledger.profileCount, 0)
+
+        // Verify ledger remains fully operational
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-after-corrupt",
+          taskClass: "general",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 100,
+        })
+        await ledger.persist()
+
+        const fresh = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        await fresh.ready
+        assert.equal(fresh.profileCount, 1)
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("10. Persistence: Bounded maxProfiles prunes oldest profiles on growth", async () => {
+      const ledger = new ModelPerformanceLedger({ maxProfiles: 3 })
+      for (let i = 1; i <= 5; i++) {
+        ledger.recordAgentOutcome({
+          deploymentId: `dep-${i}`,
+          taskClass: "coding",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 50,
+        })
+      }
+      assert.ok(ledger.profileCount <= 3, `Expected at most 3 profiles, got ${ledger.profileCount}`)
+    })
+
+    test("11. Credentials: apiKeyEnv loads and resolves from environment variable", () => {
+      const envKey = "TEST_LOCAL_MODEL_API_KEY_AUTH"
+      process.env[envKey] = "secret-token-xyz-123"
+      try {
+        const resolved = resolveProviderApiKey({ apiKeyEnv: envKey })
+        assert.equal(resolved, "secret-token-xyz-123")
+      } finally {
+        delete process.env[envKey]
+      }
+    })
+
+    test("12. Credentials: Literal apiKey in models configuration is strictly rejected", () => {
+      const badConfig = {
+        providers: [
+          { id: "p-literal", kind: "openai_compatible_local", apiKey: "plaintext-secret" } as any,
+        ],
+        models: [
+          { id: "m1", capabilities: ["coding"], specialization: "coding", contextWindow: 4096 },
+        ],
+        deployments: [
+          { id: "d1", providerId: "p-literal", modelId: "m1", priority: 1, enabled: true },
+        ],
+      }
+
+      assert.throws(
+        () => validateRoutingConfig(badConfig),
+        (err: any) => {
+          assert.ok(err instanceof ConfigValidationError)
+          assert.ok(err.message.includes("forbidden literal 'apiKey'"))
+          return true
+        }
+      )
+    })
+
+    test("13. Credentials: Missing referenced env variable throws safe AUTHENTICATION_REQUIRED without leaking key", () => {
+      const missingKey = "NONEXISTENT_KEY_12345"
+      delete process.env[missingKey]
+
+      assert.throws(
+        () => resolveProviderApiKey({ apiKeyEnv: missingKey }),
+        (err: any) => {
+          assert.ok(err instanceof Error)
+          assert.ok(err.message.includes("AUTHENTICATION_REQUIRED"))
+          assert.ok(!err.message.includes("password"))
+          assert.ok(!err.message.includes("secret"))
+          return true
+        }
+      )
+    })
+
+    test("14. Credentials: Auth headers reach both inference provider and health probe", async () => {
+      const envKey = "TEST_AUTH_PROBE_ENV"
+      process.env[envKey] = "probe-auth-token-42"
+      const tmp = await mkdtemp(join(tmpdir(), "auth-probe-test-"))
+      try {
+        let capturedProbeHeader: string | null = null
+        let capturedInferenceHeader: string | null = null
+
+        const mockFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = String(input)
+          const headers = init?.headers as Record<string, string> | undefined
+          if (urlStr.includes("/v1/models")) {
+            capturedProbeHeader = headers?.authorization ?? null
+            return new Response(JSON.stringify({ data: [{ id: "test-model" }] }), { status: 200 })
+          }
+          if (urlStr.includes("/v1/chat/completions")) {
+            capturedInferenceHeader = headers?.authorization ?? null
+            return new Response(JSON.stringify({
+              choices: [{ message: { role: "assistant", content: "Auth success" } }]
+            }), { status: 200 })
+          }
+          return new Response("Not found", { status: 404 })
+        }
+
+        const healthChecker = new EndpointHealthChecker({
+          endpoints: new Map([["dep-auth", "http://127.0.0.1:11434"]]),
+          headers: new Map([["dep-auth", { authorization: `Bearer ${process.env[envKey]}` }]]),
+          fetch: mockFetch as any,
+        })
+
+        const health = await healthChecker.checkHealth("dep-auth")
+        assert.equal(health, "ready")
+        assert.equal(capturedProbeHeader, "Bearer probe-auth-token-42", "Health probe must receive authorization header")
+
+        const provider = new OpenAICompatibleProvider({
+          baseUrl: "http://127.0.0.1:11434",
+          model: "m-code",
+          headers: { authorization: `Bearer ${process.env[envKey]}` },
+          fetch: mockFetch as any,
+        })
+
+        await provider.complete({
+          messages: [{ role: "user", content: "test" }],
+        })
+        assert.equal(capturedInferenceHeader, "Bearer probe-auth-token-42", "Inference must receive authorization header")
+      } finally {
+        delete process.env[envKey]
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("15. Shutdown durability: Awaited dispose flushes pending shown outcome and debounce to disk", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "shutdown-durability-"))
+      const ledgerPath = join(tmp, "ledger.json")
+
+      try {
+        const ledger = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        await ledger.ready
+
+        let lastDecision: any = { deploymentId: "dep-shutdown-ac" }
+        const mockGateway = {
+          lastDecision,
+          performanceLedger: ledger,
+          complete: async () => ({ text: "return 42", deploymentId: "dep-shutdown-ac", providerId: "p1" }),
+        }
+
+        const service = new AutocompleteService({
+          gateway: mockGateway as any,
+          performanceLedger: ledger,
+          debounceMs: 0,
+          scheduler: { schedule: (fn: () => void) => { setTimeout(fn, 0); return { cancel: () => {} } } },
+        })
+
+        // Request a completion
+        const snapshot = makeSnapshot({ rawPrefix: "function answer(): number {\n  " })
+        const res = await service.trigger(snapshot, "file:///test.ts")
+        assert.ok(res)
+        assert.equal(res.text, "return 42")
+
+        // Awaited shutdown dispose
+        await service.dispose()
+
+        // Read ledger from disk — pending shown completion must have been finalized and written
+        const diskContent = await readFile(ledgerPath, "utf-8")
+        const parsed = JSON.parse(diskContent)
+        assert.equal(parsed.schemaVersion, LEDGER_SCHEMA_VERSION)
+        const acProfile = parsed.profiles.find((p: any) => p.taskClass === "autocomplete")
+        assert.ok(acProfile, "Autocomplete profile must exist on disk after awaited shutdown")
+        assert.equal(acProfile.autocomplete.shown, 1, "Pending shown completion must be recorded on shutdown")
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("16. Initialization: Production construction triggers exactly one load operation", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ledger-init-contract-"))
+      const ledgerPath = join(tmp, "ledger.json")
+
+      try {
+        const initialStore = {
+          schemaVersion: LEDGER_SCHEMA_VERSION,
+          profiles: [],
+          lastUpdated: new Date().toISOString(),
+        }
+        await writeFile(ledgerPath, JSON.stringify(initialStore), "utf-8")
+
+        const ledger = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        await ledger.ready
+
+        assert.equal(ledger.loadCount, 1, "Construction must trigger exactly one load operation")
+
+        // Calling load() after ready coalesces or shares the loaded state
+        await ledger.load()
+        assert.equal(ledger.loadCount, 1, "Redundant load() after readiness must not perform duplicate I/O")
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("17. Initialization: Late loader cannot overwrite an outcome recorded after readiness", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "ledger-late-load-"))
+      const ledgerPath = join(tmp, "ledger.json")
+
+      try {
+        const initialStore = {
+          schemaVersion: LEDGER_SCHEMA_VERSION,
+          profiles: [{
+            deploymentId: "dep-initial",
+            taskClass: "coding",
+            sampleCount: 1,
+            successCount: 1,
+            failureCount: 0,
+            verificationSuccessCount: 1,
+            toolCallSuccessCount: 1,
+            totalRepairCycles: 0,
+            timeoutCount: 0,
+            cancellationCount: 0,
+            emaLatencyMs: 50,
+          }],
+          lastUpdated: new Date().toISOString(),
+        }
+        await writeFile(ledgerPath, JSON.stringify(initialStore), "utf-8")
+
+        const ledger = new ModelPerformanceLedger({ persistPath: ledgerPath })
+        await ledger.ready
+
+        // Record a new outcome in-memory
+        ledger.recordAgentOutcome({
+          deploymentId: "dep-fresh",
+          taskClass: "coding",
+          success: true,
+          qualitySuccess: true,
+          runtimeCompleted: true,
+          verificationSuccess: true,
+          toolCallSuccess: true,
+          repairCycles: 0,
+          timeoutOccurred: false,
+          cancellationOccurred: false,
+          latencyMs: 80,
+        })
+
+        // Late load must not erase dep-fresh
+        await ledger.load()
+
+        assert.ok(ledger.getProfile("dep-fresh", "coding"), "Fresh outcome recorded after ready must be preserved")
+        assert.ok(ledger.getProfile("dep-initial", "coding"), "Initial profile must also exist")
+      } finally {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    test("18. Autocomplete provider failure records truthful failure evidence for selected deployment", async () => {
+      let routeDecision = { deploymentId: "dep-failing-provider" }
+      const mockGateway = {
+        lastDecision: routeDecision,
+        complete: async () => {
+          throw new Error("HTTP 500: Inference engine internal error")
+        },
+      }
+
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 1 })
+      const service = new AutocompleteService({
+        gateway: mockGateway as any,
+        performanceLedger: ledger,
+        debounceMs: 0,
+        scheduler: { schedule: (fn: () => void) => { setTimeout(fn, 0); return { cancel: () => {} } } },
+      })
+
+      const snapshot = makeSnapshot()
+      const res = await service.trigger(snapshot, "file:///src/index.ts")
+      assert.equal(res, null)
+
+      const profile = ledger.getProfile("dep-failing-provider", "autocomplete")
+      assert.ok(profile, "Profile must be created for failed deployment")
+      assert.equal(profile.sampleCount, 1)
+      assert.equal(profile.failureCount, 1, "Provider failure must record failureCount")
+      assert.equal(profile.autocomplete?.failed, 1, "Failed count must increment")
+    })
+
+    test("19. Negative comparators: broken evidence paths strictly fail assertions", () => {
+      const ledger = new ModelPerformanceLedger({ minimumSamples: 5 })
+      ledger.recordAgentOutcome({
+        deploymentId: "dep-neg",
+        taskClass: "coding",
+        success: false,
+        qualitySuccess: false,
+        runtimeCompleted: true,
+        verificationSuccess: false,
+        toolCallSuccess: true,
+        repairCycles: 0,
+        timeoutOccurred: false,
+        cancellationOccurred: false,
+        latencyMs: 100,
+      })
+
+      const profile = ledger.getProfile("dep-neg", "coding")
+      assert.throws(
+        () => assert.equal(profile?.successCount, 1, "Negative comparator: unverified run cannot count as success"),
+        /ERR_ASSERTION/
+      )
     })
   })
 })
