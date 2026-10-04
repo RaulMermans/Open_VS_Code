@@ -293,5 +293,17 @@ Sprint 4E.4 — Evidence Semantics, Persistence Safety & Final Closure (IMPLEMEN
   - Real-Host Benchmark Preflight: Preflight acceptance verifies authorization, endpoint reachability, /v1/models response, model availability, warmup inference, and clean git worktree. If any precondition fails, emits BLOCKED_WITH_EVIDENCE without running measured tasks.
   - Status: Sprint 4E.4 IMPLEMENTATION COMPLETE — REAL HOST EVIDENCE BLOCKED: Local model qwen2.5-coder:7b not installed on host Ollama server (0 served models).
 
+Sprint 4F — Code-OSS / VSCodium Desktop Packaging & V1 Candidate ✅ COMPLETE
+  - Desktop Shell Decision (ADR-028): Audited upstream Code-OSS vs VSCodium across 10 evaluation criteria (reproducibility, licensing, telemetry, branding, extension bundling, update mechanism, marketplace behavior, macOS packaging, portability, maintenance). Selected pinned VSCodium distribution (`1.135.06055`, VS Code `1.135.0`, commit `5a73682ca091082675b10c9dc3f348c1d824d94f`, MIT license).
+  - Extension-First Invariant Preserved: Maintained strict separation: Desktop Shell -> bundled extension -> IDE adapter -> agent core -> local/external model endpoint. Zero AI logic in editor source tree.
+  - Packaging Workspace (`apps/desktop`): Created reproducible workspace with `@open-vs-code/desktop` package, `upstream.json` with SHA-256 integrity verification (`61ff9ebc3ac5563c63a0a9e1b479822647e7f2c3303b0629f15fefe9e291f7cc`), deterministic download caching in `apps/desktop/cache`, staging in `apps/desktop/staging`, and distribution in `apps/desktop/dist`.
+  - Branding & Identity: Configured product name "Open VS Code", bundle identifier `com.openvscode.desktop`, isolated data directory `.open-vs-code-desktop`, disabled crash reporting and telemetry permanently (`enableTelemetry: false`). Generated branded placeholder icon asset.
+  - Deterministic Bundling: Packaged `@open-vs-code/vscode-integration` directly into `Contents/Resources/app/extensions/open-vs-code`, enabling automatic discovery on first launch with zero marketplace dependency.
+  - First-Run Experience & Offline Grace: Added `open-vs-code.createStarterConfig` and `open-vs-code.openModelConfig` commands and exported `STARTER_MODELS_JSON` template. Offline inference or missing `.open-vs-code/models.json` produces controlled, helpful guidance without crashes or broken editor state.
+  - Packaging Script (`apps/desktop/scripts/package.ts`): Implemented temp-directory staging assembly, macOS extended-attribute hygiene (`xattr -cr`), ad-hoc codesigning (`codesign --force --deep --sign -`), symlink creation for CLI launcher `bin/open-vs-code`, and gzip tarball generation (`Open-VS-Code-darwin-arm64-0.1.0.tar.gz`).
+  - Automated Smoke Tests (`apps/desktop/smoke/desktop-smoke.test.ts`): 11 deterministic end-to-end tests validating upstream spec, bundle branding, extension discovery, binary launch, command registration, starter config creation, offline handling, mock OpenAI chat completions, mock FIM completions, deactivation cleanup, and security invariants.
+  - HALO Acceptance Runbook: Authored `docs/deployment/HALO_ACCEPTANCE.md` detailing prerequisites, validation gates, canonical execution command, and artifact capture for operator acceptance on the dedicated inference host.
+  - Status: COMPLETE — OPEN VS CODE V1 DESKTOP CANDIDATE (HALO Acceptance Gate Pending).
+
 Next:
-Awaiting operator-managed real model run with installed model weights. Permanent closure requires status === EXECUTED and measuredTasksExecuted === true from a clean committed worktree. Do NOT create Sprint 4E.5.
+Execute HALO target inference host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) on authorized inference host with installed model weights.

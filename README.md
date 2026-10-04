@@ -38,6 +38,7 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **IDE Integration** | ✅ Complete | Full VS Code / Code-OSS extension integration (`@open-vs-code/vscode-integration`) with native inline completions, chat webview, diff review, and terminal execution. |
 | **Local Model Runtime & FIM** | ✅ Complete | Canonical OpenAI-compatible endpoint contracts (`/v1`), explicit FIM prompt templating, local endpoint health probing, and privacy-preserving adaptive performance ledger. |
 | **Real Inference Safety Gate**| ✅ Complete | Explicit operator authorization (`OPEN_VS_CODE_REAL_INFERENCE=1`) preventing unauthorized inference, weight downloads, or proprietary cloud leaks. |
+| **Desktop Application & Packaging** | ✅ Complete | Branded, installable Open VS Code desktop app (`apps/desktop`) built on pinned VSCodium, bundling `@open-vs-code/vscode-integration` with zero telemetry. |
 
 ---
 
@@ -70,9 +71,28 @@ Detailed model card and analysis: [`docs/models/qwen2.5-coder-7b.md`](docs/model
 ## 4. Architecture
 
 ```text
-User / Task Input
-        │
-        ▼
+┌─────────────────────────────────────────────────────────────┐
+│       Open VS Code Desktop Application (apps/desktop)       │
+│  - Branded standalone distribution (pinned VSCodium shell)   │
+│  - Bundled extension auto-activation                         │
+│  - Strict privacy defaults (telemetry permanently disabled) │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│      VS Code Integration (packages/vscode-integration)      │
+│  - Chat Webview & Diff Review Controllers                   │
+│  - Inline Autocomplete (registerInlineCompletionItemProvider)│
+│  - Controlled Terminal Execution (VerificationEngine)       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│              IDE Adapter (packages/ide-adapter)             │
+│  - VS Code API bridge to agent-core                         │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                 packages/agent-core                         │
 │                                                             │
@@ -101,22 +121,57 @@ User / Task Input
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Model Gateway                            │
-│  - OpenAI-compatible HTTP client                            │
+│  - OpenAI-compatible HTTP client (/v1)                      │
 │  - Protocol Normalizer (fences, tool_call tags, fixups)     │
 │  - Diagnostic Capability Probe                              │
+│  - Zero proprietary cloud fallback                          │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Local Open-Weight Model Engine                 │
-│         (Ollama / llama.cpp / vLLM / Local AI)              │
-│                 e.g. qwen2.5-coder:7b                       │
+│         Self-Hosted Inference Host (Local or External)      │
+│   - Local: Ollama / llama.cpp / vLLM (e.g. qwen2.5-coder)   │
+│   - Target Inference Host: HALO                             │
+│   * NOTE: No model weights are bundled in the desktop app   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 5. Getting Started
+
+### Packaging & Running the Desktop Application
+
+The repository includes a self-contained, reproducible packaging system in `apps/desktop`:
+
+```bash
+# 1. Fetch & verify pinned upstream shell (VSCodium 1.135.06055, SHA-256 verified)
+npm run desktop:prepare
+
+# 2. Build the bundled Open VS Code extension
+npm run desktop:build
+
+# 3. Assemble and package Open VS Code.app
+npm run desktop:package
+
+# 4. Run automated desktop packaging smoke tests
+npm run desktop:smoke
+```
+
+The packaged application is produced at:
+- `apps/desktop/dist/Open VS Code.app` (macOS application bundle)
+- `apps/desktop/dist/Open-VS-Code-darwin-arm64-0.1.0.tar.gz` (redistributable archive)
+
+To install on macOS:
+```bash
+cp -R "apps/desktop/dist/Open VS Code.app" /Applications/
+open -a "Open VS Code"
+```
+
+Or run the CLI directly:
+```bash
+apps/desktop/dist/Open\ VS\ Code.app/Contents/Resources/app/bin/open-vs-code
+```
 
 ### Target Inference Machine / Optional Live Evaluation
 

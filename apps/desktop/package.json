@@ -1,0 +1,23 @@
+{
+  "name": "@open-vs-code/desktop",
+  "version": "0.1.0",
+  "description": "Desktop packaging for Open VS Code",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "node --import tsx scripts/prepare.ts",
+    "build": "npm --workspace=@open-vs-code/vscode-integration run build",
+    "package": "node --import tsx scripts/package.ts",
+    "smoke": "node --import tsx --test smoke/desktop-smoke.test.ts"
+  },
+  "dependencies": {
+    "@open-vs-code/agent-core": "*",
+    "@open-vs-code/ide-adapter": "*",
+    "@open-vs-code/vscode-integration": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

@@ -301,9 +301,97 @@ export function activate(context: vscode.ExtensionContext) {
         await host?.showOutput('HALO Core is unreachable.');
       }
     }),
+    vscode.commands.registerCommand('open-vs-code.createStarterConfig', async () => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!root) {
+        vscode.window.showWarningMessage('Open a workspace folder before creating model configuration.');
+        return;
+      }
+      const dirPath = vscode.Uri.file(`${root}/.open-vs-code`);
+      const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
+      try {
+        await vscode.workspace.fs.createDirectory(dirPath);
+        const encoder = new TextEncoder();
+        await vscode.workspace.fs.writeFile(filePath, encoder.encode(STARTER_MODELS_JSON));
+        const doc = await vscode.workspace.openTextDocument(filePath);
+        await vscode.window.showTextDocument(doc);
+        vscode.window.showInformationMessage('Created starter model configuration at .open-vs-code/models.json');
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to create starter config: ${err.message}`);
+      }
+    }),
+    vscode.commands.registerCommand('open-vs-code.openModelConfig', async () => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!root) {
+        vscode.window.showWarningMessage('No workspace folder open.');
+        return;
+      }
+      const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
+      try {
+        const doc = await vscode.workspace.openTextDocument(filePath);
+        await vscode.window.showTextDocument(doc);
+      } catch {
+        const choice = await vscode.window.showInformationMessage(
+          'No models.json found. Would you like to create a starter configuration?',
+          'Create Starter Config',
+          'Cancel'
+        );
+        if (choice === 'Create Starter Config') {
+          await vscode.commands.executeCommand('open-vs-code.createStarterConfig');
+        }
+      }
+    }),
     { dispose: () => host?.dispose() }
   );
 }
+
+export const STARTER_MODELS_JSON = JSON.stringify({
+  $schema: "https://raw.githubusercontent.com/RaulMermans/Open_VS_Code/main/config/schemas/models.schema.json",
+  providers: [
+    {
+      id: "local-inference",
+      kind: "openai_compatible_local",
+      baseUrl: "http://127.0.0.1:11434"
+    }
+  ],
+  models: [
+    {
+      id: "qwen2.5-coder-7b",
+      displayName: "Qwen 2.5 Coder 7B",
+      family: "qwen",
+      contextWindow: 32768,
+      capabilities: ["toolUse", "coding", "autocomplete", "fim"],
+      specialization: "coding",
+      fimStrategy: "qwen",
+      provenance: "Qwen2.5-Coder-7B-Instruct (Apache 2.0)"
+    }
+  ],
+  deployments: [
+    {
+      id: "local-chat",
+      providerId: "local-inference",
+      modelId: "qwen2.5-coder-7b",
+      modelName: "qwen2.5-coder:7b",
+      enabled: true,
+      priority: 10
+    },
+    {
+      id: "local-fim",
+      providerId: "local-inference",
+      modelId: "qwen2.5-coder-7b",
+      modelName: "qwen2.5-coder:7b",
+      enabled: true,
+      priority: 10,
+      fimStrategy: "qwen"
+    }
+  ],
+  routes: {
+    coding: ["local-chat"],
+    autocomplete: ["local-fim"],
+    default: ["local-chat"]
+  }
+}, null, 2) + "\n";
+
 
 export async function deactivate(): Promise<void> {
   if (currentAbortController) {

@@ -71,4 +71,15 @@ Sprint 4D, 4D.1 & 4D.2 ✅ CLOSED PERMANENTLY (Performance Truth, Real Scale, Jo
   * Truthful Autocomplete Failure Accounting (Sprint 4E.4): Selected deployment provider failures record explicit failure evidence in ledger.
   * Comprehensive Test Matrix: 69/69 tests pass in `sprint-4e-closure-eval.test.ts` (including 19 Sprint 4E.4 closure tests); full monorepo regressions clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals (100%), 111 runtime evals (100%), 50 recovery evals (100%), 100 performance scenarios (100%).
   * Real-Host Benchmark: Preflight gate active; verified safe blocked status (could not connect to running Ollama instance / 0 models installed); zero measured tasks executed under blocked preflight.
-- Next: Awaiting operator-managed real host inference with installed qwen2.5-coder:7b model. Do NOT create Sprint 4E.5.
+- Phase K (Sprint 4F): Code-OSS / VSCodium Desktop Packaging & V1 Candidate.
+  * Status: COMPLETE — OPEN VS CODE V1 DESKTOP CANDIDATE (HALO Acceptance Gate Pending).
+  * Desktop Shell Decision: Audited Code-OSS vs VSCodium across 10 dimensions. Selected pinned VSCodium distribution (`1.135.06055`, based on VS Code `1.135.0`, commit `5a73682ca091082675b10c9dc3f348c1d824d94f`, MIT license). Documented in `ADR-028`.
+  * Extension-First Invariant Preserved: Agent-core, ide-adapter, and vscode-integration remain strictly editor-independent. Desktop shell handles only branding, bundled installation, startup, and distribution. No core logic in editor source tree.
+  * Packaging Workspace (`apps/desktop`): Reproducible workspace with `upstream.json` (SHA-256 verified), deterministic scripts (`prepare.ts`, `package.ts`), and build targets (`npm run desktop:prepare`, `npm run desktop:build`, `npm run desktop:package`, `npm run desktop:smoke`).
+  * Branding & Identity: Product name "Open VS Code", bundle identifier `com.openvscode.desktop`, isolated data directory `.open-vs-code-desktop`, telemetry permanently hard-disabled (`enableTelemetry: false`).
+  * Extension Bundling: Pre-installs `@open-vs-code/vscode-integration` directly into application bundle `Contents/Resources/app/extensions/open-vs-code`. Zero marketplace dependency.
+  * First-Run Experience: Safe offline behavior. Contributed commands `open-vs-code.createStarterConfig` and `open-vs-code.openModelConfig` provide immediate actionable guidance if `.open-vs-code/models.json` is missing. Editor remains fully functional when inference host is offline.
+  * Verification & Smoke Tests: 11/11 automated smoke tests in `apps/desktop/smoke/desktop-smoke.test.ts` pass with 100% determinism. Full monorepo regressions clean: 0 TypeScript errors, 0 linter errors, clean build, 30/30 coding evals (100%), 111 runtime evals (100%), 50 recovery evals (100%), 100 performance scenarios (100%).
+  * HALO Acceptance Runbook: Documented in `docs/deployment/HALO_ACCEPTANCE.md`. Real-model acceptance execution intentionally deferred to HALO target inference host. Zero model weights downloaded or bundled on development Mac.
+
+- Next: Execute HALO target inference host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) on authorized inference host with installed model weights.

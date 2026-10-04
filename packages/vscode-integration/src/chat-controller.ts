@@ -443,10 +443,17 @@ export class ChatController {
       this.state.activities = [];
       this.state.pendingConfirmation = undefined;
       
+      let errorMessage = `Agent Error: ${e.message}`;
+      if (typeof e.message === 'string' && e.message.includes('No model routing configuration found')) {
+        errorMessage = 'No model configuration found (`.open-vs-code/models.json`). Open VS Code requires a local or self-hosted OpenAI-compatible inference endpoint (e.g. Ollama, vLLM, or HALO). Run the command "Open VS Code: Create Starter Model Configuration" to initialize.';
+      } else if (typeof e.message === 'string' && (e.message.includes('ECONNREFUSED') || e.message.includes('fetch failed'))) {
+        errorMessage = 'Inference endpoint unreachable. Ensure your local or self-hosted model server (e.g. Ollama or HALO) is running at the configured endpoint.';
+      }
+
       const errorMsg: ChatMessage = {
         id: this.generateId(),
         role: 'system',
-        content: `Agent Error: ${e.message}`,
+        content: errorMessage,
         timestamp: Date.now(),
         status: 'failed'
       };

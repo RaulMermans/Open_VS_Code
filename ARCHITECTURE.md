@@ -526,3 +526,59 @@ Future Routing Improves (evidence-driven priority adjustments, bounded ±maxAdju
 - **Durable Shutdown & Env-Only Credentials**: Autocomplete disposal (`AutocompleteService.dispose()`, `AutocompleteController.dispose()`, and `extension.deactivate()`) is asynchronous and awaited, ensuring pending suggestions and debounce writes reach disk before process termination. Credential security is env-only (`apiKeyEnv`), eliminating plaintext `apiKey` from contracts and configurations.
 - **Two Separate Evaluation Paths**: Deterministic CI integration suite (`runModelIntegrationEvaluation()`, 64 scenarios, no models required, part of `npm test`) vs. real local model benchmarking (`runRealModelBenchmark()`, gated, invoked exclusively via `npm run eval:models`).
 See [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) for full architectural specification.
+
+## Desktop Shell Distribution & Packaging Layer (Sprint 4F ✅ COMPLETE)
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│       Open VS Code Desktop Application (apps/desktop)       │
+│  - Branded standalone distribution (pinned VSCodium shell)   │
+│  - Bundled extension auto-activation                         │
+│  - Strict privacy defaults (telemetry permanently disabled) │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│      VS Code Integration (packages/vscode-integration)      │
+│  - Chat Webview & Diff Review Controllers                   │
+│  - Inline Autocomplete (registerInlineCompletionItemProvider)│
+│  - Controlled Terminal Execution (VerificationEngine)       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│              IDE Adapter (packages/ide-adapter)             │
+│  - VS Code API bridge to agent-core                         │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 packages/agent-core                         │
+│  - Context Engine, Token Budgeting, Permission Gate         │
+│  - Model Router, Mutation Engine, Verification Engine       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│         Self-Hosted Inference Host (Local or External)      │
+│   - Local: Ollama / llama.cpp / vLLM (e.g. qwen2.5-coder)   │
+│   - Target Inference Host: HALO                             │
+│   * NOTE: No model weights are bundled in the desktop app   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Extension-First Invariant**: The desktop shell is an unmodified, pinned distribution of upstream VSCodium (`1.135.06055`, VS Code `1.135.0`). No agent reasoning, prompt formatting, context compiling, model routing, or benchmark logic resides inside the editor source tree. All AI functionality is bundled as a standard extension (`@open-vs-code/vscode-integration`) located in `Contents/Resources/app/extensions/open-vs-code`.
+- **Deterministic Packaging Workspace (`apps/desktop`)**:
+  - `upstream.json`: Pinning distribution (`vscodium`), version (`1.135.06055`), commit (`5a73682ca091082675b10c9dc3f348c1d824d94f`), and expected SHA-256 archive checksum.
+  - `branding/product.json`: Configures identity as "Open VS Code", bundle ID `com.openvscode.desktop`, isolates user configuration to `.open-vs-code-desktop`, and permanently disables telemetry (`enableTelemetry: false`).
+  - `scripts/prepare.ts`: Deterministic archive fetch, SHA-256 checksum verification, caching in `apps/desktop/cache`, and extraction to `apps/desktop/staging`.
+  - `scripts/package.ts`: Stages the bundle in isolated `/tmp` workspace to prevent macOS Desktop extended-attribute pollution, merges product metadata and `Info.plist`, installs the compiled extension bundle, strips extended attributes (`xattr -cr`), ad-hoc codesigns (`codesign --force --deep --sign -`), links launcher `bin/open-vs-code`, and packages `apps/desktop/dist/Open VS Code.app` and `apps/desktop/dist/Open-VS-Code-darwin-arm64-0.1.0.tar.gz`.
+- **First-Run Behavior & Offline Resilience**:
+  - Missing `.open-vs-code/models.json` or an unreachable inference endpoint does NOT break the editor.
+  - Commands `open-vs-code.createStarterConfig` and `open-vs-code.openModelConfig` allow the developer to scaffold a starter configuration instantly.
+  - Chat controller and autocomplete controller fail gracefully with explanatory messages rather than unhandled errors.
+- **External HALO Readiness**:
+  - Open VS Code is packaged without model weights.
+  - Points to self-hosted inference runtimes (local or external OpenAI-compatible endpoints) strictly via user-controlled `.open-vs-code/models.json`.
+  - The HALO target inference host acceptance runbook is detailed in `docs/deployment/HALO_ACCEPTANCE.md`.
+See [ADR-028](docs/adrs/ADR-028-desktop-shell-and-packaging-strategy.md) for full architectural specification.

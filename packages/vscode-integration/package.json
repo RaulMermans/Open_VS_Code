@@ -58,6 +58,14 @@
       {
         "command": "open-vs-code.checkHaloConnection",
         "title": "Open VS Code: Check HALO Connection"
+      },
+      {
+        "command": "open-vs-code.createStarterConfig",
+        "title": "Open VS Code: Create Starter Model Configuration"
+      },
+      {
+        "command": "open-vs-code.openModelConfig",
+        "title": "Open VS Code: Open Model Configuration"
       }
     ],
 
