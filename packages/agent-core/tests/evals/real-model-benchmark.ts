@@ -27,23 +27,55 @@
 import { execSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises"
-import { join } from "node:path"
+import { join, resolve, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import { platform, arch, cpus, totalmem, tmpdir } from "node:os"
-import { checkInferenceGate, requireInferenceGate, inferenceGateBlockedMessage } from "../../src/model/inference-gate.ts"
+import { checkInferenceGate } from "../../src/model/inference-gate.ts"
 import { createAgentRuntime } from "../../src/agent/runtime.ts"
 import { createProductionAutocompleteGateway } from "../../src/autocomplete/gateway.ts"
 import { OpenAICompatibleProvider } from "../../src/model/openai-compatible.ts"
 import type { FimStrategy } from "../../src/contracts/routing.ts"
 import type { AgentEvent } from "../../src/contracts/agent.ts"
 
-export const BENCHMARK_SCHEMA_VERSION = 2
+export const BENCHMARK_SCHEMA_VERSION = 3
 
-function getCurrentGitSha(): string {
+export type BenchmarkStatus = "EXECUTED" | "BLOCKED_WITH_EVIDENCE" | "FAILED"
+
+export interface GitProvenance {
+  readonly gitSha: string
+  readonly worktreeClean: boolean
+  readonly dirtyFiles?: readonly string[] | undefined
+}
+
+export function getCanonicalEvalsDir(): string {
+  const currentDir = dirname(fileURLToPath(import.meta.url))
+  const repoRoot = resolve(currentDir, "../../../..")
+  return resolve(repoRoot, "evals/results")
+}
+
+export function checkGitProvenance(): GitProvenance {
+  let gitSha = "unknown"
   try {
-    return execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim()
+    gitSha = execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim()
   } catch {
-    return "unknown"
+    // fallback
   }
+
+  let worktreeClean = false
+  let dirtyFiles: string[] = []
+  try {
+    const statusOut = execSync("git status --porcelain", { encoding: "utf-8" }).trim()
+    if (statusOut.length === 0) {
+      worktreeClean = true
+    } else {
+      worktreeClean = false
+      dirtyFiles = statusOut.split("\n").map(l => l.trim()).filter(Boolean)
+    }
+  } catch {
+    worktreeClean = false
+  }
+
+  return { gitSha, worktreeClean, dirtyFiles }
 }
 
 function getHardwareSummary(): string {
@@ -247,7 +279,11 @@ export interface FimTaskResult {
 
 export interface BenchmarkArtifact {
   readonly schemaVersion: number
+  readonly status: BenchmarkStatus
+  readonly executed: boolean
+  readonly blockerReason?: string | undefined
   readonly gitSha: string
+  readonly worktreeClean: boolean
   readonly timestamp: string
   readonly hardware: string
   readonly os: string
@@ -261,6 +297,11 @@ export interface BenchmarkArtifact {
   readonly agentModelId: string
   readonly fimModelId: string
   readonly fimStrategy: string
+  readonly inferenceAuthorized: boolean
+  readonly endpointReachable: boolean
+  readonly requestedModelsAvailable: boolean
+  readonly warmupSucceeded: boolean
+  readonly measuredTasksExecuted: boolean
   readonly agentTasks: readonly AgentTaskResult[]
   readonly fimTasks: readonly FimTaskResult[]
   readonly agentSummary: {
@@ -829,45 +870,487 @@ export interface RealModelBenchmarkOptions {
   readonly fimStrategy?: FimStrategy
   readonly providerRuntime?: string
   readonly outputDir?: string
+  readonly allowDirtyWorktree?: boolean
+  readonly gitProvenanceOverride?: GitProvenance
+  readonly skipPreflightWarmup?: boolean
+  readonly fetchFn?: typeof fetch
+  readonly customTasks?: {
+    readonly agentTasks?: readonly AgentBenchmarkTask[]
+    readonly fimTasks?: readonly FimBenchmarkFixture[]
+  }
 }
 
-export async function runRealModelBenchmark(options: RealModelBenchmarkOptions): Promise<BenchmarkArtifact> {
-  // Gate check — must be explicitly authorized
-  requireInferenceGate()
+export interface BenchmarkPreflightResult {
+  readonly status: BenchmarkStatus
+  readonly inferenceAuthorized: boolean
+  readonly endpointReachable: boolean
+  readonly modelsEndpointSuccess: boolean
+  readonly requestedModelsAvailable: boolean
+  readonly warmupSucceeded: boolean
+  readonly worktreeClean: boolean
+  readonly gitSha: string
+  readonly blockerReason?: string | undefined
+  readonly servedModels: readonly string[]
+  readonly discoveredRuntime: string
+}
 
-  const logicalModelId = options.logicalModelId ?? "qwen2.5-coder-7b"
+export async function performBenchmarkPreflight(
+  options: RealModelBenchmarkOptions
+): Promise<BenchmarkPreflightResult> {
   const servedModelId = options.servedModelId ?? options.agentModelId
-  const fimStrategy = options.fimStrategy ?? "qwen"
+  const gitProv = options.gitProvenanceOverride ?? checkGitProvenance()
+  const worktreeClean = gitProv.worktreeClean
+  const gitSha = gitProv.gitSha
+
+  // 1. Worktree cleanliness check
+  if (!worktreeClean && !options.allowDirtyWorktree) {
+    return {
+      status: "BLOCKED_WITH_EVIDENCE",
+      inferenceAuthorized: false,
+      endpointReachable: false,
+      modelsEndpointSuccess: false,
+      requestedModelsAvailable: false,
+      warmupSucceeded: false,
+      worktreeClean: false,
+      gitSha,
+      blockerReason: `DIRTY_WORKTREE: Working tree contains uncommitted changes (${gitProv.dirtyFiles?.length ?? 0} files). Permanent closure requires a clean committed worktree.`,
+      servedModels: [],
+      discoveredRuntime: "unknown",
+    }
+  }
+
+  // 2. Authorization check
+  const gate = checkInferenceGate()
+  if (!gate.authorized) {
+    return {
+      status: "BLOCKED_WITH_EVIDENCE",
+      inferenceAuthorized: false,
+      endpointReachable: false,
+      modelsEndpointSuccess: false,
+      requestedModelsAvailable: false,
+      warmupSucceeded: false,
+      worktreeClean,
+      gitSha,
+      blockerReason: `UNAUTHORIZED_INFERENCE: ${gate.reason}`,
+      servedModels: [],
+      discoveredRuntime: "unknown",
+    }
+  }
+
+  const fetchFn = options.fetchFn ?? globalThis.fetch
+
+  // 3. Endpoint reachability and /v1/models probe
+  let modelsRes: Response
+  try {
+    const modelsUrl = new URL("/v1/models", options.endpoint)
+    modelsRes = await fetchFn(modelsUrl, {
+      method: "GET",
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch (err) {
+    return {
+      status: "BLOCKED_WITH_EVIDENCE",
+      inferenceAuthorized: true,
+      endpointReachable: false,
+      modelsEndpointSuccess: false,
+      requestedModelsAvailable: false,
+      warmupSucceeded: false,
+      worktreeClean,
+      gitSha,
+      blockerReason: `ENDPOINT_UNREACHABLE: Could not connect to endpoint ${options.endpoint} (${err instanceof Error ? err.message : String(err)})`,
+      servedModels: [],
+      discoveredRuntime: "unknown",
+    }
+  }
+
+  // 4. /v1/models response success
+  if (!modelsRes.ok) {
+    return {
+      status: "BLOCKED_WITH_EVIDENCE",
+      inferenceAuthorized: true,
+      endpointReachable: true,
+      modelsEndpointSuccess: false,
+      requestedModelsAvailable: false,
+      warmupSucceeded: false,
+      worktreeClean,
+      gitSha,
+      blockerReason: `MODELS_ENDPOINT_FAILED: Endpoint ${options.endpoint}/v1/models returned HTTP ${modelsRes.status} (${modelsRes.statusText})`,
+      servedModels: [],
+      discoveredRuntime: "unknown",
+    }
+  }
+
+  // Parse /v1/models response
+  let servedModels: string[] = []
+  try {
+    const data = await modelsRes.json() as any
+    if (Array.isArray(data?.data)) {
+      servedModels = data.data
+        .map((m: any) => (typeof m === "string" ? m : typeof m?.id === "string" ? m.id : String(m?.id ?? "")))
+        .filter(Boolean)
+    }
+  } catch (err) {
+    return {
+      status: "BLOCKED_WITH_EVIDENCE",
+      inferenceAuthorized: true,
+      endpointReachable: true,
+      modelsEndpointSuccess: false,
+      requestedModelsAvailable: false,
+      warmupSucceeded: false,
+      worktreeClean,
+      gitSha,
+      blockerReason: `MODELS_RESPONSE_MALFORMED: Failed to parse /v1/models response (${err instanceof Error ? err.message : String(err)})`,
+      servedModels: [],
+      discoveredRuntime: "unknown",
+    }
+  }
+
+  // 5. Requested agent served model and FIM served model exist
+  const modelExists = (target: string) => {
+    return servedModels.some(
+      m => m === target || m === `${target}:latest` || (target.endsWith(":latest") && m === target.replace(":latest", ""))
+    )
+  }
+
+  const agentModelAvailable = modelExists(servedModelId)
+  const fimModelAvailable = modelExists(options.fimModelId)
+
+  if (!agentModelAvailable || !fimModelAvailable) {
+    const missing: string[] = []
+    if (!agentModelAvailable) missing.push(`agent model "${servedModelId}"`)
+    if (!fimModelAvailable) missing.push(`FIM model "${options.fimModelId}"`)
+    return {
+      status: "BLOCKED_WITH_EVIDENCE",
+      inferenceAuthorized: true,
+      endpointReachable: true,
+      modelsEndpointSuccess: true,
+      requestedModelsAvailable: false,
+      warmupSucceeded: false,
+      worktreeClean,
+      gitSha,
+      blockerReason: `MODEL_NOT_SERVED: Requested ${missing.join(" and ")} not found on server. Available served models: [${servedModels.length > 0 ? servedModels.join(", ") : "none"}]`,
+      servedModels,
+      discoveredRuntime: "unknown",
+    }
+  }
 
   // Discover provider runtime truthfully
   const discoveredRuntime = options.providerRuntime && options.providerRuntime !== "local-openai-compatible"
     ? options.providerRuntime
     : await discoverProviderRuntime(options.endpoint)
 
-  // Warmup pass (not measured)
-  console.error(`[benchmark] Warming up agent model (${servedModelId} via ${options.endpoint})...`)
-  try {
-    const warmupProvider = new OpenAICompatibleProvider({
-      baseUrl: options.endpoint,
-      model: servedModelId,
-      timeoutMs: 30_000,
-    })
-    await warmupProvider.complete({
-      messages: [{ role: "user", content: "Say READY." }],
-      temperature: 0,
-      maxOutputTokens: 10,
-    })
-  } catch {
-    // Warmup failure is non-fatal
+  // 6. Minimal authorized warmup inference request
+  if (!options.skipPreflightWarmup) {
+    try {
+      const warmupProvider = new OpenAICompatibleProvider({
+        baseUrl: options.endpoint,
+        model: servedModelId,
+        timeoutMs: 15_000,
+        fetch: fetchFn,
+      })
+      const warmupRes = await warmupProvider.complete({
+        messages: [{ role: "user", content: "Say READY." }],
+        temperature: 0,
+        maxOutputTokens: 10,
+      })
+      if (!warmupRes?.message?.content && warmupRes?.message?.content !== "") {
+        throw new Error("Warmup response was empty")
+      }
+    } catch (err) {
+      return {
+        status: "BLOCKED_WITH_EVIDENCE",
+        inferenceAuthorized: true,
+        endpointReachable: true,
+        modelsEndpointSuccess: true,
+        requestedModelsAvailable: true,
+        warmupSucceeded: false,
+        worktreeClean,
+        gitSha,
+        blockerReason: `WARMUP_FAILED: Minimal inference request to ${servedModelId} failed (${err instanceof Error ? err.message : String(err)})`,
+        servedModels,
+        discoveredRuntime,
+      }
+    }
   }
 
-  console.error("[benchmark] Running agent tasks through production AgentRuntime stack...")
-  const agentTasks = await runAgentBenchmark(AGENT_BENCHMARK_TASKS, options.endpoint, servedModelId, logicalModelId)
+  return {
+    status: "EXECUTED",
+    inferenceAuthorized: true,
+    endpointReachable: true,
+    modelsEndpointSuccess: true,
+    requestedModelsAvailable: true,
+    warmupSucceeded: true,
+    worktreeClean,
+    gitSha,
+    servedModels,
+    discoveredRuntime,
+  }
+}
 
-  console.error("[benchmark] Running FIM tasks through production AutocompleteGateway...")
-  const fimTasks = await runFimBenchmark(FIM_BENCHMARK_FIXTURES, options.endpoint, options.fimModelId, fimStrategy, logicalModelId)
+export interface ClosureVerificationResult {
+  readonly satisfiesPermanentClosure: boolean
+  readonly reasons: readonly string[]
+}
 
-  // Compute summaries
+export function verifyPermanentClosure(artifact: BenchmarkArtifact): ClosureVerificationResult {
+  const reasons: string[] = []
+
+  if (artifact.status !== "EXECUTED") {
+    reasons.push(`Benchmark status must be 'EXECUTED', was: '${artifact.status}'`)
+  }
+  if (!artifact.executed) {
+    reasons.push("Benchmark artifact is marked executed: false")
+  }
+  if (!artifact.measuredTasksExecuted) {
+    reasons.push("Measured tasks were not executed")
+  }
+  if (!artifact.worktreeClean) {
+    reasons.push("Working tree was not clean at benchmark execution")
+  }
+  if (!artifact.inferenceAuthorized) {
+    reasons.push("Inference was not authorized (OPEN_VS_CODE_REAL_INFERENCE !== '1')")
+  }
+  if (!artifact.endpointReachable) {
+    reasons.push("Configured endpoint was not reachable")
+  }
+  if (!artifact.requestedModelsAvailable) {
+    reasons.push("Requested models were not available on the inference host")
+  }
+  if (!artifact.warmupSucceeded) {
+    reasons.push("Warmup inference request failed")
+  }
+  if (!artifact.gitSha || artifact.gitSha === "unknown") {
+    reasons.push("Git SHA must be a valid commit hash")
+  }
+  if (artifact.agentTasks.length !== 10) {
+    reasons.push(`Expected exactly 10 agent tasks, got ${artifact.agentTasks.length}`)
+  }
+  if (artifact.fimTasks.length !== 8) {
+    reasons.push(`Expected exactly 8 FIM tasks, got ${artifact.fimTasks.length}`)
+  }
+
+  // Tool traversal check on the 4 tool-required tasks
+  const toolRequiredIds = ["T001", "T002", "T003", "T004"]
+  const toolTasks = artifact.agentTasks.filter(t => toolRequiredIds.includes(t.taskId))
+  const toolTraversedCount = toolTasks.filter(t => t.requiredToolUsed || t.toolCallsCount > 0).length
+  if (toolTraversedCount < 4) {
+    reasons.push(`Tool-required agent tasks must genuinely traverse repository tools: traversed ${toolTraversedCount}/4`)
+  }
+
+  return {
+    satisfiesPermanentClosure: reasons.length === 0,
+    reasons,
+  }
+}
+
+async function writeArtifactFiles(outputDir: string, artifact: BenchmarkArtifact): Promise<void> {
+  await mkdir(outputDir, { recursive: true })
+  const baseName = `benchmark-${artifact.gitSha.slice(0, 8)}-${Date.now()}`
+  const jsonPath = join(outputDir, `${baseName}.json`)
+  await writeFile(jsonPath, JSON.stringify(artifact, null, 2), "utf-8")
+  console.error(`[benchmark] JSON artifact written: ${jsonPath}`)
+
+  const isBlocked = artifact.status === "BLOCKED_WITH_EVIDENCE"
+  const isFailed = artifact.status === "FAILED"
+
+  const mdLines = [
+    `# Sprint 4E Real Model Benchmark Report${isBlocked ? " (BLOCKED)" : isFailed ? " (FAILED)" : ""}`,
+    ``,
+    `- **Status:** \`${artifact.status}\``,
+    `- **Executed:** \`${artifact.executed}\``,
+    `- **Measured Tasks Executed:** \`${artifact.measuredTasksExecuted}\``,
+    `- **Worktree Clean:** \`${artifact.worktreeClean}\``,
+    `- **Date:** ${artifact.timestamp}`,
+    `- **Git SHA:** \`${artifact.gitSha}\``,
+  ]
+
+  if (artifact.blockerReason) {
+    mdLines.push(`- **Blocker Reason:** ${artifact.blockerReason}`)
+  }
+
+  mdLines.push(
+    `- **Inference Authorized:** \`${artifact.inferenceAuthorized}\``,
+    `- **Endpoint Reachable:** \`${artifact.endpointReachable}\``,
+    `- **Requested Models Available:** \`${artifact.requestedModelsAvailable}\``,
+    `- **Warmup Succeeded:** \`${artifact.warmupSucceeded}\``,
+    `- **Hardware:** ${artifact.hardware}`,
+    `- **OS:** ${artifact.os}`,
+    `- **Node:** ${artifact.nodeVersion}`,
+    `- **Runtime:** ${artifact.providerRuntime}`,
+    `- **Endpoint:** \`${artifact.endpoint}\``,
+    `- **Logical Model:** \`${artifact.logicalModelId}\``,
+    `- **Served Model:** \`${artifact.servedModelId}\``,
+    `- **FIM Model:** \`${artifact.fimModelId}\``,
+    `- **FIM Strategy:** \`${artifact.fimStrategy}\``,
+    ``,
+    `## Agent Summary`,
+    `- **Total Tasks:** ${artifact.agentSummary.total}`,
+    `- **Success Count:** ${artifact.agentSummary.success}`,
+    `- **Success Rate:** ${(artifact.agentSummary.successRate * 100).toFixed(1)}%`,
+    `- **Tool-Required Tasks:** ${artifact.agentSummary.toolRequiredSuccessCount}/${artifact.agentSummary.toolRequiredCount}`,
+    `- **Median Latency:** ${artifact.agentSummary.medianLatencyMs.toFixed(0)} ms`,
+    `- **P95 Latency:** ${artifact.agentSummary.p95LatencyMs.toFixed(0)} ms`,
+    ``,
+    `## FIM Summary`,
+    `- **Total Tasks:** ${artifact.fimSummary.total}`,
+    `- **Success Count:** ${artifact.fimSummary.success}`,
+    `- **Success Rate:** ${(artifact.fimSummary.successRate * 100).toFixed(1)}%`,
+    `- **Non-Empty Rate:** ${(artifact.fimSummary.nonEmptyRate * 100).toFixed(1)}%`,
+    `- **Structurally-Valid Rate:** ${(artifact.fimSummary.structurallyValidRate * 100).toFixed(1)}%`,
+    `- **Empty Rate:** ${(artifact.fimSummary.emptyRate * 100).toFixed(1)}%`,
+    `- **Median Latency:** ${artifact.fimSummary.medianLatencyMs.toFixed(0)} ms`,
+    `- **P95 Latency:** ${artifact.fimSummary.p95LatencyMs.toFixed(0)} ms`,
+    ``
+  )
+
+  const mdPath = join(outputDir, `${baseName}.md`)
+  await writeFile(mdPath, mdLines.join("\n"), "utf-8")
+  console.error(`[benchmark] Markdown report written: ${mdPath}`)
+}
+
+export async function runRealModelBenchmark(options: RealModelBenchmarkOptions): Promise<BenchmarkArtifact> {
+  const logicalModelId = options.logicalModelId ?? "qwen2.5-coder-7b"
+  const servedModelId = options.servedModelId ?? options.agentModelId
+  const fimStrategy = options.fimStrategy ?? "qwen"
+  const cpuModel = cpus()[0]?.model ?? "unknown"
+  const ramGb = Math.round(totalmem() / 1024 / 1024 / 1024)
+
+  // 1. Perform benchmark preflight acceptance checks
+  const preflight = await performBenchmarkPreflight(options)
+
+  if (preflight.status !== "EXECUTED") {
+    console.error(`[benchmark] PREFLIGHT BLOCKED: ${preflight.blockerReason}`)
+    const artifact: BenchmarkArtifact = {
+      schemaVersion: BENCHMARK_SCHEMA_VERSION,
+      status: preflight.status,
+      executed: false,
+      blockerReason: preflight.blockerReason,
+      gitSha: preflight.gitSha,
+      worktreeClean: preflight.worktreeClean,
+      timestamp: new Date().toISOString(),
+      hardware: getHardwareSummary(),
+      os: `${platform()} ${arch()}`,
+      cpu: cpuModel,
+      ramGb,
+      nodeVersion: process.version,
+      providerRuntime: preflight.discoveredRuntime,
+      endpoint: options.endpoint,
+      logicalModelId,
+      servedModelId,
+      agentModelId: servedModelId,
+      fimModelId: options.fimModelId,
+      fimStrategy,
+      inferenceAuthorized: preflight.inferenceAuthorized,
+      endpointReachable: preflight.endpointReachable,
+      requestedModelsAvailable: preflight.requestedModelsAvailable,
+      warmupSucceeded: preflight.warmupSucceeded,
+      measuredTasksExecuted: false,
+      agentTasks: [],
+      fimTasks: [],
+      agentSummary: {
+        total: 0,
+        success: 0,
+        successRate: 0,
+        toolRequiredCount: 0,
+        toolRequiredSuccessCount: 0,
+        toolUseRate: 0,
+        medianLatencyMs: 0,
+        p95LatencyMs: 0,
+      },
+      fimSummary: {
+        total: 0,
+        success: 0,
+        successRate: 0,
+        nonEmptyRate: 0,
+        structurallyValidRate: 0,
+        syntaxValidRate: 0,
+        emptyRate: 0,
+        medianLatencyMs: 0,
+        p95LatencyMs: 0,
+      },
+    }
+
+    if (options.outputDir) {
+      await writeArtifactFiles(options.outputDir, artifact)
+    }
+
+    return artifact
+  }
+
+  // 2. Preflight passed! Measured tasks begin.
+  const tasksToRun = options.customTasks?.agentTasks ?? AGENT_BENCHMARK_TASKS
+  const fimToRun = options.customTasks?.fimTasks ?? FIM_BENCHMARK_FIXTURES
+
+  let agentTasks: readonly AgentTaskResult[] = []
+  let fimTasks: readonly FimTaskResult[] = []
+
+  try {
+    console.error(`[benchmark] Running ${tasksToRun.length} agent tasks through production AgentRuntime stack...`)
+    agentTasks = await runAgentBenchmark(tasksToRun, options.endpoint, servedModelId, logicalModelId)
+
+    console.error(`[benchmark] Running ${fimToRun.length} FIM tasks through production AutocompleteGateway...`)
+    fimTasks = await runFimBenchmark(fimToRun, options.endpoint, options.fimModelId, fimStrategy, logicalModelId)
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    console.error(`[benchmark] EXECUTION FAILED: ${errorMsg}`)
+    const artifact: BenchmarkArtifact = {
+      schemaVersion: BENCHMARK_SCHEMA_VERSION,
+      status: "FAILED",
+      executed: false,
+      blockerReason: `EXECUTION_FAILED: ${errorMsg}`,
+      gitSha: preflight.gitSha,
+      worktreeClean: preflight.worktreeClean,
+      timestamp: new Date().toISOString(),
+      hardware: getHardwareSummary(),
+      os: `${platform()} ${arch()}`,
+      cpu: cpuModel,
+      ramGb,
+      nodeVersion: process.version,
+      providerRuntime: preflight.discoveredRuntime,
+      endpoint: options.endpoint,
+      logicalModelId,
+      servedModelId,
+      agentModelId: servedModelId,
+      fimModelId: options.fimModelId,
+      fimStrategy,
+      inferenceAuthorized: true,
+      endpointReachable: true,
+      requestedModelsAvailable: true,
+      warmupSucceeded: true,
+      measuredTasksExecuted: false,
+      agentTasks,
+      fimTasks,
+      agentSummary: {
+        total: agentTasks.length,
+        success: agentTasks.filter(t => t.success).length,
+        successRate: agentTasks.length > 0 ? agentTasks.filter(t => t.success).length / agentTasks.length : 0,
+        toolRequiredCount: 0,
+        toolRequiredSuccessCount: 0,
+        toolUseRate: 0,
+        medianLatencyMs: 0,
+        p95LatencyMs: 0,
+      },
+      fimSummary: {
+        total: fimTasks.length,
+        success: fimTasks.filter(t => t.success).length,
+        successRate: fimTasks.length > 0 ? fimTasks.filter(t => t.success).length / fimTasks.length : 0,
+        nonEmptyRate: 0,
+        structurallyValidRate: 0,
+        syntaxValidRate: 0,
+        emptyRate: 0,
+        medianLatencyMs: 0,
+        p95LatencyMs: 0,
+      },
+    }
+
+    if (options.outputDir) {
+      await writeArtifactFiles(options.outputDir, artifact)
+    }
+
+    return artifact
+  }
+
+  // 3. Compute summaries
   const agentLatencies = agentTasks.map(t => t.latencyMs)
   const fimLatencies = fimTasks.map(t => t.latencyMs)
 
@@ -883,25 +1366,30 @@ export async function runRealModelBenchmark(options: RealModelBenchmarkOptions):
   const fimStructurallyValid = fimTasks.filter(t => t.structurallyValid).length
   const fimEmpty = fimTasks.filter(t => t.emptyCompletion).length
 
-  const cpuModel = cpus()[0]?.model ?? "unknown"
-  const ramGb = Math.round(totalmem() / 1024 / 1024 / 1024)
-
   const artifact: BenchmarkArtifact = {
     schemaVersion: BENCHMARK_SCHEMA_VERSION,
-    gitSha: getCurrentGitSha(),
+    status: "EXECUTED",
+    executed: true,
+    gitSha: preflight.gitSha,
+    worktreeClean: preflight.worktreeClean,
     timestamp: new Date().toISOString(),
     hardware: getHardwareSummary(),
     os: `${platform()} ${arch()}`,
     cpu: cpuModel,
     ramGb,
     nodeVersion: process.version,
-    providerRuntime: discoveredRuntime,
+    providerRuntime: preflight.discoveredRuntime,
     endpoint: options.endpoint,
     logicalModelId,
     servedModelId,
     agentModelId: servedModelId,
     fimModelId: options.fimModelId,
     fimStrategy,
+    inferenceAuthorized: true,
+    endpointReachable: true,
+    requestedModelsAvailable: true,
+    warmupSucceeded: true,
+    measuredTasksExecuted: true,
     agentTasks,
     fimTasks,
     agentSummary: {
@@ -928,50 +1416,7 @@ export async function runRealModelBenchmark(options: RealModelBenchmarkOptions):
   }
 
   if (options.outputDir) {
-    await mkdir(options.outputDir, { recursive: true })
-    const baseName = `benchmark-${artifact.gitSha.slice(0, 8)}-${Date.now()}`
-    const jsonPath = join(options.outputDir, `${baseName}.json`)
-    await writeFile(jsonPath, JSON.stringify(artifact, null, 2), "utf-8")
-    console.error(`[benchmark] JSON artifact written: ${jsonPath}`)
-
-    const mdContent = [
-      `# Sprint 4E Real Model Benchmark Report`,
-      ``,
-      `- **Date:** ${artifact.timestamp}`,
-      `- **Git SHA:** \`${artifact.gitSha}\``,
-      `- **Hardware:** ${artifact.hardware}`,
-      `- **OS:** ${artifact.os}`,
-      `- **Node:** ${artifact.nodeVersion}`,
-      `- **Runtime:** ${artifact.providerRuntime}`,
-      `- **Endpoint:** \`${artifact.endpoint}\``,
-      `- **Logical Model:** \`${artifact.logicalModelId}\``,
-      `- **Served Model:** \`${artifact.servedModelId}\``,
-      `- **FIM Model:** \`${artifact.fimModelId}\``,
-      `- **FIM Strategy:** \`${artifact.fimStrategy}\``,
-      ``,
-      `## Agent Summary`,
-      `- **Total Tasks:** ${artifact.agentSummary.total}`,
-      `- **Success Count:** ${artifact.agentSummary.success}`,
-      `- **Success Rate:** ${(artifact.agentSummary.successRate * 100).toFixed(1)}%`,
-      `- **Tool-Required Tasks:** ${artifact.agentSummary.toolRequiredSuccessCount}/${artifact.agentSummary.toolRequiredCount}`,
-      `- **Median Latency:** ${artifact.agentSummary.medianLatencyMs.toFixed(0)} ms`,
-      `- **P95 Latency:** ${artifact.agentSummary.p95LatencyMs.toFixed(0)} ms`,
-      ``,
-      `## FIM Summary`,
-      `- **Total Tasks:** ${artifact.fimSummary.total}`,
-      `- **Success Count:** ${artifact.fimSummary.success}`,
-      `- **Success Rate:** ${(artifact.fimSummary.successRate * 100).toFixed(1)}%`,
-      `- **Non-Empty Rate:** ${(artifact.fimSummary.nonEmptyRate * 100).toFixed(1)}%`,
-      `- **Structurally-Valid Rate:** ${(artifact.fimSummary.structurallyValidRate * 100).toFixed(1)}%`,
-      `- **Empty Rate:** ${(artifact.fimSummary.emptyRate * 100).toFixed(1)}%`,
-      `- **Median Latency:** ${artifact.fimSummary.medianLatencyMs.toFixed(0)} ms`,
-      `- **P95 Latency:** ${artifact.fimSummary.p95LatencyMs.toFixed(0)} ms`,
-      ``,
-    ].join("\n")
-
-    const mdPath = join(options.outputDir, `${baseName}.md`)
-    await writeFile(mdPath, mdContent, "utf-8")
-    console.error(`[benchmark] Markdown report written: ${mdPath}`)
+    await writeArtifactFiles(options.outputDir, artifact)
   }
 
   return artifact
@@ -979,27 +1424,22 @@ export async function runRealModelBenchmark(options: RealModelBenchmarkOptions):
 
 /**
  * CLI entry point for `npm run eval:models`.
- * Checks the inference gate first — BLOCKED_WITH_EVIDENCE if not authorized.
  */
 export async function benchmarkCli(): Promise<void> {
   const gate = checkInferenceGate()
-  if (!gate.authorized) {
-    console.log(inferenceGateBlockedMessage())
-    process.exit(0)
-  }
-
   const endpoint = gate.endpoint ?? process.env["OPEN_VS_CODE_MODEL_ENDPOINT"] ?? "http://127.0.0.1:11434"
   const logicalModel = process.env["OPEN_VS_CODE_LOGICAL_MODEL"] ?? "qwen2.5-coder-7b"
   const agentModel = process.env["OPEN_VS_CODE_AGENT_MODEL"] ?? "qwen2.5-coder:7b"
   const fimModel = process.env["OPEN_VS_CODE_FIM_MODEL"] ?? "qwen2.5-coder:7b"
   const fimStrategy = (process.env["OPEN_VS_CODE_FIM_STRATEGY"] ?? "qwen") as FimStrategy
-  const outputDir = process.env["OPEN_VS_CODE_BENCHMARK_OUTPUT"] ?? join(process.cwd(), "benchmark-results")
+  const outputDir = process.env["OPEN_VS_CODE_BENCHMARK_OUTPUT"] ?? getCanonicalEvalsDir()
 
-  console.log(`[benchmark] Starting Sprint 4E real model benchmark`)
+  console.log(`[benchmark] Starting Sprint 4E real model benchmark harness`)
   console.log(`[benchmark] Endpoint: ${endpoint}`)
   console.log(`[benchmark] Logical model: ${logicalModel}`)
   console.log(`[benchmark] Served model: ${agentModel}`)
   console.log(`[benchmark] FIM model: ${fimModel} (strategy: ${fimStrategy})`)
+  console.log(`[benchmark] Output dir: ${outputDir}`)
 
   try {
     const artifact = await runRealModelBenchmark({
@@ -1012,7 +1452,29 @@ export async function benchmarkCli(): Promise<void> {
       outputDir,
     })
 
+    if (artifact.status === "BLOCKED_WITH_EVIDENCE") {
+      console.log("\n=== BENCHMARK BLOCKED WITH EVIDENCE ===")
+      console.log(`Status: ${artifact.status}`)
+      console.log(`Blocker Reason: ${artifact.blockerReason}`)
+      console.log(`Inference Authorized: ${artifact.inferenceAuthorized}`)
+      console.log(`Endpoint Reachable: ${artifact.endpointReachable}`)
+      console.log(`Requested Models Available: ${artifact.requestedModelsAvailable}`)
+      console.log(`Warmup Succeeded: ${artifact.warmupSucceeded}`)
+      console.log(`Worktree Clean: ${artifact.worktreeClean}`)
+      console.log(`Measured Tasks Executed: ${artifact.measuredTasksExecuted} (zero fixtures run under blocked preflight)`)
+      console.log(`Diagnostic Artifact: ${outputDir}/`)
+      return
+    }
+
+    if (artifact.status === "FAILED") {
+      console.error("\n=== BENCHMARK EXECUTION FAILED ===")
+      console.error(`Status: ${artifact.status}`)
+      console.error(`Blocker/Error: ${artifact.blockerReason}`)
+      process.exit(1)
+    }
+
     console.log("\n=== BENCHMARK RESULTS ===")
+    console.log(`Status: ${artifact.status}`)
     console.log(`Runtime: ${artifact.providerRuntime}`)
     console.log(`Agent tasks: ${artifact.agentSummary.success}/${artifact.agentSummary.total} (${(artifact.agentSummary.successRate * 100).toFixed(1)}%)`)
     console.log(`Tool-required tasks: ${artifact.agentSummary.toolRequiredSuccessCount}/${artifact.agentSummary.toolRequiredCount}`)
@@ -1022,8 +1484,18 @@ export async function benchmarkCli(): Promise<void> {
     console.log(`FIM median latency: ${artifact.fimSummary.medianLatencyMs.toFixed(0)}ms`)
     console.log(`FIM empty rate: ${(artifact.fimSummary.emptyRate * 100).toFixed(1)}%`)
     console.log(`\nArtifact: ${outputDir}/`)
-    console.log(`Git SHA: ${artifact.gitSha}`)
+    console.log(`Git SHA: ${artifact.gitSha} (clean: ${artifact.worktreeClean})`)
     console.log(`Hardware: ${artifact.hardware}`)
+
+    const closureCheck = verifyPermanentClosure(artifact)
+    if (closureCheck.satisfiesPermanentClosure) {
+      console.log("\n>>> SPRINT 4E PERMANENT CLOSURE REQUIREMENTS SATISFIED <<<")
+    } else {
+      console.log("\n>>> BENCHMARK EXECUTED BUT DID NOT SATISFY PERMANENT CLOSURE <<<")
+      for (const reason of closureCheck.reasons) {
+        console.log(` - ${reason}`)
+      }
+    }
   } catch (error) {
     console.error("[benchmark] ERROR:", error instanceof Error ? error.message : String(error))
     process.exit(1)

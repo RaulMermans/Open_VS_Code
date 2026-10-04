@@ -29,6 +29,7 @@
 | [ADR-025](docs/adrs/ADR-025-checkpoints-recovery.md) | Durable Checkpoints, Recovery & Safe Rollback | Accepted |
 | [ADR-026](docs/adrs/ADR-026-large-repository-performance.md) | Large-Repository Performance & Hardening | Accepted |
 | [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) | Real Local Models, Canonical Endpoints & Adaptive Routing | Accepted |
+| [ADR-028](docs/adrs/ADR-028-desktop-shell-and-packaging-strategy.md) | Desktop Shell and Packaging Strategy (Code-OSS vs VSCodium) | Accepted |
 
 Decision status changes belong in the ADR and this index.
 
@@ -46,3 +47,4 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 4C**: Durable Checkpoints, Recovery & Safe Rollback complete (ADR-025).
 - **Sprint 4D**: Large-Repository Performance & Hardening complete (ADR-026).
 - **Sprint 4E / 4E.1 / 4E.2**: Real Local Models, Production FIM & Evidence Closure (ADR-027) — Implementation Complete (Real-Host Evidence Blocked).
+- **Sprint 4F**: Desktop Shell and Packaging Strategy (ADR-028) — Accepted.

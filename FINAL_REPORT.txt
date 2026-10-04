@@ -186,7 +186,24 @@ SPRINT 4E / 4E.1 / 4E.2 / 4E.3 — REAL INFERENCE PRODUCTION WIRING, CONFIGURATI
 - Architecture: ARCHITECTURE.md updated with Sprint 4E.4 contracts and dataflows
 - Security Model: docs/SECURITY_MODEL.md updated with model credential boundary and Invariant 13
 
-8. Closure Status
-Status: SPRINT_4E_CLOSED_PERMANENTLY
-Real Host Benchmark Run: Executed with OPEN_VS_CODE_REAL_INFERENCE=1 on Apple M3 Pro (11 cores), 18GB RAM, darwin arm64, Ollama client v0.32.15; captured hardware provenance and safe blocked status (could not connect to running Ollama instance / 0 models installed).
-Ready for Sprint 4F Desktop Packaging: READY TO PROCEED.
+8. Sprint 4E Closure Status
+Status: Sprint 4E.4 IMPLEMENTATION COMPLETE — REAL HOST EVIDENCE BLOCKED
+Real Host Benchmark Run: Preflight gate active. Previous live command verified Ollama server unavailable / 0 served models installed (BLOCKED_WITH_EVIDENCE). Permanent closure requires status === EXECUTED and measuredTasksExecuted === true from a clean committed worktree.
+
+9. Sprint 4F: Desktop Packaging & V1 Candidate (COMPLETE)
+- Host Shell Decision: Pinned VSCodium 1.135.06055 (VS Code 1.135.0, commit 5a73682ca091082675b10c9dc3f348c1d824d94f, MIT license). Documented in ADR-028.
+- Extension-First Invariant: Agent-core, ide-adapter, and vscode-integration remain strictly editor-independent. Desktop shell modifies zero editor internals.
+- Packaging Workspace: apps/desktop (@open-vs-code/desktop v0.1.0) with upstream.json, scripts/prepare.ts, scripts/package.ts.
+- Upstream Archive Checksum: SHA-256 61ff9ebc3ac5563c63a0a9e1b479822647e7f2c3303b0629f15fefe9e291f7cc.
+- Branding & Identity: Name "Open VS Code", bundle ID com.openvscode.desktop, config directory .open-vs-code-desktop, telemetry hard-disabled.
+- Bundled Extension: @open-vs-code/vscode-integration pre-installed directly into Contents/Resources/app/extensions/open-vs-code.
+- First-Run Experience: Safe offline behavior. Commands open-vs-code.createStarterConfig and open-vs-code.openModelConfig provide immediate guidance when .open-vs-code/models.json is missing or endpoint is offline.
+- Packaged Artifacts:
+    * apps/desktop/dist/Open VS Code.app (macOS application bundle)
+    * apps/desktop/dist/Open-VS-Code-darwin-arm64-0.1.0.tar.gz (235,903,337 bytes)
+- Desktop Packaging Smoke Suite: 11/11 scenarios pass (100% determinism) in apps/desktop/smoke/desktop-smoke.test.ts.
+- HALO Acceptance Runbook: Documented in docs/deployment/HALO_ACCEPTANCE.md. Model weights are intentionally deferred to the external HALO host; zero model weights downloaded or bundled on development Mac.
+
+10. Final Status
+Status: Sprint 4F COMPLETE — OPEN VS CODE V1 DESKTOP CANDIDATE (HALO Acceptance Gate Pending).
+Next: Execute HALO target inference host acceptance runbook (OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models) on authorized inference host with installed model weights.

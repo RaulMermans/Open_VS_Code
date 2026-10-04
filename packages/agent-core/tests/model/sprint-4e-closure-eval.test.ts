@@ -35,13 +35,36 @@ import { calculateBudget } from "../../src/context/budget.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
 import type { EditorSnapshot } from "../../src/autocomplete/context-builder.ts"
-import { validateStructuralSyntax } from "../evals/real-model-benchmark.ts"
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import {
+  validateStructuralSyntax,
+  performBenchmarkPreflight,
+  runRealModelBenchmark,
+  verifyPermanentClosure,
+  type BenchmarkArtifact,
+} from "../evals/real-model-benchmark.ts"
 import { RoutedModelGateway, StaticHealthChecker } from "../../src/model/routed-gateway.ts"
 
 const fakeFetchMalformed = async () => new Response("<html>Gateway Timeout</html>", {
   status: 504,
   headers: { "content-type": "text/html" },
 })
+
+async function withMockModelServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  fn: (baseUrl: string) => Promise<void>
+): Promise<void> {
+  const server = createServer(handler)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const addr = server.address()
+  if (!addr || typeof addr === "string") throw new Error("Could not get server port")
+  const baseUrl = `http://127.0.0.1:${addr.port}`
+  try {
+    await fn(baseUrl)
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
 
 function response(content: string, toolCalls?: ModelResponse["toolCalls"]): ModelResponse {
   return {
@@ -2275,6 +2298,380 @@ describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation",
         () => assert.equal(profile?.successCount, 1, "Negative comparator: unverified run cannot count as success"),
         /ERR_ASSERTION/
       )
+    })
+  })
+
+  describe("Sprint 4E.4 Closure Gates — Preflight Acceptance & Execution Status", () => {
+    test("1. Unauthorized inference → BLOCKED", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      try {
+        const preflight = await performBenchmarkPreflight({
+          endpoint: "http://127.0.0.1:11434",
+          agentModelId: "qwen2.5-coder:7b",
+          fimModelId: "qwen2.5-coder:7b",
+          allowDirtyWorktree: true,
+        })
+        assert.equal(preflight.status, "BLOCKED_WITH_EVIDENCE")
+        assert.equal(preflight.inferenceAuthorized, false)
+        assert.match(preflight.blockerReason ?? "", /UNAUTHORIZED_INFERENCE/)
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+      }
+    })
+
+    test("2. Unreachable endpoint → BLOCKED", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      process.env["OPEN_VS_CODE_REAL_INFERENCE"] = "1"
+      try {
+        const preflight = await performBenchmarkPreflight({
+          endpoint: "http://127.0.0.1:59999",
+          agentModelId: "qwen2.5-coder:7b",
+          fimModelId: "qwen2.5-coder:7b",
+          allowDirtyWorktree: true,
+        })
+        assert.equal(preflight.status, "BLOCKED_WITH_EVIDENCE")
+        assert.equal(preflight.inferenceAuthorized, true)
+        assert.equal(preflight.endpointReachable, false)
+        assert.match(preflight.blockerReason ?? "", /ENDPOINT_UNREACHABLE/)
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+        else delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      }
+    })
+
+    test("3. /v1/models failure → BLOCKED", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      process.env["OPEN_VS_CODE_REAL_INFERENCE"] = "1"
+      try {
+        await withMockModelServer((req, res) => {
+          if (req.url === "/v1/models") {
+            res.writeHead(503, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({ error: "Service Unavailable" }))
+          } else {
+            res.writeHead(404)
+            res.end()
+          }
+        }, async (baseUrl) => {
+          const preflight = await performBenchmarkPreflight({
+            endpoint: baseUrl,
+            agentModelId: "qwen2.5-coder:7b",
+            fimModelId: "qwen2.5-coder:7b",
+            allowDirtyWorktree: true,
+          })
+          assert.equal(preflight.status, "BLOCKED_WITH_EVIDENCE")
+          assert.equal(preflight.endpointReachable, true)
+          assert.equal(preflight.modelsEndpointSuccess, false)
+          assert.match(preflight.blockerReason ?? "", /MODELS_ENDPOINT_FAILED/)
+        })
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+        else delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      }
+    })
+
+    test("4. Requested model missing → BLOCKED", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      process.env["OPEN_VS_CODE_REAL_INFERENCE"] = "1"
+      try {
+        await withMockModelServer((req, res) => {
+          if (req.url === "/v1/models") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({
+              object: "list",
+              data: [{ id: "llama3:8b", object: "model" }],
+            }))
+          } else {
+            res.writeHead(404)
+            res.end()
+          }
+        }, async (baseUrl) => {
+          const preflight = await performBenchmarkPreflight({
+            endpoint: baseUrl,
+            agentModelId: "qwen2.5-coder:7b",
+            fimModelId: "qwen2.5-coder:7b",
+            allowDirtyWorktree: true,
+          })
+          assert.equal(preflight.status, "BLOCKED_WITH_EVIDENCE")
+          assert.equal(preflight.modelsEndpointSuccess, true)
+          assert.equal(preflight.requestedModelsAvailable, false)
+          assert.match(preflight.blockerReason ?? "", /MODEL_NOT_SERVED/)
+          assert.match(preflight.blockerReason ?? "", /qwen2.5-coder:7b/)
+        })
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+        else delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      }
+    })
+
+    test("5. Warmup inference failure → BLOCKED", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      process.env["OPEN_VS_CODE_REAL_INFERENCE"] = "1"
+      try {
+        await withMockModelServer((req, res) => {
+          if (req.url === "/v1/models") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({
+              object: "list",
+              data: [{ id: "qwen2.5-coder:7b", object: "model" }],
+            }))
+          } else if (req.url === "/v1/chat/completions") {
+            res.writeHead(500, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({ error: "CUDA out of memory" }))
+          } else {
+            res.writeHead(404)
+            res.end()
+          }
+        }, async (baseUrl) => {
+          const preflight = await performBenchmarkPreflight({
+            endpoint: baseUrl,
+            agentModelId: "qwen2.5-coder:7b",
+            fimModelId: "qwen2.5-coder:7b",
+            allowDirtyWorktree: true,
+          })
+          assert.equal(preflight.status, "BLOCKED_WITH_EVIDENCE")
+          assert.equal(preflight.requestedModelsAvailable, true)
+          assert.equal(preflight.warmupSucceeded, false)
+          assert.match(preflight.blockerReason ?? "", /WARMUP_FAILED/)
+        })
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+        else delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      }
+    })
+
+    test("6. Blocked benchmark executes zero measured tasks", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      try {
+        const artifact = await runRealModelBenchmark({
+          endpoint: "http://127.0.0.1:11434",
+          agentModelId: "qwen2.5-coder:7b",
+          fimModelId: "qwen2.5-coder:7b",
+          allowDirtyWorktree: true,
+        })
+        assert.equal(artifact.status, "BLOCKED_WITH_EVIDENCE")
+        assert.equal(artifact.executed, false)
+        assert.equal(artifact.measuredTasksExecuted, false)
+        assert.equal(artifact.agentTasks.length, 0, "Zero agent tasks must run when blocked")
+        assert.equal(artifact.fimTasks.length, 0, "Zero FIM tasks must run when blocked")
+        assert.equal(artifact.agentSummary.total, 0)
+        assert.equal(artifact.fimSummary.total, 0)
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+      }
+    })
+
+    test("7. Blocked benchmark cannot satisfy permanent closure", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      try {
+        const artifact = await runRealModelBenchmark({
+          endpoint: "http://127.0.0.1:11434",
+          agentModelId: "qwen2.5-coder:7b",
+          fimModelId: "qwen2.5-coder:7b",
+          allowDirtyWorktree: true,
+        })
+        const closure = verifyPermanentClosure(artifact)
+        assert.equal(closure.satisfiesPermanentClosure, false)
+        assert.ok(closure.reasons.some(r => r.includes("must be 'EXECUTED'")))
+        assert.ok(closure.reasons.some(r => r.includes("Measured tasks were not executed")))
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+      }
+    })
+
+    test("8. Dirty worktree cannot satisfy permanent closure", async () => {
+      // 8a: Default run without allowDirtyWorktree blocks immediately
+      const blockedPreflight = await performBenchmarkPreflight({
+        endpoint: "http://127.0.0.1:11434",
+        agentModelId: "qwen2.5-coder:7b",
+        fimModelId: "qwen2.5-coder:7b",
+        allowDirtyWorktree: false,
+        gitProvenanceOverride: { gitSha: "abc1234", worktreeClean: false, dirtyFiles: ["src/file.ts"] },
+      })
+      assert.equal(blockedPreflight.status, "BLOCKED_WITH_EVIDENCE")
+      assert.match(blockedPreflight.blockerReason ?? "", /DIRTY_WORKTREE/)
+
+      // 8b: Artifact with worktreeClean: false can NEVER satisfy permanent closure
+      const syntheticArtifact: BenchmarkArtifact = {
+        schemaVersion: 3,
+        status: "EXECUTED",
+        executed: true,
+        gitSha: "abc1234",
+        worktreeClean: false,
+        timestamp: new Date().toISOString(),
+        hardware: "mock",
+        os: "mock",
+        cpu: "mock",
+        ramGb: 16,
+        nodeVersion: process.version,
+        providerRuntime: "mock",
+        endpoint: "http://127.0.0.1:11434",
+        logicalModelId: "qwen2.5-coder-7b",
+        servedModelId: "qwen2.5-coder:7b",
+        agentModelId: "qwen2.5-coder:7b",
+        fimModelId: "qwen2.5-coder:7b",
+        fimStrategy: "qwen",
+        inferenceAuthorized: true,
+        endpointReachable: true,
+        requestedModelsAvailable: true,
+        warmupSucceeded: true,
+        measuredTasksExecuted: true,
+        agentTasks: Array.from({ length: 10 }, (_, i) => ({
+          taskId: `T00${i + 1}`,
+          name: `Task ${i + 1}`,
+          category: "coding",
+          runtimeCompleted: true,
+          taskCorrect: true,
+          grounded: true,
+          requiredToolUsed: true,
+          success: true,
+          groundedSuccess: true,
+          latencyMs: 100,
+          turns: 1,
+          toolCallsCount: 1,
+          validToolCallsCount: 1,
+          selectedToolNames: ["read_file"],
+          responseLength: 50,
+          responseSha256: "abc",
+        })),
+        fimTasks: Array.from({ length: 8 }, (_, i) => ({
+          fixtureId: `F00${i + 1}`,
+          language: "typescript",
+          success: true,
+          exactMatch: true,
+          nonEmpty: true,
+          structurallyValid: true,
+          syntaxValid: true,
+          latencyMs: 50,
+          emptyCompletion: false,
+          completionLength: 20,
+          completionSha256: "def",
+        })),
+        agentSummary: {
+          total: 10,
+          success: 10,
+          successRate: 1.0,
+          toolRequiredCount: 4,
+          toolRequiredSuccessCount: 4,
+          toolUseRate: 1.0,
+          medianLatencyMs: 100,
+          p95LatencyMs: 100,
+        },
+        fimSummary: {
+          total: 8,
+          success: 8,
+          successRate: 1.0,
+          nonEmptyRate: 1.0,
+          structurallyValidRate: 1.0,
+          syntaxValidRate: 1.0,
+          emptyRate: 0.0,
+          medianLatencyMs: 50,
+          p95LatencyMs: 50,
+        },
+      }
+
+      const closure = verifyPermanentClosure(syntheticArtifact)
+      assert.equal(closure.satisfiesPermanentClosure, false, "Dirty worktree must fail permanent closure")
+      assert.ok(closure.reasons.some(r => r.includes("Working tree was not clean")))
+    })
+
+    test("9. Valid reachable mock server + model → EXECUTED", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      process.env["OPEN_VS_CODE_REAL_INFERENCE"] = "1"
+      try {
+        await withMockModelServer((req, res) => {
+          if (req.url === "/v1/models") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({
+              object: "list",
+              data: [
+                { id: "qwen2.5-coder:7b", object: "model" },
+              ],
+            }))
+          } else if (req.url === "/v1/chat/completions") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({
+              id: "chatcmpl-mock",
+              object: "chat.completion",
+              choices: [{ message: { role: "assistant", content: "READY" } }],
+            }))
+          } else if (req.url === "/api/version") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({ version: "0.4.0" }))
+          } else {
+            res.writeHead(404)
+            res.end()
+          }
+        }, async (baseUrl) => {
+          const preflight = await performBenchmarkPreflight({
+            endpoint: baseUrl,
+            agentModelId: "qwen2.5-coder:7b",
+            fimModelId: "qwen2.5-coder:7b",
+            allowDirtyWorktree: true,
+          })
+          assert.equal(preflight.status, "EXECUTED")
+          assert.equal(preflight.inferenceAuthorized, true)
+          assert.equal(preflight.endpointReachable, true)
+          assert.equal(preflight.modelsEndpointSuccess, true)
+          assert.equal(preflight.requestedModelsAvailable, true)
+          assert.equal(preflight.warmupSucceeded, true)
+        })
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+        else delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      }
+    })
+
+    test("10. EXECUTED state allows measured tasks to begin", async () => {
+      const prev = process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      process.env["OPEN_VS_CODE_REAL_INFERENCE"] = "1"
+      try {
+        await withMockModelServer((req, res) => {
+          if (req.url === "/v1/models") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({
+              object: "list",
+              data: [{ id: "qwen2.5-coder:7b", object: "model" }],
+            }))
+          } else if (req.url === "/v1/chat/completions") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({
+              id: "chatcmpl-mock",
+              object: "chat.completion",
+              choices: [{ message: { role: "assistant", content: "READY" } }],
+            }))
+          } else if (req.url === "/api/version") {
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({ version: "0.4.0" }))
+          } else {
+            res.writeHead(404)
+            res.end()
+          }
+        }, async (baseUrl) => {
+          const artifact = await runRealModelBenchmark({
+            endpoint: baseUrl,
+            agentModelId: "qwen2.5-coder:7b",
+            fimModelId: "qwen2.5-coder:7b",
+            allowDirtyWorktree: true,
+            customTasks: {
+              agentTasks: [],
+              fimTasks: [],
+            },
+          })
+          assert.equal(artifact.status, "EXECUTED")
+          assert.equal(artifact.executed, true)
+          assert.equal(artifact.measuredTasksExecuted, true)
+          assert.equal(artifact.inferenceAuthorized, true)
+          assert.equal(artifact.endpointReachable, true)
+          assert.equal(artifact.requestedModelsAvailable, true)
+          assert.equal(artifact.warmupSucceeded, true)
+        })
+      } finally {
+        if (prev !== undefined) process.env["OPEN_VS_CODE_REAL_INFERENCE"] = prev
+        else delete process.env["OPEN_VS_CODE_REAL_INFERENCE"]
+      }
     })
   })
 })

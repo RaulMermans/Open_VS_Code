@@ -9,6 +9,10 @@ node_modules/
 dist/
 ts-dist/
 *.tsbuildinfo
+apps/desktop/cache/
+apps/desktop/staging/
+apps/desktop/dist/
+
 
 # OS and Editor metadata
 .DS_Store

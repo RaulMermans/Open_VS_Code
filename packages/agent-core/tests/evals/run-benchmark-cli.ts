@@ -16,7 +16,6 @@
 
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { checkInferenceGate, inferenceGateBlockedMessage } from "../../src/model/inference-gate.ts"
 import { benchmarkCli } from "./real-model-benchmark.ts"
 
 export function getCanonicalEvalsDir(): string {
@@ -26,12 +25,6 @@ export function getCanonicalEvalsDir(): string {
 }
 
 export async function main(): Promise<void> {
-  const gate = checkInferenceGate()
-  if (!gate.authorized) {
-    console.log(inferenceGateBlockedMessage())
-    return
-  }
-
   await benchmarkCli()
 }
 

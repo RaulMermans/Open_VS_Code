@@ -5,13 +5,18 @@
   "description": "Local-first AI coding agent for open-weight models",
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
+    "desktop:prepare": "npm --workspace=@open-vs-code/desktop run prepare",
+    "desktop:build": "npm --workspace=@open-vs-code/desktop run build",
+    "desktop:package": "npm --workspace=@open-vs-code/desktop run package",
+    "desktop:smoke": "npm --workspace=@open-vs-code/desktop run smoke",
     "eval:model": "npm --workspace=@open-vs-code/agent-core run eval:model",
     "eval:models": "npm --workspace=@open-vs-code/agent-core run eval:models",
     "eval:coding": "npm --workspace=@open-vs-code/agent-core run eval:coding",
