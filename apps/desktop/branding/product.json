@@ -24,5 +24,11 @@
     "distribution": "desktop",
     "bundledExtension": "open-vs-code.vscode-integration",
     "localFirst": true
-  }
+  },
+  "builtInExtensions": [
+    {
+      "name": "open-vs-code.vscode-integration",
+      "version": "0.1.0"
+    }
+  ]
 }

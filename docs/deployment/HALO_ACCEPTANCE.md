@@ -6,30 +6,61 @@
 
 ---
 
-## 1. Overview & Separation of Concerns
+## 1. Authoritative Architecture & Topology Reconciliation
 
-Sprint 4F completes the Open VS Code Desktop Candidate application without requiring local model weights or inference execution on the development workstation.
+Sprint 4F completes the Open VS Code Desktop Candidate application without requiring local model weights or inference execution on the development workstation. Real open-weight model execution and benchmark validation belong exclusively to **HALO target-host acceptance**.
 
-Real open-weight model execution and benchmark validation belong exclusively to **HALO target-host acceptance**.
+Open VS Code implements a reconciled, authoritative dual-path topology:
 
-HALO serves as an external, private, high-performance OpenAI-compatible inference host accessible over local network (LAN) or local loopback. Open VS Code communicates with HALO using standard HTTP OpenAI-compatible protocol (`/v1/models`, `/v1/chat/completions`, `/v1/completions`).
+### A. HALO Control / Capability Path (Governed by ADR-020)
+When configured with `open-vs-code.inferenceBackend = "halo"`:
+```text
+Open VS Code extension
+  → HaloProvider
+  → HALO Core capability API (POST /inference/capability/chat)
+  → HALO runtime model routing (coding vs. reasoning)
+```
+- Authenticates using Bearer token from VS Code SecretStorage (`halo.appToken` or `HALO_APP_TOKEN_OPEN_VSCODE`).
+- Deterministically maps agent modes to capabilities (`ASK`/`BUILD` → `coding`, `PLAN`/`DEBUG`/`REVIEW` → `reasoning`).
+- Invariant: Failures on the HALO Core path never fall back to standalone-local inference.
 
-**No HALO-specific transport or proprietary SDK is bundled inside the editor.**
+### B. FIM / Autocomplete Path (Governed by ADR-027)
+Editor-native inline completion (FIM) uses direct OpenAI-compatible routing:
+```text
+Open VS Code extension
+  → AutocompleteController
+  → AutocompleteService
+  → Production Gateway
+  → ModelRouter
+  → LocalFimProvider
+  → POST /v1/completions (hosted on HALO machine)
+```
+- Configured via `.open-vs-code/models.json`.
+- Uses standard FIM prompt formatting (Qwen / DeepSeek / StarCoder strategies).
+
+### C. Standalone Local Path (Governed by ADR-027)
+When `open-vs-code.inferenceBackend = "standalone-local"`:
+- Chat and reasoning query direct OpenAI-compatible `/v1/chat/completions` endpoints hosted on local or LAN inference servers.
 
 ---
 
-## 2. Prerequisites
+## 2. Target Platform & Prerequisites
+
+### Designated Target Hardware
+- **Target**: AMD Halo host
+- **Runtime**: Operator-selected supported local inference runtime (e.g. Ollama, llama.cpp server, or vLLM)
+- **Served Model**: Determined during HALO provisioning (baseline: `qwen2.5-coder:7b`)
 
 Before initiating HALO target-host acceptance, verify:
 
 1. **Hardware Availability**:
-   - Dedicated HALO host powered on with Apple Silicon (e.g. M-series Max/Ultra) or Linux NVIDIA GPU cluster.
+   - Dedicated AMD Halo host powered on and accessible on the local network.
 2. **Inference Runtime Running**:
-   - Supported OpenAI-compatible serving engine active: Ollama, vLLM, or llama.cpp server.
+   - Supported local inference engine active on the AMD Halo host exposing OpenAI-compatible endpoints and/or HALO Core capability daemon.
 3. **Required Open-Weight Model Weights Installed by Operator**:
    - Primary coding model: `qwen2.5-coder:7b` (or designated quantized GGUF variant).
    - FIM / Autocomplete capability confirmed on the served model.
-   - Weights installed via operator CLI (e.g., `ollama pull qwen2.5-coder:7b`); never downloaded by Open VS Code.
+   - Weights installed via operator CLI; never downloaded by Open VS Code.
 4. **Network Connectivity**:
    - HTTP reachability from the Open VS Code client machine to `http://HALO_HOST:PORT` verified (e.g. `curl -s http://HALO_HOST:PORT/v1/models`).
 5. **Operator Inference Authorization**:

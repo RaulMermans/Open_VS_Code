@@ -86,18 +86,20 @@ The desktop shell is **not** responsible for and contains **no**:
 
 ### 3. Shallow Packaging Workspace (`apps/desktop`)
 
-Packaging is implemented in `apps/desktop` with four canonical phases:
+Packaging is implemented in `apps/desktop` with a pinned, repeatable packaging process:
 1. `npm run desktop:prepare` (`apps/desktop/scripts/prepare.ts`): Downloads the pinned upstream archive (if not cached), validates the SHA-256 checksum, and unpacks the shell into a staging directory.
 2. `npm run desktop:build`: Bundles `@open-vs-code/vscode-integration` into production CommonJS bundle (`dist/extension.js`).
 3. `npm run desktop:package` (`apps/desktop/scripts/package.ts`):
-   - Copies the shell to `Open VS Code.app`.
+   - Copies the shell to isolated temporary staging.
    - Modifies `Contents/Info.plist` (CFBundleName: `Open VS Code`, CFBundleIdentifier: `com.openvscode.desktop`).
-   - Replaces `Contents/Resources/app/product.json` with Open VS Code metadata (nameShort: `Open VS Code`, dataFolderName: `.open-vs-code-desktop`, telemetry: `false`).
-   - Copies the Open VS Code icon.
-   - Bundles the compiled extension into `Contents/Resources/app/extensions/open-vs-code/`.
+   - Replaces `Contents/Resources/app/product.json` with Open VS Code metadata (nameShort: `Open VS Code`, dataFolderName: `.open-vs-code-desktop`, telemetry: `false`, `builtInExtensions: [{ name: "open-vs-code.vscode-integration", version: "0.1.0" }]`).
+   - Renames all macOS Electron helper bundles to match CFBundleName (`Open VS Code Helper.app`, `(GPU).app`, `(Plugin).app`, `(Renderer).app`).
+   - Bundles the compiled extension into `Contents/Resources/app/extensions/open-vs-code.vscode-integration/` (with `open-vs-code` backward-compatibility symlink).
    - Replaces/renames the executable binary to `Open VS Code`.
-   - Produces clean local distribution artifacts (`Open VS Code.app` and archive).
-4. `npm run desktop:smoke` (`apps/desktop/smoke/desktop-smoke.test.ts`): Runs automated end-to-end smoke verification against a deterministic mock OpenAI-compatible endpoint.
+   - Ad-hoc signs the application bundle (`codesign --force --deep --sign -`) and verifies strictly (`codesign --verify --deep --strict`).
+   - Produces clean local distribution artifacts (`Open VS Code.app` and `Open-VS-Code-darwin-arm64-0.1.0.tar.gz`).
+4. `npm run desktop:smoke` (`apps/desktop/smoke/desktop-smoke.test.ts`): Runs automated smoke verification (Category A build invariants, Category B unit contracts, Category D packaged integration).
+5. `npm run desktop:accept` (`apps/desktop/smoke/desktop-runtime-acceptance.test.ts`): Category C real desktop runtime acceptance verifying real GUI launch/shutdown, real VSCodium extension host discovery and command registration, and clean archive verification.
 
 ### 4. What Is Intentionally NOT Forked
 
