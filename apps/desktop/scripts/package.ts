@@ -94,6 +94,62 @@ export async function packageOpenVSCode(): Promise<PackageResult> {
     }
   }
 
+  // 5b. Rename helper apps in Contents/Frameworks so Electron macOS can find them
+  const frameworksDir = join(tempAppPath, 'Contents', 'Frameworks');
+  const helperMappings = [
+    {
+      origApp: 'VSCodium Helper.app',
+      newApp: 'Open VS Code Helper.app',
+      origExe: 'VSCodium Helper',
+      newExe: 'Open VS Code Helper',
+      bundleId: 'com.openvscode.helper',
+    },
+    {
+      origApp: 'VSCodium Helper (GPU).app',
+      newApp: 'Open VS Code Helper (GPU).app',
+      origExe: 'VSCodium Helper (GPU)',
+      newExe: 'Open VS Code Helper (GPU)',
+      bundleId: 'com.openvscode.helper.gpu',
+    },
+    {
+      origApp: 'VSCodium Helper (Plugin).app',
+      newApp: 'Open VS Code Helper (Plugin).app',
+      origExe: 'VSCodium Helper (Plugin)',
+      newExe: 'Open VS Code Helper (Plugin)',
+      bundleId: 'com.openvscode.helper.plugin',
+    },
+    {
+      origApp: 'VSCodium Helper (Renderer).app',
+      newApp: 'Open VS Code Helper (Renderer).app',
+      origExe: 'VSCodium Helper (Renderer)',
+      newExe: 'Open VS Code Helper (Renderer)',
+      bundleId: 'com.openvscode.helper.renderer',
+    },
+  ];
+
+  for (const h of helperMappings) {
+    const oldAppPath = join(frameworksDir, h.origApp);
+    const newAppPath = join(frameworksDir, h.newApp);
+    if (existsSync(oldAppPath)) {
+      execSync(`mv "${oldAppPath}" "${newAppPath}"`);
+      const oldExe = join(newAppPath, 'Contents', 'MacOS', h.origExe);
+      const newExe = join(newAppPath, 'Contents', 'MacOS', h.newExe);
+      if (existsSync(oldExe)) {
+        execSync(`mv "${oldExe}" "${newExe}"`);
+      }
+      const helperPlist = join(newAppPath, 'Contents', 'Info.plist');
+      if (existsSync(helperPlist)) {
+        let content = readFileSync(helperPlist, 'utf8');
+        content = content.replace(new RegExp(h.origExe, 'g'), h.newExe);
+        content = content.replace(
+          /<key>CFBundleIdentifier<\/key>\s*<string>[^<]*<\/string>/,
+          `<key>CFBundleIdentifier</key>\n\t<string>${h.bundleId}</string>`
+        );
+        writeFileSync(helperPlist, content, 'utf8');
+      }
+    }
+  }
+
   // Configure bin/open-vs-code CLI launcher
   const binDir = join(tempAppPath, 'Contents', 'Resources', 'app', 'bin');
   const openVsCodeCliPath = join(binDir, 'open-vs-code');
@@ -140,7 +196,7 @@ exit $?
 
   // 7. Bundle Open VS Code Extension
   const extensionsDir = join(tempAppPath, 'Contents', 'Resources', 'app', 'extensions');
-  const bundledExtDir = join(extensionsDir, 'open-vs-code');
+  const bundledExtDir = join(extensionsDir, 'open-vs-code.vscode-integration');
   mkdirSync(join(bundledExtDir, 'dist'), { recursive: true });
 
   console.log(`[package] Bundling Open VS Code extension into ${bundledExtDir}...`);
@@ -157,13 +213,28 @@ exit $?
   const extensionJsContent = readFileSync(extensionDistPath);
   writeFileSync(join(bundledExtDir, 'dist', 'extension.js'), extensionJsContent);
 
+  // Maintain compatibility alias directory 'open-vs-code'
+  const compatExtDir = join(extensionsDir, 'open-vs-code');
+  rmSync(compatExtDir, { recursive: true, force: true });
+  try {
+    execSync(`ln -s "open-vs-code.vscode-integration" "${compatExtDir}"`);
+  } catch {
+    execSync(`cp -R "${bundledExtDir}" "${compatExtDir}"`);
+  }
+
   // 8. Clear quarantine/extended attributes and apply ad-hoc code signature
   console.log(`[package] Signing application bundle with ad-hoc signature...`);
+  let signingStatus = 'Unsigned (not executed)';
   try {
     execSync(`xattr -cr "${tempAppPath}"`);
-    execSync(`codesign --force --deep --sign - "${tempAppPath}"`);
+    execSync(`codesign --force --deep --sign - "${tempAppPath}"`, { stdio: 'pipe' });
+    execSync(`codesign --verify --deep --strict "${tempAppPath}"`, { stdio: 'pipe' });
+    signingStatus = 'Ad-hoc signed and verified (Local V1 Candidate)';
+    console.log(`[package] Ad-hoc signature verified strictly.`);
   } catch (err: any) {
-    console.log(`[package] Warning during codesign: ${err.message}`);
+    signingStatus = `Unsigned (Signing failed: ${err.message})`;
+    console.error(`[package] Signing error: ${err.message}`);
+    throw new Error(`Application codesigning failed: ${err.message}`);
   }
 
   // 9. Package distribution archive (.tar.gz) from signed temp build
@@ -191,7 +262,7 @@ exit $?
     bundleIdentifier: 'com.openvscode.desktop',
     productName: 'Open VS Code',
     extensionId: 'open-vs-code.vscode-integration',
-    signingStatus: 'Ad-hoc signed (Local V1 Candidate)',
+    signingStatus,
     spec,
   };
 
@@ -207,6 +278,15 @@ exit $?
   console.log(`==================================================`);
 
   return result;
+}
+
+export function verifyAppSignature(appPath: string): { verified: boolean; error?: string } {
+  try {
+    execSync(`codesign --verify --deep --strict "${appPath}"`, { stdio: 'pipe' });
+    return { verified: true };
+  } catch (err: any) {
+    return { verified: false, error: err.message };
+  }
 }
 
 // CLI execution

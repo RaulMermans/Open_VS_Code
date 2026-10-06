@@ -1,6 +1,6 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
-import { existsSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,7 +18,7 @@ const APP_PATH = join(DIST_DIR, 'Open VS Code.app');
 const mockVscode = {
   window: {
     createOutputChannel: () => ({ appendLine: () => {}, show: () => {}, dispose: () => {} }),
-    activeTextEditor: null,
+    activeTextEditor: null as any,
     visibleTextEditors: [],
     showErrorMessage: () => {},
     showWarningMessage: async () => 'Approve',
@@ -69,15 +69,37 @@ const mockVscode = {
       mockVscode.commands.registered[id] = callback;
       return { dispose: () => {} };
     },
-    executeCommand: async (id: string) => {
+    executeCommand: async (id: string, ...args: any[]) => {
       if (typeof mockVscode.commands.registered[id] === 'function') {
-        return await mockVscode.commands.registered[id]();
+        return await mockVscode.commands.registered[id](...args);
       }
     },
     registered: {} as Record<string, any>,
   },
+  env: {
+    clipboard: {
+      writeText: async () => {},
+    },
+  },
   Uri: {
     file: (path: string) => ({ fsPath: path, toString: () => `file://${path}` }),
+  },
+  Position: class {
+    constructor(readonly line: number, readonly character: number) {}
+  },
+  Range: class {
+    constructor(readonly start: any, readonly end: any) {}
+  },
+  InlineCompletionItem: class {
+    constructor(readonly insertText: string, readonly range?: any, readonly command?: any) {}
+  },
+  InlineCompletionList: class {
+    constructor(readonly items: any[]) {}
+  },
+  CancellationTokenSource: class {
+    token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) };
+    cancel() { this.token.isCancellationRequested = true; }
+    dispose() {}
   },
 };
 
@@ -118,7 +140,11 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     }
   });
 
-  test('1. Pinned upstream shell specification is validated', () => {
+  // =========================================================================
+  // CATEGORY A: Package Structure & Build Invariants
+  // =========================================================================
+
+  test('1. [Category A] Pinned upstream shell specification is validated', () => {
     const specPath = join(DESKTOP_ROOT, 'upstream.json');
     assert.strictEqual(existsSync(specPath), true, 'upstream.json must exist');
     const spec = JSON.parse(readFileSync(specPath, 'utf8'));
@@ -135,7 +161,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     );
   });
 
-  test('2. Packaged macOS Open VS Code.app bundle structure and branding', () => {
+  test('2. [Category A] Packaged macOS Open VS Code.app bundle structure and branding', () => {
     assert.strictEqual(existsSync(APP_PATH), true, `Packaged app must exist at ${APP_PATH}`);
 
     // Check Info.plist
@@ -155,13 +181,32 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     assert.strictEqual(product.dataFolderName, '.open-vs-code-desktop');
     assert.strictEqual(product.enableTelemetry, false, 'Telemetry must be disabled');
 
-    // Check executable
+    // Check main executable and renamed helper apps
     const exePath = join(APP_PATH, 'Contents', 'MacOS', 'Open VS Code');
     assert.strictEqual(existsSync(exePath), true, 'Open VS Code executable must exist');
+
+    const frameworksDir = join(APP_PATH, 'Contents', 'Frameworks');
+    assert.strictEqual(
+      existsSync(join(frameworksDir, 'Open VS Code Helper.app')),
+      true,
+      'Open VS Code Helper.app must exist'
+    );
+    assert.strictEqual(
+      existsSync(join(frameworksDir, 'Open VS Code Helper (Renderer).app')),
+      true,
+      'Open VS Code Helper (Renderer).app must exist'
+    );
   });
 
-  test('3. Bundled Open VS Code extension is installed and discoverable in app', () => {
-    const bundledExtDir = join(APP_PATH, 'Contents', 'Resources', 'app', 'extensions', 'open-vs-code');
+  test('3. [Category A] Bundled Open VS Code extension is installed and discoverable in app', () => {
+    const bundledExtDir = join(
+      APP_PATH,
+      'Contents',
+      'Resources',
+      'app',
+      'extensions',
+      'open-vs-code.vscode-integration'
+    );
     assert.strictEqual(existsSync(bundledExtDir), true, 'Bundled extension directory must exist');
 
     const manifestPath = join(bundledExtDir, 'package.json');
@@ -177,24 +222,94 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     assert.ok(bundleSize > 500_000, `Bundle size should be > 500KB (actual: ${bundleSize})`);
   });
 
-  test('4. Packaged Open VS Code executable launches and reports version', () => {
-    const exePath = join(APP_PATH, 'Contents', 'MacOS', 'Open VS Code');
-    const cliPath = join(APP_PATH, 'Contents', 'Resources', 'app', 'out', 'cli.js');
-    const output = execSync(`ELECTRON_RUN_AS_NODE=1 "${exePath}" "${cliPath}" --version`, { encoding: 'utf8' });
+  test('4. [Category A] Packaged Open VS Code CLI launcher script executes and reports version', () => {
+    const cliScript = join(APP_PATH, 'Contents', 'Resources', 'app', 'bin', 'open-vs-code');
+    assert.strictEqual(existsSync(cliScript), true, 'CLI launcher script must exist');
+
+    const output = execSync(`"${cliScript}" --version`, { encoding: 'utf8' });
     const lines = output.trim().split('\n');
     assert.ok(lines.length >= 1, 'Must report at least version line');
-    console.log(`[smoke] Packaged executable version output:\n${output.trim()}`);
+    console.log(`[smoke] Packaged CLI launcher version output:\n${output.trim()}`);
   });
 
-  test('5. Packaged extension activates and registers all commands', () => {
-    const bundledExtDir = join(APP_PATH, 'Contents', 'Resources', 'app', 'extensions', 'open-vs-code');
+  test('5. [Category A] Packaging signature verification validates truthfully', () => {
+    const archivePath = join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
+    assert.strictEqual(existsSync(archivePath), true, 'Distribution archive must exist');
+
+    // Extract archive into clean temp directory and verify strict signature
+    const verifyTmp = mkdtempSync(join(tmpdir(), 'ovsc-sig-test-'));
+    try {
+      execSync(`tar -xzf "${archivePath}" -C "${verifyTmp}"`, { stdio: 'pipe' });
+      const extractedApp = join(verifyTmp, 'Open VS Code.app');
+
+      // Must succeed without throwing
+      const result = execSync(`codesign --verify --deep --strict "${extractedApp}" 2>&1`, {
+        encoding: 'utf8',
+      });
+      assert.strictEqual(result.trim(), '', 'Strict codesign verification must succeed cleanly');
+    } finally {
+      rmSync(verifyTmp, { recursive: true, force: true });
+    }
+  });
+
+  test('6. [Category A] Security and supply-chain invariants verified', () => {
+    // A. Check for forbidden cloud endpoints
+    const productJsonPath = join(APP_PATH, 'Contents', 'Resources', 'app', 'product.json');
+    const productContent = readFileSync(productJsonPath, 'utf8');
+    assert.strictEqual(productContent.includes('api.openai.com'), false, 'Cannot contain api.openai.com');
+    assert.strictEqual(productContent.includes('api.anthropic.com'), false, 'Cannot contain api.anthropic.com');
+
+    // B. Check that no model weight files exist in repository or app bundle
+    const findWeights = execSync(
+      `find "${APP_PATH}" -name "*.gguf" -o -name "*.safetensors" -o -name "*.ggml" -o -name "pytorch_model*.bin" -o -name "*.pt" -o -name "*.pth" 2>/dev/null || true`,
+      { encoding: 'utf8' }
+    ).trim();
+    assert.strictEqual(findWeights, '', 'Packaged application must NOT bundle model weight files');
+
+    // C. Check that distribution archive exists
+    const archivePath = join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
+    assert.strictEqual(existsSync(archivePath), true, 'Distribution archive must exist');
+  });
+
+  // =========================================================================
+  // CATEGORY B: Unit & Component Integration (Truthfully Labeled)
+  // =========================================================================
+
+  test('7. [Category B — Unit] Bundled extension exports activation contracts and starter config', () => {
+    const bundledExtDir = join(
+      APP_PATH,
+      'Contents',
+      'Resources',
+      'app',
+      'extensions',
+      'open-vs-code.vscode-integration'
+    );
     const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
     assert.strictEqual(typeof extensionModule.activate, 'function', 'activate must be exported');
     assert.strictEqual(typeof extensionModule.deactivate, 'function', 'deactivate must be exported');
     assert.strictEqual(typeof extensionModule.STARTER_MODELS_JSON, 'string', 'STARTER_MODELS_JSON must be exported');
 
-    // Simulate VS Code ExtensionContext
+    const starterJson = JSON.parse(extensionModule.STARTER_MODELS_JSON);
+    assert.ok(Array.isArray(starterJson.providers), 'Must have providers');
+    assert.ok(Array.isArray(starterJson.models), 'Must have models');
+    assert.ok(Array.isArray(starterJson.deployments), 'Must have deployments');
+    assert.ok(starterJson.routes && typeof starterJson.routes === 'object', 'Must have routes');
+    assert.strictEqual(starterJson.providers[0].kind, 'openai_compatible_local');
+    assert.strictEqual(starterJson.models[0].specialization, 'coding');
+  });
+
+  test('8. [Category B — Unit] Mocked VS Code activation registers commands in mock environment', () => {
+    const bundledExtDir = join(
+      APP_PATH,
+      'Contents',
+      'Resources',
+      'app',
+      'extensions',
+      'open-vs-code.vscode-integration'
+    );
+    const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
+
     const subscriptions: { dispose: () => void }[] = [];
     const mockContext = {
       subscriptions,
@@ -205,10 +320,8 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
       },
     };
 
-    // Activate the packaged extension
     extensionModule.activate(mockContext as any);
 
-    // Verify commands registered in mock VS Code
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.ask'], 'function');
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.plan'], 'function');
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.build'], 'function');
@@ -219,22 +332,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.openModelConfig'], 'function');
   });
 
-  test('6. First-run starter configuration creates valid models.json template', () => {
-    const bundledExtDir = join(APP_PATH, 'Contents', 'Resources', 'app', 'extensions', 'open-vs-code');
-    const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
-    const starterJsonStr = extensionModule.STARTER_MODELS_JSON;
-    assert.ok(starterJsonStr, 'Starter JSON must be present');
-
-    const parsed = JSON.parse(starterJsonStr);
-    assert.ok(Array.isArray(parsed.providers), 'Must have providers');
-    assert.ok(Array.isArray(parsed.models), 'Must have models');
-    assert.ok(Array.isArray(parsed.deployments), 'Must have deployments');
-    assert.ok(parsed.routes && typeof parsed.routes === 'object', 'Must have routes');
-    assert.strictEqual(parsed.providers[0].kind, 'openai_compatible_local');
-    assert.strictEqual(parsed.models[0].specialization, 'coding');
-  });
-
-  test('7. Missing inference server produces a graceful, actionable error without crashing', async () => {
+  test('9. [Category B — Component] Offline inference server produces graceful error (AgentRuntime)', async () => {
     const { createAgentRuntime } = await import('@open-vs-code/agent-core');
 
     const routingConfig = {
@@ -280,10 +378,8 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
       routingConfigOverride: routingConfig as any,
     });
 
-    // Run task against unreachable endpoint
     const result = await runtime.runner.run(runtime.runnerInput);
 
-    // Verify graceful failure rather than unhandled crash
     assert.strictEqual(result.status, 'FAILED');
     assert.ok(
       result.failureReason === 'MODEL_ERROR' ||
@@ -293,75 +389,9 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     );
   });
 
-  test('8. Packaged extension stack completes chat turn against deterministic mock endpoint', async () => {
-    const { createAgentRuntime } = await import('@open-vs-code/agent-core');
-
-    // Authorize inference for mock test scope
-    process.env.OPEN_VS_CODE_REAL_INFERENCE = '1';
-    try {
-      const routingConfig = {
-        providers: [
-          {
-            id: 'mock-provider',
-            kind: 'openai_compatible_local' as const,
-            baseUrl: fixtureUrl,
-          },
-        ],
-        models: [
-          {
-            id: 'qwen-coder',
-            displayName: 'Qwen Coder',
-            family: 'qwen',
-            contextWindow: 8192,
-            capabilities: ['coding' as const, 'toolUse' as const],
-            specialization: 'coding' as const,
-          },
-        ],
-        deployments: [
-          {
-            id: 'mock-chat-dep',
-            providerId: 'mock-provider',
-            modelId: 'qwen-coder',
-            modelName: 'qwen2.5-coder:7b',
-            enabled: true,
-            priority: 1,
-          },
-        ],
-        routes: {
-          coding: ['mock-chat-dep'],
-          default: ['mock-chat-dep'],
-        },
-      };
-
-      const runtime = await createAgentRuntime({
-        workspaceRoot: tempWorkspace,
-        mode: 'ASK',
-        instruction: 'Ping model',
-        signal: new AbortController().signal,
-        isTrusted: true,
-        routingConfigOverride: routingConfig as any,
-      });
-
-      const result = await runtime.runner.run(runtime.runnerInput);
-
-      assert.strictEqual(result.status, 'COMPLETED');
-      assert.strictEqual(result.finalAnswer, smokeFixture.chatResponseText);
-
-      // Verify HTTP round-trip recorded on fixture
-      const chatReq = smokeFixture.recordedRequests.find(
-        (r) => r.method === 'POST' && r.url?.includes('/chat/completions')
-      );
-      assert.ok(chatReq, 'Fixture must have received POST /chat/completions request');
-      assert.strictEqual(chatReq?.body?.model, 'qwen2.5-coder:7b');
-    } finally {
-      delete process.env.OPEN_VS_CODE_REAL_INFERENCE;
-    }
-  });
-
-  test('9. Packaged extension stack completes FIM completion against deterministic mock endpoint', async () => {
+  test('10. [Category B — Component] Direct LocalFimProvider completes mock HTTP completion', async () => {
     const { LocalFimProvider } = await import('@open-vs-code/agent-core');
 
-    // Enable inference authorization for mock test scope
     process.env.OPEN_VS_CODE_REAL_INFERENCE = '1';
     try {
       const fimProvider = new LocalFimProvider({
@@ -384,19 +414,20 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
 
       assert.ok(result, 'FIM completion should succeed');
       assert.strictEqual(result.text, smokeFixture.fimResponseText);
-
-      // Verify HTTP round-trip on fixture
-      const fimReq = smokeFixture.recordedRequests.find(
-        (r) => r.method === 'POST' && r.url?.includes('/completions')
-      );
-      assert.ok(fimReq, 'Fixture must have received POST /completions request');
     } finally {
       delete process.env.OPEN_VS_CODE_REAL_INFERENCE;
     }
   });
 
-  test('10. Clean deactivation flushes state and leaves zero leaks', async () => {
-    const bundledExtDir = join(APP_PATH, 'Contents', 'Resources', 'app', 'extensions', 'open-vs-code');
+  test('11. [Category B — Unit] Clean deactivation flushes state and leaves zero leaks', async () => {
+    const bundledExtDir = join(
+      APP_PATH,
+      'Contents',
+      'Resources',
+      'app',
+      'extensions',
+      'open-vs-code.vscode-integration'
+    );
     const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
     await assert.doesNotReject(async () => {
@@ -404,22 +435,242 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     });
   });
 
-  test('11. Security and supply-chain invariants verified', () => {
-    // A. Check for forbidden cloud endpoints
-    const productJsonPath = join(APP_PATH, 'Contents', 'Resources', 'app', 'product.json');
-    const productContent = readFileSync(productJsonPath, 'utf8');
-    assert.strictEqual(productContent.includes('api.openai.com'), false, 'Cannot contain api.openai.com');
-    assert.strictEqual(productContent.includes('api.anthropic.com'), false, 'Cannot contain api.anthropic.com');
+  // =========================================================================
+  // CATEGORY D: Packaged Integration (Crossing Extension Boundaries)
+  // =========================================================================
 
-    // B. Check that no model weight files exist in repository or app bundle
-    const findWeights = execSync(
-      `find "${APP_PATH}" -name "*.gguf" -o -name "*.safetensors" -o -name "*.ggml" -o -name "pytorch_model*.bin" -o -name "*.pt" -o -name "*.pth" 2>/dev/null || true`,
-      { encoding: 'utf8' }
-    ).trim();
-    assert.strictEqual(findWeights, '', 'Packaged application must NOT bundle model weight files');
+  test('12. [Category D — Packaged Integration] AutocompleteController -> AutocompleteService -> Production Gateway -> LocalFimProvider against mock fixture', async () => {
+    process.env.OPEN_VS_CODE_REAL_INFERENCE = '1';
 
-    // C. Check that distribution archive exists
-    const archivePath = join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
-    assert.strictEqual(existsSync(archivePath), true, 'Distribution archive must exist');
+    // 1. Setup real workspace models.json configuration pointing to mock fixture
+    const configDir = join(tempWorkspace, '.open-vs-code');
+    mkdirSync(configDir, { recursive: true });
+    const modelsConfig = {
+      $schema: 'https://raw.githubusercontent.com/RaulMermans/Open_VS_Code/main/config/schemas/models.schema.json',
+      providers: [
+        {
+          id: 'fixture-provider',
+          kind: 'openai_compatible_local',
+          baseUrl: fixtureUrl,
+        },
+      ],
+      models: [
+        {
+          id: 'qwen-coder',
+          displayName: 'Qwen Coder',
+          family: 'qwen',
+          contextWindow: 8192,
+          capabilities: ['coding', 'autocomplete', 'fim'],
+          specialization: 'coding',
+          fimStrategy: 'qwen',
+          provenance: 'Qwen 2.5 Coder',
+        },
+      ],
+      deployments: [
+        {
+          id: 'fixture-fim',
+          providerId: 'fixture-provider',
+          modelId: 'qwen-coder',
+          modelName: 'qwen2.5-coder:7b',
+          enabled: true,
+          priority: 10,
+          fimStrategy: 'qwen',
+        },
+      ],
+      routes: {
+        autocomplete: ['fixture-fim'],
+        coding: ['fixture-fim'],
+        default: ['fixture-fim'],
+      },
+    };
+    writeFileSync(join(configDir, 'models.json'), JSON.stringify(modelsConfig, null, 2), 'utf8');
+
+    try {
+      // 2. Load bundled extension and activate with test workspace
+      const bundledExtDir = join(
+        APP_PATH,
+        'Contents',
+        'Resources',
+        'app',
+        'extensions',
+        'open-vs-code.vscode-integration'
+      );
+      const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
+
+      mockVscode.workspace.workspaceFolders = [
+        {
+          uri: { fsPath: tempWorkspace, toString: () => `file://${tempWorkspace}` },
+          name: 'test-workspace',
+        },
+      ];
+
+      const mockContext = {
+        subscriptions: [],
+        extensionUri: { toString: () => 'file:///mock/extension' },
+        secrets: {
+          get: async () => undefined,
+          store: async () => {},
+        },
+      };
+
+      extensionModule.activate(mockContext as any);
+      const controller = extensionModule._testSeam.autocompleteController;
+      assert.ok(controller, 'AutocompleteController must be initialized by extension');
+
+      // 3. Simulate VS Code TextDocument and Position
+      const mockDoc: any = {
+        getText: (range?: any) => {
+          if (!range) return 'def compute():\n    ';
+          return 'def compute():\n    ';
+        },
+        languageId: 'python',
+        uri: { fsPath: join(tempWorkspace, 'test.py'), toString: () => `file://${join(tempWorkspace, 'test.py')}` },
+        version: 1,
+        positionAt: () => new mockVscode.Position(1, 4),
+      };
+
+      const mockPos = new mockVscode.Position(1, 4);
+      const tokenSource = new mockVscode.CancellationTokenSource();
+
+      mockVscode.window.activeTextEditor = {
+        document: mockDoc,
+        selection: { active: mockPos },
+      };
+
+      // 4. Request inline completion through extension AutocompleteController
+      const result = await controller.provideInlineCompletionItems(
+        mockDoc,
+        mockPos,
+        {} as any,
+        tokenSource.token
+      );
+
+      // 5. Verify completion returned through controller
+      assert.ok(result, 'AutocompleteController must return an InlineCompletionList');
+      assert.ok(result.items.length > 0, 'Must contain completion items');
+      assert.strictEqual(result.items[0].insertText, smokeFixture.fimResponseText);
+
+      // 6. Verify HTTP round-trip recorded on deterministic mock fixture
+      const fimReq = smokeFixture.recordedRequests.find(
+        (r) => r.method === 'POST' && r.url?.includes('/completions')
+      );
+      assert.ok(fimReq, 'Mock fixture must have received POST /v1/completions from production gateway');
+      assert.strictEqual(fimReq?.body?.model, 'qwen2.5-coder:7b');
+
+      await extensionModule.deactivate();
+    } finally {
+      delete process.env.OPEN_VS_CODE_REAL_INFERENCE;
+    }
+  });
+
+  test('13. [Category D — Packaged Integration] ChatController -> AgentSessionBridge -> AgentRuntime against mock fixture', async () => {
+    process.env.OPEN_VS_CODE_REAL_INFERENCE = '1';
+
+    // 1. Setup real workspace models.json pointing to mock fixture
+    const configDir = join(tempWorkspace, '.open-vs-code');
+    mkdirSync(configDir, { recursive: true });
+    const modelsConfig = {
+      $schema: 'https://raw.githubusercontent.com/RaulMermans/Open_VS_Code/main/config/schemas/models.schema.json',
+      providers: [
+        {
+          id: 'fixture-chat-provider',
+          kind: 'openai_compatible_local',
+          baseUrl: fixtureUrl,
+        },
+      ],
+      models: [
+        {
+          id: 'qwen-coder',
+          displayName: 'Qwen Coder',
+          family: 'qwen',
+          contextWindow: 8192,
+          capabilities: ['coding', 'toolUse'],
+          specialization: 'coding',
+        },
+      ],
+      deployments: [
+        {
+          id: 'fixture-chat',
+          providerId: 'fixture-chat-provider',
+          modelId: 'qwen-coder',
+          modelName: 'qwen2.5-coder:7b',
+          enabled: true,
+          priority: 10,
+        },
+      ],
+      routes: {
+        coding: ['fixture-chat'],
+        default: ['fixture-chat'],
+      },
+    };
+    writeFileSync(join(configDir, 'models.json'), JSON.stringify(modelsConfig, null, 2), 'utf8');
+
+    try {
+      const bundledExtDir = join(
+        APP_PATH,
+        'Contents',
+        'Resources',
+        'app',
+        'extensions',
+        'open-vs-code.vscode-integration'
+      );
+      const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
+
+      // Configure workspaceFolder to point to our test workspace
+      mockVscode.workspace.workspaceFolders = [
+        {
+          uri: { fsPath: tempWorkspace, toString: () => `file://${tempWorkspace}` },
+          name: 'test-workspace',
+        },
+      ];
+
+      // Activate extension to wire ChatController
+      const mockContext = {
+        subscriptions: [],
+        extensionUri: { toString: () => 'file:///mock/extension' },
+        secrets: {
+          get: async () => undefined,
+          store: async () => {},
+        },
+      };
+
+      extensionModule.activate(mockContext as any);
+      const chatCtrl = extensionModule._testSeam.chatController;
+      assert.ok(chatCtrl, 'ChatController must be initialized by extension');
+
+      // Submit user prompt through ChatController webview message handler
+      await chatCtrl.handleWebviewMessage({
+        type: 'chat.send',
+        text: 'Packaged integration test ping',
+        mode: 'ASK',
+      });
+
+      // Await turn completion (activeTurn returns to false)
+      let turnCompleted = false;
+      for (let i = 0; i < 50; i++) {
+        if (!chatCtrl.state.activeTurn && chatCtrl.state.messages.some((m: any) => m.role === 'assistant')) {
+          turnCompleted = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(turnCompleted, true, 'Chat turn must complete within timeout');
+
+      // Verify assistant message in chatController state
+      const assistantMsg = chatCtrl.state.messages.find((m: any) => m.role === 'assistant');
+      assert.ok(assistantMsg, 'Assistant response must reach ChatController state');
+      assert.strictEqual(assistantMsg.content, smokeFixture.chatResponseText);
+
+      // Verify HTTP request reached mock fixture with expected model
+      const chatReq = smokeFixture.recordedRequests.find(
+        (r) => r.method === 'POST' && r.url?.includes('/chat/completions')
+      );
+      assert.ok(chatReq, 'Fixture must have received POST /chat/completions');
+      assert.strictEqual(chatReq?.body?.model, 'qwen2.5-coder:7b');
+
+      await extensionModule.deactivate();
+    } finally {
+      delete process.env.OPEN_VS_CODE_REAL_INFERENCE;
+    }
   });
 });
