@@ -35,6 +35,7 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Interactive CLI** | ✅ Complete | Standalone terminal interface. |
 | **Project Memory** | ✅ Complete | Bounded Markdown-first context injection and cross-session persistence. |
 | **Skills & Primitives** | ✅ Complete | Reusable metadata-first procedural playbooks (e.g., Bug Triage, Refactoring) with progressive token disclosure. |
+| **Portable Skills Runtime (V1.1)** | ✅ Deterministically verified · flag off | Strict `SKILL.md` contract, five curated built-ins plus trusted-workspace `.open-vs-code/skills`, metadata-only index, at most one lazily loaded skill, PermissionGate-checked capabilities. Off by default (`open-vs-code.skills.enabled`, CLI `--skills`) until the HALO A/B is measured. See [`docs/skills/SKILLS.md`](docs/skills/SKILLS.md). |
 | **IDE Integration** | ✅ Complete | Full VS Code / Code-OSS extension integration (`@open-vs-code/vscode-integration`) with native inline completions, chat webview, diff review, and terminal execution. |
 | **Local Model Runtime & FIM** | ✅ Complete | Canonical OpenAI-compatible endpoint contracts (`/v1`), explicit FIM prompt templating, local endpoint health probing, and privacy-preserving adaptive performance ledger. |
 | **Real Inference Safety Gate**| ✅ Complete | Explicit operator authorization (`OPEN_VS_CODE_REAL_INFERENCE=1`) preventing unauthorized inference, weight downloads, or proprietary cloud leaks. |
@@ -265,6 +266,9 @@ npm run lint
 
 # Build packages
 npm run build
+
+# Skill selection accuracy and context-efficiency benchmark (deterministic, no model)
+npm run eval:skills
 ```
 
 ### Live Open-Weight Model Benchmark (Requires Authorization)
@@ -312,6 +316,7 @@ Human-gated verification ✅
 Bounded repair ✅
 Project Memory ✅
 Skills & Prompt Primitives ✅
+Portable Skills Runtime (flag off, real-model delta deferred to HALO) ✅
 30-case deterministic evaluation ✅
 
 Canonical tools: read_file, list_directory, search_text, find_files.

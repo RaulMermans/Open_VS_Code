@@ -12,3 +12,5 @@
 - [ADR-025: Durable Checkpoints, Recovery & Safe Rollback](ADR-025-checkpoints-recovery.md)
 - [ADR-026: Large-Repository Performance & Hardening](ADR-026-large-repository-performance.md)
 - [ADR-027: Real Local Models, Canonical Endpoints & Adaptive Routing](ADR-027-real-local-models-and-adaptive-routing.md)
+- [ADR-028: Desktop Shell and Packaging Strategy](ADR-028-desktop-shell-and-packaging-strategy.md)
+- [ADR-029: Portable Skills Runtime](ADR-029-portable-skills-runtime.md)

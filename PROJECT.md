@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 4D, 4D.1 & 4D.2 ✅ CLOSED PERMANENTLY (Performance Truth, Real Scale, Journal Integrity, UTF-8 Bounds & Reporting Truth)
+Sprint 5A ✅ COMPLETE — Portable Skills Runtime (deterministic; real-model delta deferred to HALO). V1 Desktop Candidate remains gated only on HALO target-host acceptance.
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
@@ -83,4 +83,6 @@ Sprint 4D, 4D.1 & 4D.2 ✅ CLOSED PERMANENTLY (Performance Truth, Real Scale, Jo
   * Code Signing & Verification Truth: Packaging verifies code signature strictly using `codesign --verify --deep --strict`. Truthfully reports "Ad-hoc signed and verified (Local V1 Candidate)". Does not claim Apple Developer ID notarization.
   * HALO Architecture Reconciliation: Authoritative dual-path topology documented in `docs/deployment/HALO_ACCEPTANCE.md`: ADR-020 HALO Core capability path (`/inference/capability/chat`) for agent chat/reasoning when `inferenceBackend = "halo"`; ADR-027 direct OpenAI-compatible FIM path (`/v1/completions`) hosted on HALO. Target platform documented truthfully as AMD Halo host with runtime/model placeholders. Zero model weights on development Mac.
 
-- Next: Execute HALO target inference host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) on the designated AMD Halo host once provisioned.
+- Phase L (Sprint 5A, V1.1): Portable Skills Runtime (ADR-029). Strict `SKILL.md` contract, five curated built-ins plus trusted-workspace skills, metadata-only index, at most one lazily loaded skill, PermissionGate-checked capabilities, optional budgeted context, bounded evidence. Feature flag `skills.enabled` defaults off. Status: SPRINT 5A COMPLETE — PORTABLE SKILLS RUNTIME VERIFIED (deterministic); REAL_MODEL SKILL DELTA — DEFERRED TO HALO.
+
+- Next: Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the Sprint 5A same-model skills A/B. Then Sprint 5B — Structured Engineering Loop & Fresh-Context Review.

@@ -220,6 +220,11 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     assert.strictEqual(existsSync(bundleJsPath), true, 'Bundled extension.js must exist');
     const bundleSize = readFileSync(bundleJsPath).length;
     assert.ok(bundleSize > 500_000, `Bundle size should be > 500KB (actual: ${bundleSize})`);
+
+    const skillsDir = join(bundledExtDir, 'dist', 'skills', 'builtins');
+    for (const id of ['bug-triage', 'refactor-with-guards', 'security-review', 'tdd', 'verification']) {
+      assert.strictEqual(existsSync(join(skillsDir, id, 'SKILL.md')), true, `Built-in skill ${id} must ship with the extension`);
+    }
   });
 
   test('4. [Category A] Packaged Open VS Code CLI launcher script executes and reports version', () => {
@@ -330,6 +335,8 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.toggleAutocomplete'], 'function');
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.createStarterConfig'], 'function');
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.openModelConfig'], 'function');
+    assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.listSkills'], 'function');
+    assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.showActiveSkill'], 'function');
   });
 
   test('9. [Category B — Component] Offline inference server produces graceful error (AgentRuntime)', async () => {

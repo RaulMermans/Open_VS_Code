@@ -44,6 +44,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                     UNTRUSTED INPUTS                            │
 │  model responses • MCP results • workspace files • webview msgs │
+│  workspace SKILL.md files                                       │
 │  provider payloads • persisted state • env vars • URIs          │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
@@ -136,6 +137,19 @@ UI / future Runtime Evals:
 - **Control**: `SENSITIVE_FILE_PATTERNS` checked before any provider call
 - **Result**: 0 provider calls; no content sent
 
+### Skill Prompt Injection & Privilege Escalation (Sprint 5A, ADR-029)
+- **Input**: a hostile `.open-vs-code/skills/<id>/SKILL.md` committed to a repository, for example declaring `capabilities: [write, terminal]`, shadowing a built-in id, or containing "ignore previous instructions", "disable verification", "auto-approve", "switch to a cloud model", "print the .env file", or "ignore the user's task"
+- **Control**:
+  - workspace skills are indexed only in trusted workspaces, and their paths are realpath-contained at index time and again at load time;
+  - a strict schema rejects unknown fields, YAML features, executable-looking values and unsupported capabilities such as `network` or `secrets`;
+  - a shadowing override must narrow the built-in, otherwise the built-in is kept;
+  - declared capabilities are checked against `classifyPermission` for the active mode, and a denied capability makes the skill ineligible; it never widens access;
+  - required tools must already be registered;
+  - bodies with authority-override directives, secret-like values or executable markup are rejected at load;
+  - injected text is wrapped in a runtime-authored "guidance only" frame and is optional context that cannot displace system, security or task instructions;
+  - skills never touch the tool registry, the PermissionGate, the confirmation flow, routing configuration or the HALO provider.
+- **Result**: skill text has zero authority. A malicious skill degrades to "no skill" with a diagnostic, and the tool list offered to the model is identical with skills on or off. Even guidance injected directly into the runner still pauses for write confirmation (BUILD) and has writes denied (REVIEW). The directive scanner is defense in depth and can be evaded by paraphrase; the structural controls are the boundary. Evidence: `packages/agent-core/tests/skills/skill-security.test.ts`.
+
 ---
 
 ## 4. Security Invariants
@@ -153,6 +167,7 @@ UI / future Runtime Evals:
 11. **Future runtime evals have no direct authority**: they may only recommend actions.
 12. **Evaluation truth requires structured runtime evidence**: security assertions compare deep runtime evidence (`actual` vs `expected`), rejecting synthetic boolean flags (`passed: true`).
 13. **Model credentials are env-only**: configuration contracts reject literal API keys; credentials resolve exclusively from environment variables via `apiKeyEnv`.
+14. **Skills are guidance, not authority**: a `SKILL.md` (built-in or workspace) can never register tools, change permission classifications, approve actions, disable verification, enable cloud fallback, or replace the task. Workspace skills are untrusted repository content and are ignored in untrusted workspaces.
 
 ---
 

@@ -99,3 +99,28 @@ test("T-737: DIRECT CLI NO-SKILL E2E", async () => {
   assert.equal(result.skillDiagnostics.actualCompiledSkillTokens, 0)
   assert.equal(result.skillDiagnostics.skillsSelected, 0)
 })
+
+test("T-5A-CLI: --skills enables the Portable Skills Runtime and reports bounded evidence", async () => {
+  const ws = await fs.realpath(await fs.mkdtemp(path.join((await import("node:os")).tmpdir(), "ovsc-cli-skills-")))
+  const run = async (skills: boolean) => await runCLI({
+    mode: "DEBUG",
+    instruction: "Fix the parser crash when config is null",
+    workspaceRoot: ws,
+    json: true,
+    skills,
+    provider: new ScriptedModelProvider([{ model: "scripted", message: { role: "assistant", content: "Done" } }]),
+    mockApproval: "APPROVE"
+  }) as any;
+
+  const enabled = await run(true)
+  assert.equal(enabled.exitCode, 0)
+  assert.equal(enabled.skillEvidence.enabled, true)
+  assert.equal(enabled.skillEvidence.selectedSkill, "bug-triage")
+  assert.equal(enabled.skillEvidence.skillSource, "builtin")
+  assert.equal(enabled.skillEvidence.skillLoadStatus, "LOADED")
+  assert.ok(!JSON.stringify(enabled.skillEvidence).includes("parser crash"), "no task text in evidence")
+
+  const disabled = await run(false)
+  assert.equal(disabled.exitCode, 0)
+  assert.equal(disabled.skillEvidence.skillLoadStatus, "DISABLED")
+})

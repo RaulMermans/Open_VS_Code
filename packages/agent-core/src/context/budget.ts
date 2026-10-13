@@ -10,14 +10,20 @@ export class ContextBudgetError extends Error {
   }
 }
 
+/**
+ * Rank order for context sources. Required items (instructions, task, memory facts and acceptance
+ * criteria) are always admitted first; optional items then fill the remaining budget in this order, so
+ * optional skill guidance (Sprint 5A) can never displace essential active code, and yields to nothing
+ * of lower priority than itself.
+ */
 export const DEFAULT_CONTEXT_SOURCE_ORDER: readonly ContextSourceKind[] = [
   "project-instruction",
   "task",
   "active-code",
+  "skill",
   "retrieved-code",
   "observation",
   "background",
-  "skill",
 ]
 
 export function estimateTokens(content: string): number {

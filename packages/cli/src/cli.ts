@@ -23,6 +23,7 @@ Modes:
 Options:
   --workspace <dir>  Target workspace directory (default: current directory)
   --json             Output result as JSON
+  --skills           Enable the Portable Skills Runtime (off by default; ADR-029)
   --help, -h         Show this help message
 
 Model Configuration:
@@ -36,6 +37,7 @@ Model Configuration:
     options: {
       workspace: { type: "string" },
       json: { type: "boolean" },
+      skills: { type: "boolean" },
     },
     allowPositionals: true,
   });
@@ -78,6 +80,7 @@ Model Configuration:
     instruction,
     workspaceRoot,
     json: values.json,
+    ...(values.skills ? { skills: true } : {}),
   });
 
   process.exit(result.exitCode);

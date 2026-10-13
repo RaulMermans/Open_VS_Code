@@ -1,4 +1,4 @@
-import { open, readFile, readdir, stat } from "node:fs/promises"
+import { open, readFile, readdir, realpath, stat } from "node:fs/promises"
 import { join, relative } from "node:path"
 
 import { RepositoryPathError, resolveRepositoryPath } from "../tools/path-safety.ts"
@@ -151,6 +151,8 @@ export async function discoverSkills(
     if (error instanceof RepositoryPathError && error.code === "NOT_FOUND") return []
     throw error
   }
+  // resolveRepositoryPath returns realpaths; relativize against the realpath root so symlinked workspaces stay contained.
+  const canonicalRoot = await realpath(workspaceRoot)
   const directories = (await readdir(skillsRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .toSorted((left, right) => left.name.localeCompare(right.name))
@@ -173,7 +175,7 @@ export async function discoverSkills(
       ids.add(metadata.id)
       
       const estimatedTokens = Math.ceil(fileSize / 4)
-      discovered.push({ ...metadata, path: relative(workspaceRoot, path), estimatedTokens })
+      discovered.push({ ...metadata, path: relative(canonicalRoot, path), estimatedTokens })
     } catch (error) {
        // T-650: Isolate malformed skills. If DUPLICATE_ID, isolate both by removing the existing one and continuing?
        // Wait, "If two primitive files claim: id: BUG_TRIAGE_LOOP fail skill catalog construction for that ID or isolate both."

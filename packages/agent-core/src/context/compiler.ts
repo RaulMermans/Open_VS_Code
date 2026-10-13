@@ -1,6 +1,7 @@
 import type { CompiledContext, ContextBudget, ContextItem, ConversationTurn } from "../contracts/context.ts"
 import { estimateTokens, fitContext } from "./budget.ts"
 import type { LoadedSkill } from "./skills.ts"
+import type { SkillGuidance } from "../skills/contracts.ts"
 import type { MemorySelection } from "./memory.ts"
 import type { ToolObservation } from "../agent/observations.ts"
 
@@ -16,6 +17,8 @@ export interface ContextCompilerInput {
   readonly projectInstructions: readonly ProjectInstruction[]
   readonly memory?: MemorySelection
   readonly selectedSkills?: readonly LoadedSkill[]
+  /** Portable Skills Runtime guidance (ADR-029). Optional context: it is omitted, never forced, when budget is short. */
+  readonly skillGuidance?: readonly SkillGuidance[]
   readonly codeContext?: readonly ContextItem[]
   readonly observations?: readonly ToolObservation[]
   readonly recentTurns?: readonly ConversationTurn[]
@@ -123,7 +126,17 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       })
     }
   }
-  
+
+  const guidanceItems: ContextItem[] = (input.skillGuidance ?? []).map((guidance) => ({
+    id: `skill:${guidance.id}`,
+    source: { kind: "skill", path: `${guidance.source}:${guidance.id}` },
+    content: guidance.content,
+    priority: 950,
+    estimatedTokens: guidance.estimatedTokens,
+    required: false,
+    metadata: { id: guidance.id, version: guidance.version, source: guidance.source, sections: guidance.sections },
+  }))
+
   if (input.recentTurns && input.recentTurns.length > 0) {
     const groups: ConversationTurn[][] = [];
     let currentGroup: ConversationTurn[] = [];
@@ -174,5 +187,5 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       ...(observation.errorCategory ? { errorCategory: observation.errorCategory } : {}),
     },
   }))
-  return fitContext([...required, ...(input.codeContext ?? []), ...observations], input.budget)
+  return fitContext([...required, ...guidanceItems, ...(input.codeContext ?? []), ...observations], input.budget)
 }

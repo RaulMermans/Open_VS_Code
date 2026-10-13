@@ -305,5 +305,15 @@ Sprint 4F — Code-OSS / VSCodium Desktop Packaging & V1 Candidate ✅ COMPLETE
   - Code Signing & Verification Truth: Packaging strictly verifies codesign using `codesign --verify --deep --strict`. Truthfully reports "Ad-hoc signed and verified (Local V1 Candidate)". Never claims Apple Developer ID notarization.
   - HALO Architecture Reconciliation: Authoritative dual-path topology documented in `docs/deployment/HALO_ACCEPTANCE.md`: ADR-020 HALO Core capability path (`/inference/capability/chat`) for agent chat/reasoning when `inferenceBackend = "halo"`; ADR-027 direct OpenAI-compatible FIM path (`/v1/completions`) hosted on HALO. Target platform documented truthfully as AMD Halo host with runtime/model placeholders. Zero model weights on development Mac.
 
+Sprint 5A — Portable Skills Runtime (V1.1) ✅ COMPLETE (deterministic) · REAL-MODEL SKILL DELTA DEFERRED TO HALO
+  - Contract: strict `SKILL.md` (YAML-subset frontmatter, seven required sections), JSON Schema `config/schemas/skill.schema.json`, validator `agent-core/src/skills/schema.ts` (ADR-029).
+  - Sources: five curated built-ins (`bug-triage`, `tdd`, `refactor-with-guards`, `security-review`, `verification`) in `packages/agent-core/skills/builtins`, plus trusted-workspace `.open-vs-code/skills`. A workspace override must validate and narrow the built-in.
+  - Runtime: `SkillRegistry` builds a metadata-only index and lazily loads each body once. `selectSkill` (deterministic; "no skill" is valid; ties abstain) checks mode, registered tools and PermissionGate capabilities. Default 1 skill, hard cap 2 via `composes_with`. Guidance is optional context ranked after active code.
+  - Flag: `skills.enabled` (default off; CLI `--skills`, VS Code `open-vs-code.skills.enabled`). Off keeps the frozen ADR-014 path byte-for-byte.
+  - Evidence: 38 skill-runtime tests plus 1 CLI and 2 extension tests. Selection eval 38/40 (95.0%): no-skill 9/9, wrong skill 0, 1 false positive, 1 false negative. Context: eager 2530 tokens vs lazy average 332.1 tokens (−86.9%; −81.8% including the 128-token index).
+  - Desktop: built-ins ship in the packaged extension. **List Available Skills** and **Show Active Skill** are registered in the real VSCodium extension host (12 commands).
+  - HALO A/B: DEFERRED_TO_HALO (no real-model baseline exists yet).
+
 Next:
-Execute HALO target inference host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) on the designated AMD Halo host once provisioned.
+1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the Sprint 5A same-model A/B (skills off vs `--skills`).
+2. Sprint 5B — Structured Engineering Loop & Fresh-Context Review.

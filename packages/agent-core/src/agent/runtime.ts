@@ -21,6 +21,11 @@ import { SessionSummaryStorage } from "../context/session-storage.ts";
 import { MemoryRetriever } from "../context/memory-retriever.ts";
 import { discoverSkills, loadSkill } from "../context/skills.ts";
 import { selectSkills } from "../context/skill-selector.ts";
+import { SkillRegistry, defaultBuiltinSkillsRoot } from "../skills/registry.ts";
+import { prepareSkillGuidance, disabledSkillEvidence } from "../skills/runtime.ts";
+import type { SkillEvidence, SkillGuidance } from "../skills/contracts.ts";
+import type { LoadedSkill } from "../context/skills.ts";
+import type { SkillSelectionResult } from "../context/skill-selector.ts";
 import { calculateBudget, estimateTokens } from "../context/budget.ts";
 import { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
 
@@ -40,6 +45,18 @@ export interface CreateAgentRuntimeOptions {
   isTrusted: boolean;
   providerOverride?: ModelProvider;
   routingConfigOverride?: RoutingConfiguration;
+  /**
+   * Portable Skills Runtime (Sprint 5A, ADR-029). Disabled by default until the HALO A/B benchmark
+   * is recorded. When disabled, the frozen ADR-014 `.agents/skills` path behaves exactly as in V1;
+   * when enabled, it replaces that path (the two are never active together).
+   */
+  skills?: {
+    enabled?: boolean;
+    /** Directory of curated built-in skills; defaults to the copy shipped with agent-core. */
+    builtinRoot?: string;
+    /** 1 by default; hard-capped at 2 and only with an explicit composes_with rule. */
+    maxSkills?: number;
+  };
 }
 
 export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
@@ -172,38 +189,68 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   const retriever = new MemoryRetriever(memorySnapshot, sessions);
   const memory = retriever.select({ task: options.instruction, mode: options.mode, tokenBudget: 1500 });
   
-  const skills = await discoverSkills(options.workspaceRoot);
-  const skillBudget = contextBudget.availableContext * 0.15;
-  const skillSelection = selectSkills({ task: options.instruction, mode: options.mode, catalog: skills, budgetTokens: skillBudget });
-  
-  const selectedSkills = [];
+  const skillsEnabled = options.skills?.enabled === true;
+  let skillSelection: SkillSelectionResult | undefined;
   let actualSkillTokens = 0;
-  if (skillSelection.primarySkill) {
-     let sections = [...skillSelection.primarySkill.sections];
-     let loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata, { sections });
-     let t = estimateTokens(loaded.body);
-     if (t > skillBudget) {
-         sections = ["Intent", "When", "Inputs", "Procedure", "Template", "Expected Output"];
-         loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata, { sections });
-         t = estimateTokens(loaded.body);
-     }
-     if (t > skillBudget) {
-         sections = ["Intent", "When", "Procedure"];
-         loaded = await loadSkill(options.workspaceRoot, skillSelection.primarySkill.metadata, { sections });
-         t = estimateTokens(loaded.body);
-     }
-     if (t <= skillBudget) {
-         selectedSkills.push(loaded);
-         actualSkillTokens += t;
-     }
-  }
-  for (const s of skillSelection.supportingSkills) {
-     const loaded = await loadSkill(options.workspaceRoot, s.metadata, { sections: s.sections });
-     const t = estimateTokens(loaded.body);
-     if (actualSkillTokens + t <= skillBudget) {
-         selectedSkills.push(loaded);
-         actualSkillTokens += t;
-     }
+  const selectedSkills: LoadedSkill[] = [];
+  let skillGuidance: readonly SkillGuidance[] = [];
+  let skillEvidence: SkillEvidence = disabledSkillEvidence();
+  let skillRegistry: SkillRegistry | undefined;
+
+  if (skillsEnabled) {
+    const builtinRoot = options.skills?.builtinRoot ?? defaultBuiltinSkillsRoot();
+    skillRegistry = await SkillRegistry.discover({
+      ...(builtinRoot ? { builtinRoot } : {}),
+      workspaceRoot: options.workspaceRoot,
+      workspaceTrusted: options.isTrusted,
+    });
+    const prepared = await prepareSkillGuidance({
+      enabled: true,
+      registry: skillRegistry,
+      task: options.instruction,
+      mode: options.mode,
+      availableTools: registry.listDefinitions().map((definition) => definition.name),
+      permissionEvaluator: classifyPermission,
+      budget: contextBudget,
+      reservedTokens: estimateTokens(options.instruction) + memory.estimatedTokens,
+      ...(options.skills?.maxSkills !== undefined ? { maxSkills: options.skills.maxSkills } : {}),
+    });
+    skillGuidance = prepared.guidance;
+    skillEvidence = prepared.evidence;
+    actualSkillTokens = skillEvidence.skillContextTokens;
+  } else {
+    // Frozen ADR-014 path (V1 behaviour), unchanged.
+    const skills = await discoverSkills(options.workspaceRoot);
+    const skillBudget = contextBudget.availableContext * 0.15;
+    const legacySelection = selectSkills({ task: options.instruction, mode: options.mode, catalog: skills, budgetTokens: skillBudget });
+    skillSelection = legacySelection;
+    if (legacySelection.primarySkill) {
+       let sections = [...legacySelection.primarySkill.sections];
+       let loaded = await loadSkill(options.workspaceRoot, legacySelection.primarySkill.metadata, { sections });
+       let t = estimateTokens(loaded.body);
+       if (t > skillBudget) {
+           sections = ["Intent", "When", "Inputs", "Procedure", "Template", "Expected Output"];
+           loaded = await loadSkill(options.workspaceRoot, legacySelection.primarySkill.metadata, { sections });
+           t = estimateTokens(loaded.body);
+       }
+       if (t > skillBudget) {
+           sections = ["Intent", "When", "Procedure"];
+           loaded = await loadSkill(options.workspaceRoot, legacySelection.primarySkill.metadata, { sections });
+           t = estimateTokens(loaded.body);
+       }
+       if (t <= skillBudget) {
+           selectedSkills.push(loaded);
+           actualSkillTokens += t;
+       }
+    }
+    for (const s of legacySelection.supportingSkills) {
+       const loaded = await loadSkill(options.workspaceRoot, s.metadata, { sections: s.sections });
+       const t = estimateTokens(loaded.body);
+       if (actualSkillTokens + t <= skillBudget) {
+           selectedSkills.push(loaded);
+           actualSkillTokens += t;
+       }
+    }
   }
 
   const runnerInput = {
@@ -215,6 +262,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...(options.recentTurns ? { recentTurns: options.recentTurns } : {}),
     memory,
     selectedSkills,
+    ...(skillGuidance.length > 0 ? { skillGuidance } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   };
 
@@ -253,6 +301,9 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     skillSelection,
     actualSkillTokens,
     selectedSkills,
+    skillGuidance,
+    skillEvidence,
+    skillRegistry,
     memory,
     checkpointCoordinator,
     recoveryController: checkpointCoordinator.recoveryController,

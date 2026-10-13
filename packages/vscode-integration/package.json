@@ -66,6 +66,14 @@
       {
         "command": "open-vs-code.openModelConfig",
         "title": "Open VS Code: Open Model Configuration"
+      },
+      {
+        "command": "open-vs-code.listSkills",
+        "title": "Open VS Code: List Available Skills"
+      },
+      {
+        "command": "open-vs-code.showActiveSkill",
+        "title": "Open VS Code: Show Active Skill"
       }
     ],
 
@@ -88,12 +96,17 @@
           "default": 30000,
           "minimum": 1,
           "description": "Maximum HALO request duration in milliseconds."
+        },
+        "open-vs-code.skills.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the Portable Skills Runtime: select at most one task-specific SKILL.md (built-in or .open-vs-code/skills) and load it lazily. Skills are guidance only and never grant permissions. Off until the HALO A/B benchmark is recorded."
         }
       }
     }
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node && node -e \"require('fs').cpSync('../agent-core/skills/builtins','dist/skills/builtins',{recursive:true})\"",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
   },

@@ -207,3 +207,20 @@ Real Host Benchmark Run: Preflight gate active. Previous live command verified O
 10. Final Status
 Status: Sprint 4F COMPLETE — OPEN VS CODE V1 DESKTOP CANDIDATE (HALO Acceptance Gate Pending).
 Next: Execute HALO target inference host acceptance runbook (OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models) on authorized inference host with installed model weights.
+
+
+==================================================
+SPRINT 5A ADDENDUM — PORTABLE SKILLS RUNTIME (V1.1)
+==================================================
+
+Branch: sprint-5a (from main 7f19372a7e, tree-identical to sprint-4e 149db4bbfc)
+Toolchain: Node v22.23.2, npm 10.9.8
+Scope: ADR-029; skills are Markdown guidance only, feature-flagged off by default.
+
+Skill-runtime tests: 38/38 (agent-core tests/skills), plus CLI 1/1 and extension 2/2
+Workspace tests: agent-core 486/486, cli 17/17, ide-adapter 5/5, vscode-integration 20/20
+Selection eval (40 cases): 38 correct (95.0%); no-skill 9/9; wrong skill 0; false positive 1; false negative 1
+Context efficiency: eager 2530 tokens; index 128; lazy average 332.1; reduction 86.9% (81.8% including index)
+Regression ladder: typecheck, lint, build pass; eval:coding 30/30 (100% task, safety and multi-file); eval:runtime 14/14; eval:recovery 50/50; eval:performance 5/5; desktop:smoke 13/13; desktop:accept 3/3; git diff --check clean
+Fixed in 5A: ADR-014 loader symlinked-workspace crash; acceptance harness inherited ELECTRON_RUN_AS_NODE; out-of-sync package-lock.json
+HALO A/B: DEFERRED_TO_HALO (no real-model baseline recorded; no model executed; no weights downloaded)
