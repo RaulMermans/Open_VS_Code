@@ -15,7 +15,7 @@
 | [ADR-011](docs/adrs/ADR-011-safe-mutation-layer.md) | Safe mutation layer | Accepted |
 | [ADR-012](docs/adrs/ADR-012-bounded-repair-loops.md) | Bounded autonomous repair loops | Accepted |
 | [ADR-013](docs/adrs/ADR-013-bounded-session-continuity.md) | Markdown-First Project Memory & Bounded Session Continuity | Accepted |
-| [ADR-014](docs/adrs/ADR-014-metadata-first-skills.md) | Metadata-First Skills & Prompt Primitives | Accepted |
+| [ADR-014](docs/adrs/ADR-014-metadata-first-skills.md) | Metadata-First Skills & Prompt Primitives | Accepted; frozen as flag-off path by ADR-029 |
 | [ADR-015](docs/adrs/ADR-015-bounded-mcp-integration.md) | Bounded MCP Integration | Accepted |
 | [ADR-016](docs/adrs/ADR-016-deterministic-model-provider-routing.md) | Deterministic Model / Provider Routing Architecture | Accepted |
 | [ADR-017](docs/adrs/ADR-017-ide-host-adapter-boundary.md) | IDE Host Adapter Boundary | Accepted |
@@ -30,6 +30,7 @@
 | [ADR-026](docs/adrs/ADR-026-large-repository-performance.md) | Large-Repository Performance & Hardening | Accepted |
 | [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) | Real Local Models, Canonical Endpoints & Adaptive Routing | Accepted |
 | [ADR-028](docs/adrs/ADR-028-desktop-shell-and-packaging-strategy.md) | Desktop Shell and Packaging Strategy (Code-OSS vs VSCodium) | Accepted |
+| [ADR-029](docs/adrs/ADR-029-portable-skills-runtime.md) | Portable Skills Runtime | Accepted (flag off pending HALO A/B) |
 
 Decision status changes belong in the ADR and this index.
 
@@ -48,3 +49,4 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 4D**: Large-Repository Performance & Hardening complete (ADR-026).
 - **Sprint 4E / 4E.1 / 4E.2**: Real Local Models, Production FIM & Evidence Closure (ADR-027) — Implementation Complete (Real-Host Evidence Blocked).
 - **Sprint 4F**: Desktop Shell and Packaging Strategy (ADR-028) — Accepted.
+- **Sprint 5A**: Portable Skills Runtime (ADR-029) — Accepted; deterministic verification complete, real-model delta deferred to HALO.

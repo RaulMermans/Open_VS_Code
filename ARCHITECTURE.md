@@ -107,7 +107,7 @@ repair flow:
 
 The registry separates model-visible definitions from executors and strictly validates untrusted arguments before permission evaluation or execution. `ALLOW` executes, `DENY` produces a structured observation without execution, and `CONFIRM` returns a paused result that can resume with explicit approval or rejection. Tool failures are recoverable observations; model failures, required-context overflow, cancellation, maximum turns, and deterministic non-progress guards are distinct terminal outcomes.
 
-Every lifecycle transition passes through the authoritative state reducer and event stream. Results expose compact status, turn, context, tool-call, confirmation, and event diagnostics rather than an unbounded internal transcript. Recent observations are deduplicated and capped before the context compiler fits them as optional context; project instructions, the task, and multiple selected skills remain required up to the defined context budget. The SkillSelector deterministically manages skill inclusion to ensure the token budget is never exceeded.
+Every lifecycle transition passes through the authoritative state reducer and event stream. Results expose compact status, turn, context, tool-call, confirmation, and event diagnostics rather than an unbounded internal transcript. Recent observations are deduplicated and capped before the context compiler fits them as optional context; project instructions and the task remain required. Legacy ADR-014 skills (flag off) remain required context; Portable Skills Runtime guidance (ADR-029, flag on) is optional context ranked after active code, so it can be omitted but never displaces required items.
 
 ## Development machine policy
 
@@ -582,3 +582,22 @@ See [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) for f
   - Points to self-hosted inference runtimes (local or external OpenAI-compatible endpoints) strictly via user-controlled `.open-vs-code/models.json`.
   - The HALO target inference host acceptance runbook is detailed in `docs/deployment/HALO_ACCEPTANCE.md`.
 See [ADR-028](docs/adrs/ADR-028-desktop-shell-and-packaging-strategy.md) for full architectural specification.
+
+## Portable Skills Runtime (Sprint 5A, ADR-029)
+
+Editor-independent, in `packages/agent-core/src/skills/`. It is feature-flagged off by default (`skills.enabled`); when off, the frozen ADR-014 `.agents/skills` path runs unchanged.
+
+```text
+createAgentRuntime(skills.enabled)
+  └─ SkillRegistry.discover        built-in (agent-core/skills/builtins) + workspace (.open-vs-code/skills, trusted only)
+       ├─ size + frontmatter prefix only → strict schema (skills/schema.ts) → SkillIndexEntry
+       └─ precedence: workspace override must validate AND narrow the built-in
+  └─ prepareSkillGuidance
+       ├─ selectSkill               mode ∩ registered tools ∩ classifyPermission(capability) → trigger/description score → threshold, tie ⇒ none
+       ├─ registry.loadBody(id)     lazy, cached, re-contained, re-validated (metadata unchanged, sections, safety)
+       ├─ fitSkillGuidance          min(context_budget, 15% available, headroom); drop whole sections; core must fit
+       └─ SkillEvidence             ids / versions / reason codes / token counts only
+  └─ AgentRunnerInput.skillGuidance → compileContext → optional "skill" item (after active-code)
+```
+
+Authority is unchanged: the tool registry, `classifyPermission`, the confirmation flow, `RoutedModelGateway` and the HALO provider do not read skill data. Built-in skills ship as Markdown inside the extension (`dist/skills/builtins`) and the packaged desktop app. Surfaces: the CLI `--skills` flag and JSON `skillEvidence`; the VS Code setting `open-vs-code.skills.enabled`; the commands **List Available Skills** and **Show Active Skill**; and a `Skill: <id>` output line.

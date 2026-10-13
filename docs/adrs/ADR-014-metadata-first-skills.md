@@ -1,7 +1,7 @@
 # ADR-014: Metadata-First Skills & Prompt Primitives
 
 ## Status
-Accepted
+Accepted. Frozen by [ADR-029](ADR-029-portable-skills-runtime.md) (Sprint 5A): this path is the `skills.enabled = false` behaviour and receives no new features; the Portable Skills Runtime replaces it when enabled.
 
 ## Context
 We needed to provide the existing agent with reusable procedural guidance ("Skills" / "Prompt Primitives") for common tasks (e.g., Bug Triage, Refactoring, Security Hardening) without bloating the context window or diluting project-specific facts in `Project Memory`.

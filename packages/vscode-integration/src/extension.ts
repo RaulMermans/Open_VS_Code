@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, type AutocompleteGateway } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, type AutocompleteGateway } from '@open-vs-code/agent-core';
+import * as path from 'node:path';
 
 
 class VSCodeIdeHost implements IdeHost {
@@ -203,6 +204,14 @@ function haloSettings() {
   };
 }
 
+/** Portable Skills Runtime (ADR-029). Built-in skills ship inside the extension's dist folder. */
+function skillsSettings(context: vscode.ExtensionContext): { enabled: boolean; builtinRoot?: string } {
+  const enabled = vscode.workspace.getConfiguration('open-vs-code').get<boolean>('skills.enabled', false) === true;
+  return context.extensionPath
+    ? { enabled, builtinRoot: path.join(context.extensionPath, 'dist', 'skills', 'builtins') }
+    : { enabled };
+}
+
 function haloToken(context: vscode.ExtensionContext): () => Promise<string | undefined> {
   return async () => await context.secrets.get(HALO_TOKEN_SECRET_KEY) ?? process.env.HALO_APP_TOKEN_OPEN_VSCODE;
 }
@@ -242,7 +251,7 @@ export function activate(context: vscode.ExtensionContext) {
           token: haloToken(context),
         })
         : undefined;
-      activeBridge = new AgentSessionBridge({ ...options, ...(providerOverride ? { providerOverride } : {}) });
+      activeBridge = new AgentSessionBridge({ ...options, ...(providerOverride ? { providerOverride } : {}), skills: skillsSettings(context) });
     }
     return activeBridge!;
   });
@@ -319,6 +328,46 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to create starter config: ${err.message}`);
       }
+    }),
+    vscode.commands.registerCommand('open-vs-code.listSkills', async () => {
+      const settings = skillsSettings(context);
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      // Metadata only: listing never reads a skill body.
+      const registry = await SkillRegistry.discover({
+        ...(settings.builtinRoot ? { builtinRoot: settings.builtinRoot } : {}),
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+        workspaceTrusted: vscode.workspace.isTrusted === true,
+      });
+      for (const diagnostic of registry.diagnostics) {
+        await host?.showOutput(`Skill diagnostic [${diagnostic.source}/${diagnostic.skill}] ${diagnostic.code}: ${diagnostic.message}`);
+      }
+      const status = settings.enabled ? 'enabled' : 'disabled (open-vs-code.skills.enabled)';
+      if (registry.entries.length === 0) {
+        vscode.window.showInformationMessage(`No skills available. Skills are ${status}.`);
+        return;
+      }
+      await vscode.window.showQuickPick(
+        registry.entries.map((entry) => ({
+          label: entry.id,
+          description: `v${entry.version} · ${entry.source} · ${entry.allowedModes.join('/')}`,
+          detail: entry.description,
+        })),
+        { title: `Available skills (${status})`, canPickMany: false },
+      );
+    }),
+    vscode.commands.registerCommand('open-vs-code.showActiveSkill', async () => {
+      const evidence = activeBridge?.skillEvidence;
+      if (!evidence || !evidence.enabled) {
+        vscode.window.showInformationMessage('No active skill. The skills runtime is disabled or no task has run yet.');
+        return;
+      }
+      if (!evidence.selectedSkill) {
+        vscode.window.showInformationMessage(`No skill selected for the last task (${evidence.skillLoadStatus}).`);
+        return;
+      }
+      vscode.window.showInformationMessage(
+        `Skill: ${evidence.selectedSkill} v${evidence.skillVersion} (${evidence.skillSource}) · ${evidence.skillLoadStatus} · ${evidence.skillContextTokens} tokens`,
+      );
     }),
     vscode.commands.registerCommand('open-vs-code.openModelConfig', async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;

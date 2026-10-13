@@ -1,0 +1,461 @@
+{
+  "sprint": "5A",
+  "realModelSkillDelta": "DEFERRED_TO_HALO",
+  "diagnostics": 0,
+  "selection": {
+    "total": 40,
+    "correct": 38,
+    "accuracy": 0.95,
+    "positiveCases": 22,
+    "positiveCorrect": 21,
+    "noSkillCases": 9,
+    "noSkillCorrect": 9,
+    "noSkillAccuracy": 1,
+    "falsePositives": 1,
+    "falsePositiveRate": 0.07142857142857142,
+    "falseNegatives": 1,
+    "wrongSkill": 0,
+    "results": [
+      {
+        "id": "S01",
+        "kind": "positive",
+        "mode": "DEBUG",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": "bug-triage",
+        "correct": true
+      },
+      {
+        "id": "S02",
+        "kind": "positive",
+        "mode": "DEBUG",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": "bug-triage",
+        "correct": true
+      },
+      {
+        "id": "S03",
+        "kind": "positive",
+        "mode": "DEBUG",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": null,
+        "correct": false
+      },
+      {
+        "id": "S04",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": "bug-triage",
+        "correct": true
+      },
+      {
+        "id": "S05",
+        "kind": "positive",
+        "mode": "DEBUG",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": "bug-triage",
+        "correct": true
+      },
+      {
+        "id": "S06",
+        "kind": "positive",
+        "mode": "DEBUG",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": "bug-triage",
+        "correct": true
+      },
+      {
+        "id": "S07",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "tdd"
+        ],
+        "selected": "tdd",
+        "correct": true
+      },
+      {
+        "id": "S08",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "tdd"
+        ],
+        "selected": "tdd",
+        "correct": true
+      },
+      {
+        "id": "S09",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "tdd"
+        ],
+        "selected": "tdd",
+        "correct": true
+      },
+      {
+        "id": "S10",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "tdd"
+        ],
+        "selected": "tdd",
+        "correct": true
+      },
+      {
+        "id": "S11",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "refactor-with-guards"
+        ],
+        "selected": "refactor-with-guards",
+        "correct": true
+      },
+      {
+        "id": "S12",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "refactor-with-guards"
+        ],
+        "selected": "refactor-with-guards",
+        "correct": true
+      },
+      {
+        "id": "S13",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "refactor-with-guards"
+        ],
+        "selected": "refactor-with-guards",
+        "correct": true
+      },
+      {
+        "id": "S14",
+        "kind": "positive",
+        "mode": "BUILD",
+        "acceptable": [
+          "refactor-with-guards"
+        ],
+        "selected": "refactor-with-guards",
+        "correct": true
+      },
+      {
+        "id": "S15",
+        "kind": "positive",
+        "mode": "REVIEW",
+        "acceptable": [
+          "security-review"
+        ],
+        "selected": "security-review",
+        "correct": true
+      },
+      {
+        "id": "S16",
+        "kind": "positive",
+        "mode": "REVIEW",
+        "acceptable": [
+          "security-review"
+        ],
+        "selected": "security-review",
+        "correct": true
+      },
+      {
+        "id": "S17",
+        "kind": "positive",
+        "mode": "ASK",
+        "acceptable": [
+          "security-review"
+        ],
+        "selected": "security-review",
+        "correct": true
+      },
+      {
+        "id": "S18",
+        "kind": "positive",
+        "mode": "REVIEW",
+        "acceptable": [
+          "security-review"
+        ],
+        "selected": "security-review",
+        "correct": true
+      },
+      {
+        "id": "S19",
+        "kind": "positive",
+        "mode": "REVIEW",
+        "acceptable": [
+          "verification"
+        ],
+        "selected": "verification",
+        "correct": true
+      },
+      {
+        "id": "S20",
+        "kind": "positive",
+        "mode": "REVIEW",
+        "acceptable": [
+          "verification"
+        ],
+        "selected": "verification",
+        "correct": true
+      },
+      {
+        "id": "S21",
+        "kind": "positive",
+        "mode": "REVIEW",
+        "acceptable": [
+          "verification"
+        ],
+        "selected": "verification",
+        "correct": true
+      },
+      {
+        "id": "S22",
+        "kind": "positive",
+        "mode": "REVIEW",
+        "acceptable": [
+          "verification"
+        ],
+        "selected": "verification",
+        "correct": true
+      },
+      {
+        "id": "S23",
+        "kind": "no-skill",
+        "mode": "ASK",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S24",
+        "kind": "no-skill",
+        "mode": "ASK",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S25",
+        "kind": "no-skill",
+        "mode": "BUILD",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S26",
+        "kind": "no-skill",
+        "mode": "BUILD",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S27",
+        "kind": "no-skill",
+        "mode": "BUILD",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S28",
+        "kind": "no-skill",
+        "mode": "PLAN",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S29",
+        "kind": "no-skill",
+        "mode": "PLAN",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S30",
+        "kind": "no-skill",
+        "mode": "ASK",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S31",
+        "kind": "no-skill",
+        "mode": "REVIEW",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S32",
+        "kind": "ambiguous",
+        "mode": "REVIEW",
+        "acceptable": [
+          "security-review",
+          "verification"
+        ],
+        "selected": "security-review",
+        "correct": true
+      },
+      {
+        "id": "S33",
+        "kind": "ambiguous",
+        "mode": "DEBUG",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": "bug-triage",
+        "correct": true
+      },
+      {
+        "id": "S34",
+        "kind": "ambiguous",
+        "mode": "BUILD",
+        "acceptable": [
+          "bug-triage",
+          null
+        ],
+        "selected": "refactor-with-guards",
+        "correct": false
+      },
+      {
+        "id": "S35",
+        "kind": "ambiguous",
+        "mode": "DEBUG",
+        "acceptable": [
+          "bug-triage"
+        ],
+        "selected": "bug-triage",
+        "correct": true
+      },
+      {
+        "id": "S36",
+        "kind": "ambiguous",
+        "mode": "BUILD",
+        "acceptable": [
+          "tdd",
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S37",
+        "kind": "ambiguous",
+        "mode": "REVIEW",
+        "acceptable": [
+          "verification",
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S38",
+        "kind": "ambiguous",
+        "mode": "BUILD",
+        "acceptable": [
+          "refactor-with-guards",
+          null
+        ],
+        "selected": null,
+        "correct": true
+      },
+      {
+        "id": "S39",
+        "kind": "ambiguous",
+        "mode": "REVIEW",
+        "acceptable": [
+          "verification"
+        ],
+        "selected": "verification",
+        "correct": true
+      },
+      {
+        "id": "S40",
+        "kind": "ambiguous",
+        "mode": "BUILD",
+        "acceptable": [
+          null
+        ],
+        "selected": null,
+        "correct": true
+      }
+    ]
+  },
+  "efficiency": {
+    "totalSkills": 5,
+    "totalBodyTokens": 2530,
+    "eagerTokens": 2530,
+    "indexTokens": 128,
+    "averageSelectedSkillTokens": 510.96153846153845,
+    "maxSelectedSkillTokens": 559,
+    "averageLazyPromptTokens": 332.125,
+    "averageLazyWithIndexTokens": 460.125,
+    "tokensAvoidedPerTask": 2197.875,
+    "reductionPercent": 86.87252964426877,
+    "reductionWithIndexPercent": 81.81324110671937,
+    "perSkill": [
+      {
+        "id": "bug-triage",
+        "bodyTokens": 559
+      },
+      {
+        "id": "refactor-with-guards",
+        "bodyTokens": 493
+      },
+      {
+        "id": "security-review",
+        "bodyTokens": 542
+      },
+      {
+        "id": "tdd",
+        "bodyTokens": 483
+      },
+      {
+        "id": "verification",
+        "bodyTokens": 453
+      }
+    ]
+  }
+}

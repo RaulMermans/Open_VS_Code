@@ -6,6 +6,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * Environment for launching the packaged app. Strips Electron/VS Code host variables inherited when the
+ * suite runs from an editor terminal (ELECTRON_RUN_AS_NODE makes the app binary start as plain Node).
+ */
+function cleanAppEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ELECTRON_') && !key.startsWith('VSCODE_')));
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const DESKTOP_ROOT = join(__filename, '..', '..');
 const DIST_DIR = join(DESKTOP_ROOT, 'dist');
@@ -44,7 +52,7 @@ describe('Category C: Real Desktop Runtime Acceptance Suite', () => {
         ],
         {
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' },
+          env: { ...cleanAppEnv(), ELECTRON_ENABLE_LOGGING: '1' },
         }
       );
 
@@ -150,6 +158,8 @@ async function doRun() {
     'open-vs-code.checkHaloConnection',
     'open-vs-code.createStarterConfig',
     'open-vs-code.openModelConfig',
+    'open-vs-code.listSkills',
+    'open-vs-code.showActiveSkill',
   ];
 
   for (const cmd of requiredCommands) {
@@ -189,6 +199,7 @@ module.exports = { run };
           ],
           {
             stdio: 'inherit',
+            env: cleanAppEnv(),
           }
         );
 

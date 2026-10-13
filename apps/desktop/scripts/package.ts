@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -212,6 +212,10 @@ exit $?
 
   const extensionJsContent = readFileSync(extensionDistPath);
   writeFileSync(join(bundledExtDir, 'dist', 'extension.js'), extensionJsContent);
+
+  // Curated built-in skills (ADR-029) are Markdown data read lazily at runtime, not bundled code.
+  const builtinSkillsPath = join(REPO_ROOT, 'packages', 'agent-core', 'skills', 'builtins');
+  cpSync(builtinSkillsPath, join(bundledExtDir, 'dist', 'skills', 'builtins'), { recursive: true });
 
   // Maintain compatibility alias directory 'open-vs-code'
   const compatExtDir = join(extensionsDir, 'open-vs-code');

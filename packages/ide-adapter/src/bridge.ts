@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -7,6 +7,8 @@ export interface BridgeOptions {
   host: IdeHost;
   workspaceRoot: string;
   providerOverride?: any;
+  /** Portable Skills Runtime (ADR-029); disabled unless the host enables it. */
+  skills?: { enabled: boolean; builtinRoot?: string };
 }
 
 export class AgentSessionBridge {
@@ -14,11 +16,19 @@ export class AgentSessionBridge {
   private workspaceRoot: string;
   private activeSession: boolean = false;
   private providerOverride?: any;
+  private skills?: BridgeOptions["skills"];
+  private lastSkillEvidence?: SkillEvidence;
   
   constructor(options: BridgeOptions) {
     this.host = options.host;
     this.workspaceRoot = options.workspaceRoot;
     this.providerOverride = options.providerOverride;
+    this.skills = options.skills;
+  }
+
+  /** Bounded, privacy-safe skill evidence from the most recent task (ids, versions, reason codes only). */
+  public get skillEvidence(): SkillEvidence | undefined {
+    return this.lastSkillEvidence;
   }
   
   public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly ConversationTurn[]): Promise<AgentResult> {
@@ -80,9 +90,14 @@ export class AgentSessionBridge {
         signal,
         isTrusted,
         eventSink: sink,
-        providerOverride: this.providerOverride
+        providerOverride: this.providerOverride,
+        ...(this.skills ? { skills: this.skills } : {})
       });
       (this as any)._lastRuntime = runtime;
+      this.lastSkillEvidence = runtime.skillEvidence;
+      if (runtime.skillEvidence?.selectedSkill && runtime.skillEvidence.skillContextTokens > 0) {
+        await this.host.showOutput(`Skill: ${runtime.skillEvidence.selectedSkill}`);
+      }
       
       const { runner, repairOrchestrator, runnerInput } = runtime;
       

@@ -8,6 +8,8 @@ export interface CLIAppOptions {
   instruction: string;
   workspaceRoot: string;
   json?: boolean;
+  /** Portable Skills Runtime (ADR-029). Off unless set; `OPEN_VS_CODE_SKILLS=1` also enables it. */
+  skills?: boolean;
   provider?: ModelProvider;
   mockApproval?: "APPROVE" | "REJECT" | (() => Promise<"APPROVE" | "REJECT">);
 }
@@ -82,10 +84,11 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       instruction: options.instruction,
       providerOverride: initProvider,
       isTrusted: true,
-      eventSink: sink
+      eventSink: sink,
+      skills: { enabled: options.skills ?? process.env.OPEN_VS_CODE_SKILLS === "1" },
     });
 
-    const { runner, repairOrchestrator, runnerInput, mcpSnapshot, memory, routedGateway, skillSelection, actualSkillTokens } = runtime;
+    const { runner, repairOrchestrator, runnerInput, mcpSnapshot, memory, routedGateway, skillSelection, actualSkillTokens, skillEvidence } = runtime;
     
     if (!options.json) {
       let memSummary: string[] = [];
@@ -95,6 +98,9 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       if (memory.sessionSummaries.length) memSummary.push(memory.sessionSummaries.length + " prior sessions");
       if (memSummary.length > 0) {
         console.log("Project context restored:\n- " + memSummary.join('\n- '));
+      }
+      if (skillEvidence?.selectedSkill && skillEvidence.skillContextTokens > 0) {
+        console.log(`Skill: ${skillEvidence.selectedSkill}`);
       }
     }
 
@@ -260,8 +266,8 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     } : {};
 
     if (options.json) {
-      console.log(JSON.stringify({ ...runnerResult, skillDiagnostics, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics }, null, 2));
-      return { exitCode: runnerResult.status === "COMPLETED" ? 0 : (runnerResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...runnerResult };
+      console.log(JSON.stringify({ ...runnerResult, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics }, null, 2));
+      return { exitCode: runnerResult.status === "COMPLETED" ? 0 : (runnerResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...runnerResult };
     }
 
     if (changedFiles.size > 0) {
@@ -287,7 +293,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     if (runnerResult.status === "FAILED") exitCode = 1;
     if (runnerResult.status === "CANCELLED") exitCode = 2;
 
-    return { exitCode, memorySelection: memory, skillDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...runnerResult };
+    return { exitCode, memorySelection: memory, skillDiagnostics, skillEvidence, routeDiagnostics: routedGateway?.lastDiagnostics, ...runnerResult };
   } catch (err: any) {
     if (options.json) {
       console.log(JSON.stringify({ status: "ERROR", error: err.message }, null, 2));

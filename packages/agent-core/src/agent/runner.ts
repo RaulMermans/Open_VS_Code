@@ -21,6 +21,7 @@ import type { ToolCall, ToolPermission } from "../contracts/tools.ts"
 import { classifyPermission } from "../tools/permissions.ts"
 import { type PreparedToolCall, ToolRegistry, ToolRegistryError } from "../tools/registry.ts"
 import type { LoadedSkill } from "../context/skills.ts"
+import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
 import { EvidenceLedger } from "./evidence.ts"
@@ -47,6 +48,7 @@ export interface AgentRunnerInput {
   readonly contextBudget: ContextBudget
   readonly projectInstructions: readonly ProjectInstruction[]
   readonly selectedSkills?: readonly LoadedSkill[]
+  readonly skillGuidance?: readonly SkillGuidance[]
   readonly codeContext?: readonly ContextItem[]
   readonly recentTurns?: readonly ConversationTurn[]
   readonly signal?: AbortSignal
@@ -838,6 +840,7 @@ export class AgentRunner {
           task: session.input.task.instruction,
           projectInstructions: [guidanceInstruction, ...session.input.projectInstructions],
           ...(session.input.selectedSkills ? { selectedSkills: session.input.selectedSkills } : {}),
+          ...(session.input.skillGuidance ? { skillGuidance: session.input.skillGuidance } : {}),
           ...(session.input.codeContext ? { codeContext: session.input.codeContext } : {}),
           ...(session.input.recentTurns ? { recentTurns: session.input.recentTurns } : {}),
           observations: session.observations,

@@ -1,15 +1,13 @@
 # Scratchpad
 
-- Current state: SPRINT 4F COMPLETE — OPEN VS CODE V1 DESKTOP CANDIDATE (Remaining Gate: HALO Target-Host Release Acceptance Only)
-- Accomplishments (Sprint 4F Closure):
-  - Proved real desktop GUI lifecycle: Category C acceptance test 1 launches packaged `Open VS Code.app`, reaches healthy running state in isolated test profile, and cleanly exits via SIGTERM (`npm run desktop:accept`).
-  - Proved real VSCodium extension host discovery and activation: Category C acceptance test 2 executes test runner inside the real extension host process, proving bundled `open-vs-code.vscode-integration` is discovered, activates (`ext.activate()`), and registers all 10 `open-vs-code.*` commands.
-  - Proved distributable archive integrity and strict codesigning: Category C acceptance test 3 extracts `Open-VS-Code-darwin-arm64-0.1.0.tar.gz` and verifies `codesign --verify --deep --strict`.
-  - Proved packaged integration across extension boundaries: Category D smoke tests 12 & 13 prove inline autocomplete (`AutocompleteController` -> `AutocompleteService` -> Production Gateway -> `ModelRouter` -> `LocalFimProvider` -> `/v1/completions`) and chat turns (`ChatController` -> `AgentSessionBridge` -> `AgentRuntime` -> `/v1/chat/completions`) against mock fixture with zero cloud fallback.
-  - Reconciled HALO architecture & target hardware: Reconciled ADR-020 HALO Core capability path (`/inference/capability/chat`) and ADR-027 direct OpenAI-compatible FIM path (`/v1/completions`) in `docs/deployment/HALO_ACCEPTANCE.md`. Corrected target platform to AMD Halo host with runtime/model placeholders. Zero model weights installed on development Mac.
-  - Strict codesigning truth: `package.ts` executes `codesign --verify --deep --strict` on staged app bundle; throws on failure; truthfully reports "Ad-hoc signed and verified (Local V1 Candidate)". Does not claim Apple Developer ID notarization.
-  - Pinned, repeatable packaging process: Clarified Option A terminology in ADR-028 and project documentation.
-  - All 13 desktop smoke tests and 3 real runtime acceptance tests pass 100% green.
-
-Next:
-Execute HALO target inference host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) on the designated AMD Halo host once provisioned.
+- Current state: SPRINT 5A COMPLETE — PORTABLE SKILLS RUNTIME VERIFIED (deterministic). V1 Desktop Candidate still gated only on HALO target-host acceptance.
+- Sprint 5A summary:
+  - New `packages/agent-core/src/skills/` (contracts, schema, registry, selector, runtime), five built-ins in `packages/agent-core/skills/builtins`, ADR-029, guide `docs/skills/SKILLS.md`.
+  - Flag `skills.enabled` defaults off; off = frozen ADR-014 `.agents/skills` path, unchanged.
+  - Selection eval 38/40. The misses are kept untuned on purpose (S03 "TypeError thrown" has no trigger word; S34 "refactor; tests currently fail" picks refactor-with-guards in BUILD).
+  - Context: eager 2530 vs lazy 332.1 average tokens (−86.9%).
+- Defects found and fixed during 5A:
+  - Frozen ADR-014 `discoverSkills` made skill paths relative to the non-realpath workspace root, so workspaces reached through a symlink (e.g. macOS `/var` → `/private/var`) crashed `loadSkill` with OUTSIDE_WORKSPACE. It now relativizes against the realpath root (covered by `skill-runtime-integration.test.ts`).
+  - `desktop:accept` launched the packaged app with the inherited environment; `ELECTRON_RUN_AS_NODE` from an editor terminal made the binary start as Node. The harness now strips `ELECTRON_*`/`VSCODE_*`.
+  - The committed `package-lock.json` lacked the `apps/desktop` workspace, so `npm ci` failed; it is now resynced.
+- Next: HALO acceptance, then the same-model skills A/B (off vs `--skills`); then Sprint 5B.
