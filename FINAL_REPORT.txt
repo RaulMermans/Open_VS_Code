@@ -249,3 +249,27 @@ Regression ladder:
   desktop:package ok; desktop:smoke 13/13; desktop:accept 3/3
 Fixed in 5B: skill "active" claimed before final compile; IMPLEMENT failed on the runner's "tests" keyword verification rule (now explicit delegation); "do not modify behaviour" misclassified as read-only
 HALO A/B: DEFERRED_TO_HALO (no real-model baseline recorded; no model executed; no weights downloaded)
+
+SPRINT 5C ADDENDUM — NON-PROGRESS DETECTION & BOUNDED RECOVERY (V1.1)
+=====================================================================
+
+Branch: sprint-5c (from main 9a705e2566, which merges sprint-5b 28bb5b9b66)
+Toolchain: Node v22.23.2, npm 10.9.8
+Scope: ADR-031; feature-flagged off by default (progressMonitor.enabled); Sprint 5B closure included.
+
+5B closure: workflow persistence sanitized via sanitizeWorkflowState (canonical redactor) — C-0A;
+  REVIEW receives the net diff (workflow start → current workspace), stale code cannot ground findings — C-0B regression
+  SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED
+New tests: 51 (closure 6, monitor/unit 23, workflow integration 14, direct path 8); existing 5B workflow tests 27/27 unchanged
+Workspace tests: agent-core 568/568, cli 19/19, ide-adapter 7/7, vscode-integration 20/20
+eval:progress (deterministic, A = monitor off, B = on, same simulated model):
+  known loops detected 5/5; false stalls 0/4; classification accuracy 5/5
+  recovery attempts 4; recovered 1 (state demonstrably advanced); blocked after bounded retry 3; escalated without retry 1
+  model calls 68 → 55; tool/check calls 60 → 47; prompt tokens 25001 → 21674; diagnostic model calls added 0
+Regression ladder:
+  npm ci, typecheck, lint, build: pass
+  eval:skills 38/40 (unchanged); eval:workflow eligibility 14/14, A/B outcomes unchanged (REVIEW tokens shifted by net diff)
+  eval:coding 30/30 (100%); eval:runtime 14/14 (111 scenarios); eval:recovery 50/50; eval:performance 5/5 (100 scenarios)
+  desktop:package ok; desktop:smoke 13/13; desktop:accept 3/3
+Fixed in 5C: normalizer missed node:test "# duration_ms" (identical failures split); 5B guide listed bug-triage as IMPLEMENT-selectable
+HALO A/B: DEFERRED_TO_HALO (no real-model baseline recorded; no model executed; no weights downloaded)

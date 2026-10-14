@@ -257,6 +257,7 @@ export function activate(context: vscode.ExtensionContext) {
         skills: skillsSettings(context),
         // Structured Engineering Loop (ADR-030); off by default.
         workflow: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('workflow.enabled', false) === true },
+        progressMonitor: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('progressMonitor.enabled', false) === true },
       });
     }
     return activeBridge!;

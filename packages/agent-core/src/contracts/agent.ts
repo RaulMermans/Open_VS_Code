@@ -148,4 +148,6 @@ export interface AgentResult {
   readonly terminationSource?: "RUNTIME_EVAL" | "NON_PROGRESS_GUARD" | undefined
   readonly observations?: readonly import("../agent/observations.ts").ToolObservation[]
   readonly recoveryPlan?: import("../recovery/contracts.ts").RecoveryPlan
+  /** Sprint 5C: bounded non-progress evidence, present only when the progress monitor is enabled. */
+  readonly nonProgress?: import("../progress/direct-guard.ts").DirectNonProgressEvidence
 }

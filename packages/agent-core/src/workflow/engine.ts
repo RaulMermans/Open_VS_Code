@@ -16,6 +16,31 @@ import { estimateTokens } from "../context/budget.ts"
 import type { AgentConfirmationRequest, AgentEvent, AgentMode, AgentResult } from "../contracts/agent.ts"
 import type { ContextBudget } from "../contracts/context.ts"
 import type { ModelProvider } from "../contracts/model.ts"
+import {
+  MAX_NON_PROGRESS_RECOVERIES,
+  PROGRESS_LIMITS,
+  type ProgressAssessment,
+  type ProgressSignal,
+  type ProgressSnapshot,
+  type ProgressThresholds,
+  type WorkflowProgressState,
+} from "../progress/contracts.ts"
+import { normalizeFailureOutput, setFingerprint, shortHash } from "../progress/fingerprint.ts"
+import { ProgressMonitor, initialMonitorState } from "../progress/monitor.ts"
+import {
+  boundRecoveryText,
+  buildNonProgressReport,
+  buildRecoveryContext,
+  buildRecoveryPlan,
+  classifyStall,
+  formatNonProgressReport,
+  patternCandidate,
+  runDiagnosticCheck,
+  stallNotice,
+  type DiagnosticResult,
+  type Endpoint,
+  type FailureCapture,
+} from "../progress/recovery.ts"
 import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts"
 import type { SkillRegistry } from "../skills/registry.ts"
 import { SkillInjectionTracker, disabledSkillEvidence, prepareSkillGuidance } from "../skills/runtime.ts"
@@ -23,14 +48,17 @@ import { sha256 } from "../tools/mutation-engine.ts"
 import { resolveRepositoryPath } from "../tools/path-safety.ts"
 import type { ToolRegistry } from "../tools/registry.ts"
 import type { VerificationAction } from "../tools/verification-contracts.ts"
-import { boundText, changedFileFromMutation, checkOutcome, parsePlanArtifact, parseReviewEvidence, renderDiff, uniquePaths } from "./artifacts.ts"
-import { implementInstruction, planInstruction, reviewInstruction, reviewRepairReason, testRepairReason } from "./context.ts"
+import { boundText, changedFileFromMutation, checkOutcome, computeNetChange, netDiffFingerprint, parsePlanArtifact, parseReviewEvidence, renderNetDiff, uniquePaths } from "./artifacts.ts"
+import { implementInstruction, planInstruction, recoveryImplementInstruction, reviewInstruction, reviewRepairReason, testRepairReason } from "./context.ts"
 import {
   ARTIFACT_LIMITS,
+  BLOCKING_SEVERITIES,
   DEFAULT_WORKFLOW_POLICY,
   TERMINAL_STAGES,
+  type ChangedFile,
   type CheckOutcome,
   type EngineeringStage,
+  type NetChange,
   type StageRecord,
   type WorkflowBlocker,
   type WorkflowConfirmation,
@@ -41,6 +69,7 @@ import {
   type WorkStage,
 } from "./contracts.ts"
 import { STAGE_ENVELOPES, assertTransition, stagePermission, type PermissionEvaluator } from "./policy.ts"
+import { sanitizeWorkflowState } from "./persistence.ts"
 import type { WorkflowStateStore, WorkflowVerifier } from "./services.ts"
 
 export interface EngineeringWorkflowDependencies {
@@ -60,6 +89,18 @@ export interface EngineeringWorkflowDependencies {
   readonly policy?: Partial<WorkflowPolicy>
   readonly clock?: () => string
   readonly idFactory?: () => string
+  /**
+   * Non-progress detection & bounded recovery (Sprint 5C, ADR-031). Off by default: the workflow then
+   * behaves exactly as in Sprint 5B.
+   */
+  readonly progress?: {
+    readonly enabled: boolean
+    readonly thresholds?: Partial<ProgressThresholds>
+    /** Loopback endpoint probe used by the ENDPOINT_PROBE check; injectable for tests. */
+    readonly probe?: (endpoint: Endpoint) => Promise<boolean>
+  }
+  /** Minimal user-facing progress notices ("No progress detected…", the BLOCKED summary). */
+  readonly onProgress?: (notice: string) => void
 }
 
 export interface EngineeringWorkflowInput {
@@ -85,6 +126,14 @@ interface ActiveModelStage {
 
 type Step = "CONTINUE" | "PAUSED"
 
+/**
+ * The recovery IMPLEMENT pass explicitly requests the existing built-in bug-triage skill (ADR-029).
+ * Selection still applies the skill's contract against the stage envelope: the built-in declares the
+ * `verify` capability, which IMPLEMENT does not have, so it is truthfully rejected there
+ * (CAPABILITY_DENIED) rather than the envelope being widened.
+ */
+const RECOVERY_SKILL_REQUEST = "skill:bug-triage"
+
 function defaultId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -99,6 +148,9 @@ export class EngineeringWorkflow {
   #active: ActiveModelStage | undefined
   #pendingVerification: { readonly stage: "TEST" | "VERIFY"; readonly actions: readonly VerificationAction[] } | undefined
   #driving = false
+  /** Content of each changed file at workflow start (null: did not exist). In memory only; never persisted. */
+  readonly #baselines = new Map<string, string | null>()
+  readonly #monitor: ProgressMonitor | undefined
 
   private constructor(deps: EngineeringWorkflowDependencies, state: WorkflowState, inputs: RestoreInput) {
     this.#deps = deps
@@ -113,6 +165,14 @@ export class EngineeringWorkflow {
     if (inputs.signal) {
       if (inputs.signal.aborted) this.#abort.abort()
       else inputs.signal.addEventListener("abort", () => this.#abort.abort(), { once: true })
+    }
+    if (deps.progress?.enabled) {
+      // Restored counters and the consumed recovery attempt survive a restart.
+      this.#monitor = new ProgressMonitor({ ...(deps.progress.thresholds ? { thresholds: deps.progress.thresholds } : {}), state: state.progress?.monitor ?? initialMonitorState() })
+      if (!state.progress) {
+        this.#state = { ...state, progress: { monitor: this.#monitor.state, assessments: [], stallSignals: [], recoveryCount: 0, recoveryAttempted: false, diagnosticRun: false } }
+        this.#observe("START")
+      }
     }
   }
 
@@ -237,11 +297,13 @@ export class EngineeringWorkflow {
       case "PLAN":
         return this.#startModelStage("PLAN", planInstruction(this.#inputs), (result) => this.#completePlan(result))
       case "IMPLEMENT":
-        return this.#startModelStage("IMPLEMENT", implementInstruction(this.#inputs, this.#state), (result) => this.#completeImplement(result))
+        return this.#isRecoveryPass()
+          ? this.#startModelStage("IMPLEMENT", recoveryImplementInstruction(this.#state), (result) => this.#completeImplement(result), RECOVERY_SKILL_REQUEST)
+          : this.#startModelStage("IMPLEMENT", implementInstruction(this.#inputs, this.#state), (result) => this.#completeImplement(result))
       case "TEST":
         return this.#requestChecks("TEST", ["TEST"])
       case "REVIEW":
-        return this.#startModelStage("REVIEW", reviewInstruction(this.#inputs, this.#state), (result) => this.#completeReview(result))
+        return this.#startModelStage("REVIEW", reviewInstruction(this.#inputs, this.#state, await this.#refreshNetChanges()), (result) => this.#completeReview(result))
       case "VERIFY":
         return this.#requestChecks("VERIFY", this.#policy.verifyActions)
     }
@@ -249,7 +311,7 @@ export class EngineeringWorkflow {
 
   // ---- model stages -------------------------------------------------------------------------------
 
-  async #startModelStage(stage: WorkStage, instruction: string, onDone: (result: AgentResult) => Promise<void>): Promise<Step> {
+  async #startModelStage(stage: WorkStage, instruction: string, onDone: (result: AgentResult) => Promise<void>, skillRequest?: string): Promise<Step> {
     const envelope = STAGE_ENVELOPES[stage]
     const registry = this.#deps.registry.restrict(envelope.actions)
     const permission = stagePermission(stage, this.#deps.permissionEvaluator)
@@ -260,7 +322,7 @@ export class EngineeringWorkflow {
       guidance = await prepareSkillGuidance({
         enabled: true,
         registry: this.#deps.skills.registry,
-        task: this.#state.task,
+        task: skillRequest ? `${this.#state.task}\n${skillRequest}` : this.#state.task,
         mode: envelope.mode,
         availableTools: registry.listDefinitions().map((definition) => definition.name),
         permissionEvaluator: permission,
@@ -282,6 +344,7 @@ export class EngineeringWorkflow {
       contextCompiler,
       ...(this.#deps.eventSink ? { eventSink: this.#deps.eventSink } : {}),
       ...(stage === "IMPLEMENT" && this.#deps.checkpointCoordinator ? { checkpointCoordinator: this.#deps.checkpointCoordinator } : {}),
+      ...(this.#deps.progress?.enabled ? { progressMonitor: { enabled: true, ...(this.#deps.progress.thresholds ? { thresholds: this.#deps.progress.thresholds } : {}) } } : {}),
     })
     const attempt = this.#state.stages.filter((record) => record.stage === stage).length + 1
     const active: ActiveModelStage = { stage, runner, tracker, onDone }
@@ -316,6 +379,7 @@ export class EngineeringWorkflow {
   async #afterRunner(active: ActiveModelStage, result: AgentResult): Promise<Step> {
     this.#updateRecordFromRunner(active, result)
     if (result.status === "PAUSED" && result.confirmation) {
+      if (result.confirmation.preparedMutation) await this.#captureBaseline(result.confirmation.preparedMutation.path)
       active.confirmation = result.confirmation
       this.#setPending({ kind: "RUNNER", stage: active.stage, callId: result.confirmation.callId, toolName: result.confirmation.toolName, action: result.confirmation.action })
       this.#patchRecord({ status: "WAITING_FOR_CONFIRMATION" })
@@ -327,6 +391,21 @@ export class EngineeringWorkflow {
     if (result.status === "CANCELLED" || this.#aborted()) {
       await this.#finishRecord("CANCELLED", { outcome: "CANCELLED" })
       await this.#terminate("CANCELLED")
+      return "CONTINUE"
+    }
+    // A stage session that stopped on an unrecoverable stall ends the workflow; it is never retried
+    // as an ordinary stage failure, so session and workflow retry budgets cannot multiply.
+    const stalled = result.nonProgress?.finalBlocker
+    if (stalled && this.#state.progress) {
+      await this.#finishRecord("FAILED", { outcome: "NON_PROGRESS" })
+      this.#setProgress({
+        finalBlocker: stalled,
+        stallSignals: [...this.#state.progress.stallSignals, ...result.nonProgress!.signals].slice(-PROGRESS_LIMITS.assessments),
+        ...(result.nonProgress!.recoveryPlan ? { recoveryPlan: result.nonProgress!.recoveryPlan } : {}),
+        recoveryOutcome: result.nonProgress!.recoveryAttempted ? "NOT_RECOVERED" : "ESCALATED",
+      })
+      this.#deps.onProgress?.(formatNonProgressReport(stalled))
+      await this.#block("BLOCKED_NON_PROGRESS", `${stalled.failureClass}: ${stalled.repeatedPattern}`)
       return "CONTINUE"
     }
     await active.onDone(result)
@@ -369,14 +448,22 @@ export class EngineeringWorkflow {
       ...rest,
       implementation: { ...implementation, passes: pass, summary: boundText(result.finalAnswer, ARTIFACT_LIMITS.summaryChars) },
     }
+    await this.#refreshNetChanges()
+    const assessment = this.#observe("MUTATION")
+    if (assessment && assessment.signals.length > 0) {
+      await this.#handleStall(assessment, "IMPLEMENT")
+      return
+    }
     await this.#transition("TEST", "IMPLEMENT")
   }
 
   async #completeReview(result: AgentResult): Promise<void> {
     const attempt = this.#state.reviews.length + 1
-    const changes = this.#state.implementation?.changedFiles ?? []
+    // Findings are grounded only in the net diff and the current content of net-changed files, so
+    // obsolete intermediate code from the mutation history cannot support a current finding.
+    const net = await this.#refreshNetChanges()
     const review = result.status === "COMPLETED"
-      ? parseReviewEvidence(result.finalAnswer, attempt, { diff: renderDiff(changes).text, changedFiles: uniquePaths(changes), fileContents: await this.#readChangedFiles() })
+      ? parseReviewEvidence(result.finalAnswer, attempt, { diff: renderNetDiff(net).text, changedFiles: net.map((change) => change.path), fileContents: await this.#readChangedFiles(net.map((change) => change.path)) })
       : undefined
     if (!review) {
       await this.#finishRecord("FAILED", { outcome: result.status === "COMPLETED" ? "REVIEW_UNPARSEABLE" : (result.failureReason ?? result.status) })
@@ -385,8 +472,13 @@ export class EngineeringWorkflow {
     }
     this.#state = { ...this.#state, reviews: [...this.#state.reviews, review] }
     await this.#finishRecord(review.blocking > 0 ? "FAILED" : "PASSED", { outcome: `${review.verdict} (${review.blocking} blocking)` })
+    const assessment = this.#observe("REVIEW")
     if (review.blocking === 0) {
       await this.#transition("VERIFY", "REVIEW")
+      return
+    }
+    if (assessment && assessment.signals.length > 0) {
+      await this.#handleStall(assessment, "REVIEW")
       return
     }
     if (this.#state.retryCounts.reviewRepairs >= this.#policy.maxReviewRepairs) {
@@ -469,8 +561,13 @@ export class EngineeringWorkflow {
     }
     this.#state = { ...this.#state, test }
     await this.#finishRecord(passed ? "PASSED" : "FAILED", { outcome: passed ? "PASS" : outcomes.map((outcome) => outcome.status).join(",") })
+    const assessment = this.#observe("TEST")
     if (passed) {
       await this.#transition("REVIEW", "TEST")
+      return
+    }
+    if (assessment && assessment.signals.length > 0) {
+      await this.#handleStall(assessment, "TEST")
       return
     }
     if (this.#state.retryCounts.testRepairs >= this.#policy.maxTestRepairs) {
@@ -496,6 +593,7 @@ export class EngineeringWorkflow {
       },
     }
     await this.#finishRecord(verdict === "READY" ? "PASSED" : "FAILED", { outcome: verdict })
+    this.#observe("VERIFY")
     if (verdict === "READY") {
       await this.#transition("COMPLETE", "VERIFY")
       return
@@ -512,7 +610,196 @@ export class EngineeringWorkflow {
     await this.#transition("IMPLEMENT", from, { guarded: true })
   }
 
+  // ---- non-progress detection & bounded recovery (Sprint 5C, ADR-031) ----------------------------
+
+  #isRecoveryPass(): boolean {
+    const progress = this.#state.progress
+    return progress?.recoveryOutcome === "PENDING" && progress.recoveryPass === this.#currentPass()
+  }
+
+  #setProgress(patch: Partial<WorkflowProgressState>): void {
+    if (!this.#state.progress) return
+    this.#state = { ...this.#state, progress: { ...this.#state.progress, ...patch } }
+  }
+
+  /** Bounded, deterministic snapshot of observable state. Hashes and counts only. */
+  #snapshot(point: ProgressSnapshot["point"]): ProgressSnapshot {
+    const state = this.#state
+    const net = state.implementation?.netChanges ?? []
+    const base = {
+      workflowId: state.workflowId,
+      stage: point === "START" ? "PLAN" : point === "MUTATION" ? "IMPLEMENT" : (point as EngineeringStage),
+      point,
+      changedFileHashes: Object.fromEntries(net.map((change) => [change.path, change.currentHash.slice(0, 16)])),
+      diffFingerprint: netDiffFingerprint(net),
+      timestamp: this.#clock(),
+    } as const
+    if (point === "TEST" && state.test) {
+      const failing = state.test.outcomes.filter((outcome) => outcome.status !== "PASS")
+      const testFingerprint = setFingerprint(failing.map((outcome) => `${outcome.action}:${outcome.fingerprint}`))
+      return {
+        ...base,
+        failingCheckCount: failing.reduce((total, outcome) => total + Math.max(1, outcome.testCounts?.failed ?? 1), 0),
+        ...(testFingerprint ? { testFingerprint } : {}),
+      }
+    }
+    if (point === "REVIEW") {
+      const blocking = (state.reviews.at(-1)?.findings ?? []).filter((finding) => BLOCKING_SEVERITIES.has(finding.severity))
+      const reviewFingerprint = setFingerprint(blocking.map((finding) => shortHash(`${finding.file}\0${normalizeFailureOutput(finding.evidence)}`)))
+      return { ...base, blockerCount: blocking.length, ...(reviewFingerprint ? { reviewFingerprint } : {}) }
+    }
+    if (point === "VERIFY" && state.verification) {
+      return { ...base, verificationState: state.verification.verdict, verificationFailedChecks: state.verification.outcomes.filter((outcome) => outcome.status !== "PASS").length }
+    }
+    return base
+  }
+
+  /** Feeds one observation to the monitor (an observer only) and records the assessment. */
+  #observe(point: ProgressSnapshot["point"]): ProgressAssessment | undefined {
+    const progress = this.#state.progress
+    if (!this.#monitor || !progress) return undefined
+    const assessment = this.#monitor.observe(this.#snapshot(point))
+    const recovered = progress.recoveryOutcome === "PENDING" && assessment.status === "ADVANCED" && (point === "TEST" || point === "REVIEW")
+    this.#setProgress({
+      monitor: this.#monitor.state,
+      assessments: [...progress.assessments, assessment].slice(-PROGRESS_LIMITS.assessments),
+      ...(recovered ? { recoveryOutcome: "RECOVERED" as const, ...(progress.recoveryPlan ? { patternCandidate: patternCandidate(progress.recoveryPlan, true) } : {}) } : {}),
+    })
+    return assessment
+  }
+
+  /** Resolves a still-pending recovery at a terminal point. "RECOVERED" only when the run completed. */
+  #settleRecovery(outcome: "RECOVERED" | "NOT_RECOVERED" | "CANCELLED"): void {
+    const progress = this.#state.progress
+    if (progress?.recoveryOutcome !== "PENDING") return
+    this.#setProgress({ recoveryOutcome: outcome, ...(progress.recoveryPlan && outcome !== "CANCELLED" ? { patternCandidate: patternCandidate(progress.recoveryPlan, outcome === "RECOVERED") } : {}) })
+  }
+
+  #lastPassChanges(): readonly ChangedFile[] {
+    const implementation = this.#state.implementation
+    return (implementation?.changedFiles ?? []).filter((change) => change.pass === implementation?.passes)
+  }
+
+  #capture(from: "TEST" | "REVIEW" | "IMPLEMENT", signals: readonly ProgressSignal[]): FailureCapture {
+    if (from === "TEST") {
+      const failing = (this.#state.test?.outcomes ?? []).filter((outcome) => outcome.status !== "PASS")
+      return {
+        stage: "TEST",
+        signals,
+        failureText: boundRecoveryText(failing.map((outcome) => `${outcome.action} \`${outcome.command}\` → ${outcome.status}\n${outcome.excerpt}`).join("\n\n"), ARTIFACT_LIMITS.outputExcerptChars),
+        checkStatuses: failing.map((outcome) => outcome.status),
+      }
+    }
+    if (from === "REVIEW") {
+      const finding = (this.#state.reviews.at(-1)?.findings ?? []).find((item) => BLOCKING_SEVERITIES.has(item.severity))
+      return { stage: "REVIEW", signals, ...(finding ? { failureText: boundRecoveryText(`[${finding.severity}] ${finding.file}${finding.location ? `:${finding.location}` : ""} — ${finding.claim}\nEvidence: ${finding.evidence}`) } : {}) }
+    }
+    return { stage: "IMPLEMENT", signals, failureText: `IMPLEMENT pass ${this.#state.implementation?.passes ?? 0} applied edits that left the net workspace diff unchanged` }
+  }
+
+  /**
+   * STALL → stop the retry loop → capture → classify → one discriminating check → one bounded
+   * recovery retry, or BLOCKED. The engine acts; the monitor only observed.
+   */
+  async #handleStall(assessment: ProgressAssessment, from: "TEST" | "REVIEW" | "IMPLEMENT"): Promise<void> {
+    const progress = this.#state.progress!
+    if (this.#aborted()) {
+      await this.#terminate("CANCELLED")
+      return
+    }
+    this.#deps.onProgress?.(stallNotice(assessment.signals))
+    const counter = from === "TEST" ? "testRepairs" : from === "REVIEW" ? "reviewRepairs" : undefined
+    const repairLimit = from === "TEST" ? this.#policy.maxTestRepairs : this.#policy.maxReviewRepairs
+    const budgetAvailable = counter !== undefined && progress.recoveryCount < MAX_NON_PROGRESS_RECOVERIES && this.#state.retryCounts[counter] < repairLimit
+    const capture = this.#capture(from, assessment.signals)
+    const preliminary = classifyStall(capture)
+
+    // The discriminating check runs at most once per workflow; a repeat stall reuses its evidence.
+    let result: DiagnosticResult
+    if (!progress.diagnosticRun) {
+      const latest = new Map<string, string>()
+      for (const change of this.#state.implementation?.changedFiles ?? []) latest.set(change.path, change.afterHash)
+      const finding = from === "REVIEW" ? (this.#state.reviews.at(-1)?.findings ?? []).find((item) => BLOCKING_SEVERITIES.has(item.severity)) : undefined
+      result = await runDiagnosticCheck(preliminary.check, {
+        capture,
+        expectedHashes: Object.fromEntries(latest),
+        currentHash: async (path) => {
+          const content = await this.#readWorkspaceFile(path)
+          return content === undefined ? undefined : sha256(content)
+        },
+        lastPassPaths: uniquePaths(this.#lastPassChanges()),
+        ...(finding ? { reviewEvidence: { file: finding.file, quote: finding.evidence, ...(await this.#readWorkspaceFile(finding.file).then((content) => (content === undefined ? {} : { currentContent: content }))) } } : {}),
+        ...(this.#deps.progress?.probe ? { probe: this.#deps.progress.probe } : {}),
+      })
+    } else {
+      result = { observed: `the same stall persisted after the bounded recovery attempt (earlier check: ${progress.recoveryPlan?.observedResult ?? "n/a"})` }
+    }
+    // Cancellation supersedes recovery: nothing after the check runs.
+    if (this.#aborted()) {
+      await this.#terminate("CANCELLED")
+      return
+    }
+    const plan = buildRecoveryPlan({ capture, preliminary, result, budgetAvailable })
+    this.#setProgress({
+      stallSignals: [...progress.stallSignals, ...assessment.signals].slice(-PROGRESS_LIMITS.assessments),
+      diagnosticRun: true,
+      recoveryPlan: plan,
+    })
+
+    if (plan.retryAllowed && counter) {
+      const pass = this.#currentPass()
+      const net = this.#state.implementation?.netChanges ?? []
+      const last = this.#lastPassChanges()
+      const reason = buildRecoveryContext({
+        task: this.#state.task,
+        stage: from,
+        acceptanceCriteria: this.#state.plan?.acceptanceCriteria ?? [],
+        latestArtifact: capture.failureText ?? "",
+        ...(this.#snapshot(from === "IMPLEMENT" ? "MUTATION" : from).testFingerprint ? { failureFingerprint: this.#snapshot(from === "IMPLEMENT" ? "MUTATION" : from).testFingerprint! } : {}),
+        lastMeaningfulAction: last.length > 0
+          ? `IMPLEMENT pass ${this.#state.implementation?.passes} changed ${uniquePaths(last).join(", ")} (+${last.reduce((n, change) => n + change.linesAdded, 0)} −${last.reduce((n, change) => n + change.linesRemoved, 0)})`
+          : "no applied change in the last pass",
+        workspaceHashes: Object.fromEntries(net.map((change) => [change.path, change.currentHash])),
+        plan,
+      })
+      // Consume the attempt before retrying, so a restart can never regain it.
+      this.#setProgress({ recoveryCount: progress.recoveryCount + 1, recoveryAttempted: true, recoveryOutcome: "PENDING", recoveryPass: pass })
+      await this.#startRepair(from as "TEST" | "REVIEW", counter, reason)
+      return
+    }
+
+    const report = buildNonProgressReport(plan, capture.failureText ?? "", plan.observedResult ?? result.observed)
+    this.#setProgress({
+      finalBlocker: report,
+      recoveryOutcome: progress.recoveryAttempted ? "NOT_RECOVERED" : "ESCALATED",
+      patternCandidate: patternCandidate(plan, false),
+    })
+    this.#deps.onProgress?.(formatNonProgressReport(report))
+    await this.#block("BLOCKED_NON_PROGRESS", `${report.failureClass}: ${report.repeatedPattern}`)
+  }
+
   // ---- change tracking ----------------------------------------------------------------------------
+
+  /** Records a file's workflow-start content the first time the workflow is about to change it. */
+  async #captureBaseline(path: string): Promise<void> {
+    if (this.#baselines.has(path) || (this.#state.implementation?.changedFiles ?? []).some((change) => change.path === path)) return
+    const content = await this.#readWorkspaceFile(path)
+    this.#baselines.set(path, content ?? null)
+  }
+
+  /** Recomputes the net (workflow start → current workspace) change set from the real workspace. */
+  async #refreshNetChanges(): Promise<readonly NetChange[]> {
+    const implementation = this.#state.implementation
+    if (!implementation) return []
+    const net: NetChange[] = []
+    for (const path of uniquePaths(implementation.changedFiles)) {
+      const change = computeNetChange(path, this.#baselines.get(path), await this.#readWorkspaceFile(path), implementation.changedFiles)
+      if (change) net.push(change)
+    }
+    this.#state = { ...this.#state, implementation: { ...implementation, netChanges: net } }
+    return net
+  }
+
 
   /** The implementation pass now running: 1 for the initial pass, 2+ for repairs. */
   #currentPass(): number {
@@ -539,9 +826,9 @@ export class EngineeringWorkflow {
     }
   }
 
-  async #readChangedFiles(): Promise<Map<string, string>> {
+  async #readChangedFiles(paths: readonly string[] = uniquePaths(this.#state.implementation?.changedFiles ?? [])): Promise<Map<string, string>> {
     const contents = new Map<string, string>()
-    for (const path of uniquePaths(this.#state.implementation?.changedFiles ?? [])) {
+    for (const path of paths) {
       const content = await this.#readWorkspaceFile(path)
       if (content !== undefined) contents.set(path, content.slice(0, ARTIFACT_LIMITS.groundingFileBytes))
     }
@@ -565,6 +852,8 @@ export class EngineeringWorkflow {
   async #transition(to: EngineeringStage, from: WorkStage, options: { guarded?: boolean } = {}): Promise<void> {
     if (!options.guarded) assertTransition(this.#state, to, this.#policy)
     const completedStages = this.#state.completedStages.includes(from) ? this.#state.completedStages : [...this.#state.completedStages, from]
+    // A pending recovery is only "recovered" once the run demonstrably reached COMPLETE.
+    if (to === "COMPLETE") this.#settleRecovery("RECOVERED")
     this.#state = {
       ...this.#state,
       currentStage: to,
@@ -604,6 +893,7 @@ export class EngineeringWorkflow {
     this.#pendingVerification = undefined
     const open = this.#state.stages.at(-1)
     if (open && !open.endedAt) await this.#finishRecord(stage === "CANCELLED" ? "CANCELLED" : "BLOCKED", { outcome: stage })
+    this.#settleRecovery(stage === "CANCELLED" ? "CANCELLED" : "NOT_RECOVERED")
     const { pending: _pending, ...rest } = this.#state
     this.#state = { ...rest, currentStage: stage, status: stage, updatedAt: this.#clock() }
     await this.#persist()
@@ -682,7 +972,8 @@ export class EngineeringWorkflow {
 
   async #persist(): Promise<void> {
     this.#state = { ...this.#state, updatedAt: this.#clock() }
-    await this.#deps.store?.save(this.#state)
+    // The persistence boundary: no store ever receives raw secrets or reasoning (Sprint 5B closure).
+    if (this.#deps.store) await this.#deps.store.save(sanitizeWorkflowState(this.#state))
   }
 
   #result(): WorkflowResult {

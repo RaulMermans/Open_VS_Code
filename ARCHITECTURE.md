@@ -629,3 +629,40 @@ Surfaces:
 - the VS Code setting `open-vs-code.workflow.enabled`.
 
 Guide: `docs/workflows/ENGINEERING_LOOP.md`.
+
+Sprint 5B closure (verified in 5C):
+
+- `EngineeringWorkflow.#persist` passes every state through `sanitizeWorkflowState` (`workflow/persistence.ts`) before the store.
+- REVIEW receives `NetChange[]` (`computeNetChange`: workflow-start content → current workspace) instead of the mutation history, which stays internal.
+
+## Non-Progress Detection & Bounded Recovery (Sprint 5C, ADR-031)
+
+Editor-independent, in `packages/agent-core/src/progress/`. It is feature-flagged off by default (`progressMonitor.enabled`); when it is off, the direct and workflow paths behave exactly as in Sprint 5B.
+
+```text
+EngineeringWorkflow (authority for stages)                      AgentRunner (authority for its turn loop)
+  observe(START | MUTATION | TEST | REVIEW | VERIFY)              observeTool(result) · endTurn() · turn exhaustion
+     └─ #snapshot → ProgressMonitor.observe (observer only)          └─ DirectProgressGuard (observer only)
+          compareSnapshots → ADVANCED | CHANGED | STALLED | REGRESSED | UNKNOWN
+          per-dimension repeat counters → ProgressSignal[]
+  signal → #handleStall: capture → classifyStall → runDiagnosticCheck (once, read-only)
+         → buildRecoveryPlan → retryAllowed && budget?
+              yes: consume the attempt (persisted) → #startRepair (assertTransition) → IMPLEMENT (recovery)
+              no : BLOCKED_NON_PROGRESS + NonProgressReport
+  every save: sanitizeWorkflowState → CheckpointWorkflowStore → CheckpointStore (WORKFLOW_STAGE)
+```
+
+Authorities are unchanged:
+
+- The monitor and the guard never run tools, write files, change permissions or pick models.
+- Stage transitions still go through `assertTransition`.
+- Recovery is an ordinary guarded repair that draws from the existing repair budget (`MAX_NON_PROGRESS_RECOVERIES = 1`).
+- The only I/O in diagnostics is a read-only workspace hash and an optional single loopback TCP probe.
+
+Surfaces:
+
+- the CLI `--progress-monitor` flag;
+- the IDE bridge `progressMonitor.enabled` (notices go through `IdeHost.showOutput`);
+- the VS Code setting `open-vs-code.progressMonitor.enabled`.
+
+Guide: `docs/workflows/NON_PROGRESS_RECOVERY.md`.

@@ -167,6 +167,24 @@ UI / future Runtime Evals:
   - every model call goes to the one configured local provider.
 - **Result**: PLAN and REVIEW cannot mutate, and no stage can escalate. A `DENY` from the gate blocks the workflow rather than bypassing it. Evidence: `packages/agent-core/tests/workflow/workflow.test.ts` (W-03, W-14, W-21, W-22, W-26, W-27).
 
+### Workflow persistence & net-diff review (Sprint 5B closure)
+- **Input**: secrets appearing in the task, model output, diffs, test output or review findings; a repaired bug quoted as a current finding.
+- **Control**:
+  - `sanitizeWorkflowState` runs before every `WorkflowStateStore.save`. It applies the canonical `redactRuntimeEvalSecrets` to every free-text string, strips reasoning blocks and bounds string length; hashes and ids are untouched.
+  - REVIEW sees only the net diff (workflow start → current workspace), and findings are grounded only in it and in the current content of net-changed files.
+- **Result**: no literal secret reaches checkpoint JSON, and obsolete intermediate code cannot ground a blocking finding. Evidence: `packages/agent-core/tests/workflow/closure.test.ts` (C-0A, C-0B).
+
+### Non-progress detection & recovery (Sprint 5C, ADR-031)
+- **Input**: a model repeating a failing action; a stall caused by a denied permission or an unavailable service; a crash during recovery.
+- **Control**:
+  - `ProgressMonitor` and `DirectProgressGuard` are observers. They cannot run tools, mutate, approve, change permissions or choose models.
+  - Recovery is an ordinary guarded repair through `assertTransition` and the same PermissionGate-checked tools; the IMPLEMENT envelope is not widened, and the explicitly requested `bug-triage` skill is rejected there (`CAPABILITY_DENIED`).
+  - PERMISSION_BLOCK, ENVIRONMENT_FAILURE, EXTERNAL_BLOCKER, STATE_MISMATCH and UNKNOWN escalate without a retry.
+  - The endpoint probe connects only to loopback; external hosts are never contacted.
+  - Recovery count and counters are persisted (sanitized) before the retry, so a restart cannot gain retries.
+  - Cancellation is checked before and after the diagnostic check.
+- **Result**: at most one bounded recovery per run, with no permission escalation, no cloud call, no model download and no background continuation. Evidence: `packages/agent-core/tests/progress/` (NP-W-07, -08, -10, -11, -12, -14; NP-D-06, -08).
+
 ---
 
 ## 4. Security Invariants

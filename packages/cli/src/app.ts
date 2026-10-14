@@ -12,6 +12,8 @@ export interface CLIAppOptions {
   skills?: boolean;
   /** Structured Engineering Loop (ADR-030). Off unless set; `OPEN_VS_CODE_WORKFLOW=1` also enables it. */
   workflow?: boolean;
+  /** Non-progress detection & bounded recovery (ADR-031). Off unless set; `OPEN_VS_CODE_PROGRESS_MONITOR=1` also enables it. */
+  progressMonitor?: boolean;
   provider?: ModelProvider;
   mockApproval?: "APPROVE" | "REJECT" | (() => Promise<"APPROVE" | "REJECT">);
 }
@@ -88,6 +90,12 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       isTrusted: true,
       eventSink: sink,
       skills: { enabled: options.skills ?? process.env.OPEN_VS_CODE_SKILLS === "1" },
+      progressMonitor: {
+        enabled: options.progressMonitor ?? process.env.OPEN_VS_CODE_PROGRESS_MONITOR === "1",
+        onProgress: (notice: string) => {
+          if (!options.json) console.log(`\n${notice}`);
+        },
+      },
       workflow: {
         enabled: options.workflow ?? process.env.OPEN_VS_CODE_WORKFLOW === "1",
         // Meaningful transitions only; no tool-level spam.

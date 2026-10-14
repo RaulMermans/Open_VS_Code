@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 5B ✅ COMPLETE — Structured Engineering Loop & Fresh-Context Review (deterministic; real-model delta deferred to HALO). Sprint 5A ✅ COMPLETE — Portable Skills Runtime verified, including injected-state truth. V1 Desktop Candidate remains gated only on HALO target-host acceptance.
+Sprint 5C ✅ COMPLETE — Non-Progress Detection & Bounded Recovery (deterministic; real-model delta deferred to HALO). Sprint 5B ✅ COMPLETE — Structured Engineering Loop & Fresh-Context Review, including its closure (sanitized persistence, net-diff review) verified in 5C. Sprint 5A ✅ COMPLETE — Portable Skills Runtime verified, including injected-state truth. V1 Desktop Candidate remains gated only on HALO target-host acceptance.
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.

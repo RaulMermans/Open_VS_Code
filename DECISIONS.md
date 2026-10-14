@@ -31,7 +31,8 @@
 | [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) | Real Local Models, Canonical Endpoints & Adaptive Routing | Accepted |
 | [ADR-028](docs/adrs/ADR-028-desktop-shell-and-packaging-strategy.md) | Desktop Shell and Packaging Strategy (Code-OSS vs VSCodium) | Accepted |
 | [ADR-029](docs/adrs/ADR-029-portable-skills-runtime.md) | Portable Skills Runtime | Accepted (flag off pending HALO A/B) |
-| [ADR-030](docs/adrs/ADR-030-structured-engineering-loop.md) | Structured Engineering Loop & Fresh-Context Review | Accepted (flag off pending HALO A/B) |
+| [ADR-030](docs/adrs/ADR-030-structured-engineering-loop.md) | Structured Engineering Loop & Fresh-Context Review | Accepted (flag off pending HALO A/B; 5B closure amendment) |
+| [ADR-031](docs/adrs/ADR-031-non-progress-detection-and-recovery.md) | Non-Progress Detection & Bounded Recovery | Accepted (flag off pending HALO A/B) |
 
 Decision status changes belong in the ADR and this index.
 
@@ -51,3 +52,5 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 4E / 4E.1 / 4E.2**: Real Local Models, Production FIM & Evidence Closure (ADR-027) — Implementation Complete (Real-Host Evidence Blocked).
 - **Sprint 4F**: Desktop Shell and Packaging Strategy (ADR-028) — Accepted.
 - **Sprint 5A**: Portable Skills Runtime (ADR-029) — Accepted; deterministic verification complete, real-model delta deferred to HALO.
+- **Sprint 5B**: Structured Engineering Loop & Fresh-Context Review (ADR-030) — Accepted; closure amendment (sanitized persistence, net-diff review) verified in Sprint 5C.
+- **Sprint 5C**: Non-Progress Detection & Bounded Recovery (ADR-031) — Accepted; deterministic verification complete, real-model delta deferred to HALO.

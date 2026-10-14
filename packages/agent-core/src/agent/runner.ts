@@ -38,6 +38,12 @@ import { searchText } from "../tools/search-text.ts"
 import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts"
 import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
 import { join } from "node:path"
+import { readFile } from "node:fs/promises"
+import { MAX_NON_PROGRESS_RECOVERIES, type ProgressSignal, type ProgressThresholds } from "../progress/contracts.ts"
+import { DirectProgressGuard, dedupeObservations, type DirectNonProgressEvidence } from "../progress/direct-guard.ts"
+import { boundRecoveryText, buildNonProgressReport, buildRecoveryPlan, classifyStall, describeSignals, formatNonProgressReport, runDiagnosticCheck, stallNotice, type FailureCapture } from "../progress/recovery.ts"
+import { resolveRepositoryPath } from "../tools/path-safety.ts"
+import { sha256 } from "../tools/mutation-engine.ts"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
 
@@ -75,6 +81,11 @@ export interface AgentRunnerDependencies {
   readonly adaptiveInterventions?: boolean
   readonly checkpointCoordinator?: CheckpointCoordinator
   readonly performanceLedger?: ModelPerformanceLedger
+  /**
+   * Sprint 5C non-progress guard (ADR-031). Off by default: the existing 3-repeat NON_PROGRESS_GUARD
+   * is then the only stall protection, exactly as before.
+   */
+  readonly progressMonitor?: { readonly enabled: boolean; readonly thresholds?: Partial<ProgressThresholds> }
 }
 
 interface PendingConfirmation {
@@ -113,6 +124,8 @@ interface Session {
   lastDeploymentId?: string | undefined
   startTime?: number | undefined
   performanceOutcomeRecorded?: boolean | undefined
+  progressGuard?: DirectProgressGuard | undefined
+  nonProgress?: DirectNonProgressEvidence | undefined
   timeoutOccurred?: boolean | undefined
 }
 
@@ -173,6 +186,7 @@ export class AgentRunner {
   readonly #adaptiveInterventions: boolean
   readonly #checkpointCoordinator?: CheckpointCoordinator | undefined
   readonly #performanceLedger?: ModelPerformanceLedger | undefined
+  readonly #progressMonitor?: AgentRunnerDependencies["progressMonitor"] | undefined
   #session?: Session | undefined
 
   constructor(dependencies: AgentRunnerDependencies) {
@@ -194,6 +208,7 @@ export class AgentRunner {
     this.#adaptiveInterventions = dependencies.adaptiveInterventions ?? true
     this.#checkpointCoordinator = dependencies.checkpointCoordinator
     this.#performanceLedger = dependencies.performanceLedger
+    this.#progressMonitor = dependencies.progressMonitor
     if (!Number.isInteger(this.#nonProgressThreshold) || this.#nonProgressThreshold < 2) {
       throw new AgentRunnerError("INVALID_INPUT", "nonProgressThreshold must be an integer of at least 2")
     }
@@ -236,6 +251,7 @@ export class AgentRunner {
       toolCalls: [],
       repeatedProgress: 0,
       startTime: Date.now(),
+      ...(this.#progressMonitor?.enabled ? { progressGuard: new DirectProgressGuard(this.#progressMonitor.thresholds) } : {}),
     }
     this.#emit("task.started", { task: input.task })
     if (this.#checkpointCoordinator) {
@@ -560,6 +576,9 @@ export class AgentRunner {
           }
         }
 
+        const review = pending.reviewable?.reviewPayload as { path?: string; beforeHash?: string; afterHash?: string } | undefined
+        const isMutation = pending.prepared.definition.action === "write_file" || pending.prepared.definition.action === "delete_file"
+        if (await this.#observeProgress(pending.prepared, observation, isMutation && review?.path ? { path: review.path, ...(review.beforeHash ? { beforeHash: review.beforeHash } : {}), ...(review.afterHash ? { afterHash: review.afterHash } : {}) } : undefined)) return this.#result()
         const progressKey = `${pending.signature}\0${observation.ok}\0${observation.content}`
         session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
         session.lastProgressKey = progressKey
@@ -803,6 +822,7 @@ export class AgentRunner {
       }
       if (session.turns >= session.input.maxTurns) {
         session.failureReason = "MAX_TURNS_EXCEEDED"
+        this.#recordTurnExhaustion()
         this.#emit("task.max_turns", { message: `Maximum of ${session.input.maxTurns} model turns reached` })
         break
       }
@@ -1018,11 +1038,43 @@ export class AgentRunner {
         break
       }
 
+      let stopped = false
       for (const call of calls) {
-        if (await this.#handleCall(call)) break
+        if (await this.#handleCall(call)) {
+          stopped = true
+          break
+        }
+      }
+      // Context burn: several tool-using turns in a row that produced no new durable evidence.
+      if (!stopped && session.progressGuard && session.state.status === "OBSERVING") {
+        const burn = session.progressGuard.endTurn()
+        if (burn.length > 0 && (await this.#handleDirectStall(burn, { name: calls.at(-1)?.name ?? "unknown", ...(session.observations.at(-1) ? { observation: session.observations.at(-1)! } : {}) }))) break
       }
     }
     return this.#result()
+  }
+
+  /** Turn exhaustion without new evidence is reported as a bounded non-progress blocker. */
+  #recordTurnExhaustion(): void {
+    const session = this.#requiredSession()
+    const guard = session.progressGuard
+    if (!guard || guard.noEvidenceTurns === 0 || session.nonProgress?.finalBlocker) return
+    const signal: ProgressSignal = { kind: "CONTEXT_BURN", count: guard.noEvidenceTurns, threshold: 1, pattern: `the turn budget ran out after ${guard.noEvidenceTurns} turn(s) without new evidence` }
+    const plan = buildRecoveryPlan({
+      capture: { stage: "DIRECT", signals: [signal] },
+      preliminary: { failureClass: "CONTEXT_DEGRADATION", hypothesis: "the run is repeating actions without gaining evidence", check: "CONTEXT_COMPACTION", checkDescription: "count turns since the last new evidence" },
+      result: { observed: `${guard.noEvidenceTurns} final turn(s) added no new evidence` },
+      budgetAvailable: false,
+    })
+    session.nonProgress = {
+      signals: [...(session.nonProgress?.signals ?? []), signal].slice(-12),
+      recoveryAttempted: guard.recoveryCount > 0,
+      recoveryCount: guard.recoveryCount,
+      recoveryPlan: plan,
+      recoveryOutcome: guard.recoveryCount > 0 ? "NOT_RECOVERED" : "ESCALATED",
+      finalBlocker: buildNonProgressReport(plan, session.observations.at(-1)?.content ?? "", plan.observedResult ?? ""),
+      observationsDropped: session.nonProgress?.observationsDropped ?? 0,
+    }
   }
 
   async #handleCall(call: ToolCall | unknown): Promise<boolean> {
@@ -1046,6 +1098,7 @@ export class AgentRunner {
         outcome: "REJECTED",
         error: message,
       })
+      if (await this.#observeProgress({ name, arguments: (candidate.arguments ?? {}) as Readonly<Record<string, unknown>> }, observation)) return true
       const { evalResult: rejEval, directive: rejDirective } = await this.#runEval("TOOL_FAILURE")
       if (this.#adaptiveInterventions && rejDirective.decision !== "CONTINUE") {
         const handled = await this.#dispatchDirective(rejEval, rejDirective, "TOOL_FAILURE")
@@ -1070,6 +1123,7 @@ export class AgentRunner {
         outcome: "DENIED",
         error: "Permission policy denied this tool request",
       })
+      if (await this.#observeProgress(prepared, session.observations.at(-1)!)) return true
       const { evalResult: secEval, directive: secDirective } = await this.#runEval("TOOL_FAILURE")
       if (this.#adaptiveInterventions && secDirective.decision !== "CONTINUE") {
         const handled = await this.#dispatchDirective(secEval, secDirective, "TOOL_FAILURE")
@@ -1329,6 +1383,7 @@ export class AgentRunner {
         if (handled) return true
       }
     }
+    if (await this.#observeProgress(prepared, observation)) return true
     const progressKey = `${signature}\0${observation.ok}\0${observation.content}`
     session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
     session.lastProgressKey = progressKey
@@ -1339,6 +1394,128 @@ export class AgentRunner {
       return true
     }
     return false
+  }
+
+  // ---- Sprint 5C: direct-path non-progress guard (ADR-031) ---------------------------------------
+
+  /** Feeds one tool result to the guard. Returns true when the run must stop (BLOCKED_NON_PROGRESS). */
+  async #observeProgress(prepared: Pick<PreparedToolCall, "name" | "arguments">, observation: ToolObservation, mutation?: { readonly path: string; readonly beforeHash?: string; readonly afterHash?: string }): Promise<boolean> {
+    const guard = this.#session?.progressGuard
+    if (!guard) return false
+    const signals = guard.observeTool({
+      name: prepared.name,
+      args: prepared.arguments,
+      ok: observation.ok,
+      content: observation.content,
+      ...(observation.errorCategory ? { errorCategory: observation.errorCategory } : {}),
+      ...(mutation ? { mutation } : {}),
+    })
+    if (signals.length === 0) return false
+    return this.#handleDirectStall(signals, { name: prepared.name, observation })
+  }
+
+  /**
+   * STALL → capture → classify → one discriminating check → one bounded recovery turn (compacted
+   * context + a recovery directive), or stop with a structured BLOCKED_NON_PROGRESS report.
+   * The check is deterministic and read-only; the runner never invents a tool call for the model.
+   */
+  async #handleDirectStall(signals: readonly ProgressSignal[], last: { readonly name: string; readonly observation?: ToolObservation }): Promise<boolean> {
+    const session = this.#requiredSession()
+    const guard = session.progressGuard!
+    if (session.input.signal?.aborted) {
+      this.#cancel()
+      return true
+    }
+    const category = last.observation?.errorCategory
+    const lastDiagnostic = session.diagnostics.at(-1)
+    const capture: FailureCapture = {
+      stage: "DIRECT",
+      signals,
+      ...(last.observation ? { failureText: boundRecoveryText(last.observation.content, 1_200) } : {}),
+      ...(category ? { toolErrorCategories: [category] } : {}),
+      ...(category === "PERMISSION_DENIED" ? { permissionOutcome: "DENIED" as const } : category === "PERMISSION_REJECTED" ? { permissionOutcome: "REJECTED" as const } : {}),
+      ...(lastDiagnostic && lastDiagnostic.totalEstimatedTokens >= session.input.contextBudget.availableContext * 0.9 ? { contextPressure: true } : {}),
+    }
+    const preliminary = classifyStall(capture)
+    const budgetAvailable = guard.recoveryCount < MAX_NON_PROGRESS_RECOVERIES
+    const definition = this.#registry.listDefinitions().find((item) => item.name === last.name)
+    const result = guard.recoveryCount === 0
+      ? await runDiagnosticCheck(preliminary.check, {
+          capture,
+          tools: {
+            available: this.#registry.listDefinitions().filter((item) => this.#permission(item.action) !== "DENY").map((item) => item.name),
+            failing: last.name,
+            ...(Array.isArray(definition?.inputSchema.required) ? { required: (definition!.inputSchema.required as unknown[]).map(String) } : {}),
+          },
+          expectedHashes: guard.workspaceHashes,
+          currentHash: async (path) => {
+            try {
+              return sha256(await readFile(await resolveRepositoryPath(session.input.workspaceRoot, path, "file"), "utf8"))
+            } catch {
+              return undefined
+            }
+          },
+        })
+      : { observed: `the same stall persisted after the bounded recovery attempt (${session.nonProgress?.recoveryPlan?.observedResult ?? "no earlier check"})` }
+    const plan = buildRecoveryPlan({ capture, preliminary, result, budgetAvailable })
+    const previous = session.nonProgress
+
+    if (plan.retryAllowed) {
+      guard.recoveryCount += 1
+      // Fresh, compact context: each distinct observation once, then one bounded recovery directive.
+      const { kept, dropped } = dedupeObservations(session.observations)
+      session.observations = kept
+      session.observations.push(createToolObservation({
+        toolName: "progress_recovery",
+        callId: `progress-recovery-${guard.recoveryCount}`,
+        error: {
+          category: "NON_PROGRESS_RECOVERY",
+          message: [
+            `No progress: ${describeSignals(signals)}.`,
+            `Failure class: ${plan.failureClass}. Hypothesis: ${plan.hypothesis}.`,
+            `Diagnostic (${plan.checkDescription}): ${plan.observedResult ?? "not run"}.`,
+            `Next: ${plan.correctiveAction}. Do not repeat the previous call; take one different action or answer from the evidence above.`,
+          ].join("\n"),
+        },
+        maxContentBytes: this.#observationMaxBytes,
+      }))
+      session.nonProgress = {
+        signals: [...(previous?.signals ?? []), ...signals].slice(-12),
+        recoveryAttempted: true,
+        recoveryCount: guard.recoveryCount,
+        recoveryPlan: plan,
+        recoveryOutcome: "PENDING",
+        observationsDropped: (previous?.observationsDropped ?? 0) + dropped,
+      }
+      this.#emit("recovery.non_progress", { message: stallNotice(signals), failureClass: plan.failureClass })
+      return false
+    }
+
+    const report = buildNonProgressReport(plan, last.observation?.content ?? "", plan.observedResult ?? result.observed)
+    session.nonProgress = {
+      signals: [...(previous?.signals ?? []), ...signals].slice(-12),
+      recoveryAttempted: guard.recoveryCount > 0,
+      recoveryCount: guard.recoveryCount,
+      recoveryPlan: plan,
+      recoveryOutcome: guard.recoveryCount > 0 ? "NOT_RECOVERED" : "ESCALATED",
+      finalBlocker: report,
+      observationsDropped: previous?.observationsDropped ?? 0,
+    }
+    session.failureReason = "NON_PROGRESS"
+    session.terminationSource = "NON_PROGRESS_GUARD"
+    this.#emit("task.non_progress", { message: formatNonProgressReport(report), terminationSource: "NON_PROGRESS_GUARD", failureClass: report.failureClass })
+    return true
+  }
+
+  /** Resolves a pending recovery at a terminal state; "RECOVERED" needs new evidence after the recovery. */
+  #settleDirectRecovery(): void {
+    const session = this.#session
+    const evidence = session?.nonProgress
+    if (!session || !evidence || evidence.recoveryOutcome !== "PENDING") return
+    const status = session.state.status
+    if (status !== "COMPLETED" && status !== "FAILED" && status !== "CANCELLED") return
+    const recoveryOutcome = status === "CANCELLED" ? "CANCELLED" : status === "COMPLETED" && (session.progressGuard?.evidenceSinceRecovery ?? 0) > 0 ? "RECOVERED" : "NOT_RECOVERED"
+    session.nonProgress = { ...evidence, recoveryOutcome }
   }
 
   #addErrorObservation(prepared: PreparedToolCall, category: string, message: string, outcome: AgentToolCallRecord["outcome"]): void {
@@ -2172,6 +2349,7 @@ export class AgentRunner {
     const status = session.state.status === "WAITING_FOR_CONFIRMATION"
       ? "PAUSED"
       : session.state.status as AgentResult["status"]
+    this.#settleDirectRecovery()
     return {
       status,
       ...(session.finalAnswer !== undefined ? { finalAnswer: session.finalAnswer } : {}),
@@ -2185,6 +2363,7 @@ export class AgentRunner {
       evalResults: session.evalResults,
       evalSummary: session.evalAnalytics?.formatDeveloperSummary(session.input.task.id),
       observations: session.observations,
+      ...(session.nonProgress ? { nonProgress: session.nonProgress } : {}),
       ...(session.pending ? {
         confirmation: {
           callId: session.pending.prepared.id,

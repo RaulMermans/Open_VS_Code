@@ -26,6 +26,8 @@ Options:
   --skills           Enable the Portable Skills Runtime (off by default; ADR-029)
   --workflow         Run eligible build/debug tasks through the Structured Engineering Loop
                      (PLAN → IMPLEMENT → TEST → REVIEW → VERIFY; off by default; ADR-030)
+  --progress-monitor Detect non-progress (repeated failures/actions) and run one bounded
+                     diagnostic recovery before stopping as BLOCKED (off by default; ADR-031)
   --help, -h         Show this help message
 
 Model Configuration:
@@ -41,6 +43,7 @@ Model Configuration:
       json: { type: "boolean" },
       skills: { type: "boolean" },
       workflow: { type: "boolean" },
+      "progress-monitor": { type: "boolean" },
     },
     allowPositionals: true,
   });
@@ -85,6 +88,7 @@ Model Configuration:
     json: values.json,
     ...(values.skills ? { skills: true } : {}),
     ...(values.workflow ? { workflow: true } : {}),
+    ...(values["progress-monitor"] ? { progressMonitor: true } : {}),
   });
 
   process.exit(result.exitCode);
