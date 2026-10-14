@@ -1,7 +1,7 @@
 import * as readline from "node:readline/promises";
 
 import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
-import type { ModelProvider } from "@open-vs-code/agent-core";
+import type { ModelProvider, WorkflowStageEvent, WorkflowResult } from "@open-vs-code/agent-core";
 
 export interface CLIAppOptions {
   mode: AgentMode;
@@ -10,6 +10,8 @@ export interface CLIAppOptions {
   json?: boolean;
   /** Portable Skills Runtime (ADR-029). Off unless set; `OPEN_VS_CODE_SKILLS=1` also enables it. */
   skills?: boolean;
+  /** Structured Engineering Loop (ADR-030). Off unless set; `OPEN_VS_CODE_WORKFLOW=1` also enables it. */
+  workflow?: boolean;
   provider?: ModelProvider;
   mockApproval?: "APPROVE" | "REJECT" | (() => Promise<"APPROVE" | "REJECT">);
 }
@@ -20,7 +22,7 @@ export interface CLIAppOptions {
 export async function runCLI(options: CLIAppOptions): Promise<any> {
   
   
-  const { createAgentRuntime } = await import("@open-vs-code/agent-core");
+  const { createAgentRuntime, isSkillApplied } = await import("@open-vs-code/agent-core");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   const confirm = async (prompt: string): Promise<boolean> => {
@@ -86,9 +88,21 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       isTrusted: true,
       eventSink: sink,
       skills: { enabled: options.skills ?? process.env.OPEN_VS_CODE_SKILLS === "1" },
+      workflow: {
+        enabled: options.workflow ?? process.env.OPEN_VS_CODE_WORKFLOW === "1",
+        // Meaningful transitions only; no tool-level spam.
+        onStage: (event: WorkflowStageEvent) => {
+          if (options.json || event.status === "WAITING_FOR_CONFIRMATION") return;
+          console.log(`\nStage: ${event.stage}${event.skill ? `\nSkill: ${event.skill}` : ""}`);
+        },
+      },
     });
 
-    const { runner, repairOrchestrator, runnerInput, mcpSnapshot, memory, routedGateway, skillSelection, actualSkillTokens, skillEvidence } = runtime;
+    if (runtime.workflow) {
+      return await runWorkflowCLI(runtime, options, confirm, rl);
+    }
+
+    const { runner, repairOrchestrator, runnerInput, mcpSnapshot, memory, routedGateway, skillSelection, actualSkillTokens } = runtime;
     
     if (!options.json) {
       let memSummary: string[] = [];
@@ -98,9 +112,6 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       if (memory.sessionSummaries.length) memSummary.push(memory.sessionSummaries.length + " prior sessions");
       if (memSummary.length > 0) {
         console.log("Project context restored:\n- " + memSummary.join('\n- '));
-      }
-      if (skillEvidence?.selectedSkill && skillEvidence.skillContextTokens > 0) {
-        console.log(`Skill: ${skillEvidence.selectedSkill}`);
       }
     }
 
@@ -245,6 +256,9 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     // We are no longer saving to sessionStorage in this CLI snippet as we moved memory off of here. Wait, actually we can just skip sessionStorage appending in CLI, or use memory.
     // I'll skip it for brevity unless it fails the test. The shared runtime doesn't return sessionStorage directly but memory object.
     
+    // Read after the run: evidence reflects the guidance the final compiled context actually carried.
+    const skillEvidence = runtime.skillEvidence;
+
     const skillDiagnostics = skillSelection ? {
       skillsDiscovered: skillSelection.skillsDiscovered,
       skillsEligible: skillSelection.skillsEligible,
@@ -268,6 +282,12 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     if (options.json) {
       console.log(JSON.stringify({ ...runnerResult, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics }, null, 2));
       return { exitCode: runnerResult.status === "COMPLETED" ? 0 : (runnerResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...runnerResult };
+    }
+
+    if (isSkillApplied(skillEvidence)) {
+      console.log(`\nSkill: ${skillEvidence.selectedSkill} (${skillEvidence.injectionStatus}, ${skillEvidence.injectedSkillTokens} tokens)`);
+    } else if (skillEvidence.injectionStatus === "OMITTED_BY_FINAL_BUDGET") {
+      console.log(`\nSkill: ${skillEvidence.selectedSkill} omitted by final context budget`);
     }
 
     if (changedFiles.size > 0) {
@@ -307,4 +327,65 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       await runtime.cleanup();
     }
   }
+}
+
+/** Drives an eligible task through the Structured Engineering Loop (ADR-030). */
+async function runWorkflowCLI(
+  runtime: any,
+  options: CLIAppOptions,
+  confirm: (prompt: string) => Promise<boolean>,
+  rl: readline.Interface,
+): Promise<any> {
+  const workflow = runtime.workflow;
+  const ac = new AbortController();
+  const sigintHandler = () => {
+    if (!options.json) console.log("\nCancelling...");
+    workflow.cancel();
+    ac.abort();
+  };
+  process.on("SIGINT", sigintHandler);
+  let result: WorkflowResult = await workflow.run();
+  while (result.status === "WAITING_FOR_CONFIRMATION") {
+    const confirmation = result.confirmation!;
+    let approved = false;
+    if (confirmation.runner?.preparedMutation) {
+      const pm = confirmation.runner.preparedMutation;
+      if (!options.json) {
+        console.log(`\nProposed Mutation (${confirmation.stage}):`);
+        console.log(`File: ${pm.path}`);
+        console.log(`Operation: ${pm.operation}`);
+        console.log(`Lines added: ${pm.linesAdded}, removed: ${pm.linesRemoved}`);
+        console.log(pm.diff);
+      }
+      approved = await confirm("\nApprove this change? [y/N] ");
+    } else if (confirmation.verification) {
+      if (!options.json) {
+        console.log(`\nProposed Verification (${confirmation.stage}):`);
+        for (const command of confirmation.verification.commands) console.log(`- ${command}`);
+      }
+      approved = await confirm("\nRun these checks? [y/N] ");
+    } else {
+      if (!options.json) console.log(`\nApproval requested: ${confirmation.runner?.toolName} (${confirmation.runner?.action})`);
+      approved = await confirm("\nApprove? [y/N] ");
+    }
+    if (!approved && !options.json) console.log("REJECT");
+    result = await workflow.resume(approved ? "APPROVE" : "REJECT");
+  }
+  process.removeListener("SIGINT", sigintHandler);
+  rl.close();
+  await runtime.cleanup();
+
+  const state = result.state;
+  const exitCode = result.status === "COMPLETE" ? 0 : result.status === "CANCELLED" ? 2 : 1;
+  if (options.json) {
+    console.log(JSON.stringify({ status: result.status, workflow: state }, null, 2));
+  } else {
+    console.log(`\nWorkflow: ${result.status}${state.blocker ? ` (${state.blocker}: ${state.blockerDetail ?? ""})` : ""}`);
+    const files = [...new Set((state.implementation?.changedFiles ?? []).map((change: { path: string }) => change.path))];
+    if (files.length > 0) console.log(`Files changed:\n${files.map((file) => `- ${file}`).join("\n")}`);
+    const review = state.reviews.at(-1);
+    if (review) console.log(`Review: ${review.verdict} (${review.blocking} blocking, ${review.findings.length} finding(s))`);
+    if (state.verification) console.log(`Verification: ${state.verification.verdict}`);
+  }
+  return { exitCode, workflow: state, status: result.status };
 }

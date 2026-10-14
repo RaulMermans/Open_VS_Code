@@ -601,3 +601,31 @@ createAgentRuntime(skills.enabled)
 ```
 
 Authority is unchanged: the tool registry, `classifyPermission`, the confirmation flow, `RoutedModelGateway` and the HALO provider do not read skill data. Built-in skills ship as Markdown inside the extension (`dist/skills/builtins`) and the packaged desktop app. Surfaces: the CLI `--skills` flag and JSON `skillEvidence`; the VS Code setting `open-vs-code.skills.enabled`; the commands **List Available Skills** and **Show Active Skill**; and a `Skill: <id>` output line.
+
+Injected-state truth (Sprint 5B amendment): `createAgentRuntime` wraps the runner's context compiler with a `SkillInjectionTracker`. `runtime.skillEvidence` is a getter, so its value is reconciled with what the final compiled requests actually carried (`injectionStatus`, `injectedSkills`, `injectedSkillTokens`).
+
+## Structured Engineering Loop (Sprint 5B, ADR-030)
+
+Editor-independent, in `packages/agent-core/src/workflow/`. It is feature-flagged off by default (`workflow.enabled`); when it is off, or the task is ineligible, the direct `AgentRunner` path runs unchanged.
+
+```text
+createAgentRuntime(workflow.enabled) → assessWorkflowEligibility (BUILD/DEBUG, trusted, not read-only)
+  └─ EngineeringWorkflow (one sequential orchestrator)
+       PLAN       fresh AgentRunner · mode PLAN   · registry.restrict(read)         → PlanArtifact
+       IMPLEMENT  fresh AgentRunner · mode BUILD  · registry.restrict(read+write)   → ChangedFile[] (from approved mutation.applied)
+       TEST       WorkflowVerifier → discoverVerificationCommand + VerificationEngine → TestEvidence
+       REVIEW     fresh AgentRunner · mode REVIEW · registry.restrict(read) · allow-listed envelope → grounded ReviewEvidence
+       VERIFY     WorkflowVerifier (TYPECHECK/LINT/BUILD/TEST as defined) + diff integrity → READY | NOT_READY
+       every stage: stagePermission(stage, classifyPermission) — DENY outside envelope, else the gate's answer
+       every transition: assertTransition (pure) → CheckpointWorkflowStore → CheckpointStore (WORKFLOW_STAGE)
+```
+
+Stages exchange bounded artifacts, never transcripts. The REVIEW envelope is an explicit allow-list: task, criteria, plan, changed files, diff, test evidence and constraints. The PermissionGate, `VerificationEngine` and `CheckpointStore` remain the single authorities. The workflow adds no persistence, verification or permission mechanism of its own.
+
+Surfaces:
+
+- the CLI `--workflow` flag, which prints stage transitions only;
+- the IDE bridge (`AgentSessionBridge` with `workflow.enabled`; every confirmation goes through `IdeHost.requestConfirmation`);
+- the VS Code setting `open-vs-code.workflow.enabled`.
+
+Guide: `docs/workflows/ENGINEERING_LOOP.md`.

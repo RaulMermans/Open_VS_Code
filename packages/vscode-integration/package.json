@@ -101,6 +101,11 @@
           "type": "boolean",
           "default": false,
           "description": "Enable the Portable Skills Runtime: select at most one task-specific SKILL.md (built-in or .open-vs-code/skills) and load it lazily. Skills are guidance only and never grant permissions. Off until the HALO A/B benchmark is recorded."
+        },
+        "open-vs-code.workflow.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run eligible Build/Debug tasks through the Structured Engineering Loop (PLAN → IMPLEMENT → TEST → fresh-context REVIEW → VERIFY). Every change and check still needs your approval. Off until the HALO A/B benchmark is recorded."
         }
       }
     }

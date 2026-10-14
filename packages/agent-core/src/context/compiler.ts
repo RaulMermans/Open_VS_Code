@@ -2,6 +2,7 @@ import type { CompiledContext, ContextBudget, ContextItem, ConversationTurn } fr
 import { estimateTokens, fitContext } from "./budget.ts"
 import type { LoadedSkill } from "./skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
+import { skillContextItemId } from "../skills/runtime.ts"
 import type { MemorySelection } from "./memory.ts"
 import type { ToolObservation } from "../agent/observations.ts"
 
@@ -128,7 +129,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
   }
 
   const guidanceItems: ContextItem[] = (input.skillGuidance ?? []).map((guidance) => ({
-    id: `skill:${guidance.id}`,
+    id: skillContextItemId(guidance.id),
     source: { kind: "skill", path: `${guidance.source}:${guidance.id}` },
     content: guidance.content,
     priority: 950,

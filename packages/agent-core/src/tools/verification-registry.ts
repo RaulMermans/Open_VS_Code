@@ -3,7 +3,7 @@ import { discoverVerificationCommand } from "./verification-discovery.ts"
 import { VerificationEngine } from "./verification-engine.ts"
 import { VerificationAction, PreparedVerification, VerificationResult } from "./verification-contracts.ts"
 
-const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
+export const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
   TEST: 60_000,
   TYPECHECK: 60_000,
   LINT: 60_000,

@@ -24,7 +24,8 @@
     "eval:runtime": "npm --workspace=@open-vs-code/agent-core run eval:runtime",
     "eval:recovery": "npm --workspace=@open-vs-code/agent-core run eval:recovery",
     "eval:performance": "npm --workspace=@open-vs-code/agent-core run eval:performance",
-    "eval:skills": "npm --workspace=@open-vs-code/agent-core run eval:skills"
+    "eval:skills": "npm --workspace=@open-vs-code/agent-core run eval:skills",
+    "eval:workflow": "npm --workspace=@open-vs-code/agent-core run eval:workflow"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

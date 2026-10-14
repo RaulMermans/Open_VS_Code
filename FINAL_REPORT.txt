@@ -224,3 +224,28 @@ Context efficiency: eager 2530 tokens; index 128; lazy average 332.1; reduction 
 Regression ladder: typecheck, lint, build pass; eval:coding 30/30 (100% task, safety and multi-file); eval:runtime 14/14; eval:recovery 50/50; eval:performance 5/5; desktop:smoke 13/13; desktop:accept 3/3; git diff --check clean
 Fixed in 5A: ADR-014 loader symlinked-workspace crash; acceptance harness inherited ELECTRON_RUN_AS_NODE; out-of-sync package-lock.json
 HALO A/B: DEFERRED_TO_HALO (no real-model baseline recorded; no model executed; no weights downloaded)
+
+SPRINT 5B ADDENDUM — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW (V1.1)
+==============================================================================
+
+Branch: sprint-5b (from main a59a7ab845, which merges sprint-5a 264886fd60)
+Toolchain: Node v22.23.2, npm 10.9.8
+Scope: ADR-030; feature-flagged off by default (workflow.enabled); Sprint 5A injected-state closure included.
+
+5A closure: skill evidence is reconciled with the final compiled context (SELECTED → LOADED → INJECTED); 4/4 injection-truth tests
+Workflow tests: 27/27 (agent-core tests/workflow, incl. IMPLEMENTER_PRIVATE_CONTEXT_SENTINEL fresh-context proof), plus CLI 2/2 and IDE bridge 2/2
+Workspace tests: agent-core 517/517, cli 19/19, ide-adapter 7/7, vscode-integration 20/20
+eval:workflow (deterministic, simulated local model, real npm-test checkers):
+  eligibility 14/14
+  direct vs workflow (5 mutating fixtures): correct 4/5 vs 5/5; injected defects caught 1/2 vs 2/2
+    model calls 17 vs 25; prompt tokens 5206 vs 10100; approvals 12 vs 19
+  stage peak context 593-668 tokens vs monolithic lower bound 1220-2354
+  reviewer bias: true-positive rate 100%, false-positive rate 33.3% (inflated-severity probe), severity correctness 80%
+  two-run deterministic, excluding latency
+Regression ladder:
+  npm ci, typecheck, lint, build: pass
+  eval:skills 38/40 (unchanged); eval:coding 30/30 (27 pass + 3 safe rejections); eval:runtime 14/14 (111 scenarios)
+  eval:recovery 50/50; eval:performance 5/5
+  desktop:package ok; desktop:smoke 13/13; desktop:accept 3/3
+Fixed in 5B: skill "active" claimed before final compile; IMPLEMENT failed on the runner's "tests" keyword verification rule (now explicit delegation); "do not modify behaviour" misclassified as read-only
+HALO A/B: DEFERRED_TO_HALO (no real-model baseline recorded; no model executed; no weights downloaded)

@@ -150,6 +150,23 @@ UI / future Runtime Evals:
   - skills never touch the tool registry, the PermissionGate, the confirmation flow, routing configuration or the HALO provider.
 - **Result**: skill text has zero authority. A malicious skill degrades to "no skill" with a diagnostic, and the tool list offered to the model is identical with skills on or off. Even guidance injected directly into the runner still pauses for write confirmation (BUILD) and has writes denied (REVIEW). The directive scanner is defense in depth and can be evaded by paraphrase; the structural controls are the boundary. Evidence: `packages/agent-core/tests/skills/skill-security.test.ts`.
 
+### Structured Engineering Loop (Sprint 5B, ADR-030)
+- **Input**: a stage that tries to act outside its role. Examples:
+  - a planner or reviewer model emitting `apply_patch`;
+  - a reviewer instructing the workflow to approve or skip checks;
+  - an approval that arrives after cancellation;
+  - a restart while a mutation awaits approval.
+- **Control**:
+  - each stage sees only `ToolRegistry.restrict(envelope)`;
+  - `stagePermission` returns DENY outside the envelope and otherwise exactly `classifyPermission` for the stage mode, so it can only narrow;
+  - writes and TEST/VERIFY checks pause for confirmation, and stage membership is never approval;
+  - review output is parsed as data into grounded findings and can only trigger a bounded repair, never an approval;
+  - cancellation is terminal, and later `resume("APPROVE")` calls do nothing;
+  - restore re-requests pending checks and restarts an interrupted runner stage without replaying its unanswered confirmation;
+  - TEST/VERIFY run only repository-defined commands through `VerificationEngine`;
+  - every model call goes to the one configured local provider.
+- **Result**: PLAN and REVIEW cannot mutate, and no stage can escalate. A `DENY` from the gate blocks the workflow rather than bypassing it. Evidence: `packages/agent-core/tests/workflow/workflow.test.ts` (W-03, W-14, W-21, W-22, W-26, W-27).
+
 ---
 
 ## 4. Security Invariants
@@ -168,6 +185,7 @@ UI / future Runtime Evals:
 12. **Evaluation truth requires structured runtime evidence**: security assertions compare deep runtime evidence (`actual` vs `expected`), rejecting synthetic boolean flags (`passed: true`).
 13. **Model credentials are env-only**: configuration contracts reject literal API keys; credentials resolve exclusively from environment variables via `apiKeyEnv`.
 14. **Skills are guidance, not authority**: a `SKILL.md` (built-in or workspace) can never register tools, change permission classifications, approve actions, disable verification, enable cloud fallback, or replace the task. Workspace skills are untrusted repository content and are ignored in untrusted workspaces.
+15. **Workflow stages only narrow authority**: a structured-workflow stage envelope can hide tools or deny actions but never upgrade a PermissionGate decision; review findings and stage membership are never approvals; COMPLETE requires a VERIFY `READY` verdict.
 
 ---
 

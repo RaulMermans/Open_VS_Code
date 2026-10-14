@@ -31,6 +31,7 @@
 | [ADR-027](docs/adrs/ADR-027-real-local-models-and-adaptive-routing.md) | Real Local Models, Canonical Endpoints & Adaptive Routing | Accepted |
 | [ADR-028](docs/adrs/ADR-028-desktop-shell-and-packaging-strategy.md) | Desktop Shell and Packaging Strategy (Code-OSS vs VSCodium) | Accepted |
 | [ADR-029](docs/adrs/ADR-029-portable-skills-runtime.md) | Portable Skills Runtime | Accepted (flag off pending HALO A/B) |
+| [ADR-030](docs/adrs/ADR-030-structured-engineering-loop.md) | Structured Engineering Loop & Fresh-Context Review | Accepted (flag off pending HALO A/B) |
 
 Decision status changes belong in the ADR and this index.
 

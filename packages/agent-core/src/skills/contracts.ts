@@ -126,6 +126,22 @@ export type SkillLoadStatus =
   | "FAILED_BUDGET"
   | "FAILED_INVALID"
 
+/**
+ * Whether prepared skill guidance actually reached a model request (SELECTED → LOADED → INJECTED).
+ * Skill guidance is optional context, so the final context compiler may still drop it for budget.
+ * - NOT_APPLICABLE: no guidance was prepared (disabled, nothing selected, or load/budget failure).
+ * - PENDING: guidance prepared but no model request has been compiled yet.
+ * - INJECTED: present in every compiled model request.
+ * - PARTIALLY_INJECTED: present in some compiled requests and dropped from others.
+ * - OMITTED_BY_FINAL_BUDGET: compiled at least once and dropped from every request.
+ */
+export type SkillInjectionStatus =
+  | "NOT_APPLICABLE"
+  | "PENDING"
+  | "INJECTED"
+  | "PARTIALLY_INJECTED"
+  | "OMITTED_BY_FINAL_BUDGET"
+
 /** A skill body prepared for injection into the current stage context. */
 export interface SkillGuidance {
   readonly id: string
@@ -149,7 +165,18 @@ export interface SkillEvidence {
   readonly selectedSkills: readonly string[]
   readonly selectionReason?: SkillSelectionReason
   readonly skillLoadStatus: SkillLoadStatus
+  /** Tokens of guidance that was loaded and fitted (pre-compile). Not proof of injection. */
   readonly skillContextTokens: number
+  /** Final-context truth: whether the guidance reached a model request. */
+  readonly injectionStatus: SkillInjectionStatus
+  /** Skills present in at least one compiled model request. Only these count as active/applied. */
+  readonly injectedSkills: readonly string[]
+  /** Skill guidance tokens in the most recent compiled model request. */
+  readonly injectedSkillTokens: number
+  /** Skills dropped by the final context compiler from at least one request. */
+  readonly omittedSkills: readonly string[]
+  readonly compiledRequests: number
+  readonly requestsWithSkill: number
   readonly skillVersion?: number
   readonly skillSource?: SkillSourceKind
   readonly loadedSections: readonly string[]

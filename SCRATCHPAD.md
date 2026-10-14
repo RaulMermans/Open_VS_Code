@@ -1,6 +1,15 @@
 # Scratchpad
 
-- Current state: SPRINT 5A COMPLETE — PORTABLE SKILLS RUNTIME VERIFIED (deterministic). V1 Desktop Candidate still gated only on HALO target-host acceptance.
+- Current state: SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (deterministic). SPRINT 5A COMPLETE — PORTABLE SKILLS RUNTIME VERIFIED. V1 Desktop Candidate still gated only on HALO target-host acceptance.
+- Sprint 5B summary:
+  - New `packages/agent-core/src/workflow/` (contracts, policy, artifacts, context, services, engine), ADR-030, guide `docs/workflows/ENGINEERING_LOOP.md`, `npm run eval:workflow`.
+  - 5A closure: `SkillInjectionTracker`. Evidence is reconciled with the final compiled context, and a skill dropped by the final budget is `OMITTED_BY_FINAL_BUDGET`, never "active".
+  - Small infra extensions: `ToolRegistry.restrict`, the optional `CheckpointRecord.workflow` field plus the `WORKFLOW_STAGE` reason, the exported `ACTION_TIMEOUTS`, and the runner's `#verificationRequired()` honouring `verificationOwner: "workflow"`.
+- Defects found during 5B:
+  - The runner's post-mutation verification rule matched the word "tests" in any instruction, so the workflow's IMPLEMENT stage (no verification tool by design) failed with VERIFICATION_UNAVAILABLE. Fixed by explicit delegation, not by rewording.
+  - Eligibility treated "do not modify behaviour" as read-only. The pattern now needs a file/code object (found by eval case E13).
+- Known limits (measured, not tuned away): grounding cannot detect severity inflation ("D-inflated" probe blocks once), and `tdd`/`refactor-with-guards`/`verification` are not selectable inside workflow stages because they require `run_verification`.
+- Next: HALO acceptance, then the same-model A/Bs (skills; direct vs workflow); then Sprint 5C (non-progress detection).
 - Sprint 5A summary:
   - New `packages/agent-core/src/skills/` (contracts, schema, registry, selector, runtime), five built-ins in `packages/agent-core/skills/builtins`, ADR-029, guide `docs/skills/SKILLS.md`.
   - Flag `skills.enabled` defaults off; off = frozen ADR-014 `.agents/skills` path, unchanged.
@@ -10,4 +19,3 @@
   - Frozen ADR-014 `discoverSkills` made skill paths relative to the non-realpath workspace root, so workspaces reached through a symlink (e.g. macOS `/var` → `/private/var`) crashed `loadSkill` with OUTSIDE_WORKSPACE. It now relativizes against the realpath root (covered by `skill-runtime-integration.test.ts`).
   - `desktop:accept` launched the packaged app with the inherited environment; `ELECTRON_RUN_AS_NODE` from an editor terminal made the binary start as Node. The harness now strips `ELECTRON_*`/`VSCODE_*`.
   - The committed `package-lock.json` lacked the `apps/desktop` workspace, so `npm ci` failed; it is now resynced.
-- Next: HALO acceptance, then the same-model skills A/B (off vs `--skills`); then Sprint 5B.

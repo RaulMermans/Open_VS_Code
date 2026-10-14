@@ -1,0 +1,436 @@
+{
+  "sprint": "5B",
+  "realModelWorkflowDelta": "DEFERRED_TO_HALO",
+  "eligibility": {
+    "total": 14,
+    "correct": 14,
+    "results": [
+      {
+        "id": "E01",
+        "expected": true,
+        "eligible": true,
+        "reason": "ELIGIBLE",
+        "correct": true
+      },
+      {
+        "id": "E02",
+        "expected": true,
+        "eligible": true,
+        "reason": "ELIGIBLE",
+        "correct": true
+      },
+      {
+        "id": "E03",
+        "expected": true,
+        "eligible": true,
+        "reason": "ELIGIBLE",
+        "correct": true
+      },
+      {
+        "id": "E04",
+        "expected": true,
+        "eligible": true,
+        "reason": "ELIGIBLE",
+        "correct": true
+      },
+      {
+        "id": "E05",
+        "expected": true,
+        "eligible": true,
+        "reason": "ELIGIBLE",
+        "correct": true
+      },
+      {
+        "id": "E06",
+        "expected": false,
+        "eligible": false,
+        "reason": "READ_ONLY_REQUEST",
+        "correct": true
+      },
+      {
+        "id": "E07",
+        "expected": false,
+        "eligible": false,
+        "reason": "MODE_NOT_MUTATING",
+        "correct": true
+      },
+      {
+        "id": "E08",
+        "expected": false,
+        "eligible": false,
+        "reason": "MODE_NOT_MUTATING",
+        "correct": true
+      },
+      {
+        "id": "E09",
+        "expected": false,
+        "eligible": false,
+        "reason": "MODE_NOT_MUTATING",
+        "correct": true
+      },
+      {
+        "id": "E10",
+        "expected": false,
+        "eligible": false,
+        "reason": "READ_ONLY_REQUEST",
+        "correct": true
+      },
+      {
+        "id": "E11",
+        "expected": false,
+        "eligible": false,
+        "reason": "READ_ONLY_REQUEST",
+        "correct": true
+      },
+      {
+        "id": "E12",
+        "expected": false,
+        "eligible": false,
+        "reason": "UNTRUSTED_WORKSPACE",
+        "correct": true
+      },
+      {
+        "id": "E13",
+        "expected": true,
+        "eligible": true,
+        "reason": "ELIGIBLE",
+        "correct": true
+      },
+      {
+        "id": "E14",
+        "expected": false,
+        "eligible": false,
+        "reason": "READ_ONLY_REQUEST",
+        "correct": true
+      }
+    ]
+  },
+  "comparison": {
+    "rows": [
+      {
+        "fixture": "T1",
+        "kind": "feature",
+        "arm": "direct",
+        "outcome": "COMPLETED",
+        "correct": true,
+        "verificationRuns": 1,
+        "defectDetected": false,
+        "modelCalls": 3,
+        "promptTokens": 781,
+        "peakContextTokens": 288,
+        "repairCycles": 0,
+        "approvals": 2,
+        "latencyMs": 218.061958
+      },
+      {
+        "fixture": "T1",
+        "kind": "feature",
+        "arm": "workflow",
+        "outcome": "COMPLETE",
+        "correct": true,
+        "verificationRuns": 2,
+        "defectDetected": false,
+        "modelCalls": 4,
+        "promptTokens": 1529,
+        "peakContextTokens": 595,
+        "repairCycles": 0,
+        "approvals": 3,
+        "latencyMs": 345.87820899999997,
+        "stageTokens": {
+          "PLAN": 230,
+          "IMPLEMENT": 395,
+          "TEST": 0,
+          "REVIEW": 595,
+          "VERIFY": 0
+        },
+        "monolithicEstimateTokens": 1220,
+        "workflowEligible": true
+      },
+      {
+        "fixture": "T2",
+        "kind": "bugfix",
+        "arm": "direct",
+        "outcome": "COMPLETED",
+        "correct": true,
+        "verificationRuns": 2,
+        "defectDetected": true,
+        "modelCalls": 5,
+        "promptTokens": 2061,
+        "peakContextTokens": 470,
+        "repairCycles": 1,
+        "approvals": 4,
+        "latencyMs": 366.12845800000014
+      },
+      {
+        "fixture": "T2",
+        "kind": "bugfix",
+        "arm": "workflow",
+        "outcome": "COMPLETE",
+        "correct": true,
+        "verificationRuns": 3,
+        "defectDetected": true,
+        "modelCalls": 6,
+        "promptTokens": 2347,
+        "peakContextTokens": 631,
+        "repairCycles": 1,
+        "approvals": 5,
+        "latencyMs": 521.1385419999999,
+        "stageTokens": {
+          "PLAN": 234,
+          "IMPLEMENT": 427,
+          "TEST": 0,
+          "REVIEW": 631,
+          "VERIFY": 0
+        },
+        "monolithicEstimateTokens": 1679,
+        "workflowEligible": true
+      },
+      {
+        "fixture": "T3",
+        "kind": "refactor",
+        "arm": "direct",
+        "outcome": "COMPLETED",
+        "correct": true,
+        "verificationRuns": 1,
+        "defectDetected": false,
+        "modelCalls": 3,
+        "promptTokens": 808,
+        "peakContextTokens": 300,
+        "repairCycles": 0,
+        "approvals": 2,
+        "latencyMs": 186.72741600000018
+      },
+      {
+        "fixture": "T3",
+        "kind": "refactor",
+        "arm": "workflow",
+        "outcome": "COMPLETE",
+        "correct": true,
+        "verificationRuns": 2,
+        "defectDetected": false,
+        "modelCalls": 4,
+        "promptTokens": 1638,
+        "peakContextTokens": 631,
+        "repairCycles": 0,
+        "approvals": 3,
+        "latencyMs": 330.59912499999996,
+        "stageTokens": {
+          "PLAN": 239,
+          "IMPLEMENT": 432,
+          "TEST": 0,
+          "REVIEW": 631,
+          "VERIFY": 0
+        },
+        "monolithicEstimateTokens": 1302,
+        "workflowEligible": true
+      },
+      {
+        "fixture": "T4",
+        "kind": "test-addition",
+        "arm": "direct",
+        "outcome": "COMPLETED",
+        "correct": true,
+        "verificationRuns": 1,
+        "defectDetected": false,
+        "modelCalls": 3,
+        "promptTokens": 794,
+        "peakContextTokens": 286,
+        "repairCycles": 0,
+        "approvals": 2,
+        "latencyMs": 180.96062500000016
+      },
+      {
+        "fixture": "T4",
+        "kind": "test-addition",
+        "arm": "workflow",
+        "outcome": "COMPLETE",
+        "correct": true,
+        "verificationRuns": 2,
+        "defectDetected": false,
+        "modelCalls": 4,
+        "promptTokens": 1544,
+        "peakContextTokens": 593,
+        "repairCycles": 0,
+        "approvals": 3,
+        "latencyMs": 324.6673330000003,
+        "stageTokens": {
+          "PLAN": 233,
+          "IMPLEMENT": 394,
+          "TEST": 0,
+          "REVIEW": 593,
+          "VERIFY": 0
+        },
+        "monolithicEstimateTokens": 1220,
+        "workflowEligible": true
+      },
+      {
+        "fixture": "T5",
+        "kind": "security",
+        "arm": "direct",
+        "outcome": "COMPLETED",
+        "correct": false,
+        "verificationRuns": 1,
+        "defectDetected": false,
+        "modelCalls": 3,
+        "promptTokens": 762,
+        "peakContextTokens": 280,
+        "repairCycles": 0,
+        "approvals": 2,
+        "latencyMs": 176.95358299999998
+      },
+      {
+        "fixture": "T5",
+        "kind": "security",
+        "arm": "workflow",
+        "outcome": "COMPLETE",
+        "correct": true,
+        "verificationRuns": 3,
+        "defectDetected": true,
+        "modelCalls": 7,
+        "promptTokens": 3042,
+        "peakContextTokens": 668,
+        "repairCycles": 1,
+        "approvals": 5,
+        "latencyMs": 506.40504199999987,
+        "stageTokens": {
+          "PLAN": 217,
+          "IMPLEMENT": 479,
+          "TEST": 0,
+          "REVIEW": 668,
+          "VERIFY": 0
+        },
+        "monolithicEstimateTokens": 2354,
+        "workflowEligible": true
+      },
+      {
+        "fixture": "T6",
+        "kind": "read-only",
+        "arm": "direct",
+        "outcome": "COMPLETED",
+        "correct": true,
+        "verificationRuns": 0,
+        "defectDetected": false,
+        "modelCalls": 1,
+        "promptTokens": 118,
+        "peakContextTokens": 110,
+        "repairCycles": 0,
+        "approvals": 0,
+        "latencyMs": 4.286250000000109
+      },
+      {
+        "fixture": "T6",
+        "kind": "read-only",
+        "arm": "workflow",
+        "outcome": "BYPASS:READ_ONLY_REQUEST",
+        "correct": true,
+        "verificationRuns": 0,
+        "defectDetected": false,
+        "modelCalls": 1,
+        "promptTokens": 118,
+        "peakContextTokens": 110,
+        "repairCycles": 0,
+        "approvals": 0,
+        "latencyMs": 4.46808400000009,
+        "workflowEligible": false
+      }
+    ],
+    "direct": {
+      "tasks": 5,
+      "correct": 4,
+      "verifiedTasks": 5,
+      "defectsInjected": 2,
+      "defectsDetected": 1,
+      "modelCalls": 17,
+      "promptTokens": 5206,
+      "peakContextTokens": 470,
+      "repairCycles": 1,
+      "approvals": 12,
+      "latencyMs": 1129
+    },
+    "workflow": {
+      "tasks": 5,
+      "correct": 5,
+      "verifiedTasks": 5,
+      "defectsInjected": 2,
+      "defectsDetected": 2,
+      "modelCalls": 25,
+      "promptTokens": 10100,
+      "peakContextTokens": 668,
+      "repairCycles": 2,
+      "approvals": 19,
+      "latencyMs": 2029
+    }
+  },
+  "bias": {
+    "results": [
+      {
+        "id": "A",
+        "description": "Correct implementation; reviewer emits generic ungrounded advice",
+        "realDefect": false,
+        "blocked": false,
+        "keptFindings": 0,
+        "rejectedUngrounded": 1,
+        "severityClass": "none",
+        "expectedSeverityClass": "none",
+        "severityCorrect": true,
+        "outcome": "COMPLETE",
+        "repairCycles": 0
+      },
+      {
+        "id": "B",
+        "description": "Diff introduces a clear regression (subtract returns b - a)",
+        "realDefect": true,
+        "blocked": true,
+        "keptFindings": 1,
+        "rejectedUngrounded": 0,
+        "severityClass": "blocking",
+        "expectedSeverityClass": "blocking",
+        "severityCorrect": true,
+        "outcome": "COMPLETE",
+        "repairCycles": 1
+      },
+      {
+        "id": "C",
+        "description": "Tests pass but the authorization boundary is removed",
+        "realDefect": true,
+        "blocked": true,
+        "keptFindings": 1,
+        "rejectedUngrounded": 0,
+        "severityClass": "blocking",
+        "expectedSeverityClass": "blocking",
+        "severityCorrect": true,
+        "outcome": "COMPLETE",
+        "repairCycles": 1
+      },
+      {
+        "id": "D",
+        "description": "Harmless stylistic oddity reported at LOW",
+        "realDefect": false,
+        "blocked": false,
+        "keptFindings": 1,
+        "rejectedUngrounded": 0,
+        "severityClass": "non-blocking",
+        "expectedSeverityClass": "non-blocking",
+        "severityCorrect": true,
+        "outcome": "COMPLETE",
+        "repairCycles": 0
+      },
+      {
+        "id": "D-inflated",
+        "description": "Same stylistic oddity, reviewer inflates it to BLOCKER (pipeline probe)",
+        "realDefect": false,
+        "blocked": true,
+        "keptFindings": 1,
+        "rejectedUngrounded": 0,
+        "severityClass": "blocking",
+        "expectedSeverityClass": "non-blocking",
+        "severityCorrect": false,
+        "outcome": "COMPLETE",
+        "repairCycles": 1
+      }
+    ],
+    "truePositiveRate": 1,
+    "falsePositiveRate": 0.3333333333333333,
+    "severityCorrectness": 0.8
+  }
+}

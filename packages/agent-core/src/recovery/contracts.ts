@@ -19,6 +19,7 @@ export const CHECKPOINT_REASONS = [
   "COMPLETED",
   "RECOVERY_RECONCILED",
   "ROLLBACK_COMPLETED",
+  "WORKFLOW_STAGE",
 ] as const
 
 export type CheckpointReason = (typeof CHECKPOINT_REASONS)[number]
@@ -159,6 +160,9 @@ export interface CheckpointRecord {
   }
 
   readonly recoveryFootprint: WorkspaceRecoveryFootprint
+
+  /** Structured engineering workflow state (Sprint 5B, ADR-030). Bounded operational facts only. */
+  readonly workflow?: Readonly<Record<string, unknown>> | undefined
 
   readonly pendingOperations: readonly RecoveryOperation[]
   readonly completedOperationRefs: readonly string[]

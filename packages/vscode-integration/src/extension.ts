@@ -251,7 +251,13 @@ export function activate(context: vscode.ExtensionContext) {
           token: haloToken(context),
         })
         : undefined;
-      activeBridge = new AgentSessionBridge({ ...options, ...(providerOverride ? { providerOverride } : {}), skills: skillsSettings(context) });
+      activeBridge = new AgentSessionBridge({
+        ...options,
+        ...(providerOverride ? { providerOverride } : {}),
+        skills: skillsSettings(context),
+        // Structured Engineering Loop (ADR-030); off by default.
+        workflow: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('workflow.enabled', false) === true },
+      });
     }
     return activeBridge!;
   });
@@ -366,7 +372,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       vscode.window.showInformationMessage(
-        `Skill: ${evidence.selectedSkill} v${evidence.skillVersion} (${evidence.skillSource}) · ${evidence.skillLoadStatus} · ${evidence.skillContextTokens} tokens`,
+        `Skill: ${evidence.selectedSkill} v${evidence.skillVersion} (${evidence.skillSource}) · ${evidence.skillLoadStatus} · ${evidence.injectionStatus} · ${evidence.injectedSkillTokens} tokens injected`,
       );
     }),
     vscode.commands.registerCommand('open-vs-code.openModelConfig', async () => {

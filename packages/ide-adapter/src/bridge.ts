@@ -1,5 +1,5 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence } from "@open-vs-code/agent-core";
-import { createAgentRuntime, calculateBudget } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult } from "@open-vs-code/agent-core";
+import { createAgentRuntime, calculateBudget, isSkillApplied } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
 
@@ -9,6 +9,8 @@ export interface BridgeOptions {
   providerOverride?: any;
   /** Portable Skills Runtime (ADR-029); disabled unless the host enables it. */
   skills?: { enabled: boolean; builtinRoot?: string };
+  /** Structured Engineering Loop (ADR-030); disabled unless the host enables it. */
+  workflow?: { enabled: boolean };
 }
 
 export class AgentSessionBridge {
@@ -18,12 +20,20 @@ export class AgentSessionBridge {
   private providerOverride?: any;
   private skills?: BridgeOptions["skills"];
   private lastSkillEvidence?: SkillEvidence;
+  private workflow?: BridgeOptions["workflow"];
+  private lastWorkflowState?: WorkflowState;
   
   constructor(options: BridgeOptions) {
     this.host = options.host;
     this.workspaceRoot = options.workspaceRoot;
     this.providerOverride = options.providerOverride;
     this.skills = options.skills;
+    this.workflow = options.workflow;
+  }
+
+  /** Bounded workflow state of the most recent structured task, if one ran. */
+  public get workflowState(): WorkflowState | undefined {
+    return this.lastWorkflowState;
   }
 
   /** Bounded, privacy-safe skill evidence from the most recent task (ids, versions, reason codes only). */
@@ -91,14 +101,23 @@ export class AgentSessionBridge {
         isTrusted,
         eventSink: sink,
         providerOverride: this.providerOverride,
-        ...(this.skills ? { skills: this.skills } : {})
+        ...(this.skills ? { skills: this.skills } : {}),
+        ...(this.workflow?.enabled ? {
+          workflow: {
+            enabled: true,
+            // Meaningful stage transitions only.
+            onStage: (event: { stage: string; status: string; skill?: string }) => {
+              if (event.status !== "WAITING_FOR_CONFIRMATION") void this.host.showOutput(`Stage: ${event.stage}${event.skill ? ` · Skill: ${event.skill}` : ""}`);
+            },
+          },
+        } : {}),
       });
       (this as any)._lastRuntime = runtime;
-      this.lastSkillEvidence = runtime.skillEvidence;
-      if (runtime.skillEvidence?.selectedSkill && runtime.skillEvidence.skillContextTokens > 0) {
-        await this.host.showOutput(`Skill: ${runtime.skillEvidence.selectedSkill}`);
-      }
       
+      if (runtime.workflow) {
+        return await this._runWorkflow(runtime.workflow, signal);
+      }
+
       const { runner, repairOrchestrator, runnerInput } = runtime;
       
       let runnerResult = await runner.run(runnerInput as any);
@@ -170,6 +189,11 @@ export class AgentSessionBridge {
           runnerResult = await runner.resume("REJECT");
         }
       }
+      // Final-context truth: report the skill only if its guidance reached a model request.
+      this.lastSkillEvidence = runtime.skillEvidence;
+      if (isSkillApplied(runtime.skillEvidence)) {
+        await this.host.showOutput(`Skill: ${runtime.skillEvidence.selectedSkill}`);
+      }
       await this.host.showOutput(`Task Finished: ${runnerResult.status}`);
       if (runtime?.performanceLedger) {
         await runtime.performanceLedger.persist().catch(() => {});
@@ -186,11 +210,59 @@ export class AgentSessionBridge {
       }
     } finally {
       if (runtime) {
+        this.lastSkillEvidence = runtime.skillEvidence;
         await runtime.cleanup();
       }
     }
   }
   
+  /** Drives a structured workflow; every confirmation goes through the host, exactly as on the direct path. */
+  private async _runWorkflow(workflow: any, signal: AbortSignal): Promise<AgentResult> {
+    const onAbort = () => workflow.cancel();
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      let result: WorkflowResult = await workflow.run();
+      while (result.status === "WAITING_FOR_CONFIRMATION") {
+        const confirmation = result.confirmation!;
+        let approved = false;
+        if (signal.aborted) {
+          approved = false;
+        } else if (confirmation.runner?.preparedMutation) {
+          const pm = confirmation.runner.preparedMutation;
+          approved = (await this.host.requestConfirmation(`Approve mutation on ${pm.path}? (${pm.operation})`, pm)) === "APPROVE";
+        } else if (confirmation.verification) {
+          approved = (await this.host.requestConfirmation(`Run ${confirmation.stage} checks: ${confirmation.verification.commands.join(", ")}?`, confirmation.verification)) === "APPROVE";
+        } else if (confirmation.runner) {
+          approved = (await this.host.requestConfirmation(`Approve ${confirmation.runner.toolName}? (${confirmation.runner.action})`, confirmation.runner)) === "APPROVE";
+        }
+        result = await workflow.resume(approved ? "APPROVE" : "REJECT");
+      }
+      const state = result.state;
+      this.lastWorkflowState = state;
+      await this.host.showOutput(`Task Finished: ${result.status}${state.blocker ? ` (${state.blocker})` : ""}`);
+      const status = result.status === "COMPLETE" ? "COMPLETED" : result.status === "CANCELLED" ? "CANCELLED" : "FAILED";
+      const review = state.reviews.at(-1);
+      const finalAnswer = [
+        `Workflow ${result.status}${state.blocker ? `: ${state.blocker}${state.blockerDetail ? ` — ${state.blockerDetail}` : ""}` : ""}`,
+        ...(state.implementation ? [`Changed: ${[...new Set(state.implementation.changedFiles.map((change) => change.path))].join(", ")}`] : []),
+        ...(review ? [`Review: ${review.verdict} (${review.blocking} blocking)`] : []),
+        ...(state.verification ? [`Verification: ${state.verification.verdict}`] : []),
+      ].join("\n");
+      return {
+        status,
+        ...(status === "FAILED" ? { failureReason: "INTERNAL_ERROR" as const } : {}),
+        finalAnswer,
+        turns: state.stages.reduce((total, record) => total + record.modelCalls, 0),
+        finalState: { status, events: [] },
+        events: [],
+        contextDiagnostics: [],
+        toolCalls: [],
+      } as AgentResult;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
   private handleEvent(ev: AgentEvent) {
     switch (ev.type) {
       case "task.started":

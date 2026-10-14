@@ -163,7 +163,10 @@ Every task with skills enabled records `skillEvidence`. It contains:
 - the selected id, version and source, and the reason it was selected;
 - the load status;
 - the tokens used and the sections loaded;
-- rejection reasons and diagnostic codes.
+- rejection reasons and diagnostic codes;
+- whether the skill actually reached the model: `injectionStatus`, `injectedSkills`, `injectedSkillTokens` and `omittedSkills`.
+
+"Loaded" is not "applied". Skill guidance is optional context, so the final context compiler can drop it when the budget is tight. That case is reported as `OMITTED_BY_FINAL_BUDGET`. A skill is shown as active (CLI `Skill:` line, the IDE output, **Show active skill**) only when its guidance was in a request the model received.
 
 It never contains task text, prompts, source code or skill bodies.
 

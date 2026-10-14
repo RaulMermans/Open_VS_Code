@@ -305,7 +305,8 @@ Sprint 4F — Code-OSS / VSCodium Desktop Packaging & V1 Candidate ✅ COMPLETE
   - Code Signing & Verification Truth: Packaging strictly verifies codesign using `codesign --verify --deep --strict`. Truthfully reports "Ad-hoc signed and verified (Local V1 Candidate)". Never claims Apple Developer ID notarization.
   - HALO Architecture Reconciliation: Authoritative dual-path topology documented in `docs/deployment/HALO_ACCEPTANCE.md`: ADR-020 HALO Core capability path (`/inference/capability/chat`) for agent chat/reasoning when `inferenceBackend = "halo"`; ADR-027 direct OpenAI-compatible FIM path (`/v1/completions`) hosted on HALO. Target platform documented truthfully as AMD Halo host with runtime/model placeholders. Zero model weights on development Mac.
 
-Sprint 5A — Portable Skills Runtime (V1.1) ✅ COMPLETE (deterministic) · REAL-MODEL SKILL DELTA DEFERRED TO HALO
+Sprint 5A — Portable Skills Runtime (V1.1) — SPRINT 5A COMPLETE — PORTABLE SKILLS RUNTIME VERIFIED (deterministic) · REAL-MODEL SKILL DELTA DEFERRED TO HALO
+  - Closure check (in Sprint 5B): skill evidence now distinguishes SELECTED → LOADED → INJECTED. `SkillInjectionTracker` reconciles evidence with the final compiled context (`injectionStatus`, `injectedSkills`, `injectedSkillTokens`), and the CLI, IDE and "Show active skill" report a skill only if it reached the model. 4 tests in `skill-injection-truth.test.ts`, including the audit case: preliminary budget passes, final compile drops the skill, reported `OMITTED_BY_FINAL_BUDGET`.
   - Contract: strict `SKILL.md` (YAML-subset frontmatter, seven required sections), JSON Schema `config/schemas/skill.schema.json`, validator `agent-core/src/skills/schema.ts` (ADR-029).
   - Sources: five curated built-ins (`bug-triage`, `tdd`, `refactor-with-guards`, `security-review`, `verification`) in `packages/agent-core/skills/builtins`, plus trusted-workspace `.open-vs-code/skills`. A workspace override must validate and narrow the built-in.
   - Runtime: `SkillRegistry` builds a metadata-only index and lazily loads each body once. `selectSkill` (deterministic; "no skill" is valid; ties abstain) checks mode, registered tools and PermissionGate capabilities. Default 1 skill, hard cap 2 via `composes_with`. Guidance is optional context ranked after active code.
@@ -314,6 +315,22 @@ Sprint 5A — Portable Skills Runtime (V1.1) ✅ COMPLETE (deterministic) · REA
   - Desktop: built-ins ship in the packaged extension. **List Available Skills** and **Show Active Skill** are registered in the real VSCodium extension host (12 commands).
   - HALO A/B: DEFERRED_TO_HALO (no real-model baseline exists yet).
 
+Sprint 5B — Structured Engineering Loop & Fresh-Context Review (V1.1) ✅ COMPLETE (deterministic) · REAL-MODEL WORKFLOW DELTA DEFERRED TO HALO
+  - Design (ADR-030, `docs/workflows/ENGINEERING_LOOP.md`): one sequential `EngineeringWorkflow` (PLAN → IMPLEMENT → TEST → REVIEW → VERIFY → COMPLETE, any → BLOCKED/CANCELLED) over the existing AgentRunner, PermissionGate, VerificationEngine, skills runtime and CheckpointStore.
+  - Model stages: each PLAN, IMPLEMENT and REVIEW gets a fresh runner session with a stage tool envelope (`ToolRegistry.restrict` + `stagePermission`, which narrows only).
+  - Deterministic stages: TEST and VERIFY run only repository-defined checks; VERIFY also checks diff integrity.
+  - Fresh review: an allow-listed envelope; findings must quote the diff or a changed file; `NO_FINDINGS` is valid.
+  - Repair: at most 2 test repairs and 2 review repairs, then BLOCKED.
+  - Persistence: `WORKFLOW_STAGE` checkpoints, with restore that never re-runs completed stages. Cancellation is terminal.
+  - Flag: `workflow.enabled` (default off; CLI `--workflow`, VS Code `open-vs-code.workflow.enabled`).
+  - Evidence:
+    - 27 workflow tests (all 30 required behaviours plus the `IMPLEMENTER_PRIVATE_CONTEXT_SENTINEL` fresh-context proof, with negative controls), 2 CLI tests and 2 bridge tests;
+    - `npm run eval:workflow`: eligibility 14/14;
+    - A/B on simulated fixtures: direct 4/5 correct and 1/2 injected defects caught, against workflow 5/5 and 2/2, at 25 vs 17 model calls, about 1.9× the prompt tokens and 19 vs 12 approvals;
+    - reviewer-bias pipeline: true-positive rate 100%, false-positive rate 33.3% (the inflated-severity probe), severity correctness 80%.
+  - Runner change: IMPLEMENT sessions mark `verificationOwner: "workflow"`, so post-mutation verification is owned by the mandatory TEST/VERIFY stages (the direct path is unchanged).
+  - HALO A/B: DEFERRED_TO_HALO.
+
 Next:
-1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the Sprint 5A same-model A/B (skills off vs `--skills`).
-2. Sprint 5B — Structured Engineering Loop & Fresh-Context Review.
+1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`, and skills + direct vs skills + `--workflow`.
+2. Sprint 5C — Non-Progress Detection & Recovery.
