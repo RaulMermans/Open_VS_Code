@@ -34,21 +34,21 @@ Real-model workflow delta: **DEFERRED_TO_HALO**. The model here is a determinist
 
 | Arm | Correct | Verified | Defects caught | Model calls | Prompt tokens | Peak context | Repair cycles | Approvals | Latency ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A direct (workflow off) | 4/5 | 5/5 | 1/2 | 17 | 5206 | 470 | 1 | 12 | 1129 |
-| B structured (workflow on) | 5/5 | 5/5 | 2/2 | 25 | 10100 | 668 | 2 | 19 | 2029 |
+| A direct (workflow off) | 4/5 | 5/5 | 1/2 | 17 | 5206 | 470 | 1 | 12 | 1199 |
+| B structured (workflow on) | 5/5 | 5/5 | 2/2 | 25 | 10069 | 642 | 2 | 19 | 2084 |
 
 | Fixture | Kind | Arm | Outcome | Correct | Verification runs | Defect caught | Model calls | Prompt tokens | Peak context | Repairs | Approvals |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | T1 | feature | direct | COMPLETED | yes | 1 | - | 3 | 781 | 288 | 0 | 2 |
-| T1 | feature | workflow | COMPLETE | yes | 2 | - | 4 | 1529 | 595 | 0 | 3 |
+| T1 | feature | workflow | COMPLETE | yes | 2 | - | 4 | 1540 | 606 | 0 | 3 |
 | T2 | bugfix | direct | COMPLETED | yes | 2 | yes | 5 | 2061 | 470 | 1 | 4 |
-| T2 | bugfix | workflow | COMPLETE | yes | 3 | yes | 6 | 2347 | 631 | 1 | 5 |
+| T2 | bugfix | workflow | COMPLETE | yes | 3 | yes | 6 | 2315 | 599 | 1 | 5 |
 | T3 | refactor | direct | COMPLETED | yes | 1 | - | 3 | 808 | 300 | 0 | 2 |
-| T3 | refactor | workflow | COMPLETE | yes | 2 | - | 4 | 1638 | 631 | 0 | 3 |
+| T3 | refactor | workflow | COMPLETE | yes | 2 | - | 4 | 1649 | 642 | 0 | 3 |
 | T4 | test-addition | direct | COMPLETED | yes | 1 | - | 3 | 794 | 286 | 0 | 2 |
-| T4 | test-addition | workflow | COMPLETE | yes | 2 | - | 4 | 1544 | 593 | 0 | 3 |
+| T4 | test-addition | workflow | COMPLETE | yes | 2 | - | 4 | 1555 | 604 | 0 | 3 |
 | T5 | security | direct | COMPLETED | no | 1 | - | 3 | 762 | 280 | 0 | 2 |
-| T5 | security | workflow | COMPLETE | yes | 3 | yes | 7 | 3042 | 668 | 1 | 5 |
+| T5 | security | workflow | COMPLETE | yes | 3 | yes | 7 | 3010 | 625 | 1 | 5 |
 | T6 | read-only | direct | COMPLETED | yes | 0 | - | 1 | 118 | 110 | 0 | 0 |
 | T6 | read-only | workflow | BYPASS:READ_ONLY_REQUEST | yes | 0 | - | 1 | 118 | 110 | 0 | 0 |
 
@@ -56,11 +56,11 @@ Real-model workflow delta: **DEFERRED_TO_HALO**. The model here is a determinist
 
 | Fixture | PLAN | IMPLEMENT | TEST | REVIEW | VERIFY | Structured peak | Monolithic estimate (lower bound) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| T1 | 230 | 395 | 0 | 595 | 0 | 595 | 1220 |
-| T2 | 234 | 427 | 0 | 631 | 0 | 631 | 1679 |
-| T3 | 239 | 432 | 0 | 631 | 0 | 631 | 1302 |
-| T4 | 233 | 394 | 0 | 593 | 0 | 593 | 1220 |
-| T5 | 217 | 479 | 0 | 668 | 0 | 668 | 2354 |
+| T1 | 230 | 395 | 0 | 606 | 0 | 606 | 1231 |
+| T2 | 234 | 427 | 0 | 599 | 0 | 599 | 1647 |
+| T3 | 239 | 432 | 0 | 642 | 0 | 642 | 1313 |
+| T4 | 233 | 394 | 0 | 604 | 0 | 604 | 1231 |
+| T5 | 217 | 479 | 0 | 625 | 0 | 625 | 2322 |
 
 ## Reviewer bias (pipeline, scripted reviewer)
 

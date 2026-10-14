@@ -2,9 +2,9 @@
  * Stage artifact parsing and bounding. Model output is untrusted data: it is parsed into bounded
  * structured artifacts, and only those artifacts move between stages.
  */
-import { createHash } from "node:crypto"
-
 import type { MutationReviewPayload } from "../contracts/agent.ts"
+import { normalizeFailureOutput, parseTestCounts, shortHash } from "../progress/fingerprint.ts"
+import { generateCreateDiff, generateUnifiedDiff, sha256 } from "../tools/mutation-engine.ts"
 import type { VerificationAction, VerificationResult } from "../tools/verification-contracts.ts"
 import {
   ARTIFACT_LIMITS,
@@ -12,6 +12,7 @@ import {
   REVIEW_SEVERITIES,
   type ChangedFile,
   type CheckOutcome,
+  type NetChange,
   type PlanArtifact,
   type ReviewEvidence,
   type ReviewFinding,
@@ -102,7 +103,7 @@ export function changedFileFromMutation(payload: MutationReviewPayload, pass: nu
   }
 }
 
-/** The bounded combined diff the reviewer sees. */
+/** Bounded combined rendering of the internal mutation history. Never shown to REVIEW as the final diff. */
 export function renderDiff(changes: readonly ChangedFile[]): { text: string; truncated: boolean } {
   let text = ""
   let truncated = false
@@ -122,23 +123,92 @@ export function uniquePaths(changes: readonly ChangedFile[]): string[] {
   return [...new Set(changes.map((change) => change.path))]
 }
 
+function boundedDiff(diff: string, truncated: boolean): { diff: string; diffTruncated: boolean } {
+  return { diff: diff.slice(0, ARTIFACT_LIMITS.diffPerFileChars), diffTruncated: truncated || diff.length > ARTIFACT_LIMITS.diffPerFileChars }
+}
+
+/**
+ * The net change of one file from the workflow start state to its current content.
+ *
+ * `baseline` is the content at workflow start (null: the file did not exist; undefined: not
+ * captured in this process). Returns undefined when the file has no net change (e.g. reverted).
+ */
+export function computeNetChange(path: string, baseline: string | null | undefined, current: string | undefined, history: readonly ChangedFile[]): NetChange | undefined {
+  const currentHash = current === undefined ? "" : sha256(current)
+  const changes = history.filter((change) => change.path === path)
+  if (baseline !== undefined) {
+    const baselineHash = baseline === null ? "" : sha256(baseline)
+    if (baselineHash === currentHash) return undefined
+    if (current === undefined) {
+      const lines = baseline === null ? 0 : baseline.split("\n").length
+      return { path, operation: "delete", baselineHash, currentHash, linesAdded: 0, linesRemoved: lines, diff: `--- a/${path}\n+++ /dev/null`, diffTruncated: false, source: "BASELINE" }
+    }
+    const generated = baseline === null
+      ? generateCreateDiff(path, current, ARTIFACT_LIMITS.diffPerFileChars)
+      : generateUnifiedDiff(path, baseline, current, ARTIFACT_LIMITS.diffPerFileChars)
+    return { path, operation: baseline === null ? "create" : "modify", baselineHash, currentHash, linesAdded: generated.linesAdded, linesRemoved: generated.linesRemoved, ...boundedDiff(generated.unified, generated.truncated), source: "BASELINE" }
+  }
+  // The start content is not available (e.g. after a restart). Never fall back to stale history.
+  const first = changes[0]
+  const baselineHash = first?.beforeHash ?? ""
+  if (baselineHash === currentHash) return undefined
+  const operation = current === undefined ? "delete" : first?.operation === "create" ? "create" : "modify"
+  if (changes.length === 1 && first && first.afterHash === currentHash) {
+    return { path, operation, baselineHash, currentHash, linesAdded: first.linesAdded, linesRemoved: first.linesRemoved, ...boundedDiff(first.diff, first.diffTruncated), source: "SINGLE_CHANGE" }
+  }
+  const content = current ?? ""
+  const shown = content.split("\n").map((line) => ` ${line}`).join("\n")
+  return {
+    path,
+    operation,
+    baselineHash,
+    currentHash,
+    linesAdded: 0,
+    linesRemoved: 0,
+    ...boundedDiff(`[net diff unavailable after restart; current content of ${path}]\n${shown}`, false),
+    source: "CURRENT_CONTENT",
+  }
+}
+
+/** The bounded net diff the reviewer sees: workflow start → current workspace. */
+export function renderNetDiff(changes: readonly NetChange[]): { text: string; truncated: boolean } {
+  let text = ""
+  let truncated = false
+  for (const change of changes) {
+    const block = `### ${change.operation} ${change.path} (+${change.linesAdded} −${change.linesRemoved})\n${change.diff}${change.diffTruncated ? "\n[diff truncated]" : ""}\n`
+    if (text.length + block.length > ARTIFACT_LIMITS.diffChars) {
+      truncated = true
+      break
+    }
+    text += block
+    truncated ||= change.diffTruncated
+  }
+  return { text: text.trimEnd(), truncated }
+}
+
+/** Deterministic fingerprint of the net diff (empty net diff included). */
+export function netDiffFingerprint(changes: readonly NetChange[]): string {
+  return shortHash(changes.map((change) => `${change.path}\0${change.currentHash}`).toSorted().join("\n"))
+}
+
 // ---- TEST / VERIFY --------------------------------------------------------------------------------
 
-/** Removes timing and other run-specific noise so equal failures share a fingerprint. */
+/** Removes run-specific noise so equal failures share a fingerprint (one normalizer, ADR-031). */
 export function normalizeOutput(output: string): string {
-  return output
-    .replace(/\d+(\.\d+)?\s?(ms|s|sec|seconds)\b/gi, "<t>")
-    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.]+Z?\b/g, "<ts>")
-    .replace(/\s+/g, " ")
-    .trim()
+  return normalizeFailureOutput(output)
 }
 
 export function fingerprint(output: string): string {
-  return createHash("sha256").update(normalizeOutput(output), "utf8").digest("hex").slice(0, 16)
+  return shortHash(normalizeFailureOutput(output))
 }
 
 export function checkOutcome(action: VerificationAction, command: string, result: VerificationResult): CheckOutcome {
   const combined = [result.stdout, result.stderr].filter(Boolean).join("\n")
+  // Parsed from the full output before the excerpt is bounded.
+  const counts = action === "TEST" ? parseTestCounts(combined) : undefined
+  const testCounts = counts && (counts.total !== undefined || counts.passed !== undefined || counts.failed !== undefined)
+    ? { ...(counts.total !== undefined ? { total: counts.total } : {}), ...(counts.passed !== undefined ? { passed: counts.passed } : {}), ...(counts.failed !== undefined ? { failed: counts.failed } : {}) }
+    : undefined
   return {
     action,
     command,
@@ -147,6 +217,8 @@ export function checkOutcome(action: VerificationAction, command: string, result
     durationMs: result.durationMs,
     fingerprint: fingerprint(combined),
     excerpt: combined.length <= ARTIFACT_LIMITS.outputExcerptChars ? combined : `…${combined.slice(-(ARTIFACT_LIMITS.outputExcerptChars - 1))}`,
+    ...(testCounts ? { testCounts } : {}),
+    ...(counts && counts.failures.length > 0 && result.status !== "PASS" ? { failingTests: counts.failures } : {}),
   }
 }
 

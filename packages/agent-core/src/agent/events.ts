@@ -47,6 +47,7 @@ export const AGENT_EVENT_TYPES = [
   "recovery.started",
   "recovery.reconciled",
   "recovery.blocked",
+  "recovery.non_progress",
   "rollback.prepared",
   "rollback.completed",
   "recovery.completed",

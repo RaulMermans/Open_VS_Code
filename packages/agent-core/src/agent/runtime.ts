@@ -71,6 +71,16 @@ export interface CreateAgentRuntimeOptions {
     enabled?: boolean;
     onStage?: (event: WorkflowStageEvent) => void;
   };
+  /**
+   * Non-progress detection & bounded recovery (Sprint 5C, ADR-031). Disabled by default until the
+   * HALO A/B benchmark is recorded; when disabled, the direct and workflow paths behave exactly as in
+   * Sprint 5B. When enabled it protects both paths.
+   */
+  progressMonitor?: {
+    enabled?: boolean;
+    /** Minimal user-facing notices: "No progress detected…" and the BLOCKED summary. */
+    onProgress?: (notice: string) => void;
+  };
 }
 
 export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
@@ -288,6 +298,9 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...(options.signal ? { signal: options.signal } : {}),
   };
 
+  const progressMonitorEnabled = options.progressMonitor?.enabled === true;
+  const progressMonitor = progressMonitorEnabled ? { progressMonitor: { enabled: true } } : {};
+
   const runner = new AgentRunner({
     provider,
     registry,
@@ -297,6 +310,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     checkpointCoordinator,
     contextCompiler,
     ...(performanceLedger ? { performanceLedger } : {}),
+    ...progressMonitor,
   });
 
   const workflowEligibility: WorkflowEligibility = assessWorkflowEligibility({
@@ -319,6 +333,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
           eventSink: options.eventSink,
           ...(options.workflow?.onStage ? { onStage: options.workflow.onStage } : {}),
           ...(skillRegistry ? { skills: { registry: skillRegistry } } : {}),
+          ...(progressMonitorEnabled ? { progress: { enabled: true } } : {}),
+          ...(progressMonitorEnabled && options.progressMonitor?.onProgress ? { onProgress: options.progressMonitor.onProgress } : {}),
         },
         {
           task: options.instruction,
@@ -346,6 +362,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       checkpointCoordinator,
       contextCompiler,
       ...(performanceLedger ? { performanceLedger } : {}),
+      ...progressMonitor,
     })
   );
 

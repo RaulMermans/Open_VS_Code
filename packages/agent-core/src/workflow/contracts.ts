@@ -5,6 +5,7 @@
  * results. It never stores prompts, model transcripts, reasoning, full source files or secrets.
  */
 import type { AgentMode, AgentConfirmationRequest } from "../contracts/agent.ts"
+import type { WorkflowProgressState } from "../progress/contracts.ts"
 import type { SkillInjectionStatus } from "../skills/contracts.ts"
 import type { VerificationAction, VerificationStatus } from "../tools/verification-contracts.ts"
 
@@ -31,6 +32,8 @@ export type WorkflowBlocker =
   | "VERIFY_NOT_READY"
   | "VERIFY_UNAVAILABLE"
   | "RESTORE_FAILED"
+  /** Sprint 5C: a stall survived the bounded diagnostic recovery, or cannot be retried. */
+  | "BLOCKED_NON_PROGRESS"
 
 export type WorkflowIneligibleReason = "DISABLED" | "MODE_NOT_MUTATING" | "UNTRUSTED_WORKSPACE" | "READ_ONLY_REQUEST"
 
@@ -100,9 +103,37 @@ export interface ChangedFile {
   readonly diffTruncated: boolean
 }
 
+/**
+ * The net change of one file from the workflow start state to the current workspace (Sprint 5B
+ * closure). This, not the mutation history, is what REVIEW sees and what grounds its findings.
+ */
+export interface NetChange {
+  readonly path: string
+  readonly operation: "create" | "modify" | "delete"
+  /** sha256 of the content at workflow start ("" when the file did not exist). */
+  readonly baselineHash: string
+  /** sha256 of the current workspace content ("" when the file no longer exists). */
+  readonly currentHash: string
+  readonly linesAdded: number
+  readonly linesRemoved: number
+  readonly diff: string
+  readonly diffTruncated: boolean
+  /**
+   * BASELINE: diffed from the captured start content. SINGLE_CHANGE: the file changed once, so its
+   * one mutation diff is the net diff. CURRENT_CONTENT: the start content is no longer available
+   * (restart after several passes), so the current content is shown instead of a stale diff.
+   */
+  readonly source: "BASELINE" | "SINGLE_CHANGE" | "CURRENT_CONTENT"
+}
+
 export interface ImplementationArtifact {
-  /** Every applied mutation, in order, across the initial pass and repairs. */
+  /**
+   * Internal mutation history, in order, across the initial pass and repairs. Kept for recovery and
+   * evidence only: it is never presented as the final diff.
+   */
   readonly changedFiles: readonly ChangedFile[]
+  /** Net workflow-start → current-workspace changes; files whose net change is empty are omitted. */
+  readonly netChanges?: readonly NetChange[]
   readonly passes: number
   /** Bounded final summary of the latest pass. Never forwarded to REVIEW. */
   readonly summary: string
@@ -118,6 +149,10 @@ export interface CheckOutcome {
   readonly fingerprint: string
   /** Bounded tail of the combined output. */
   readonly excerpt: string
+  /** Test counts parsed from the full output, when the runner's summary format is recognized. */
+  readonly testCounts?: { readonly total?: number; readonly passed?: number; readonly failed?: number }
+  /** Fingerprints of individual failing tests (bounded), when test names are recognizable. */
+  readonly failingTests?: readonly string[]
 }
 
 export interface TestEvidence {
@@ -219,6 +254,8 @@ export interface WorkflowState {
   /** Repair reason handed to the next IMPLEMENT pass, if any. */
   readonly repairReason?: string
   readonly stages: readonly StageRecord[]
+  /** Sprint 5C non-progress state; present only when the progress monitor is enabled. */
+  readonly progress?: WorkflowProgressState
   readonly createdAt: string
   readonly updatedAt: string
 }

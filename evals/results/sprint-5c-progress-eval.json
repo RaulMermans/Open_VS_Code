@@ -1,0 +1,306 @@
+{
+  "sprint": "5C",
+  "realModelNonProgressDelta": "DEFERRED_TO_HALO",
+  "rows": [
+    {
+      "fixture": "A",
+      "arm": "A",
+      "outcome": "BLOCKED:TEST_REPAIR_LIMIT",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 7,
+      "promptTokens": 2627,
+      "toolCalls": 6,
+      "turns": 7
+    },
+    {
+      "fixture": "A",
+      "arm": "B",
+      "outcome": "BLOCKED:BLOCKED_NON_PROGRESS",
+      "stallDetected": true,
+      "signals": [
+        "TEST_STAGNATION"
+      ],
+      "failureClass": "LOGIC_FAILURE",
+      "recoveryAttempted": true,
+      "recoveryOutcome": "NOT_RECOVERED",
+      "diagnosticChecks": 1,
+      "modelCalls": 7,
+      "promptTokens": 2975,
+      "toolCalls": 6,
+      "turns": 7
+    },
+    {
+      "fixture": "B",
+      "arm": "A",
+      "outcome": "COMPLETE",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 8,
+      "promptTokens": 3276,
+      "toolCalls": 8,
+      "turns": 8
+    },
+    {
+      "fixture": "B",
+      "arm": "B",
+      "outcome": "COMPLETE",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 8,
+      "promptTokens": 3276,
+      "toolCalls": 8,
+      "turns": 8
+    },
+    {
+      "fixture": "D",
+      "arm": "A",
+      "outcome": "BLOCKED:TEST_REPAIR_LIMIT",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 7,
+      "promptTokens": 2610,
+      "toolCalls": 6,
+      "turns": 7
+    },
+    {
+      "fixture": "D",
+      "arm": "B",
+      "outcome": "BLOCKED:BLOCKED_NON_PROGRESS",
+      "stallDetected": true,
+      "signals": [
+        "TEST_STAGNATION"
+      ],
+      "failureClass": "ENVIRONMENT_FAILURE",
+      "recoveryAttempted": false,
+      "recoveryOutcome": "ESCALATED",
+      "diagnosticChecks": 1,
+      "modelCalls": 5,
+      "promptTokens": 1782,
+      "toolCalls": 4,
+      "turns": 5
+    },
+    {
+      "fixture": "E",
+      "arm": "A",
+      "outcome": "COMPLETE",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 8,
+      "promptTokens": 3256,
+      "toolCalls": 8,
+      "turns": 8
+    },
+    {
+      "fixture": "E",
+      "arm": "B",
+      "outcome": "COMPLETE",
+      "stallDetected": true,
+      "signals": [
+        "TEST_STAGNATION"
+      ],
+      "failureClass": "LOGIC_FAILURE",
+      "recoveryAttempted": true,
+      "recoveryOutcome": "RECOVERED",
+      "diagnosticChecks": 1,
+      "modelCalls": 8,
+      "promptTokens": 3604,
+      "toolCalls": 8,
+      "turns": 8
+    },
+    {
+      "fixture": "F",
+      "arm": "A",
+      "outcome": "BLOCKED:BLOCKED_REVIEW",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 10,
+      "promptTokens": 4454,
+      "toolCalls": 6,
+      "turns": 10
+    },
+    {
+      "fixture": "F",
+      "arm": "B",
+      "outcome": "BLOCKED:BLOCKED_NON_PROGRESS",
+      "stallDetected": true,
+      "signals": [
+        "REVIEW_STAGNATION"
+      ],
+      "failureClass": "LOGIC_FAILURE",
+      "recoveryAttempted": true,
+      "recoveryOutcome": "NOT_RECOVERED",
+      "diagnosticChecks": 1,
+      "modelCalls": 10,
+      "promptTokens": 4706,
+      "toolCalls": 6,
+      "turns": 10
+    },
+    {
+      "fixture": "G",
+      "arm": "A",
+      "outcome": "COMPLETE",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 6,
+      "promptTokens": 2419,
+      "toolCalls": 6,
+      "turns": 6
+    },
+    {
+      "fixture": "G",
+      "arm": "B",
+      "outcome": "COMPLETE",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 6,
+      "promptTokens": 2419,
+      "toolCalls": 6,
+      "turns": 6
+    },
+    {
+      "fixture": "C",
+      "arm": "A",
+      "outcome": "COMPLETED",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 3,
+      "promptTokens": 611,
+      "toolCalls": 2,
+      "turns": 3
+    },
+    {
+      "fixture": "C",
+      "arm": "B",
+      "outcome": "COMPLETED",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 3,
+      "promptTokens": 611,
+      "toolCalls": 2,
+      "turns": 3
+    },
+    {
+      "fixture": "H",
+      "arm": "A",
+      "outcome": "FAILED:MAX_TURNS_EXCEEDED",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 15,
+      "promptTokens": 4662,
+      "toolCalls": 15,
+      "turns": 15
+    },
+    {
+      "fixture": "H",
+      "arm": "B",
+      "outcome": "FAILED:NON_PROGRESS",
+      "stallDetected": true,
+      "signals": [
+        "REPEATED_TOOL_ACTION"
+      ],
+      "failureClass": "CONTEXT_DEGRADATION",
+      "recoveryAttempted": true,
+      "recoveryOutcome": "NOT_RECOVERED",
+      "diagnosticChecks": 1,
+      "modelCalls": 4,
+      "promptTokens": 1214,
+      "toolCalls": 4,
+      "turns": 4
+    },
+    {
+      "fixture": "I",
+      "arm": "A",
+      "outcome": "COMPLETED",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 4,
+      "promptTokens": 1086,
+      "toolCalls": 3,
+      "turns": 4
+    },
+    {
+      "fixture": "I",
+      "arm": "B",
+      "outcome": "COMPLETED",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 4,
+      "promptTokens": 1086,
+      "toolCalls": 3,
+      "turns": 4
+    }
+  ],
+  "detection": {
+    "loopFixtures": 5,
+    "loopsDetected": 5,
+    "trueStallRate": 1,
+    "progressFixtures": 4,
+    "falseStalls": 0,
+    "falseStallRate": 0,
+    "classified": 5,
+    "classificationAccuracy": 1,
+    "misses": []
+  },
+  "recovery": {
+    "stallsDetected": 5,
+    "stallsCorrectlyClassified": 5,
+    "diagnosticsRun": 5,
+    "recoveriesAttempted": 4,
+    "recovered": 1,
+    "recoverySuccessRate": 0.25,
+    "blockedAfterBoundedRetry": 3,
+    "escalatedWithoutRetry": 1,
+    "unnecessaryRecoveries": 0,
+    "unnecessaryRecoveryRate": 0
+  },
+  "efficiency": {
+    "modelCalls": {
+      "A": 68,
+      "B": 55
+    },
+    "toolCalls": {
+      "A": 60,
+      "B": 47
+    },
+    "promptTokens": {
+      "A": 25001,
+      "B": 21673
+    },
+    "repeatedModelCallsAvoided": 13,
+    "repeatedToolCallsAvoided": 13,
+    "averageTurnsBeforeBlocker": {
+      "A": 9.75,
+      "B": 6.5
+    },
+    "diagnosticCallsAdded": 5,
+    "diagnosticModelCallsAdded": 0,
+    "netTokenDifference": -3328
+  }
+}

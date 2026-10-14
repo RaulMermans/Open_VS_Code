@@ -50,3 +50,12 @@ ECC (`affaan-m/ECC`, MIT) uses many specialised agents, including a reviewer wit
 - Skills whose `required_tools` include `run_verification` (`tdd`, `refactor-with-guards`, `verification`) are not selectable inside the IMPLEMENT or REVIEW envelopes. TEST and VERIFY cover their verification structurally.
 - A pending runner confirmation does not survive a restart: that stage restarts with a fresh session, and the user is asked again.
 - Out of scope, by design: non-progress detection and replanning (Sprint 5C), learning from findings (5D), and multi-agent, parallel, PR, worktree or cloud orchestration.
+
+## Amendment — Sprint 5B closure (verified during Sprint 5C)
+An audit found two integrity defects. Both are fixed; the decision above otherwise stands.
+
+1. **Persistence secret safety.** Checkpoints stored raw free text: task, summary, diffs, test excerpts, finding fields, repair reason and blocker detail. Every `WorkflowState` now passes through `sanitizeWorkflowState` (`workflow/persistence.ts`) before any store sees it. The sanitizer reuses the canonical `redactRuntimeEvalSecrets` (now also covering GitHub, Slack and AWS tokens, JWTs and upper-case `.env` assignments), strips reasoning and bounds strings. Hashes and ids are untouched. Test `C-0A`.
+2. **REVIEW sees the net diff.** Decision 6's "bounded diff" was the accumulated mutation history, so a repaired bug could still ground a blocking finding. REVIEW now gets the net diff (workflow start → current workspace), and grounding uses only that diff and the current content of net-changed files. The mutation history stays internal. Test `C-0B`.
+3. The Skills table in the guide wrongly listed `bug-triage` as selectable in IMPLEMENT. It declares `verify`, which IMPLEMENT lacks (`CAPABILITY_DENIED`). The table is corrected.
+
+Status: SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED.

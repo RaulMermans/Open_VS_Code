@@ -1,6 +1,16 @@
 # Scratchpad
 
-- Current state: SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (deterministic). SPRINT 5A COMPLETE — PORTABLE SKILLS RUNTIME VERIFIED. V1 Desktop Candidate still gated only on HALO target-host acceptance.
+- Current state: SPRINT 5C COMPLETE — NON-PROGRESS DETECTION & BOUNDED RECOVERY VERIFIED (deterministic). SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (closure: sanitized persistence + net-diff review). SPRINT 5A COMPLETE. V1 Desktop Candidate still gated only on HALO target-host acceptance.
+- Sprint 5C summary:
+  - New `packages/agent-core/src/progress/` (contracts, fingerprint, monitor, recovery, direct-guard), `workflow/persistence.ts`, ADR-031, guide `docs/workflows/NON_PROGRESS_RECOVERY.md`, `npm run eval:progress`.
+  - 5B closure: `sanitizeWorkflowState` at the persistence boundary (canonical redactor, extended with GitHub/Slack/AWS/JWT/.env formats); REVIEW gets `NetChange[]` (workflow start → current workspace), and grounding uses only that diff and the current content.
+  - The recovery draws from the existing repair budget (no counter multiplication). A stage session that ends `BLOCKED_NON_PROGRESS` blocks the workflow instead of being retried.
+- Defects found during 5C:
+  - Identical node:test failures fingerprinted differently because of the `# duration_ms` footer. Found by eval fixtures A/E; fixed in the normalizer (thresholds untouched).
+  - The 5B guide claimed `bug-triage` is selectable in IMPLEMENT; it is `CAPABILITY_DENIED` (it declares `verify`). Corrected, and the envelope was not widened.
+  - Eval fixture G's patch target also matched `add()` (a fixture bug, recorded in the eval report).
+- Known limits: the simulated implementer is not smarter in recovery (1/4 recoveries succeed); workflow-path recoveries cost about +300 prompt tokens and save no calls (savings come from early escalation and direct-path cycles); after a restart, REVIEW shows current content instead of a net diff for multi-change files.
+- Next: HALO acceptance and same-model A/Bs (skills; workflow; progress monitor), then Sprint 5D.
 - Sprint 5B summary:
   - New `packages/agent-core/src/workflow/` (contracts, policy, artifacts, context, services, engine), ADR-030, guide `docs/workflows/ENGINEERING_LOOP.md`, `npm run eval:workflow`.
   - 5A closure: `SkillInjectionTracker`. Evidence is reconciled with the final compiled context, and a skill dropped by the final budget is `OMITTED_BY_FINAL_BUDGET`, never "active".
@@ -9,7 +19,6 @@
   - The runner's post-mutation verification rule matched the word "tests" in any instruction, so the workflow's IMPLEMENT stage (no verification tool by design) failed with VERIFICATION_UNAVAILABLE. Fixed by explicit delegation, not by rewording.
   - Eligibility treated "do not modify behaviour" as read-only. The pattern now needs a file/code object (found by eval case E13).
 - Known limits (measured, not tuned away): grounding cannot detect severity inflation ("D-inflated" probe blocks once), and `tdd`/`refactor-with-guards`/`verification` are not selectable inside workflow stages because they require `run_verification`.
-- Next: HALO acceptance, then the same-model A/Bs (skills; direct vs workflow); then Sprint 5C (non-progress detection).
 - Sprint 5A summary:
   - New `packages/agent-core/src/skills/` (contracts, schema, registry, selector, runtime), five built-ins in `packages/agent-core/skills/builtins`, ADR-029, guide `docs/skills/SKILLS.md`.
   - Flag `skills.enabled` defaults off; off = frozen ADR-014 `.agents/skills` path, unchanged.

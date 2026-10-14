@@ -107,9 +107,11 @@ Artifact bounds (`ARTIFACT_LIMITS`):
 - acceptance criteria;
 - approved plan;
 - changed-file list;
-- bounded diff;
+- the bounded **net diff**: workflow start state → current workspace;
 - test evidence;
 - constraints (project decisions).
+
+The net diff (`NetChange`, computed by `computeNetChange`) comes from each file's content at workflow start (captured before its first approved change) and its current workspace content. A file whose net change is empty is omitted. The internal mutation history (`ChangedFile[]`) is kept for recovery and evidence but is never shown as the final diff. Findings are grounded only in the net diff and the current content of net-changed files, so a finding that quotes obsolete intermediate code is rejected as ungrounded. Regression `C-0B`: a bug introduced, failed in TEST and repaired cannot block REVIEW. After a restart the start content is no longer in memory. A file changed once then shows that one change's diff; a file changed several times shows its current content, labelled as such, never a stale diff.
 
 The REVIEW session starts at turn 1 with a single user message. It can read changed files and their callers with the read-only tools.
 
@@ -149,7 +151,7 @@ This applies ECC's "pre-report gate" pattern (reference only; nothing copied): a
 
 MEDIUM, LOW and NOTE findings are reported but do not block.
 
-The workflow does not detect stalls or replan. It does record evidence that Sprint 5C can use: retry counts, failure fingerprints, and per-stage attempts.
+Sprint 5C adds optional non-progress detection on top of these limits (`progressMonitor.enabled`, ADR-031, [`NON_PROGRESS_RECOVERY.md`](NON_PROGRESS_RECOVERY.md)). On a stall it runs one discriminating check and allows one bounded recovery pass. That pass draws from the same repair budget, then the workflow ends `BLOCKED` · `BLOCKED_NON_PROGRESS`. With the flag off, this table is the whole policy.
 
 ## Verification
 
@@ -173,10 +175,10 @@ Each model stage selects at most one skill. Selection uses the stage's mode and 
 | Stage | Selectable built-ins | Not selectable, and why |
 | --- | --- | --- |
 | PLAN | none | no built-in allows `PLAN` mode |
-| IMPLEMENT | `bug-triage` | `tdd` and `refactor-with-guards` require `run_verification`, which the workflow reserves for TEST/VERIFY |
+| IMPLEMENT | none | `bug-triage` declares the `verify` capability, and IMPLEMENT has no `run_known_test` (`CAPABILITY_DENIED`); `tdd` and `refactor-with-guards` require `run_verification`, which the workflow reserves for TEST/VERIFY |
 | REVIEW | `security-review` | `verification` requires `run_verification` |
 
-The envelopes are not widened to admit those skills. Their verification steps are done structurally by the TEST and VERIFY stages. A future stage-aware skill variant would need its own ADR-029 contract change.
+(Corrected in Sprint 5C. This table first listed `bug-triage` as selectable in IMPLEMENT; the selector rejects it there, as the Sprint 5C recovery test NP-W-12 shows.) The envelopes are not widened to admit those skills. Their verification steps are done structurally by the TEST and VERIFY stages. A future stage-aware skill variant would need its own ADR-029 contract change.
 
 Stage evidence records `selectedSkill`, `skillInjection` and `skillInjected`. These values come from the final compiled context (`SkillInjectionTracker`), so a skill dropped by the final budget is never reported as applied.
 
@@ -195,7 +197,16 @@ Stage evidence records `selectedSkill`, `skillInjection` and `skillInjected`. Th
 - ids, the stage, completed stages, artifacts, retry counts and blocker;
 - one `StageRecord` per executed stage attempt: start/end, status, mode, model calls, peak context tokens, tools used, skill and injection state, outcome.
 
-Records exist only for stages that ran, so there is never a synthetic "review passed". It never stores prompts, transcripts, reasoning, full file contents (`beforeContent`/`proposedContent` are dropped) or secrets. It does store the task text, as the existing checkpoint records already do, because a restored workflow must rebuild its envelopes.
+Records exist only for stages that ran, so there is never a synthetic "review passed". It never stores prompts, transcripts, reasoning or full file contents (`beforeContent`/`proposedContent` are dropped). Workflow-start file contents used for the net diff stay in memory only.
+
+**Persistence boundary.** Every state is passed through `sanitizeWorkflowState` (`workflow/persistence.ts`) before any `WorkflowStateStore` sees it. The sanitizer:
+
+- applies the canonical `redactRuntimeEvalSecrets` to every free-text string (task, summary, diffs, test excerpts, finding claim/evidence/action, repair reason, blocker detail, progress evidence);
+- strips reasoning blocks;
+- bounds each string to 12,000 characters;
+- leaves hashes, ids and timestamps untouched.
+
+The in-memory state is not modified. A restored workflow therefore rebuilds its envelopes from the redacted task text. Regression `C-0A` writes literal secrets into every field and checks that no checkpoint file contains one.
 
 Progress shown to the user is limited to stage transitions (`Stage: REVIEW`, `Skill: security-review`).
 

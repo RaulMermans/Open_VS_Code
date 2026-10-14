@@ -5,9 +5,9 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "test": "node --import tsx/esm --test tests/agent/*.test.ts tests/context/*.test.ts tests/contracts/*.test.ts tests/mcp/*.test.ts tests/model/*.test.ts tests/tools/*.test.ts tests/runtime-evals/*.test.ts tests/recovery/*.test.ts tests/performance/*.test.ts tests/skills/*.test.ts tests/workflow/*.test.ts tests/hygiene.test.ts",
+    "test": "node --import tsx/esm --test tests/agent/*.test.ts tests/context/*.test.ts tests/contracts/*.test.ts tests/mcp/*.test.ts tests/model/*.test.ts tests/tools/*.test.ts tests/runtime-evals/*.test.ts tests/recovery/*.test.ts tests/performance/*.test.ts tests/skills/*.test.ts tests/workflow/*.test.ts tests/progress/*.test.ts tests/hygiene.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests/agent tests/context tests/contracts tests/mcp tests/evals tests/model tests/tools tests/runtime-evals tests/recovery tests/performance tests/skills tests/workflow tests/hygiene.test.ts",
+    "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests/agent tests/context tests/contracts tests/mcp tests/evals tests/model tests/tools tests/runtime-evals tests/recovery tests/performance tests/skills tests/workflow tests/progress tests/hygiene.test.ts",
     "build": "tsc --noEmit",
     "eval:model": "node --import tsx/esm tests/evals/run-benchmark-cli.ts",
     "eval:models": "node --import tsx/esm tests/evals/run-benchmark-cli.ts",
@@ -16,7 +16,8 @@
     "eval:recovery": "node --import tsx/esm --test tests/recovery/*.test.ts",
     "eval:performance": "node --import tsx/esm --test tests/performance/*.test.ts",
     "eval:skills": "node --import tsx/esm tests/evals/run-skill-eval.ts",
-    "eval:workflow": "node --import tsx/esm tests/evals/run-workflow-eval.ts"
+    "eval:workflow": "node --import tsx/esm tests/evals/run-workflow-eval.ts",
+    "eval:progress": "node --import tsx/esm tests/evals/run-progress-eval.ts"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

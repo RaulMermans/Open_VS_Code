@@ -61,7 +61,7 @@ export function patchingImplementer(patches: readonly { search: string; replace:
   }
 }
 
-const STAGE_HEADER = /\[Engineering workflow · (PLAN|IMPLEMENT|IMPLEMENT \(repair\)|REVIEW) stage\]/
+const STAGE_HEADER = /\[Engineering workflow · (PLAN|IMPLEMENT|IMPLEMENT \(repair\)|IMPLEMENT \(recovery\)|REVIEW) stage\]/
 
 /**
  * Deterministic, local, stage-aware model. It answers by the stage header in the prompt and the

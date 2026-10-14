@@ -120,7 +120,7 @@
         "peakContextTokens": 288,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 218.061958
+        "latencyMs": 236.56908299999998
       },
       {
         "fixture": "T1",
@@ -131,19 +131,19 @@
         "verificationRuns": 2,
         "defectDetected": false,
         "modelCalls": 4,
-        "promptTokens": 1529,
-        "peakContextTokens": 595,
+        "promptTokens": 1540,
+        "peakContextTokens": 606,
         "repairCycles": 0,
         "approvals": 3,
-        "latencyMs": 345.87820899999997,
+        "latencyMs": 353.999334,
         "stageTokens": {
           "PLAN": 230,
           "IMPLEMENT": 395,
           "TEST": 0,
-          "REVIEW": 595,
+          "REVIEW": 606,
           "VERIFY": 0
         },
-        "monolithicEstimateTokens": 1220,
+        "monolithicEstimateTokens": 1231,
         "workflowEligible": true
       },
       {
@@ -159,7 +159,7 @@
         "peakContextTokens": 470,
         "repairCycles": 1,
         "approvals": 4,
-        "latencyMs": 366.12845800000014
+        "latencyMs": 382.48520900000005
       },
       {
         "fixture": "T2",
@@ -170,19 +170,19 @@
         "verificationRuns": 3,
         "defectDetected": true,
         "modelCalls": 6,
-        "promptTokens": 2347,
-        "peakContextTokens": 631,
+        "promptTokens": 2315,
+        "peakContextTokens": 599,
         "repairCycles": 1,
         "approvals": 5,
-        "latencyMs": 521.1385419999999,
+        "latencyMs": 517.4313750000001,
         "stageTokens": {
           "PLAN": 234,
           "IMPLEMENT": 427,
           "TEST": 0,
-          "REVIEW": 631,
+          "REVIEW": 599,
           "VERIFY": 0
         },
-        "monolithicEstimateTokens": 1679,
+        "monolithicEstimateTokens": 1647,
         "workflowEligible": true
       },
       {
@@ -198,7 +198,7 @@
         "peakContextTokens": 300,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 186.72741600000018
+        "latencyMs": 183.9763750000002
       },
       {
         "fixture": "T3",
@@ -209,19 +209,19 @@
         "verificationRuns": 2,
         "defectDetected": false,
         "modelCalls": 4,
-        "promptTokens": 1638,
-        "peakContextTokens": 631,
+        "promptTokens": 1649,
+        "peakContextTokens": 642,
         "repairCycles": 0,
         "approvals": 3,
-        "latencyMs": 330.59912499999996,
+        "latencyMs": 338.57145900000023,
         "stageTokens": {
           "PLAN": 239,
           "IMPLEMENT": 432,
           "TEST": 0,
-          "REVIEW": 631,
+          "REVIEW": 642,
           "VERIFY": 0
         },
-        "monolithicEstimateTokens": 1302,
+        "monolithicEstimateTokens": 1313,
         "workflowEligible": true
       },
       {
@@ -237,7 +237,7 @@
         "peakContextTokens": 286,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 180.96062500000016
+        "latencyMs": 201.2579169999999
       },
       {
         "fixture": "T4",
@@ -248,19 +248,19 @@
         "verificationRuns": 2,
         "defectDetected": false,
         "modelCalls": 4,
-        "promptTokens": 1544,
-        "peakContextTokens": 593,
+        "promptTokens": 1555,
+        "peakContextTokens": 604,
         "repairCycles": 0,
         "approvals": 3,
-        "latencyMs": 324.6673330000003,
+        "latencyMs": 341.904125,
         "stageTokens": {
           "PLAN": 233,
           "IMPLEMENT": 394,
           "TEST": 0,
-          "REVIEW": 593,
+          "REVIEW": 604,
           "VERIFY": 0
         },
-        "monolithicEstimateTokens": 1220,
+        "monolithicEstimateTokens": 1231,
         "workflowEligible": true
       },
       {
@@ -276,7 +276,7 @@
         "peakContextTokens": 280,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 176.95358299999998
+        "latencyMs": 194.86316699999998
       },
       {
         "fixture": "T5",
@@ -287,19 +287,19 @@
         "verificationRuns": 3,
         "defectDetected": true,
         "modelCalls": 7,
-        "promptTokens": 3042,
-        "peakContextTokens": 668,
+        "promptTokens": 3010,
+        "peakContextTokens": 625,
         "repairCycles": 1,
         "approvals": 5,
-        "latencyMs": 506.40504199999987,
+        "latencyMs": 531.887541,
         "stageTokens": {
           "PLAN": 217,
           "IMPLEMENT": 479,
           "TEST": 0,
-          "REVIEW": 668,
+          "REVIEW": 625,
           "VERIFY": 0
         },
-        "monolithicEstimateTokens": 2354,
+        "monolithicEstimateTokens": 2322,
         "workflowEligible": true
       },
       {
@@ -315,7 +315,7 @@
         "peakContextTokens": 110,
         "repairCycles": 0,
         "approvals": 0,
-        "latencyMs": 4.286250000000109
+        "latencyMs": 4.390124999999898
       },
       {
         "fixture": "T6",
@@ -330,7 +330,7 @@
         "peakContextTokens": 110,
         "repairCycles": 0,
         "approvals": 0,
-        "latencyMs": 4.46808400000009,
+        "latencyMs": 4.135999999999967,
         "workflowEligible": false
       }
     ],
@@ -345,7 +345,7 @@
       "peakContextTokens": 470,
       "repairCycles": 1,
       "approvals": 12,
-      "latencyMs": 1129
+      "latencyMs": 1199
     },
     "workflow": {
       "tasks": 5,
@@ -354,11 +354,11 @@
       "defectsInjected": 2,
       "defectsDetected": 2,
       "modelCalls": 25,
-      "promptTokens": 10100,
-      "peakContextTokens": 668,
+      "promptTokens": 10069,
+      "peakContextTokens": 642,
       "repairCycles": 2,
       "approvals": 19,
-      "latencyMs": 2029
+      "latencyMs": 2084
     }
   },
   "bias": {

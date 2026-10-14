@@ -4,8 +4,8 @@
  * its inputs are an explicit allow-list, so implementation dialogue, reasoning, tool observations and
  * self-justifications cannot reach it by construction.
  */
-import { boundText, renderDiff, renderPlan, uniquePaths } from "./artifacts.ts"
-import { ARTIFACT_LIMITS, type PlanArtifact, type TestEvidence, type WorkflowState } from "./contracts.ts"
+import { boundText, renderNetDiff, renderPlan, uniquePaths } from "./artifacts.ts"
+import { ARTIFACT_LIMITS, type NetChange, type PlanArtifact, type TestEvidence, type WorkflowState } from "./contracts.ts"
 
 const list = (items: readonly string[]) => (items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : "- (none)")
 
@@ -40,6 +40,20 @@ function criteria(plan: PlanArtifact): string {
   return `## Acceptance criteria\n${list(plan.acceptanceCriteria)}`
 }
 
+/**
+ * The bounded recovery IMPLEMENT envelope (Sprint 5C). It is rebuilt from allow-listed state only:
+ * the compact recovery context (task, acceptance criteria, latest evidence, diagnostic result,
+ * workspace hashes). The plan, memory digest, earlier repair reasons, summaries and any stage
+ * transcript are excluded, so a failed hypothesis cannot be carried into the recovery attempt.
+ */
+export function recoveryImplementInstruction(state: WorkflowState): string {
+  return [
+    header("IMPLEMENT (recovery)"),
+    "Earlier repairs did not change the outcome. Start from the diagnostic evidence below, not from earlier attempts. Read the code the evidence points to before editing. Make the smallest change that addresses the diagnosed cause; every change goes through the normal approval flow. Do not run tests; the workflow runs them next. When done, reply with a one-paragraph summary.",
+    state.repairReason ?? "",
+  ].join("\n\n")
+}
+
 export function implementInstruction(inputs: StageContextInputs, state: WorkflowState): string {
   const plan = state.plan!
   const changed = state.implementation ? uniquePaths(state.implementation.changedFiles) : []
@@ -62,12 +76,13 @@ function testSummary(test: TestEvidence | undefined): string {
 
 /**
  * The fresh REVIEW envelope. Allowed inputs only: original task, acceptance criteria, approved plan,
- * final diff, changed-file list, test evidence and constraints.
+ * the net diff (workflow start → current workspace), changed-file list, test evidence and
+ * constraints. The mutation history is never shown, so obsolete intermediate code cannot be reviewed
+ * as though it were current.
  */
-export function reviewInstruction(inputs: Pick<StageContextInputs, "task" | "constraints">, state: WorkflowState): string {
+export function reviewInstruction(inputs: Pick<StageContextInputs, "task" | "constraints">, state: WorkflowState, netChanges: readonly NetChange[]): string {
   const plan = state.plan!
-  const changes = state.implementation?.changedFiles ?? []
-  const diff = renderDiff(changes)
+  const diff = renderNetDiff(netChanges)
   return [
     header("REVIEW"),
     [
@@ -81,8 +96,8 @@ export function reviewInstruction(inputs: Pick<StageContextInputs, "task" | "con
     `## Original task\n${inputs.task}`,
     criteria(plan),
     `## Approved plan\n${renderPlan(plan)}`,
-    `## Changed files\n${list(uniquePaths(changes))}`,
-    `## Diff${diff.truncated ? " (truncated; read the files for the rest)" : ""}\n${diff.text}`,
+    `## Changed files\n${list(netChanges.map((change) => change.path))}`,
+    `## Diff (net: workflow start → current workspace)${diff.truncated ? " (truncated; read the files for the rest)" : ""}\n${diff.text || "(no net change)"}`,
     `## Test evidence\n${testSummary(state.test)}`,
     ...(inputs.constraints ? [`## Constraints\n${inputs.constraints}`] : []),
     [

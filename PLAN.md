@@ -330,7 +330,25 @@ Sprint 5B — Structured Engineering Loop & Fresh-Context Review (V1.1) ✅ COMP
     - reviewer-bias pipeline: true-positive rate 100%, false-positive rate 33.3% (the inflated-severity probe), severity correctness 80%.
   - Runner change: IMPLEMENT sessions mark `verificationOwner: "workflow"`, so post-mutation verification is owned by the mandatory TEST/VERIFY stages (the direct path is unchanged).
   - HALO A/B: DEFERRED_TO_HALO.
+  - Closure (verified in Sprint 5C): workflow persistence passes through `sanitizeWorkflowState`, which reuses the canonical redactor (test `C-0A`), and REVIEW receives the true net diff, not the mutation history (regression `C-0B`). SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED.
+
+Sprint 5C — Non-Progress Detection & Bounded Recovery (V1.1) ✅ COMPLETE (deterministic) · REAL-MODEL NON-PROGRESS DELTA DEFERRED TO HALO
+  - Design (ADR-031, `docs/workflows/NON_PROGRESS_RECOVERY.md`): new `packages/agent-core/src/progress/`.
+    - Deterministic `ProgressSnapshot` and `compareSnapshots`: ADVANCED / CHANGED / STALLED / REGRESSED / UNKNOWN.
+    - `ProgressMonitor`, an observer that only requests CONTINUE / DIAGNOSE / BLOCK.
+    - `classifyStall` (10 classes), one read-only discriminating check, `NonProgressRecoveryPlan`, and a structured `BLOCKED_NON_PROGRESS` report.
+  - Workflow: observes START, MUTATION, TEST, REVIEW and VERIFY. One recovery per workflow draws from the existing repair budget. It uses a compact, allow-listed recovery context; the plan, earlier repairs and transcripts are excluded. Restart-safe.
+  - Direct path: `DirectProgressGuard` in `AgentRunner` catches repeated (also non-consecutive) actions, repeated errors, no-op writes, context burn and turn exhaustion without evidence. It gets one recovery turn with deduplicated observations.
+  - Flag: `progressMonitor.enabled` (default off; CLI `--progress-monitor`, VS Code `open-vs-code.progressMonitor.enabled`).
+  - Evidence:
+    - 51 new tests: 6 closure, 23 monitor/unit, 14 workflow integration, 8 direct path;
+    - `npm run eval:progress` (A = off, B = on, same simulated model):
+      - known loops 5/5 detected, false stalls 0/4, classification 5/5;
+      - 13 model calls, 13 tool/check calls and 3,327 prompt tokens saved, with 0 model calls added by diagnostics;
+      - recovery success 1/4 attempts (simulated implementer).
+  - Defects found: the failure normalizer missed node:test's `# duration_ms`, so identical failures had different fingerprints (fixed; P-04b); the 5B guide's skills table wrongly listed `bug-triage` as selectable in IMPLEMENT (corrected).
+  - HALO A/B: DEFERRED_TO_HALO.
 
 Next:
-1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`, and skills + direct vs skills + `--workflow`.
-2. Sprint 5C — Non-Progress Detection & Recovery.
+1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
+2. Sprint 5D — Memory-to-Skill Learning & V1.1 Benchmark Closure.

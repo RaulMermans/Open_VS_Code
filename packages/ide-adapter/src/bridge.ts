@@ -11,6 +11,8 @@ export interface BridgeOptions {
   skills?: { enabled: boolean; builtinRoot?: string };
   /** Structured Engineering Loop (ADR-030); disabled unless the host enables it. */
   workflow?: { enabled: boolean };
+  /** Non-progress detection & bounded recovery (ADR-031); disabled unless the host enables it. */
+  progressMonitor?: { enabled: boolean };
 }
 
 export class AgentSessionBridge {
@@ -21,6 +23,7 @@ export class AgentSessionBridge {
   private skills?: BridgeOptions["skills"];
   private lastSkillEvidence?: SkillEvidence;
   private workflow?: BridgeOptions["workflow"];
+  private progressMonitor?: BridgeOptions["progressMonitor"];
   private lastWorkflowState?: WorkflowState;
   
   constructor(options: BridgeOptions) {
@@ -29,6 +32,7 @@ export class AgentSessionBridge {
     this.providerOverride = options.providerOverride;
     this.skills = options.skills;
     this.workflow = options.workflow;
+    this.progressMonitor = options.progressMonitor;
   }
 
   /** Bounded workflow state of the most recent structured task, if one ran. */
@@ -102,6 +106,12 @@ export class AgentSessionBridge {
         eventSink: sink,
         providerOverride: this.providerOverride,
         ...(this.skills ? { skills: this.skills } : {}),
+        ...(this.progressMonitor?.enabled ? {
+          progressMonitor: {
+            enabled: true,
+            onProgress: (notice: string) => void this.host.showOutput(notice),
+          },
+        } : {}),
         ...(this.workflow?.enabled ? {
           workflow: {
             enabled: true,

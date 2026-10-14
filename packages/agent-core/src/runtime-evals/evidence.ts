@@ -31,6 +31,10 @@ export function redactRuntimeEvalSecrets(text: string): string {
     .replace(/((?:api[_-]?key|secret|token|password|auth(?:orization)?)\s*[:=]\s*["']?)[^"'\s\n\r]+/gi, "$1[REDACTED]")
     .replace(/-----BEGIN[A-Z\s]+PRIVATE KEY-----[\s\S]+?-----END[A-Z\s]+PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]")
     .replace(/sk[-_][a-zA-Z0-9_-]{8,}/g, "[REDACTED_API_KEY]")
+    // Well-known provider token formats and upper-case .env style assignments (Sprint 5C).
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g, "[REDACTED_TOKEN]")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[REDACTED_JWT]")
+    .replace(/\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIALS?)[A-Z0-9_]*\s*[:=]\s*["']?)(?!\[REDACTED)[^"'\s]+/g, "$1[REDACTED]")
 }
 
 export const redactEvalSecrets = redactRuntimeEvalSecrets
