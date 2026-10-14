@@ -22,12 +22,17 @@ import { MemoryRetriever } from "../context/memory-retriever.ts";
 import { discoverSkills, loadSkill } from "../context/skills.ts";
 import { selectSkills } from "../context/skill-selector.ts";
 import { SkillRegistry, defaultBuiltinSkillsRoot } from "../skills/registry.ts";
-import { prepareSkillGuidance, disabledSkillEvidence } from "../skills/runtime.ts";
+import { prepareSkillGuidance, disabledSkillEvidence, SkillInjectionTracker } from "../skills/runtime.ts";
+import { compileContext, type ContextCompilerInput } from "../context/compiler.ts";
 import type { SkillEvidence, SkillGuidance } from "../skills/contracts.ts";
 import type { LoadedSkill } from "../context/skills.ts";
 import type { SkillSelectionResult } from "../context/skill-selector.ts";
 import { calculateBudget, estimateTokens } from "../context/budget.ts";
 import { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
+import { EngineeringWorkflow } from "../workflow/engine.ts";
+import { assessWorkflowEligibility } from "../workflow/policy.ts";
+import { CheckpointWorkflowStore, createWorkspaceVerifier } from "../workflow/services.ts";
+import type { WorkflowEligibility, WorkflowStageEvent } from "../workflow/contracts.ts";
 
 import type { AgentMode, AgentEvent } from "../contracts/agent.ts";
 import type { ModelProvider } from "../contracts/model.ts";
@@ -56,6 +61,15 @@ export interface CreateAgentRuntimeOptions {
     builtinRoot?: string;
     /** 1 by default; hard-capped at 2 and only with an explicit composes_with rule. */
     maxSkills?: number;
+  };
+  /**
+   * Structured Engineering Loop (Sprint 5B, ADR-030). Disabled by default until the HALO A/B
+   * benchmark is recorded. When disabled, or when the task is not eligible, `workflow` is undefined
+   * and the direct runner path is used exactly as before.
+   */
+  workflow?: {
+    enabled?: boolean;
+    onStage?: (event: WorkflowStageEvent) => void;
   };
 }
 
@@ -253,6 +267,14 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     }
   }
 
+  // Final-context truth (ADR-029): a skill counts as applied only if the compiler kept it in a request.
+  const skillTracker = new SkillInjectionTracker(skillEvidence, skillGuidance);
+  const contextCompiler = (input: ContextCompilerInput) => {
+    const compiled = compileContext(input);
+    skillTracker.observe(compiled);
+    return compiled;
+  };
+
   const runnerInput = {
     task: { id: `session-${Date.now()}`, mode: options.mode, instruction: options.instruction },
     workspaceRoot: options.workspaceRoot,
@@ -273,8 +295,44 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     evidenceGate: false,
     eventSink: options.eventSink,
     checkpointCoordinator,
+    contextCompiler,
     ...(performanceLedger ? { performanceLedger } : {}),
   });
+
+  const workflowEligibility: WorkflowEligibility = assessWorkflowEligibility({
+    enabled: options.workflow?.enabled === true,
+    mode: options.mode,
+    instruction: options.instruction,
+    isTrusted: options.isTrusted,
+  });
+  const workflow = workflowEligibility.eligible
+    ? EngineeringWorkflow.start(
+        {
+          provider,
+          registry,
+          permissionEvaluator: classifyPermission,
+          verifier: createWorkspaceVerifier(options.workspaceRoot, verificationEngine),
+          workspaceRoot: options.workspaceRoot,
+          contextBudget,
+          store: new CheckpointWorkflowStore(checkpointCoordinator.checkpointStore),
+          checkpointCoordinator,
+          eventSink: options.eventSink,
+          ...(options.workflow?.onStage ? { onStage: options.workflow.onStage } : {}),
+          ...(skillRegistry ? { skills: { registry: skillRegistry } } : {}),
+        },
+        {
+          task: options.instruction,
+          mode: options.mode,
+          taskId: runnerInput.task.id,
+          memoryDigest: [
+            ...memory.projectFacts.map((fact) => fact.content),
+            ...memory.decisions.map((decision) => `Decision ${decision.id}: ${decision.summary}`),
+          ].join("\n"),
+          constraints: memory.decisions.map((decision) => `${decision.id}: ${decision.summary}`).join("\n"),
+          ...(options.signal ? { signal: options.signal } : {}),
+        },
+      )
+    : undefined;
 
   const repairOrchestrator = new RepairOrchestrator(
     { maxRepairAttempts: 3, maxMutations: 3, maxVerificationRuns: 3, maxTotalAgentTurns: 20 },
@@ -286,6 +344,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       evidenceGate: false,
       eventSink: options.eventSink,
       checkpointCoordinator,
+      contextCompiler,
       ...(performanceLedger ? { performanceLedger } : {}),
     })
   );
@@ -302,9 +361,14 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     actualSkillTokens,
     selectedSkills,
     skillGuidance,
-    skillEvidence,
+    /** Reconciled with the final compiled context on every read. */
+    get skillEvidence(): SkillEvidence {
+      return skillTracker.evidence;
+    },
     skillRegistry,
     memory,
+    workflow,
+    workflowEligibility,
     checkpointCoordinator,
     recoveryController: checkpointCoordinator.recoveryController,
     performanceLedger: routedGateway?.performanceLedger,

@@ -966,12 +966,7 @@ export class AgentRunner {
             }
 
             const hasMutations = session.evidenceCollector.getEvidence().mutationOutcomes.some((m) => m.status === "APPLIED")
-            const isVerificationRequired = Boolean(
-              session.input.task.metadata?.requireVerification === true ||
-              session.input.task.mode === "DEBUG" ||
-              session.taskProfile.category === "TEST_DIAGNOSIS" ||
-              /\b(?:test|tests|verify|verification|assert|diagnose)\b/i.test(session.input.task.instruction)
-            )
+            const isVerificationRequired = this.#verificationRequired()
 
             if (verifOutcome === "UNAVAILABLE") {
               if (hasMutations && isVerificationRequired) {
@@ -1353,6 +1348,22 @@ export class AgentRunner {
     session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome, truncated: observation.truncated })
   }
 
+  /**
+   * Whether applied mutations must be verified inside this session before it may complete. A
+   * structured engineering workflow (ADR-030) sets `verificationOwner: "workflow"` on its IMPLEMENT
+   * session: its mandatory TEST and VERIFY stages own verification, so the session need not run it.
+   */
+  #verificationRequired(): boolean {
+    const session = this.#requiredSession()
+    if (session.input.task.metadata?.verificationOwner === "workflow") return false
+    return Boolean(
+      session.input.task.metadata?.requireVerification === true ||
+      session.input.task.mode === "DEBUG" ||
+      session.taskProfile.category === "TEST_DIAGNOSIS" ||
+      /\b(?:test|tests|verify|verification|assert|diagnose)\b/i.test(session.input.task.instruction)
+    )
+  }
+
   #permission(action: Parameters<typeof classifyPermission>[0]["action"]): ToolPermission {
     const session = this.#requiredSession()
     return this.#permissionEvaluator({ action, mode: session.input.task.mode })
@@ -1477,12 +1488,7 @@ export class AgentRunner {
           return true
         }
         const hasMutations = session.evidenceCollector.getEvidence().mutationOutcomes.some((m) => m.status === "APPLIED")
-        const isVerificationRequired = Boolean(
-          session.input.task.metadata?.requireVerification === true ||
-          session.input.task.mode === "DEBUG" ||
-          session.taskProfile.category === "TEST_DIAGNOSIS" ||
-          /\b(?:test|tests|verify|verification|assert|diagnose)\b/i.test(session.input.task.instruction)
-        )
+        const isVerificationRequired = this.#verificationRequired()
         if (verifOutcome === "UNAVAILABLE" && hasMutations && isVerificationRequired) {
           session.failureReason = "INTERNAL_ERROR"
           this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })

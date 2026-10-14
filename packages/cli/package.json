@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx/esm --test tests/cli.test.ts tests/cli-skills.test.ts",
+    "test": "node --import tsx/esm --test tests/cli.test.ts tests/cli-skills.test.ts tests/cli-workflow.test.ts",
     "lint": "oxlint -c ../../.oxlintrc.json --deny-warnings src tests/*.ts"
   },
   "dependencies": {

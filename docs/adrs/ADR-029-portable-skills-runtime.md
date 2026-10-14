@@ -27,6 +27,16 @@ ECC (`affaan-m/ECC`) and the wider "agent skills" pattern informed the design: a
 9. **Feature flag.** `CreateAgentRuntimeOptions.skills.enabled` (CLI `--skills` / `OPEN_VS_CODE_SKILLS=1`, VS Code `open-vs-code.skills.enabled`), default `false`. Off: the ADR-014 path runs exactly as in V1. On: the portable runtime replaces it. The two are never active together.
 10. **Seed set.** Five curated built-ins: `bug-triage`, `tdd`, `refactor-with-guards`, `security-review`, `verification`. No automatic skill creation.
 
+## Amendments (Sprint 5B)
+- **Injected-state truth.** Load status describes the skill before compilation. Skill guidance is optional context, so the final `compileContext` can still drop it. `SkillInjectionTracker` observes every compiled request and adds these fields to the evidence:
+  - `injectionStatus` (`NOT_APPLICABLE | PENDING | INJECTED | PARTIALLY_INJECTED | OMITTED_BY_FINAL_BUDGET`);
+  - `injectedSkills`;
+  - `injectedSkillTokens` (the most recent request);
+  - `omittedSkills`, `compiledRequests` and `requestsWithSkill`.
+
+  A skill counts as active or applied (`isSkillApplied`) only if its guidance reached a model request. The CLI, IDE bridge and "Show active skill" read the reconciled evidence after the run. Tests: `tests/skills/skill-injection-truth.test.ts`.
+- **Stage interaction (ADR-030).** In the Structured Engineering Loop each model stage selects at most one skill. Selection uses the stage's mode and tool envelope. `required_tools` is enforced unchanged, so `tdd`, `refactor-with-guards` and `verification` (which need `run_verification`) are not selectable inside IMPLEMENT or REVIEW. `bug-triage` (IMPLEMENT) and `security-review` (REVIEW) are.
+
 ## Consequences
 - Small models see at most one compact (~450–560 token) skill instead of several; a deterministic benchmark measures an 86.9% average reduction against eager injection of all seed bodies.
 - Malformed or hostile skills degrade to "no skill" with diagnostics; they cannot crash the agent or widen its authority.

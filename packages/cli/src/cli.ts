@@ -24,6 +24,8 @@ Options:
   --workspace <dir>  Target workspace directory (default: current directory)
   --json             Output result as JSON
   --skills           Enable the Portable Skills Runtime (off by default; ADR-029)
+  --workflow         Run eligible build/debug tasks through the Structured Engineering Loop
+                     (PLAN → IMPLEMENT → TEST → REVIEW → VERIFY; off by default; ADR-030)
   --help, -h         Show this help message
 
 Model Configuration:
@@ -38,6 +40,7 @@ Model Configuration:
       workspace: { type: "string" },
       json: { type: "boolean" },
       skills: { type: "boolean" },
+      workflow: { type: "boolean" },
     },
     allowPositionals: true,
   });
@@ -81,6 +84,7 @@ Model Configuration:
     workspaceRoot,
     json: values.json,
     ...(values.skills ? { skills: true } : {}),
+    ...(values.workflow ? { workflow: true } : {}),
   });
 
   process.exit(result.exitCode);

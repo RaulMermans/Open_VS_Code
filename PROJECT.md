@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 5A ✅ COMPLETE — Portable Skills Runtime (deterministic; real-model delta deferred to HALO). V1 Desktop Candidate remains gated only on HALO target-host acceptance.
+Sprint 5B ✅ COMPLETE — Structured Engineering Loop & Fresh-Context Review (deterministic; real-model delta deferred to HALO). Sprint 5A ✅ COMPLETE — Portable Skills Runtime verified, including injected-state truth. V1 Desktop Candidate remains gated only on HALO target-host acceptance.
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
@@ -85,4 +85,6 @@ Sprint 5A ✅ COMPLETE — Portable Skills Runtime (deterministic; real-model de
 
 - Phase L (Sprint 5A, V1.1): Portable Skills Runtime (ADR-029). Strict `SKILL.md` contract, five curated built-ins plus trusted-workspace skills, metadata-only index, at most one lazily loaded skill, PermissionGate-checked capabilities, optional budgeted context, bounded evidence. Feature flag `skills.enabled` defaults off. Status: SPRINT 5A COMPLETE — PORTABLE SKILLS RUNTIME VERIFIED (deterministic); REAL_MODEL SKILL DELTA — DEFERRED TO HALO.
 
-- Next: Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the Sprint 5A same-model skills A/B. Then Sprint 5B — Structured Engineering Loop & Fresh-Context Review.
+- Phase M (Sprint 5B, V1.1): Structured Engineering Loop & Fresh-Context Review (ADR-030). A sequential, bounded PLAN → IMPLEMENT → TEST → REVIEW → VERIFY workflow for eligible mutating tasks, built over the existing runner, PermissionGate, VerificationEngine, skills runtime and CheckpointStore. Each model stage gets a fresh session and a narrowing tool envelope. REVIEW gets an allow-listed fresh-context envelope with evidence-grounded findings. Repair is bounded; VERIFY READY is required for COMPLETE; resume and cancellation are durable. The feature flag `workflow.enabled` defaults off. Sprint 5A injected-state evidence (SELECTED → LOADED → INJECTED) closed in the same sprint. Status: SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (deterministic); REAL_MODEL WORKFLOW DELTA — DEFERRED TO HALO.
+
+- Next: Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs (skills; skills + direct vs skills + workflow). Then Sprint 5C — Non-Progress Detection & Recovery.

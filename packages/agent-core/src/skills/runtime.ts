@@ -1,5 +1,5 @@
 import type { AgentMode } from "../contracts/agent.ts"
-import type { ContextBudget } from "../contracts/context.ts"
+import type { CompiledContext, ContextBudget } from "../contracts/context.ts"
 import type { ToolAction, ToolPermission } from "../contracts/tools.ts"
 import { estimateTokens } from "../context/budget.ts"
 import {
@@ -13,6 +13,7 @@ import {
   type SkillEvidence,
   type SkillGuidance,
   type SkillIndexEntry,
+  type SkillInjectionStatus,
   type SkillLoadStatus,
   type SkillRejectionReason,
 } from "./contracts.ts"
@@ -103,11 +104,21 @@ export function disabledSkillEvidence(): SkillEvidence {
     selectedSkills: [],
     skillLoadStatus: "DISABLED",
     skillContextTokens: 0,
+    ...NO_INJECTION,
     loadedSections: [],
     rejected: [],
     diagnostics: [],
   }
 }
+
+const NO_INJECTION = {
+  injectionStatus: "NOT_APPLICABLE",
+  injectedSkills: [],
+  injectedSkillTokens: 0,
+  omittedSkills: [],
+  compiledRequests: 0,
+  requestsWithSkill: 0,
+} as const satisfies Pick<SkillEvidence, "injectionStatus" | "injectedSkills" | "injectedSkillTokens" | "omittedSkills" | "compiledRequests" | "requestsWithSkill">
 
 export async function prepareSkillGuidance(input: PrepareSkillGuidanceInput): Promise<PreparedSkillGuidance> {
   if (!input.enabled || !input.registry) return { guidance: [], evidence: disabledSkillEvidence() }
@@ -171,9 +182,76 @@ export async function prepareSkillGuidance(input: PrepareSkillGuidanceInput): Pr
     ...(selection.reasons[0] ? { selectionReason: selection.reasons[0] } : {}),
     skillLoadStatus: status,
     skillContextTokens: guidance.reduce((total, item) => total + item.estimatedTokens, 0),
+    ...NO_INJECTION,
+    ...(guidance.length > 0 ? { injectionStatus: "PENDING" as const } : {}),
     loadedSections: primary ? primary.sections : [],
     rejected,
     diagnostics: boundedDiagnostics(diagnostics),
   }
   return { guidance, evidence }
+}
+
+/** Context item id the compiler uses for a skill's guidance. */
+export function skillContextItemId(skillId: string): string {
+  return `skill:${skillId}`
+}
+
+/**
+ * Reconciles prepared skill evidence with what the final context compiler actually sent to the model.
+ * Observe every compiled context (the runtime wraps the runner's compiler); `evidence` then reports
+ * a skill as injected only if its guidance was present in a compiled model request.
+ */
+export class SkillInjectionTracker {
+  readonly #prepared: SkillEvidence
+  readonly #guidance: readonly SkillGuidance[]
+  readonly #turnsWithSkill = new Map<string, number>()
+  readonly #omitted = new Set<string>()
+  #compiledRequests = 0
+  #requestsWithSkill = 0
+  #lastInjectedTokens = 0
+
+  constructor(prepared: SkillEvidence, guidance: readonly SkillGuidance[]) {
+    this.#prepared = prepared
+    this.#guidance = guidance
+  }
+
+  observe(compiled: CompiledContext): void {
+    if (this.#guidance.length === 0) return
+    this.#compiledRequests += 1
+    const present = new Set(compiled.items.map((item) => item.id))
+    let tokens = 0
+    for (const item of this.#guidance) {
+      if (present.has(skillContextItemId(item.id))) {
+        this.#turnsWithSkill.set(item.id, (this.#turnsWithSkill.get(item.id) ?? 0) + 1)
+        tokens += item.estimatedTokens
+      } else {
+        this.#omitted.add(item.id)
+      }
+    }
+    if (tokens > 0) this.#requestsWithSkill += 1
+    this.#lastInjectedTokens = tokens
+  }
+
+  get evidence(): SkillEvidence {
+    if (this.#guidance.length === 0) return this.#prepared
+    let injectionStatus: SkillInjectionStatus
+    if (this.#compiledRequests === 0) injectionStatus = "PENDING"
+    else if (this.#requestsWithSkill === 0) injectionStatus = "OMITTED_BY_FINAL_BUDGET"
+    else if (this.#omitted.size > 0) injectionStatus = "PARTIALLY_INJECTED"
+    else injectionStatus = "INJECTED"
+    return {
+      ...this.#prepared,
+      injectionStatus,
+      injectedSkills: this.#guidance.map((item) => item.id).filter((id) => this.#turnsWithSkill.has(id)),
+      injectedSkillTokens: this.#lastInjectedTokens,
+      omittedSkills: this.#guidance.map((item) => item.id).filter((id) => this.#omitted.has(id)),
+      compiledRequests: this.#compiledRequests,
+      requestsWithSkill: this.#requestsWithSkill,
+    }
+  }
+}
+
+/** True only when a skill's guidance actually reached a model request. */
+export function isSkillApplied(evidence: SkillEvidence | undefined): evidence is SkillEvidence & { selectedSkill: string } {
+  return Boolean(evidence?.selectedSkill) && (evidence?.injectedSkills.length ?? 0) > 0
 }
