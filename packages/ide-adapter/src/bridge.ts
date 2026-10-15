@@ -13,6 +13,8 @@ export interface BridgeOptions {
   workflow?: { enabled: boolean };
   /** Non-progress detection & bounded recovery (ADR-031); disabled unless the host enables it. */
   progressMonitor?: { enabled: boolean };
+  /** Bounded memory-to-skill learning (ADR-032); disabled unless the host enables it. */
+  learning?: { enabled: boolean };
 }
 
 export class AgentSessionBridge {
@@ -24,6 +26,7 @@ export class AgentSessionBridge {
   private lastSkillEvidence?: SkillEvidence;
   private workflow?: BridgeOptions["workflow"];
   private progressMonitor?: BridgeOptions["progressMonitor"];
+  private learning?: BridgeOptions["learning"];
   private lastWorkflowState?: WorkflowState;
   
   constructor(options: BridgeOptions) {
@@ -33,6 +36,7 @@ export class AgentSessionBridge {
     this.skills = options.skills;
     this.workflow = options.workflow;
     this.progressMonitor = options.progressMonitor;
+    this.learning = options.learning;
   }
 
   /** Bounded workflow state of the most recent structured task, if one ran. */
@@ -106,6 +110,7 @@ export class AgentSessionBridge {
         eventSink: sink,
         providerOverride: this.providerOverride,
         ...(this.skills ? { skills: this.skills } : {}),
+        ...(this.learning?.enabled ? { learning: { enabled: true } } : {}),
         ...(this.progressMonitor?.enabled ? {
           progressMonitor: {
             enabled: true,
@@ -125,7 +130,9 @@ export class AgentSessionBridge {
       (this as any)._lastRuntime = runtime;
       
       if (runtime.workflow) {
-        return await this._runWorkflow(runtime.workflow, signal);
+        const workflowResult = await this._runWorkflow(runtime.workflow, signal);
+        if (this.lastWorkflowState) await this._learn(runtime, { kind: "workflow", state: this.lastWorkflowState });
+        return workflowResult;
       }
 
       const { runner, repairOrchestrator, runnerInput } = runtime;
@@ -205,6 +212,7 @@ export class AgentSessionBridge {
         await this.host.showOutput(`Skill: ${runtime.skillEvidence.selectedSkill}`);
       }
       await this.host.showOutput(`Task Finished: ${runnerResult.status}`);
+      await this._learn(runtime, { kind: "direct", taskId: runnerInput.task.id, mode, result: runnerResult });
       if (runtime?.performanceLedger) {
         await runtime.performanceLedger.persist().catch(() => {});
       }
@@ -226,6 +234,15 @@ export class AgentSessionBridge {
     }
   }
   
+  /** Runs after the task is finished; learning never changes or fails the task (ADR-032). */
+  private async _learn(runtime: any, input: unknown): Promise<void> {
+    if (!this.learning?.enabled || typeof runtime?.learnAfter !== "function") return;
+    const step = await runtime.learnAfter(input);
+    if (step?.proposedCandidates > 0) {
+      await this.host.showOutput(`Learning: ${step.proposedCandidates} skill candidate(s) await review (Open VS Code: Review Learning Candidates)`);
+    }
+  }
+
   /** Drives a structured workflow; every confirmation goes through the host, exactly as on the direct path. */
   private async _runWorkflow(workflow: any, signal: AbortSignal): Promise<AgentResult> {
     const onAbort = () => workflow.cancel();

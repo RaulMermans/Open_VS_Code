@@ -277,7 +277,12 @@ npm run eval:workflow
 
 # Non-progress detection & recovery evaluation: loop detection, false stalls, recovery, efficiency A/B (deterministic)
 npm run eval:progress
+
+# Learning evaluation: classification, dedupe, false promotions, malicious/escalation probes, token impact (deterministic, no model)
+npm run eval:learning
 ```
+
+Consolidated V1.1 deterministic benchmark and the HALO real-model benchmark contract: [`docs/evals/V1_1_BENCHMARK.md`](docs/evals/V1_1_BENCHMARK.md).
 
 ### Live Open-Weight Model Benchmark (Requires Authorization)
 
@@ -325,6 +330,9 @@ Bounded repair ✅
 Project Memory ✅
 Skills & Prompt Primitives ✅
 Portable Skills Runtime (flag off, real-model delta deferred to HALO) ✅
+Structured Engineering Loop (flag off, real-model delta deferred to HALO) ✅
+Non-progress detection & bounded recovery (flag off, real-model delta deferred to HALO) ✅
+Bounded memory-to-skill learning with human approval (flag off; [guide](docs/learning/LEARNING_SYSTEM.md)) ✅
 30-case deterministic evaluation ✅
 
 Canonical tools: read_file, list_directory, search_text, find_files.

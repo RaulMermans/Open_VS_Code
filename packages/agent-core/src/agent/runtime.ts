@@ -33,6 +33,11 @@ import { EngineeringWorkflow } from "../workflow/engine.ts";
 import { assessWorkflowEligibility } from "../workflow/policy.ts";
 import { CheckpointWorkflowStore, createWorkspaceVerifier } from "../workflow/services.ts";
 import type { WorkflowEligibility, WorkflowStageEvent } from "../workflow/contracts.ts";
+import { openWorkspaceLearning } from "../learning/node.ts";
+import { runLearningStep, type LearningStepResult, type LearningTaskInput } from "../learning/hooks.ts";
+import type { LearningRetrieval } from "../learning/contracts.ts";
+import type { LearningService } from "../learning/service.ts";
+import { resolveRepositoryPath } from "../tools/path-safety.ts";
 
 import type { AgentMode, AgentEvent } from "../contracts/agent.ts";
 import type { ModelProvider } from "../contracts/model.ts";
@@ -80,6 +85,15 @@ export interface CreateAgentRuntimeOptions {
     enabled?: boolean;
     /** Minimal user-facing notices: "No progress detected…" and the BLOCKED summary. */
     onProgress?: (notice: string) => void;
+  };
+  /**
+   * Bounded memory-to-skill learning (Sprint 5D, ADR-032). Disabled by default. When disabled no
+   * learning is extracted, stored, proposed or retrieved, and prompts are exactly as before. When
+   * enabled, only APPROVED learning (≤ 10% of the available context) is retrieved; candidates never
+   * influence a run, and nothing is approved except by an explicit review command.
+   */
+  learning?: {
+    enabled?: boolean;
   };
 }
 
@@ -277,6 +291,25 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     }
   }
 
+  // Sprint 5D: approved learning only, budget-selected before the run. Candidates never get here.
+  let learning: LearningService | undefined;
+  let learningRetrieval: LearningRetrieval | undefined;
+  let learningOpenError: string | undefined;
+  if (options.learning?.enabled === true) {
+    try {
+      // Built-ins only (metadata): a workspace override must not remove an id from the protected set.
+      const builtinRoot = options.skills?.builtinRoot ?? defaultBuiltinSkillsRoot();
+      const builtinIds = (await SkillRegistry.discover({ ...(builtinRoot ? { builtinRoot } : {}), workspaceTrusted: false })).entries.map((entry) => entry.id);
+      learning = await openWorkspaceLearning({ workspaceRoot: options.workspaceRoot, enabled: true, workspaceTrusted: options.isTrusted, builtinSkillIds: builtinIds });
+      learningRetrieval = learning.retrieve({ task: options.instruction, mode: options.mode, availableContext: contextBudget.availableContext });
+    } catch (error) {
+      // Learning is advisory: a store that cannot be opened leaves the run exactly as with learning off.
+      learning = undefined;
+      learningOpenError = error instanceof Error ? error.message.slice(0, 200) : "learning store unavailable";
+    }
+  }
+  const learnedMemory = learningRetrieval?.items ?? [];
+
   // Final-context truth (ADR-029): a skill counts as applied only if the compiler kept it in a request.
   const skillTracker = new SkillInjectionTracker(skillEvidence, skillGuidance);
   const contextCompiler = (input: ContextCompilerInput) => {
@@ -295,6 +328,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     memory,
     selectedSkills,
     ...(skillGuidance.length > 0 ? { skillGuidance } : {}),
+    ...(learnedMemory.length > 0 ? { learnedMemory } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   };
 
@@ -343,6 +377,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
           memoryDigest: [
             ...memory.projectFacts.map((fact) => fact.content),
             ...memory.decisions.map((decision) => `Decision ${decision.id}: ${decision.summary}`),
+            ...learnedMemory.map((item) => item.content),
           ].join("\n"),
           constraints: memory.decisions.map((decision) => `${decision.id}: ${decision.summary}`).join("\n"),
           ...(options.signal ? { signal: options.signal } : {}),
@@ -384,6 +419,23 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     },
     skillRegistry,
     memory,
+    /** Sprint 5D learning service (undefined when disabled) and what it retrieved for this task. */
+    learning,
+    learningRetrieval,
+    learningOpenError,
+    /**
+     * Runs the bounded learning step after the task has finished. Never throws and never changes the
+     * task's result; a no-op when learning is disabled.
+     */
+    learnAfter: (input: LearningTaskInput): Promise<LearningStepResult> =>
+      runLearningStep(learning, input, async (relativePath) => {
+        try {
+          await resolveRepositoryPath(options.workspaceRoot, relativePath);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
     workflow,
     workflowEligibility,
     checkpointCoordinator,

@@ -55,6 +55,8 @@ export interface AgentRunnerInput {
   readonly projectInstructions: readonly ProjectInstruction[]
   readonly selectedSkills?: readonly LoadedSkill[]
   readonly skillGuidance?: readonly SkillGuidance[]
+  /** Approved learned memory (ADR-032), already budget-selected. Candidates never reach this field. */
+  readonly learnedMemory?: readonly { readonly id: string; readonly content: string; readonly estimatedTokens: number }[]
   readonly codeContext?: readonly ContextItem[]
   readonly recentTurns?: readonly ConversationTurn[]
   readonly signal?: AbortSignal
@@ -861,6 +863,7 @@ export class AgentRunner {
           projectInstructions: [guidanceInstruction, ...session.input.projectInstructions],
           ...(session.input.selectedSkills ? { selectedSkills: session.input.selectedSkills } : {}),
           ...(session.input.skillGuidance ? { skillGuidance: session.input.skillGuidance } : {}),
+          ...(session.input.learnedMemory && session.input.learnedMemory.length > 0 ? { learnedMemory: session.input.learnedMemory } : {}),
           ...(session.input.codeContext ? { codeContext: session.input.codeContext } : {}),
           ...(session.input.recentTurns ? { recentTurns: session.input.recentTurns } : {}),
           observations: session.observations,

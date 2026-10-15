@@ -20,6 +20,8 @@ export interface ContextCompilerInput {
   readonly selectedSkills?: readonly LoadedSkill[]
   /** Portable Skills Runtime guidance (ADR-029). Optional context: it is omitted, never forced, when budget is short. */
   readonly skillGuidance?: readonly SkillGuidance[]
+  /** Approved, budgeted learning (ADR-032). Optional context: omitted, never forced, when budget is short. */
+  readonly learnedMemory?: readonly { readonly id: string; readonly content: string; readonly estimatedTokens: number }[]
   readonly codeContext?: readonly ContextItem[]
   readonly observations?: readonly ToolObservation[]
   readonly recentTurns?: readonly ConversationTurn[]
@@ -138,6 +140,15 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     metadata: { id: guidance.id, version: guidance.version, source: guidance.source, sections: guidance.sections },
   }))
 
+  const learnedItems: ContextItem[] = (input.learnedMemory ?? []).map((memory, index) => ({
+    id: `learned:${memory.id}`,
+    source: { kind: "learned-memory" },
+    content: memory.content,
+    priority: 600 - index,
+    estimatedTokens: memory.estimatedTokens,
+    required: false,
+  }))
+
   if (input.recentTurns && input.recentTurns.length > 0) {
     const groups: ConversationTurn[][] = [];
     let currentGroup: ConversationTurn[] = [];
@@ -188,5 +199,5 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       ...(observation.errorCategory ? { errorCategory: observation.errorCategory } : {}),
     },
   }))
-  return fitContext([...required, ...guidanceItems, ...(input.codeContext ?? []), ...observations], input.budget)
+  return fitContext([...required, ...guidanceItems, ...learnedItems, ...(input.codeContext ?? []), ...observations], input.budget)
 }

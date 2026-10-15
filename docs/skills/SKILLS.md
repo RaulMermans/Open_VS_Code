@@ -170,6 +170,17 @@ Every task with skills enabled records `skillEvidence`. It contains:
 
 It never contains task text, prompts, source code or skill bodies.
 
+## Learned skills (Sprint 5D, ADR-032)
+
+With learning enabled, a reusable pattern that held in 3 or more independent verified tasks becomes a *skill candidate*. After you approve it (`open-vscode-agent learning approve <id>` or *Open VS Code: Review Learning Candidates*), it is written to `.open-vs-code/skills/<id>/SKILL.md` in exactly the format above. From then on it is an ordinary workspace skill: trusted workspaces only, lazily loaded, at most one per task, capabilities checked by the PermissionGate.
+
+- A learned skill may declare only `read`, `search`, `write` and `verify`, and only known tools. It never shadows a built-in and never overwrites a skill you wrote.
+- The generated file is validated with this schema before it is written. A candidate that fails validation is rejected; nothing is written.
+- Provenance (supporting tasks, evidence, approval time, version history) lives in `.open-vs-code/learning/learning.json`, not in the frontmatter, because the schema rejects unknown fields.
+- An update needs a new approval. It increments `version` and archives the previous file under `.open-vs-code/learning/history/<id>/`.
+
+Details: `docs/learning/LEARNING_SYSTEM.md`.
+
 ## Legacy `.agents/skills`
 
 The ADR-014 skills under `.agents/skills/` are still used **only while the portable runtime is off**, which keeps V1 behaviour unchanged. Turning skills on replaces them, and the two systems are never active together. To migrate a legacy skill, rewrite it to the contract above under `.open-vs-code/skills/<id>/`.

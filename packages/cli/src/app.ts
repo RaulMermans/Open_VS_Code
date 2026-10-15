@@ -14,6 +14,8 @@ export interface CLIAppOptions {
   workflow?: boolean;
   /** Non-progress detection & bounded recovery (ADR-031). Off unless set; `OPEN_VS_CODE_PROGRESS_MONITOR=1` also enables it. */
   progressMonitor?: boolean;
+  /** Bounded memory-to-skill learning (ADR-032). Off unless set; `OPEN_VS_CODE_LEARNING=1` also enables it. */
+  learning?: boolean;
   provider?: ModelProvider;
   mockApproval?: "APPROVE" | "REJECT" | (() => Promise<"APPROVE" | "REJECT">);
 }
@@ -90,6 +92,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       isTrusted: true,
       eventSink: sink,
       skills: { enabled: options.skills ?? process.env.OPEN_VS_CODE_SKILLS === "1" },
+      learning: { enabled: options.learning ?? process.env.OPEN_VS_CODE_LEARNING === "1" },
       progressMonitor: {
         enabled: options.progressMonitor ?? process.env.OPEN_VS_CODE_PROGRESS_MONITOR === "1",
         onProgress: (notice: string) => {
@@ -266,6 +269,8 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     
     // Read after the run: evidence reflects the guidance the final compiled context actually carried.
     const skillEvidence = runtime.skillEvidence;
+    // The task's outcome is final; the learning step can neither change nor fail it (ADR-032).
+    const learningStep = await runtime.learnAfter({ kind: "direct", taskId: runnerInput.task.id, mode: options.mode, result: runnerResult });
 
     const skillDiagnostics = skillSelection ? {
       skillsDiscovered: skillSelection.skillsDiscovered,
@@ -288,8 +293,8 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     } : {};
 
     if (options.json) {
-      console.log(JSON.stringify({ ...runnerResult, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics }, null, 2));
-      return { exitCode: runnerResult.status === "COMPLETED" ? 0 : (runnerResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...runnerResult };
+      console.log(JSON.stringify({ ...runnerResult, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, ...(learningStep.ran ? { learningStep } : {}) }, null, 2));
+      return { exitCode: runnerResult.status === "COMPLETED" ? 0 : (runnerResult.status === "CANCELLED" ? 2 : 1), memorySelection: memory, skillDiagnostics, skillEvidence, mcpDiagnostics, routeDiagnostics: routedGateway?.lastDiagnostics, learningStep, ...runnerResult };
     }
 
     if (isSkillApplied(skillEvidence)) {
@@ -316,12 +321,13 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     }
 
     console.log(`\nTurns: ${runnerResult.turns}`);
+    printLearningStep(learningStep);
 
     let exitCode = 0;
     if (runnerResult.status === "FAILED") exitCode = 1;
     if (runnerResult.status === "CANCELLED") exitCode = 2;
 
-    return { exitCode, memorySelection: memory, skillDiagnostics, skillEvidence, routeDiagnostics: routedGateway?.lastDiagnostics, ...runnerResult };
+    return { exitCode, memorySelection: memory, skillDiagnostics, skillEvidence, routeDiagnostics: routedGateway?.lastDiagnostics, learningStep, ...runnerResult };
   } catch (err: any) {
     if (options.json) {
       console.log(JSON.stringify({ status: "ERROR", error: err.message }, null, 2));
@@ -385,8 +391,10 @@ async function runWorkflowCLI(
 
   const state = result.state;
   const exitCode = result.status === "COMPLETE" ? 0 : result.status === "CANCELLED" ? 2 : 1;
+  // Runs after the workflow is terminal: learning can neither block nor fail the task (ADR-032).
+  const learningStep = await runtime.learnAfter({ kind: "workflow", state });
   if (options.json) {
-    console.log(JSON.stringify({ status: result.status, workflow: state }, null, 2));
+    console.log(JSON.stringify({ status: result.status, workflow: state, ...(learningStep.ran ? { learningStep } : {}) }, null, 2));
   } else {
     console.log(`\nWorkflow: ${result.status}${state.blocker ? ` (${state.blocker}: ${state.blockerDetail ?? ""})` : ""}`);
     const files = [...new Set((state.implementation?.changedFiles ?? []).map((change: { path: string }) => change.path))];
@@ -394,6 +402,90 @@ async function runWorkflowCLI(
     const review = state.reviews.at(-1);
     if (review) console.log(`Review: ${review.verdict} (${review.blocking} blocking, ${review.findings.length} finding(s))`);
     if (state.verification) console.log(`Verification: ${state.verification.verdict}`);
+    printLearningStep(learningStep);
   }
-  return { exitCode, workflow: state, status: result.status };
+  return { exitCode, workflow: state, status: result.status, learningStep };
+}
+
+function printLearningStep(step: { ran: boolean; proposedCandidates: number; error?: string } | undefined): void {
+  if (!step?.ran) return;
+  if (step.error) console.log(`\nLearning: skipped (${step.error})`);
+  else if (step.proposedCandidates > 0) console.log(`\nLearning: ${step.proposedCandidates} skill candidate(s) await review — run \`open-vscode-agent learning list\``);
+}
+
+export interface LearningCLIOptions {
+  workspaceRoot: string;
+  action: string;
+  id?: string;
+  reason?: string;
+  title?: string;
+  summary?: string;
+  json?: boolean;
+}
+
+/**
+ * `open-vscode-agent learning <list|show|approve|reject|decide>` — the explicit human review gate
+ * (ADR-032). Nothing is approved by any other path; inactivity never approves anything.
+ */
+export async function runLearningCLI(options: LearningCLIOptions): Promise<{ exitCode: number; output: unknown }> {
+  const { openWorkspaceLearning, SkillRegistry, defaultBuiltinSkillsRoot } = await import("@open-vs-code/agent-core");
+  const builtinRoot = defaultBuiltinSkillsRoot();
+  const builtins = await SkillRegistry.discover({ ...(builtinRoot ? { builtinRoot } : {}), workspaceTrusted: false });
+  const service = await openWorkspaceLearning({ workspaceRoot: options.workspaceRoot, enabled: true, workspaceTrusted: true, builtinSkillIds: builtins.entries.map((entry) => entry.id) });
+  const print = (value: unknown, text: string) => console.log(options.json ? JSON.stringify(value, null, 2) : text);
+  if (service.corrupt) {
+    print({ error: "corrupt learning store" }, "The learning store is corrupt and is left untouched.");
+    return { exitCode: 1, output: undefined };
+  }
+  switch (options.action) {
+    case "list": {
+      const { records, candidates } = service.list();
+      const open = candidates.filter((candidate) => candidate.status === "READY_FOR_REVIEW");
+      const reviewable = records.filter((record) => record.status === "CANDIDATE");
+      const lines = [
+        `Skill candidates awaiting review: ${open.length}`,
+        ...open.map((candidate) => `  ${candidate.id}  ${candidate.proposedSkillId}${candidate.updateOf ? ` (update to v${candidate.updateOf.fromVersion + 1})` : ""} — ${candidate.supportingTaskIds.length} supporting task(s)`),
+        `Memory candidates awaiting review: ${reviewable.length}`,
+        ...reviewable.map((record) => `  ${record.id}  [${record.kind}] ${record.title} (${record.successfulOccurrences} success, ${record.failedOccurrences} failure)`),
+        `Approved: ${records.filter((record) => record.status === "APPROVED").length} · Observed: ${records.filter((record) => record.status === "OBSERVED").length} · Stale: ${records.filter((record) => record.status === "STALE").length} · Rejected: ${records.filter((record) => record.status === "REJECTED").length}`,
+      ];
+      print({ records, candidates }, lines.join("\n"));
+      return { exitCode: 0, output: { records, candidates } };
+    }
+    case "show": {
+      const explanation = options.id ? service.explain(options.id) : undefined;
+      if (!explanation) {
+        print({ error: "not found" }, `No learning record or candidate '${options.id ?? ""}'.`);
+        return { exitCode: 1, output: undefined };
+      }
+      print(explanation, [
+        `What was learned: ${explanation.what}`,
+        `Why: ${explanation.why}`,
+        `From tasks: ${explanation.fromTasks.join(", ") || "-"}`,
+        `Evidence: ${explanation.evidence.join(", ") || "-"}`,
+        `Successes: ${explanation.successes} · Failures: ${explanation.failures}`,
+        `Status: ${explanation.status} · Scope: ${explanation.scope}`,
+        `If approved: ${explanation.ifApproved}`,
+      ].join("\n"));
+      return { exitCode: 0, output: explanation };
+    }
+    case "approve": {
+      const result = await service.approve(options.id ?? "");
+      print(result, result.ok ? (result.kind === "SKILL" ? `Approved: wrote ${result.path} (version ${result.version}).` : `Approved memory: ${result.record.title}`) : `Not approved: ${result.reason}`);
+      return { exitCode: result.ok ? 0 : 1, output: result };
+    }
+    case "reject": {
+      const ok = await service.reject(options.id ?? "", options.reason);
+      print({ ok }, ok ? "Rejected. The same proposal stays suppressed until materially new evidence appears." : `Nothing to reject for '${options.id ?? ""}'.`);
+      return { exitCode: ok ? 0 : 1, output: { ok } };
+    }
+    case "decide": {
+      const result = await service.recordUserDecision({ title: options.title ?? "", summary: options.summary ?? "" });
+      print(result, result.ok ? `Recorded decision ${result.record.id}.` : `Not recorded: ${result.reason}`);
+      return { exitCode: result.ok ? 0 : 1, output: result };
+    }
+    default:
+      print({ error: "unknown action" }, "Usage: open-vscode-agent learning <list|show <id>|approve <id>|reject <id> [--reason r]|decide --title t --summary s>");
+      return { exitCode: 3, output: undefined };
+  }
 }

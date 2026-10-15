@@ -36,6 +36,7 @@ export function initialMonitorState(): MonitorState {
     lastByPoint: {},
     counters: { test: { count: 0 }, review: { count: 0 }, diff: { count: 0 }, error: { count: 0 }, noAdvanceWindow: 0 },
     observations: 0,
+    epoch: 1,
   }
 }
 
@@ -131,6 +132,10 @@ export class ProgressMonitor {
     const updated: number[] = []
     const t = this.#thresholds
 
+    // Measurable progress opens a new epoch: an error repeated across it is not a stale repeat.
+    // Per-point counters (test/review/diff) are untouched; they already key on their own fingerprints.
+    const epochAdvanced = delta.status === "ADVANCED"
+    if (epochAdvanced) counters = { ...counters, error: { count: 0 } }
     // A stage advance (e.g. tests pass and REVIEW starts) resets the loop counters it leaves behind.
     const stageAdvanced = stageIndex(snapshot.stage) > stageIndex(state.furthestStage)
 
@@ -186,6 +191,7 @@ export class ProgressMonitor {
       ...(stageIndex(snapshot.stage) > stageIndex(state.furthestStage) ? { furthestStage: snapshot.stage } : state.furthestStage ? { furthestStage: state.furthestStage } : {}),
       counters,
       observations: state.observations + 1,
+      epoch: (state.epoch ?? 1) + (epochAdvanced ? 1 : 0),
     }
     // A crossed stagnation threshold is never masked by a mere stage advance; a regression is reported as such.
     const status = signals.length > 0 && delta.status !== "REGRESSED" ? "STALLED" : delta.status

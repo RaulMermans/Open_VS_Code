@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 5C ✅ COMPLETE — Non-Progress Detection & Bounded Recovery (deterministic; real-model delta deferred to HALO). Sprint 5B ✅ COMPLETE — Structured Engineering Loop & Fresh-Context Review, including its closure (sanitized persistence, net-diff review) verified in 5C. Sprint 5A ✅ COMPLETE — Portable Skills Runtime verified, including injected-state truth. V1 Desktop Candidate remains gated only on HALO target-host acceptance.
+Sprint 5D ✅ COMPLETE — Bounded Memory-to-Skill Learning & V1.1 deterministic benchmark (ADR-032; `docs/evals/V1_1_BENCHMARK.md`). **Open VS Code V1.1 development is complete**; remaining release work is HALO target-host real-model acceptance and the V1.1 benchmark (REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO). Sprint 5C ✅ COMPLETE — Non-Progress Detection & Bounded Recovery, including the progress-epoch closure verified in 5D. Sprint 5B ✅ COMPLETE — Structured Engineering Loop & Fresh-Context Review, including its closure (sanitized persistence, net-diff review) verified in 5C. Sprint 5A ✅ COMPLETE — Portable Skills Runtime verified, including injected-state truth. V1 Desktop Candidate remains gated only on HALO target-host acceptance.
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
 - Phase B (Sprint 3A-3B): IDE Adapter and Chat UX.
@@ -87,4 +87,15 @@ Sprint 5C ✅ COMPLETE — Non-Progress Detection & Bounded Recovery (determinis
 
 - Phase M (Sprint 5B, V1.1): Structured Engineering Loop & Fresh-Context Review (ADR-030). A sequential, bounded PLAN → IMPLEMENT → TEST → REVIEW → VERIFY workflow for eligible mutating tasks, built over the existing runner, PermissionGate, VerificationEngine, skills runtime and CheckpointStore. Each model stage gets a fresh session and a narrowing tool envelope. REVIEW gets an allow-listed fresh-context envelope with evidence-grounded findings. Repair is bounded; VERIFY READY is required for COMPLETE; resume and cancellation are durable. The feature flag `workflow.enabled` defaults off. Sprint 5A injected-state evidence (SELECTED → LOADED → INJECTED) closed in the same sprint. Status: SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (deterministic); REAL_MODEL WORKFLOW DELTA — DEFERRED TO HALO.
 
-- Next: Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs (skills; skills + direct vs skills + workflow). Then Sprint 5C — Non-Progress Detection & Recovery.
+- Phase N (Sprint 5C, V1.1): Non-Progress Detection & Bounded Recovery (ADR-031), with progress epochs added as the Sprint 5D closure. Status: SPRINT 5C COMPLETE — NON-PROGRESS DETECTION & BOUNDED RECOVERY VERIFIED.
+
+- Phase O (Sprint 5D, V1.1): Bounded Memory-to-Skill Learning (ADR-032).
+  - Evidence-backed `LearningRecord`s; project vs reusable scope; dedupe; negative evidence; staleness.
+  - `LearnedSkillCandidate`s validated against the 5A schema and capability ceiling.
+  - An explicit human approval gate (CLI `learning`, VS Code *Review Learning Candidates*).
+  - Approved-only retrieval within 10% of the context.
+  - Flag `learning.enabled` defaults off.
+  - V1.1 deterministic benchmark consolidated in `docs/evals/V1_1_BENCHMARK.md`.
+  - Status: SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED; REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO.
+
+- Next: HALO target-host acceptance (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`), then the five-arm V1.1 real-model benchmark (A baseline … E approved learning) in `docs/evals/V1_1_BENCHMARK.md`. No further V1.1 development sprint is planned.

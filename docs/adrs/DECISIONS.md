@@ -14,3 +14,6 @@
 - [ADR-027: Real Local Models, Canonical Endpoints & Adaptive Routing](ADR-027-real-local-models-and-adaptive-routing.md)
 - [ADR-028: Desktop Shell and Packaging Strategy](ADR-028-desktop-shell-and-packaging-strategy.md)
 - [ADR-029: Portable Skills Runtime](ADR-029-portable-skills-runtime.md)
+- [ADR-030: Structured Engineering Loop](ADR-030-structured-engineering-loop.md)
+- [ADR-031: Non-Progress Detection & Bounded Recovery](ADR-031-non-progress-detection-and-recovery.md)
+- [ADR-032: Bounded Memory-to-Skill Learning](ADR-032-bounded-memory-to-skill-learning.md)

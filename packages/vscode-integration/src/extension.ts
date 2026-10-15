@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, type AutocompleteGateway } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, type AutocompleteGateway } from '@open-vs-code/agent-core';
 import * as path from 'node:path';
 
 
@@ -212,6 +212,68 @@ function skillsSettings(context: vscode.ExtensionContext): { enabled: boolean; b
     : { enabled };
 }
 
+function learningEnabled(): boolean {
+  return vscode.workspace.getConfiguration('open-vs-code').get<boolean>('learning.enabled', false) === true;
+}
+
+/**
+ * The explicit human review gate for learning (ADR-032): pick a candidate, read what was learned,
+ * why, from which tasks, and what approval would change, then choose Approve or Reject. Dismissing
+ * the dialog changes nothing; approval is never inferred.
+ */
+async function reviewLearningCandidates(context: vscode.ExtensionContext): Promise<void> {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    vscode.window.showInformationMessage('Open a workspace folder to review learning candidates.');
+    return;
+  }
+  if (!learningEnabled()) {
+    vscode.window.showInformationMessage('Learning is disabled (open-vs-code.learning.enabled).');
+    return;
+  }
+  const settings = skillsSettings(context);
+  const builtins = await SkillRegistry.discover({ ...(settings.builtinRoot ? { builtinRoot: settings.builtinRoot } : {}), workspaceTrusted: false });
+  const service = await openWorkspaceLearning({ workspaceRoot, enabled: true, workspaceTrusted: vscode.workspace.isTrusted === true, builtinSkillIds: builtins.entries.map((entry) => entry.id) });
+  const { records, candidates } = service.list();
+  const items = [
+    ...candidates.filter((candidate) => candidate.status === 'READY_FOR_REVIEW').map((candidate) => ({
+      id: candidate.id,
+      label: `Skill: ${candidate.proposedSkillId}${candidate.updateOf ? ` (update to v${candidate.updateOf.fromVersion + 1})` : ''}`,
+      description: `${candidate.supportingTaskIds.length} supporting task(s)`,
+      detail: candidate.description,
+    })),
+    ...records.filter((record) => record.status === 'CANDIDATE').map((record) => ({
+      id: record.id,
+      label: `Memory: ${record.title}`,
+      description: `${record.kind} · ${record.successfulOccurrences} success, ${record.failedOccurrences} failure`,
+      detail: record.summary,
+    })),
+  ];
+  if (items.length === 0) {
+    vscode.window.showInformationMessage('No learning candidates await review.');
+    return;
+  }
+  const picked = await vscode.window.showQuickPick(items, { title: 'Learning candidates awaiting review', canPickMany: false });
+  if (!picked) return;
+  const explanation = service.explain(picked.id);
+  if (!explanation) return;
+  const detail = [
+    `What was learned: ${explanation.what}`,
+    `Why: ${explanation.why}`,
+    `From tasks: ${explanation.fromTasks.join(', ') || '-'}`,
+    `Successes: ${explanation.successes} · Failures: ${explanation.failures}`,
+    `If approved: ${explanation.ifApproved}`,
+  ].join('\n');
+  const choice = await vscode.window.showInformationMessage(picked.label, { modal: true, detail }, 'Approve', 'Reject');
+  if (choice === 'Approve') {
+    const result = await service.approve(picked.id);
+    vscode.window.showInformationMessage(result.ok ? (result.kind === 'SKILL' ? `Learned skill written: ${result.path} (v${result.version})` : 'Memory approved.') : `Not approved: ${result.reason}`);
+  } else if (choice === 'Reject') {
+    await service.reject(picked.id, 'rejected in review');
+    vscode.window.showInformationMessage('Rejected. It stays suppressed until materially new evidence appears.');
+  }
+}
+
 function haloToken(context: vscode.ExtensionContext): () => Promise<string | undefined> {
   return async () => await context.secrets.get(HALO_TOKEN_SECRET_KEY) ?? process.env.HALO_APP_TOKEN_OPEN_VSCODE;
 }
@@ -258,6 +320,8 @@ export function activate(context: vscode.ExtensionContext) {
         // Structured Engineering Loop (ADR-030); off by default.
         workflow: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('workflow.enabled', false) === true },
         progressMonitor: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('progressMonitor.enabled', false) === true },
+        // Bounded memory-to-skill learning (ADR-032); off by default.
+        learning: { enabled: learningEnabled() },
       });
     }
     return activeBridge!;
@@ -361,6 +425,9 @@ export function activate(context: vscode.ExtensionContext) {
         })),
         { title: `Available skills (${status})`, canPickMany: false },
       );
+    }),
+    vscode.commands.registerCommand('open-vs-code.reviewLearningCandidates', async () => {
+      await reviewLearningCandidates(context);
     }),
     vscode.commands.registerCommand('open-vs-code.showActiveSkill', async () => {
       const evidence = activeBridge?.skillEvidence;

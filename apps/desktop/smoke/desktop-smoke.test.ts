@@ -337,6 +337,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.openModelConfig'], 'function');
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.listSkills'], 'function');
     assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.showActiveSkill'], 'function');
+    assert.strictEqual(typeof mockVscode.commands.registered['open-vs-code.reviewLearningCandidates'], 'function');
   });
 
   test('9. [Category B — Component] Offline inference server produces graceful error (AgentRuntime)', async () => {

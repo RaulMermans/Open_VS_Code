@@ -160,6 +160,7 @@ async function doRun() {
     'open-vs-code.openModelConfig',
     'open-vs-code.listSkills',
     'open-vs-code.showActiveSkill',
+    'open-vs-code.reviewLearningCandidates',
   ];
 
   for (const cmd of requiredCommands) {

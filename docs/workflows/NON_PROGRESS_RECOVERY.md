@@ -44,6 +44,23 @@ Progress is measured from observable state only. A `ProgressSnapshot` holds:
 | REGRESSED | more failures or blockers, or `READY` → `NOT_READY` |
 | UNKNOWN | first observation |
 
+## Progress epochs (Sprint 5D closure)
+
+Repetition counters belong to a **progress epoch**. Measurable progress opens a new epoch, so an old action or error seen again after real progress starts from one instead of inheriting a stale count.
+
+| Path | Opens a new epoch | Resets |
+| --- | --- | --- |
+| Direct (`DirectProgressGuard`) | fewer failed checks in a recognised test summary; new evidence after the bounded recovery | all action and error repeat counters |
+| Direct | a write that changes workspace content | counters of *successful* actions only; a failure that survives the change still counts ("the repair did not help") |
+| Workflow (`ProgressMonitor`) | every ADVANCED observation (fewer failures or blockers, better verification, stage advance) | the cross-point error counter; per-point test, review and diff counters already key on their own fingerprints |
+
+A first-time read is evidence but not an epoch boundary, so an A/B/A/B read cycle is still caught. Epochs never reset global safety state: the consumed recovery attempt, cancellation, permission decisions, turn limits and the durable evidence set.
+
+Regressions:
+
+- `tests/progress/epochs.test.ts` EP-01 to EP-07;
+- `eval:progress` fixture J (stall → recovery → new evidence → old read reused → COMPLETED; before epochs, `FAILED:NON_PROGRESS`).
+
 ## Signals and thresholds
 
 | Signal | Trigger | Default |

@@ -74,3 +74,17 @@ Sprint 5B closure, recorded here because 5C depends on it:
 - After a restart, a file's workflow-start content is no longer in memory. REVIEW then shows the file's current content, labelled as such, instead of a possibly stale diff.
 - Persisted task text is redacted. A restored workflow therefore rebuilds stage envelopes from the redacted task, which keeps the intent but drops the secret value.
 - Out of scope: automatic skill generation or promotion (5D), background or autonomous loops, multi-agent recovery, cloud escalation, model downloads, and automatic commits.
+
+## Amendment (Sprint 5D): progress epochs
+Before this amendment, the direct guard counted identical actions and errors over the whole task. "Read A → real progress → read A" could therefore inherit the old count and stall falsely. In particular, the first reuse of an old action after a successful recovery was BLOCKED.
+
+Repetition counters are now scoped to a **progress epoch**:
+
+- **Direct path.** A new epoch opens on fewer failed checks or on new evidence after the bounded recovery; it resets all repeat counters. A workspace change resets only successful-action counters, so the same failure after an edit still counts.
+- **Workflow path.** An ADVANCED observation opens a new epoch and clears the cross-point error counter.
+- **Unchanged.** Global safety state is never reset: the recovery count, cancellation, permissions, turn limits and the evidence set. `MonitorState.epoch` is optional, so states persisted before it existed restore as epoch 1.
+
+Evidence:
+
+- `tests/progress/epochs.test.ts` (EP-01–EP-07);
+- `eval:progress` fixture J. Before the change, J ended `FAILED:NON_PROGRESS`; after it, J is COMPLETED. Loops 6/6, false stalls 0/4.

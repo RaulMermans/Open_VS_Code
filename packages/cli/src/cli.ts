@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { realpath, access } from "node:fs/promises";
-import { runCLI } from "./app.ts";
+import { runCLI, runLearningCLI } from "./app.ts";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -28,6 +28,15 @@ Options:
                      (PLAN → IMPLEMENT → TEST → REVIEW → VERIFY; off by default; ADR-030)
   --progress-monitor Detect non-progress (repeated failures/actions) and run one bounded
                      diagnostic recovery before stopping as BLOCKED (off by default; ADR-031)
+  --learning         Record evidence-backed lessons after each task and use only APPROVED
+                     learning in prompts (off by default; ADR-032)
+
+Learning review (explicit human gate; ADR-032):
+  open-vscode-agent learning list
+  open-vscode-agent learning show <id>
+  open-vscode-agent learning approve <id>
+  open-vscode-agent learning reject <id> [--reason "<why>"]
+  open-vscode-agent learning decide --title "<decision>" --summary "<reason>"
   --help, -h         Show this help message
 
 Model Configuration:
@@ -44,6 +53,10 @@ Model Configuration:
       skills: { type: "boolean" },
       workflow: { type: "boolean" },
       "progress-monitor": { type: "boolean" },
+      learning: { type: "boolean" },
+      reason: { type: "string" },
+      title: { type: "string" },
+      summary: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -54,6 +67,19 @@ Model Configuration:
   if (!modeRaw) {
     console.error("Error: Mode is required. Use --help for usage.");
     process.exit(3);
+  }
+
+  if (modeRaw === "learning") {
+    const learning = await runLearningCLI({
+      workspaceRoot: await resolveWorkspace(values.workspace),
+      action: positionals[1] ?? "list",
+      ...(positionals[2] ? { id: positionals[2] } : {}),
+      ...(values.reason ? { reason: values.reason } : {}),
+      ...(values.title ? { title: values.title } : {}),
+      ...(values.summary ? { summary: values.summary } : {}),
+      ...(values.json ? { json: true } : {}),
+    });
+    process.exit(learning.exitCode);
   }
 
   const mode = modeRaw.toUpperCase();
@@ -68,18 +94,7 @@ Model Configuration:
     process.exit(3);
   }
 
-  let workspaceRoot = process.cwd();
-  if (values.workspace) {
-    workspaceRoot = resolve(values.workspace);
-  }
-
-  try {
-    workspaceRoot = await realpath(workspaceRoot);
-    await access(workspaceRoot);
-  } catch {
-    console.error(`Error: Workspace path '${workspaceRoot}' does not exist or is inaccessible.`);
-    process.exit(3);
-  }
+  const workspaceRoot = await resolveWorkspace(values.workspace);
 
   const result = await runCLI({
     mode: mode as any,
@@ -89,9 +104,22 @@ Model Configuration:
     ...(values.skills ? { skills: true } : {}),
     ...(values.workflow ? { workflow: true } : {}),
     ...(values["progress-monitor"] ? { progressMonitor: true } : {}),
+    ...(values.learning ? { learning: true } : {}),
   });
 
   process.exit(result.exitCode);
+}
+
+async function resolveWorkspace(requested: string | undefined): Promise<string> {
+  const workspaceRoot = requested ? resolve(requested) : process.cwd();
+  try {
+    const real = await realpath(workspaceRoot);
+    await access(real);
+    return real;
+  } catch {
+    console.error(`Error: Workspace path '${workspaceRoot}' does not exist or is inaccessible.`);
+    process.exit(3);
+  }
 }
 
 main().catch(err => {

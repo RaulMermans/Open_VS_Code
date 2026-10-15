@@ -1,4 +1,4 @@
-export type ContextSourceKind = "project-instruction" | "task" | "active-code" | "retrieved-code" | "observation" | "background" | "skill" | "historical-session"
+export type ContextSourceKind = "project-instruction" | "task" | "active-code" | "retrieved-code" | "observation" | "background" | "skill" | "historical-session" | "learned-memory"
 
 export interface ContextSource {
   readonly kind: ContextSourceKind

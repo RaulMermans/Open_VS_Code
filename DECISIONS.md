@@ -32,7 +32,8 @@
 | [ADR-028](docs/adrs/ADR-028-desktop-shell-and-packaging-strategy.md) | Desktop Shell and Packaging Strategy (Code-OSS vs VSCodium) | Accepted |
 | [ADR-029](docs/adrs/ADR-029-portable-skills-runtime.md) | Portable Skills Runtime | Accepted (flag off pending HALO A/B) |
 | [ADR-030](docs/adrs/ADR-030-structured-engineering-loop.md) | Structured Engineering Loop & Fresh-Context Review | Accepted (flag off pending HALO A/B; 5B closure amendment) |
-| [ADR-031](docs/adrs/ADR-031-non-progress-detection-and-recovery.md) | Non-Progress Detection & Bounded Recovery | Accepted (flag off pending HALO A/B) |
+| [ADR-031](docs/adrs/ADR-031-non-progress-detection-and-recovery.md) | Non-Progress Detection & Bounded Recovery | Accepted (flag off pending HALO A/B; progress-epoch amendment in 5D) |
+| [ADR-032](docs/adrs/ADR-032-bounded-memory-to-skill-learning.md) | Bounded Memory-to-Skill Learning (human-approved) | Accepted (flag off pending HALO benchmark) |
 
 Decision status changes belong in the ADR and this index.
 
@@ -53,4 +54,5 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 4F**: Desktop Shell and Packaging Strategy (ADR-028) — Accepted.
 - **Sprint 5A**: Portable Skills Runtime (ADR-029) — Accepted; deterministic verification complete, real-model delta deferred to HALO.
 - **Sprint 5B**: Structured Engineering Loop & Fresh-Context Review (ADR-030) — Accepted; closure amendment (sanitized persistence, net-diff review) verified in Sprint 5C.
-- **Sprint 5C**: Non-Progress Detection & Bounded Recovery (ADR-031) — Accepted; deterministic verification complete, real-model delta deferred to HALO.
+- **Sprint 5C**: Non-Progress Detection & Bounded Recovery (ADR-031) — Accepted; deterministic verification complete, real-model delta deferred to HALO. Progress-epoch amendment closed in Sprint 5D.
+- **Sprint 5D**: Bounded Memory-to-Skill Learning (ADR-032) — Accepted; deterministic verification complete, V1.1 deterministic benchmark consolidated (`docs/evals/V1_1_BENCHMARK.md`), real-model benchmark deferred to HALO.

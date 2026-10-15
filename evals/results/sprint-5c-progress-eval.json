@@ -28,7 +28,7 @@
       "recoveryOutcome": "NOT_RECOVERED",
       "diagnosticChecks": 1,
       "modelCalls": 7,
-      "promptTokens": 2975,
+      "promptTokens": 2976,
       "toolCalls": 6,
       "turns": 7
     },
@@ -255,26 +255,56 @@
       "promptTokens": 1086,
       "toolCalls": 3,
       "turns": 4
+    },
+    {
+      "fixture": "J",
+      "arm": "A",
+      "outcome": "COMPLETED",
+      "stallDetected": false,
+      "signals": [],
+      "recoveryAttempted": false,
+      "diagnosticChecks": 0,
+      "modelCalls": 5,
+      "promptTokens": 1310,
+      "toolCalls": 4,
+      "turns": 5
+    },
+    {
+      "fixture": "J",
+      "arm": "B",
+      "outcome": "COMPLETED",
+      "stallDetected": true,
+      "signals": [
+        "REPEATED_TOOL_ACTION"
+      ],
+      "failureClass": "CONTEXT_DEGRADATION",
+      "recoveryAttempted": true,
+      "recoveryOutcome": "RECOVERED",
+      "diagnosticChecks": 1,
+      "modelCalls": 5,
+      "promptTokens": 1823,
+      "toolCalls": 4,
+      "turns": 5
     }
   ],
   "detection": {
-    "loopFixtures": 5,
-    "loopsDetected": 5,
+    "loopFixtures": 6,
+    "loopsDetected": 6,
     "trueStallRate": 1,
     "progressFixtures": 4,
     "falseStalls": 0,
     "falseStallRate": 0,
-    "classified": 5,
+    "classified": 6,
     "classificationAccuracy": 1,
     "misses": []
   },
   "recovery": {
-    "stallsDetected": 5,
-    "stallsCorrectlyClassified": 5,
-    "diagnosticsRun": 5,
-    "recoveriesAttempted": 4,
-    "recovered": 1,
-    "recoverySuccessRate": 0.25,
+    "stallsDetected": 6,
+    "stallsCorrectlyClassified": 6,
+    "diagnosticsRun": 6,
+    "recoveriesAttempted": 5,
+    "recovered": 2,
+    "recoverySuccessRate": 0.4,
     "blockedAfterBoundedRetry": 3,
     "escalatedWithoutRetry": 1,
     "unnecessaryRecoveries": 0,
@@ -282,16 +312,16 @@
   },
   "efficiency": {
     "modelCalls": {
-      "A": 68,
-      "B": 55
+      "A": 73,
+      "B": 60
     },
     "toolCalls": {
-      "A": 60,
-      "B": 47
+      "A": 64,
+      "B": 51
     },
     "promptTokens": {
-      "A": 25001,
-      "B": 21673
+      "A": 26311,
+      "B": 23497
     },
     "repeatedModelCallsAvoided": 13,
     "repeatedToolCallsAvoided": 13,
@@ -299,8 +329,8 @@
       "A": 9.75,
       "B": 6.5
     },
-    "diagnosticCallsAdded": 5,
+    "diagnosticCallsAdded": 6,
     "diagnosticModelCallsAdded": 0,
-    "netTokenDifference": -3328
+    "netTokenDifference": -2814
   }
 }
