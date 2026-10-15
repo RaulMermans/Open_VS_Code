@@ -66,6 +66,8 @@ Direct (non-workflow) tasks teach less. ASK, PLAN and REVIEW never teach anythin
 
 A model statement is not evidence. A model-drafted skill candidate must point at a record that already has the required independent evidence, and it goes through the same validation as any other candidate.
 
+Before any candidate is stored, it passes one boundary, `normalizeSkillCandidate`. That covers title, description, intent, when-to-use, inputs, workflow, verification, failure modes, exit criteria and triggers, plus the structural fields. A candidate that contains a secret, a `<think>` block, an instruction to override policy, skip verification, escalate permissions, switch to the cloud or exfiltrate secrets, or executable markup is **rejected, not redacted**. It is stored only as `REJECTED` with a code such as `SECRET_DETECTED in workflow`. Its text is never written to `learning.json`.
+
 ## Thresholds
 
 | Independent successful tasks | State |
@@ -95,7 +97,7 @@ The classifier leans towards PROJECT. A project-specific lesson with no marker (
 
 ## Learned skills
 
-Approving a skill candidate writes `.open-vs-code/skills/<id>/SKILL.md` in the standard 5A format: frontmatter plus the seven required sections. It is validated with the same schema the registry uses before anything is written. An invalid candidate is rejected; nothing is written.
+Approving a skill candidate writes `.open-vs-code/skills/<id>/SKILL.md` in the standard 5A format: frontmatter plus the seven required sections. It is validated with the same schema the registry uses before anything is written. The whole file, frontmatter `name`/`description` included, also passes the candidate safety scan. An invalid candidate is rejected; nothing is written.
 
 A learned skill cannot widen authority:
 

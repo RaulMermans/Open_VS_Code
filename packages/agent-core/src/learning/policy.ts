@@ -133,7 +133,14 @@ export function classifyScope(observation: Pick<LearningObservation, "kind" | "t
 const AUTHORITY_CLAIM = [
   /\b(?:may|can|allowed to|permitted to|authori[sz]ed to|free to)\s+(?:always\s+)?(?:run|execute|use|access|call|enable|install|download|push|deploy|delete)\s+(?:\w+\s+){0,2}(?:shell|terminal|commands?|network|internet|cloud|secrets?|credentials?|sudo|root|anything|models?|weights)\b/i,
   /\b(?:no|without)\s+(?:need\s+(?:for|to)\s+)?(?:approval|confirmation|permission|review)s?\b/i,
+  /\balways\s+(?:approve|accept|allow|confirm)\b/i,
+  /\b(?:switch|fall\s*back|escalate|route|offload)\s+(?:\w+\s+){0,2}to\s+(?:the\s+)?(?:cloud|remote|hosted)\b/i,
 ]
+
+/** The first authority-override directive or authority claim in `text` (5A directives + learning claims). */
+export function findAuthorityClaim(text: string): string | undefined {
+  return findUnsafeDirective(text) ?? AUTHORITY_CLAIM.map((pattern) => pattern.exec(text)?.[0]).find(Boolean)
+}
 
 export type TrustVerdict =
   | { readonly trusted: true }
@@ -146,8 +153,8 @@ export type TrustVerdict =
  */
 export function assessTrust(observation: Pick<LearningObservation, "source" | "title" | "summary" | "evidenceRefs">): TrustVerdict {
   const text = `${observation.title}\n${observation.summary}`
-  const unsafe = findUnsafeDirective(text) ?? AUTHORITY_CLAIM.map((pattern) => pattern.exec(text)?.[0]).find(Boolean)
-  if (unsafe) return { trusted: false, reject: true, reason: `claims authority ("${unsafe.slice(0, 60)}"); learning can never grant permissions` }
+  // The reason never quotes the offending text: rejection evidence carries a code, not the content.
+  if (findAuthorityClaim(text)) return { trusted: false, reject: true, reason: "AUTHORITY_OVERRIDE: claims authority; learning can never grant permissions" }
   if (observation.source === "REPOSITORY_TEXT") return { trusted: false, reject: false, reason: "repository text is data, not a decision; it cannot establish trusted learning" }
   if (observation.source === "MODEL_PROPOSAL" && observation.evidenceRefs.length === 0) return { trusted: false, reject: true, reason: "a model statement without evidence is not evidence" }
   return { trusted: true }

@@ -5,6 +5,7 @@
   - 5C closure: progress epochs. Before the fix, the first reuse of an old action after a real recovery was BLOCKED (eval fixture J ended `FAILED:NON_PROGRESS`). A workspace change resets only successful-action counters, so edit → identical failure is still caught.
   - New `packages/agent-core/src/learning/`, ADR-032, guide `docs/learning/LEARNING_SYSTEM.md`, `npm run eval:learning`, `docs/evals/V1_1_BENCHMARK.md` (with the HALO five-arm contract).
   - Found, not changed: the direct runner never forwarded the ADR-005 Markdown memory selection to its compiler (only the workflow memory digest used it). Learned memory has its own `learnedMemory` runner field.
+  - Final closure (2026-10-15, branch `sprint-5d-closure` off origin/main b759e43312): audited defect — `submitCandidate` persisted raw external/model-drafted candidate text (including in REJECTED, disabled and no-evidence branches), rejection reasons quoted content, and frontmatter `name`/`description` were not redacted or scanned. Fixed with `learning/candidate.ts` `normalizeSkillCandidate` (exhaustive per-field rules; reject secrets/`<think>`/authority/executable; sanitise + bound; closed vocabularies), run at submit, propose and approve. `validateRendered` now scans the whole document, and stored candidates that fail the boundary are scrubbed on approval. 11 tests (`tests/learning/candidate-boundary.test.ts`) read the real `learning.json`. Two learning authority patterns were added ("always approve", "switch … to cloud"); the 5A skill schema is unchanged.
   - Known limits: 3 curated reusable pattern families; classification 16/18 (unmarked project lessons pass as reusable); decisions and toolchain facts are always retrieved, even for unrelated questions (about 140 tokens).
 - Previous state: SPRINT 5C COMPLETE — NON-PROGRESS DETECTION & BOUNDED RECOVERY VERIFIED (deterministic). SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (closure: sanitized persistence + net-diff review). SPRINT 5A COMPLETE. V1 Desktop Candidate still gated only on HALO target-host acceptance.
 - Sprint 5C summary:
@@ -16,7 +17,7 @@
   - The 5B guide claimed `bug-triage` is selectable in IMPLEMENT; it is `CAPABILITY_DENIED` (it declares `verify`). Corrected, and the envelope was not widened.
   - Eval fixture G's patch target also matched `add()` (a fixture bug, recorded in the eval report).
 - Known limits: the simulated implementer is not smarter in recovery (1/4 recoveries succeed); workflow-path recoveries cost about +300 prompt tokens and save no calls (savings come from early escalation and direct-path cycles); after a restart, REVIEW shows current content instead of a net diff for multi-change files.
-- Next: HALO acceptance and same-model A/Bs (skills; workflow; progress monitor), then Sprint 5D.
+- Next (at 5C close): HALO acceptance and same-model A/Bs (skills; workflow; progress monitor), then Sprint 5D (since done).
 - Sprint 5B summary:
   - New `packages/agent-core/src/workflow/` (contracts, policy, artifacts, context, services, engine), ADR-030, guide `docs/workflows/ENGINEERING_LOOP.md`, `npm run eval:workflow`.
   - 5A closure: `SkillInjectionTracker`. Evidence is reconciled with the final compiled context, and a skill dropped by the final budget is `OMITTED_BY_FINAL_BUDGET`, never "active".

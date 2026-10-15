@@ -211,7 +211,7 @@ export function validateSkillMetadata(fields: Map<SkillField, string | string[]>
   return { id, name, description, version, category, allowedModes: modes as AgentMode[], capabilities, requiredTools, contextBudget, riskLevel, triggers, composesWith }
 }
 
-const EXECUTABLE_BODY = /<\s*(script|iframe|object|embed)\b|javascript:|<\?php/i
+export const EXECUTABLE_BODY = /<\s*(script|iframe|object|embed)\b|javascript:|<\?php/i
 
 const NEGATION_WINDOW = /\b(not|never|no|don't|do not|must not|cannot|without first)\b[^.\n]{0,24}$/i
 
