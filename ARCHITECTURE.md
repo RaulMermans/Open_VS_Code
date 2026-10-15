@@ -666,3 +666,35 @@ Surfaces:
 - the VS Code setting `open-vs-code.progressMonitor.enabled`.
 
 Guide: `docs/workflows/NON_PROGRESS_RECOVERY.md`.
+
+## Bounded Memory-to-Skill Learning (Sprint 5D, ADR-032)
+
+`packages/agent-core/src/learning/`:
+
+| Module | Role |
+| --- | --- |
+| `contracts` | `LearningRecord`, `LearnedSkillCandidate`, provenance, thresholds, caps |
+| `policy` | Redaction boundary reuse, dedupe, project/reusable scope, trust, evidence scoring |
+| `patterns` | Curated reusable pattern templates |
+| `extract` | Deterministic extraction from terminal `WorkflowState`, direct-run non-progress evidence, lockfiles |
+| `service` | `LearningService`: observe, propose, approve/reject, staleness, budgeted retrieval, `SKILL.md` render + 5A validation |
+| `node` | Contained atomic storage |
+| `hooks` | Non-blocking `runLearningStep` |
+
+Data flow:
+
+1. A task finishes. The runtime's `learnAfter`, called by the CLI and the IDE bridge after the result is final, extracts observations.
+2. `LearningService` stores compact redacted records in `.open-vs-code/learning/learning.json`.
+3. Promotable reusable records become `LearnedSkillCandidate`s.
+4. An explicit review command approves memory, or writes `.open-vs-code/skills/<id>/SKILL.md`.
+5. On the next run, `createAgentRuntime` retrieves **approved** records only, within 10% of the available context. They enter the compiler as the optional `learned-memory` source, ranked after the selected skill, and the workflow memory digest.
+
+Authority: none. The service cannot call tools, change permissions or select models. Learned skills are ordinary workspace skills, discovered by `SkillRegistry` and gated by the PermissionGate.
+
+Surfaces:
+
+- CLI `--learning` and `open-vscode-agent learning list|show|approve|reject|decide`;
+- the IDE bridge `learning.enabled`;
+- the VS Code setting `open-vs-code.learning.enabled` and the command *Open VS Code: Review Learning Candidates*.
+
+Guide: `docs/learning/LEARNING_SYSTEM.md`. V1.1 benchmark: `docs/evals/V1_1_BENCHMARK.md`.

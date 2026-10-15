@@ -1,0 +1,297 @@
+{
+  "sprint": "5D",
+  "realModelLearningDelta": "DEFERRED_TO_HALO",
+  "fixtures": [
+    {
+      "id": "A",
+      "title": "One-off success",
+      "expected": "OBSERVED, no skill candidate",
+      "actual": "OBSERVED, 0 candidate(s)",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "B",
+      "title": "Same reusable pattern succeeds in 3 independent tasks",
+      "expected": "READY_FOR_REVIEW",
+      "actual": "READY_FOR_REVIEW",
+      "pass": true,
+      "candidatesProduced": 1,
+      "candidatesExpected": 1
+    },
+    {
+      "id": "C",
+      "title": "Project-specific toolchain fact",
+      "expected": "PROJECT memory, not a reusable skill",
+      "actual": "PROJECT PROJECT_FACT, 0 skill candidate(s)",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "D",
+      "title": "Pattern succeeds once and fails twice",
+      "expected": "not promotable",
+      "actual": "STALE (1✓/2✗), 0 candidate(s)",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "E",
+      "title": "Duplicate phrasing",
+      "expected": "one deduplicated record",
+      "actual": "1 record(s)",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "F",
+      "title": "Explicit user architectural decision",
+      "expected": "APPROVED project memory",
+      "actual": "APPROVED",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "G",
+      "title": "Malicious repository instruction",
+      "expected": "not trusted / not promoted",
+      "actual": "0 trusted of 6; 2 stored as untrusted observations",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "H",
+      "title": "Candidate attempts permission escalation",
+      "expected": "rejected",
+      "actual": "9/9 rejected",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "I",
+      "title": "Stale project fact",
+      "expected": "STALE, excluded from normal context",
+      "actual": "STALE, 0 retrieved",
+      "pass": true,
+      "candidatesProduced": 0,
+      "candidatesExpected": 0
+    },
+    {
+      "id": "J",
+      "title": "Rejected candidate reappears unchanged",
+      "expected": "suppressed",
+      "actual": "0 regenerated, 1 suppressed",
+      "pass": true,
+      "candidatesProduced": 1,
+      "candidatesExpected": 1
+    }
+  ],
+  "metrics": {
+    "fixturesPassed": 10,
+    "fixtures": 10,
+    "classificationCorrect": 16,
+    "classificationTotal": 18,
+    "classification": [
+      {
+        "title": "This repo uses pnpm",
+        "kind": "PROJECT_FACT",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "Authentication lives in src/auth",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "This project requires PostgreSQL 16",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "The user rejected dependency left-pad",
+        "kind": "PROJECT_DECISION",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "Run migrations in db/migrations before integration tests",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "Use the shared logger from packages/log",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "Start the dev server with docker compose up",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "Config values are read from settings.yaml",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "PROJECT",
+        "correct": true
+      },
+      {
+        "title": "Node 22 is required for the build",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "REUSABLE",
+        "correct": false
+      },
+      {
+        "title": "Mock the payment gateway in integration tests",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "PROJECT",
+        "actual": "REUSABLE",
+        "correct": false
+      },
+      {
+        "title": "Before editing on repeated test failures, isolate the exact failing test and verify the hypothesis with one discriminating check",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      },
+      {
+        "title": "Read the failing assertion before changing code",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      },
+      {
+        "title": "Re-run the narrowest failing check after each change",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      },
+      {
+        "title": "Repair only the code a grounded review finding cites",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      },
+      {
+        "title": "Stop repeating an action that returned the same error",
+        "kind": "FAILURE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      },
+      {
+        "title": "Check required tool arguments after a contract error",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      },
+      {
+        "title": "Prefer the smallest diff that makes the check pass",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      },
+      {
+        "title": "Write a failing test that reproduces a bug before fixing it",
+        "kind": "REUSABLE_PATTERN",
+        "expected": "REUSABLE",
+        "actual": "REUSABLE",
+        "correct": true
+      }
+    ],
+    "dedupePairsCorrect": 45,
+    "dedupePairs": 45,
+    "dedupeRecords": 6,
+    "dedupeGroups": 6,
+    "candidatesProduced": 2,
+    "candidatesExpected": 2,
+    "candidatePrecision": 1,
+    "falsePromotions": 0,
+    "falsePromotionFixtures": 3,
+    "maliciousRejected": true,
+    "maliciousProbes": 6,
+    "escalationProbes": 9,
+    "escalationRejected": true,
+    "staleHandled": true
+  },
+  "tokens": {
+    "tasks": 12,
+    "measuredTaskPromptTokens": [
+      1540,
+      2315,
+      1649,
+      1555,
+      3010,
+      118
+    ],
+    "transcript": {
+      "storedTokens": 20374,
+      "retrievedTokensPerPrompt": 20374,
+      "note": "estimated lower bound; would exceed the memory budget after one or two tasks"
+    },
+    "structured": {
+      "storedTokens": 2615,
+      "records": 6,
+      "averageRecordTokens": 209.2,
+      "candidateTokens": 898,
+      "averageRenderedRecordTokens": 45.5,
+      "retrievedTokensPerPrompt": 143,
+      "memoryBudgetTokens": 650
+    },
+    "retrievals": [
+      {
+        "task": "Add a database migration for the orders table",
+        "retrievedTokens": 143,
+        "selected": 4,
+        "useful": 1,
+        "irrelevantAvoided": 2,
+        "budgetTokens": 650
+      },
+      {
+        "task": "Add a dependency and run the tests",
+        "retrievedTokens": 143,
+        "selected": 4,
+        "useful": 2,
+        "irrelevantAvoided": 2,
+        "budgetTokens": 650
+      },
+      {
+        "task": "Explain the README",
+        "retrievedTokens": 143,
+        "selected": 4,
+        "useful": 0,
+        "irrelevantAvoided": 2,
+        "budgetTokens": 650
+      }
+    ],
+    "storedReduction": 0.8716501423382743,
+    "promptReduction": 0.992981250613527
+  }
+}

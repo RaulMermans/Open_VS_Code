@@ -273,3 +273,31 @@ Regression ladder:
   desktop:package ok; desktop:smoke 13/13; desktop:accept 3/3
 Fixed in 5C: normalizer missed node:test "# duration_ms" (identical failures split); 5B guide listed bug-triage as IMPLEMENT-selectable
 HALO A/B: DEFERRED_TO_HALO (no real-model baseline recorded; no model executed; no weights downloaded)
+
+==================================================
+SPRINT 5D — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 BENCHMARK CLOSURE (2026-10-15, branch sprint-5d off origin/main 62c4e32f5c)
+==================================================
+5C closure: progress epochs (DirectProgressGuard, ProgressMonitor). Measurable progress opens a new epoch and old action/error counts are not inherited;
+  a workspace change resets only successful-action counters; recovery count, cancellation, permissions and turn limits are never reset.
+  Regressions EP-01..EP-07 + eval:progress fixture J (pre-fix: FAILED:NON_PROGRESS; post-fix: COMPLETED)
+  SPRINT 5C COMPLETE — NON-PROGRESS DETECTION & BOUNDED RECOVERY VERIFIED
+Learning (ADR-032): packages/agent-core/src/learning/ (contracts, policy, patterns, extract, service, node, hooks)
+  evidence-first deterministic extraction; 1 → OBSERVED, 2 → CANDIDATE, 3 independent → skill proposal (support ≥ 0.75)
+  project vs reusable scope; dedupe (pattern key, normalised tokens, Jaccard ≥ 0.6); rejection fingerprints; STALE on missing files/contradiction/superseded decision
+  LearnedSkillCandidate validated with the 5A schema; capability ceiling read/search/write/verify; no built-in shadowing or user-skill overwrite
+  explicit approval only (CLI `learning approve`, VS Code "Review Learning Candidates"); approved-only retrieval ≤ 10% of context; flag learning.enabled off
+New tests: 40 (epochs 8, learning unit 25, learning runtime 2, CLI 2, VS Code command 3)
+Workspace tests: agent-core 603/603, cli 21/21, ide-adapter 7/7, vscode-integration 23/23 (654 total)
+eval:learning: fixtures A–J 10/10; classification 16/18; dedupe pairs 45/45; candidate precision 2/2; false promotions 0/3;
+  malicious repo text trusted 0/6; escalation candidates rejected 9/9; stale excluded yes
+  tokens (12 tasks): stored 2,615 vs ≥ 20,374 estimated transcript (−87.2%); 143 retrieved per prompt (budget 650)
+eval:progress (fixture J added): loops 6/6; false stalls 0/4; classification 6/6; recovered 2/5; calls 73 → 60; tokens 26312 → 23496
+Regression ladder:
+  npm ci, typecheck, lint, build: pass
+  eval:skills 38/40; eval:workflow 14/14 eligibility, A/B unchanged; eval:progress pass; eval:learning pass
+  eval:coding 30/30 (100%); eval:runtime 14/14; eval:recovery 50/50; eval:performance 5/5
+  desktop:package ok; desktop:smoke 13/13; desktop:accept 3/3 (new command registered in the real host)
+V1.1 consolidated deterministic benchmark: docs/evals/V1_1_BENCHMARK.md (comparability labelled; no combined score)
+REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO (five-arm contract documented; no model executed; no weights downloaded)
+SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED
+OPEN VS CODE V1.1 DEVELOPMENT COMPLETE — remaining release work: HALO target-host real-model acceptance and V1.1 benchmark

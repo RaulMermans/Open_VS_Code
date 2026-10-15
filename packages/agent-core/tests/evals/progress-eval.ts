@@ -50,6 +50,8 @@ interface DirectFixture {
   readonly title: string
   readonly expected: Expectation
   readonly expectedClass?: FailureClass
+  /** The arm-B outcome the fixture must reach (e.g. a real stall that recovers must still complete). */
+  readonly expectedOutcome?: "COMPLETED"
   readonly steps: () => ((request: ModelRequest) => ModelResponse)[]
 }
 
@@ -178,6 +180,15 @@ export const FIXTURES: readonly Fixture[] = [
     title: "direct productive investigation across three files",
     expected: "PROGRESS",
     steps: () => [() => read("i1", "README.md"), () => read("i2", "src/index.ts"), () => read("i3", "src/nested/value.ts"), () => answer("Done.")],
+  },
+  {
+    id: "J",
+    path: "direct",
+    title: "progress epoch: stall → recovery → new evidence → the old read reused (Sprint 5D closure)",
+    expected: "LOOP",
+    expectedClass: "CONTEXT_DEGRADATION",
+    expectedOutcome: "COMPLETED",
+    steps: () => [() => read("j1", "README.md"), () => read("j2", "README.md"), () => read("j3", "src/index.ts"), () => read("j4", "README.md"), () => answer("Done.")],
   },
 ]
 
@@ -334,6 +345,7 @@ export async function runProgressEval(): Promise<ProgressEvalReport> {
   const misses = [
     ...loops.filter((fixture) => !byId(fixture.id, b).stallDetected).map((fixture) => `${fixture.id}: loop not detected`),
     ...falseStalls.map((fixture) => `${fixture.id}: false stall`),
+    ...FIXTURES.filter((fixture) => fixture.path === "direct" && fixture.expectedOutcome && byId(fixture.id, b).outcome !== fixture.expectedOutcome).map((fixture) => `${fixture.id}: expected ${(fixture as DirectFixture).expectedOutcome}, got ${byId(fixture.id, b).outcome}`),
     ...detected.filter((fixture) => fixture.expectedClass && byId(fixture.id, b).failureClass !== fixture.expectedClass).map((fixture) => `${fixture.id}: classified ${byId(fixture.id, b).failureClass}, expected ${fixture.expectedClass}`),
   ]
   const attempted = b.filter((row) => row.recoveryAttempted)

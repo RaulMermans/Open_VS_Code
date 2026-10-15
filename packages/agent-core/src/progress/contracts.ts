@@ -180,6 +180,12 @@ export interface MonitorState {
   readonly furthestStage?: EngineeringStage
   readonly counters: MonitorCounters
   readonly observations: number
+  /**
+   * Progress epoch (Sprint 5D closure): advances on every ADVANCED observation and clears the
+   * cross-point error counter, so an old error seen again after measurable progress starts at one.
+   * Optional so states persisted before the field existed restore as epoch 1.
+   */
+  readonly epoch?: number
 }
 
 /** Persisted in WorkflowState.progress; restored after a restart so counters never reset. */

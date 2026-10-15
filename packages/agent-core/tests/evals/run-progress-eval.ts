@@ -33,6 +33,8 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 - The first run missed fixture E and caught A only through the 3-cycle window, not on the second identical failure. The cause was a product gap: the failure normalizer did not strip node:test's own TAP footer (\`# duration_ms 12.345\`), so identical failures got different fingerprints. The normalizer now strips duration fields, and unit test P-04b covers it. Thresholds were not changed.
 - Fixture G had a fixture bug: its patch target \`a + b\` also matched \`add()\`, so the patch failed in both arms. G now uses a genuine one-character fix (\`a - a\` → \`a - b\`).
 
+- Sprint 5D closure: fixture J adds the progress-epoch case. A real stall is recovered, new evidence opens a new epoch, and the old action is reused. It must complete; before epochs it was blocked by an inherited repetition count.
+
 ## Fixtures
 
 ${FIXTURES.map((fixture) => `- **${fixture.id}** (${fixture.path}, expected ${fixture.expected}${fixture.expectedClass ? `, ${fixture.expectedClass}` : ""}): ${fixture.title}`).join("\n")}
@@ -84,4 +86,4 @@ await mkdir(resultsDir, { recursive: true })
 await writeFile(resolve(resultsDir, "sprint-5c-progress-eval.json"), `${JSON.stringify({ sprint: "5C", realModelNonProgressDelta: "DEFERRED_TO_HALO", ...report }, null, 2)}\n`)
 await writeFile(resolve(resultsDir, "sprint-5c-progress-eval.md"), markdown)
 console.log(markdown)
-process.exitCode = detection.loopsDetected === detection.loopFixtures && detection.falseStalls === 0 ? 0 : 1
+process.exitCode = detection.loopsDetected === detection.loopFixtures && detection.falseStalls === 0 && detection.misses.length === 0 ? 0 : 1

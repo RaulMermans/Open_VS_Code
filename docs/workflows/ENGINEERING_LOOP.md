@@ -210,6 +210,16 @@ The in-memory state is not modified. A restored workflow therefore rebuilds its 
 
 Progress shown to the user is limited to stage transitions (`Stage: REVIEW`, `Skill: security-review`).
 
+## Learning after a terminal state (ADR-032)
+
+With `learning.enabled`, a bounded learning step runs **after** the workflow is terminal. The result is final first; a learning failure is reported and never changes it.
+
+- Inputs are the compact workflow artifacts only: retry counts, VERIFY verdict and passing commands, review blocking counts, settled recovery outcome and blocker. No dialogue is used.
+- Outputs are evidence-backed records and, after 3 independent verified tasks, a skill candidate for human review.
+- Approved memory is appended to later workflows' memory digest, within 10% of the context budget. Unapproved candidates never are.
+
+See `docs/learning/LEARNING_SYSTEM.md`.
+
 ## Measurement
 
 `npm run eval:workflow` writes `evals/results/sprint-5b-workflow-eval.{json,md}`. It covers:

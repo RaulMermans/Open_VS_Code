@@ -1,6 +1,12 @@
 # Scratchpad
 
-- Current state: SPRINT 5C COMPLETE — NON-PROGRESS DETECTION & BOUNDED RECOVERY VERIFIED (deterministic). SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (closure: sanitized persistence + net-diff review). SPRINT 5A COMPLETE. V1 Desktop Candidate still gated only on HALO target-host acceptance.
+- Current state: SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; remaining release work: HALO target-host real-model acceptance and the V1.1 benchmark (DEFERRED_TO_HALO).
+- Sprint 5D summary:
+  - 5C closure: progress epochs. Before the fix, the first reuse of an old action after a real recovery was BLOCKED (eval fixture J ended `FAILED:NON_PROGRESS`). A workspace change resets only successful-action counters, so edit → identical failure is still caught.
+  - New `packages/agent-core/src/learning/`, ADR-032, guide `docs/learning/LEARNING_SYSTEM.md`, `npm run eval:learning`, `docs/evals/V1_1_BENCHMARK.md` (with the HALO five-arm contract).
+  - Found, not changed: the direct runner never forwarded the ADR-005 Markdown memory selection to its compiler (only the workflow memory digest used it). Learned memory has its own `learnedMemory` runner field.
+  - Known limits: 3 curated reusable pattern families; classification 16/18 (unmarked project lessons pass as reusable); decisions and toolchain facts are always retrieved, even for unrelated questions (about 140 tokens).
+- Previous state: SPRINT 5C COMPLETE — NON-PROGRESS DETECTION & BOUNDED RECOVERY VERIFIED (deterministic). SPRINT 5B COMPLETE — STRUCTURED ENGINEERING LOOP & FRESH-CONTEXT REVIEW VERIFIED (closure: sanitized persistence + net-diff review). SPRINT 5A COMPLETE. V1 Desktop Candidate still gated only on HALO target-host acceptance.
 - Sprint 5C summary:
   - New `packages/agent-core/src/progress/` (contracts, fingerprint, monitor, recovery, direct-guard), `workflow/persistence.ts`, ADR-031, guide `docs/workflows/NON_PROGRESS_RECOVERY.md`, `npm run eval:progress`.
   - 5B closure: `sanitizeWorkflowState` at the persistence boundary (canonical redactor, extended with GitHub/Slack/AWS/JWT/.env formats); REVIEW gets `NetChange[]` (workflow start → current workspace), and grounding uses only that diff and the current content.

@@ -74,6 +74,10 @@
       {
         "command": "open-vs-code.showActiveSkill",
         "title": "Open VS Code: Show Active Skill"
+      },
+      {
+        "command": "open-vs-code.reviewLearningCandidates",
+        "title": "Open VS Code: Review Learning Candidates"
       }
     ],
 
@@ -111,6 +115,11 @@
           "type": "boolean",
           "default": false,
           "description": "Detect when a task stops making progress (the same failure, edit or tool call repeating), run one bounded diagnostic recovery, and otherwise stop as Blocked with the reason and a recommended next step. Never grants permissions. Off until the HALO A/B benchmark is recorded."
+        },
+        "open-vs-code.learning.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "After each task, record compact evidence-backed lessons and propose project memory or project-local skills for your review (Open VS Code: Review Learning Candidates). Only what you approve is ever used in prompts; learning never grants permissions. Off until the HALO benchmark is recorded."
         }
       }
     }

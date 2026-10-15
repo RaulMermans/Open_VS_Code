@@ -14,13 +14,15 @@ export class ContextBudgetError extends Error {
  * Rank order for context sources. Required items (instructions, task, memory facts and acceptance
  * criteria) are always admitted first; optional items then fill the remaining budget in this order, so
  * optional skill guidance (Sprint 5A) can never displace essential active code, and yields to nothing
- * of lower priority than itself.
+ * of lower priority than itself. Approved learned memory (Sprint 5D) is optional and ranks after the
+ * selected skill: it can never displace the task, instructions, acceptance criteria or current code.
  */
 export const DEFAULT_CONTEXT_SOURCE_ORDER: readonly ContextSourceKind[] = [
   "project-instruction",
   "task",
   "active-code",
   "skill",
+  "learned-memory",
   "retrieved-code",
   "observation",
   "background",

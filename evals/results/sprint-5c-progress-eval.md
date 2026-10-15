@@ -9,6 +9,8 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 - The first run missed fixture E and caught A only through the 3-cycle window, not on the second identical failure. The cause was a product gap: the failure normalizer did not strip node:test's own TAP footer (`# duration_ms 12.345`), so identical failures got different fingerprints. The normalizer now strips duration fields, and unit test P-04b covers it. Thresholds were not changed.
 - Fixture G had a fixture bug: its patch target `a + b` also matched `add()`, so the patch failed in both arms. G now uses a genuine one-character fix (`a - a` → `a - b`).
 
+- Sprint 5D closure: fixture J adds the progress-epoch case. A real stall is recovered, new evidence opens a new epoch, and the old action is reused. It must complete; before epochs it was blocked by an inherited repetition count.
+
 ## Fixtures
 
 - **A** (workflow, expected LOOP, LOGIC_FAILURE): genuine loop: the same failing test after every edit
@@ -20,25 +22,26 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 - **C** (direct, expected PROGRESS): transient tool failure: one failed read, then success
 - **H** (direct, expected LOOP, CONTEXT_DEGRADATION): direct A/B/A/B read cycle (invisible to a consecutive-repeat guard)
 - **I** (direct, expected PROGRESS): direct productive investigation across three files
+- **J** (direct, expected LOOP, CONTEXT_DEGRADATION): progress epoch: stall → recovery → new evidence → the old read reused (Sprint 5D closure)
 
 ## Detection (arm B)
 
 | Metric | Value |
 | --- | --- |
-| Known loops detected | 5/5 (100.0%) |
+| Known loops detected | 6/6 (100.0%) |
 | False stalls on fixtures with measurable progress | 0/4 (0.0%) |
-| Failure classification accuracy (detected loops) | 5/5 (100.0%) |
+| Failure classification accuracy (detected loops) | 6/6 (100.0%) |
 | Misses | none |
 
 ## Recovery (arm B)
 
 | Metric | Value |
 | --- | --- |
-| Stalls detected | 5 |
-| Stalls correctly classified | 5 |
-| Diagnostic checks run | 5 |
-| Recovery attempts | 4 |
-| Recovered (state then demonstrably progressed) | 1 (25.0% of attempts) |
+| Stalls detected | 6 |
+| Stalls correctly classified | 6 |
+| Diagnostic checks run | 6 |
+| Recovery attempts | 5 |
+| Recovered (state then demonstrably progressed) | 2 (40.0% of attempts) |
 | Blocked after the bounded retry | 3 |
 | Escalated without retry (environment/permission/state) | 1 |
 | Unnecessary recoveries (on progress fixtures) | 0 (0.0%) |
@@ -47,22 +50,22 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 
 | Metric | A (off) | B (on) | Δ |
 | --- | --- | --- | --- |
-| Model calls | 68 | 55 | -13 |
-| Tool + check calls | 60 | 47 | -13 |
-| Prompt tokens (estimated) | 25001 | 21673 | -3328 |
+| Model calls | 73 | 60 | -13 |
+| Tool + check calls | 64 | 51 | -13 |
+| Prompt tokens (estimated) | 26311 | 23497 | -2814 |
 | Average model turns before a blocker | 9.75 | 6.5 | -3.25 |
 
 - Repeated model calls avoided: 13.
 - Repeated tool/check calls avoided: 13.
-- Diagnostic checks added: 5. They are deterministic and read-only; model calls added by diagnostics: 0.
-- Net token difference (B − A): -3328.
+- Diagnostic checks added: 6. They are deterministic and read-only; model calls added by diagnostics: 0.
+- Net token difference (B − A): -2814.
 
 ## Per fixture
 
 | Fixture | Path | Expected | Arm | Outcome | Stall | Signals | Class | Recovery | Recovery outcome | Model calls | Tool+check calls | Prompt tokens | Turns |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | A | workflow | LOOP | A | BLOCKED:TEST_REPAIR_LIMIT | no | - | - | no | - | 7 | 6 | 2627 | 7 |
-| A | workflow | LOOP | B | BLOCKED:BLOCKED_NON_PROGRESS | yes | TEST_STAGNATION | LOGIC_FAILURE | yes | NOT_RECOVERED | 7 | 6 | 2975 | 7 |
+| A | workflow | LOOP | B | BLOCKED:BLOCKED_NON_PROGRESS | yes | TEST_STAGNATION | LOGIC_FAILURE | yes | NOT_RECOVERED | 7 | 6 | 2976 | 7 |
 | B | workflow | PROGRESS | A | COMPLETE | no | - | - | no | - | 8 | 8 | 3276 | 8 |
 | B | workflow | PROGRESS | B | COMPLETE | no | - | - | no | - | 8 | 8 | 3276 | 8 |
 | D | workflow | LOOP | A | BLOCKED:TEST_REPAIR_LIMIT | no | - | - | no | - | 7 | 6 | 2610 | 7 |
@@ -79,3 +82,5 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 | H | direct | LOOP | B | FAILED:NON_PROGRESS | yes | REPEATED_TOOL_ACTION | CONTEXT_DEGRADATION | yes | NOT_RECOVERED | 4 | 4 | 1214 | 4 |
 | I | direct | PROGRESS | A | COMPLETED | no | - | - | no | - | 4 | 3 | 1086 | 4 |
 | I | direct | PROGRESS | B | COMPLETED | no | - | - | no | - | 4 | 3 | 1086 | 4 |
+| J | direct | LOOP | A | COMPLETED | no | - | - | no | - | 5 | 4 | 1310 | 5 |
+| J | direct | LOOP | B | COMPLETED | yes | REPEATED_TOOL_ACTION | CONTEXT_DEGRADATION | yes | RECOVERED | 5 | 4 | 1823 | 5 |

@@ -349,6 +349,15 @@ Sprint 5C — Non-Progress Detection & Bounded Recovery (V1.1) ✅ COMPLETE (det
   - Defects found: the failure normalizer missed node:test's `# duration_ms`, so identical failures had different fingerprints (fixed; P-04b); the 5B guide's skills table wrongly listed `bug-triage` as selectable in IMPLEMENT (corrected).
   - HALO A/B: DEFERRED_TO_HALO.
 
+Sprint 5D — Bounded Memory-to-Skill Learning & V1.1 Benchmark Closure ✅ COMPLETE (deterministic) · REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO
+  - 5C closure: progress epochs in `DirectProgressGuard` and `ProgressMonitor`, so there is no inherited repetition count after measurable progress (EP-01–EP-07, `eval:progress` fixture J). `SPRINT 5C COMPLETE — NON-PROGRESS DETECTION & BOUNDED RECOVERY VERIFIED`.
+  - Design (ADR-032, `docs/learning/LEARNING_SYSTEM.md`): new `packages/agent-core/src/learning/`. It provides deterministic extraction, evidence thresholds (1 → OBSERVED, 2 → CANDIDATE, 3 independent → skill proposal), project/reusable scope, dedupe, rejection fingerprints, staleness, skill candidates validated with the 5A schema and a capability ceiling, an explicit approval gate, and approved-only retrieval within 10% of the context.
+  - Surfaces:
+    - CLI `--learning` and `learning list|show|approve|reject|decide`;
+    - IDE bridge `learning.enabled`;
+    - VS Code `open-vs-code.learning.enabled` and *Review Learning Candidates*.
+  - Evidence: `npm run eval:learning` 10/10 fixtures, classification 16/18, dedupe 45/45, 0 false promotions, 0/6 malicious trusted, 9/9 escalations rejected, stored tokens −87.2% vs an estimated transcript. 654/654 tests. `docs/evals/V1_1_BENCHMARK.md`.
+
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
-2. Sprint 5D — Memory-to-Skill Learning & V1.1 Benchmark Closure.
+2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
