@@ -1,3 +1,4 @@
+export * from "./candidate.ts"
 export * from "./contracts.ts"
 export * from "./extract.ts"
 export * from "./hooks.ts"

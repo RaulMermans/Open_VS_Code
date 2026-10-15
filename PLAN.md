@@ -357,6 +357,7 @@ Sprint 5D — Bounded Memory-to-Skill Learning & V1.1 Benchmark Closure ✅ COMP
     - IDE bridge `learning.enabled`;
     - VS Code `open-vs-code.learning.enabled` and *Review Learning Candidates*.
   - Evidence: `npm run eval:learning` 10/10 fixtures, classification 16/18, dedupe 45/45, 0 false promotions, 0/6 malicious trusted, 9/9 escalations rejected, stored tokens −87.2% vs an estimated transcript. 654/654 tests. `docs/evals/V1_1_BENCHMARK.md`.
+  - Final closure (candidate sanitization): every skill-candidate field passes one boundary, `normalizeSkillCandidate`, before persistence. Secrets, hidden reasoning, authority overrides and executable markup are rejected (not redacted). Frontmatter gets the same scan as the body, and rejection evidence is a code, never content (C-01–C-21). 665/665 tests; all evals and desktop package/smoke/accept unchanged and green.
 
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.

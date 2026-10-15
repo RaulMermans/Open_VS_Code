@@ -11,16 +11,10 @@
  */
 import { estimateTokens } from "../context/budget.ts"
 import type { AgentMode } from "../contracts/agent.ts"
+import { REQUIRED_SKILL_SECTIONS, SKILL_LIMITS } from "../skills/contracts.ts"
+import { SkillValidationError, parseSkillFrontmatter, splitSkillDocument, validateSkillBody, validateSkillMetadata } from "../skills/schema.ts"
+import { describeCandidateRejection, findContentSafetyIssue, normalizeSkillCandidate, rejectedCandidateEvidence, type SkillCandidateDraft } from "./candidate.ts"
 import {
-  KNOWN_SKILL_TOOLS,
-  REQUIRED_SKILL_SECTIONS,
-  SKILL_CAPABILITIES,
-  SKILL_LIMITS,
-  SKILL_MODES,
-} from "../skills/contracts.ts"
-import { parseSkillFrontmatter, splitSkillDocument, validateSkillBody, validateSkillMetadata } from "../skills/schema.ts"
-import {
-  LEARNED_SKILL_CAPABILITY_CEILING,
   LEARNING_HISTORY_DIR,
   LEARNING_LIMITS,
   LEARNING_THRESHOLDS,
@@ -377,33 +371,43 @@ export class LearningService {
 
   /**
    * External proposals (e.g. a model-drafted candidate) go through the same gate: they must point
-   * at a promotable record (evidence first) and are validated exactly like generated ones.
+   * at a promotable record (evidence first) and are validated exactly like generated ones. The raw
+   * input is normalised before anything is stored; a draft rejected at that boundary is stored only
+   * as a code-bearing stub, never with its content.
    */
-  async submitCandidate(input: Omit<LearnedSkillCandidate, "id" | "status" | "createdAt" | "updatedAt" | "evidenceRefs" | "supportingTaskIds" | "updateOf" | "statusReason">): Promise<LearnedSkillCandidate> {
-    const record = this.#data.records.find((item) => item.id === input.recordId)
+  async submitCandidate(input: SkillCandidateDraft): Promise<LearnedSkillCandidate> {
+    const record = this.#data.records.find((item) => item.id === (input as { recordId?: unknown })?.recordId)
     const now = this.#clock()
-    const base: LearnedSkillCandidate = { ...input, id: `sc-${shortDigest(`${input.recordId}:${input.proposedSkillId}:${JSON.stringify(input)}`).slice(0, 12)}`, evidenceRefs: record?.evidenceRefs ?? [], supportingTaskIds: record?.sourceTaskIds ?? [], status: "DRAFT", createdAt: now, updatedAt: now }
-    const candidate = !this.enabled
-      ? { ...base, status: "REJECTED" as const, statusReason: "learning is disabled" }
-      : !record || !isPromotable(record)
-        ? { ...base, status: "REJECTED" as const, statusReason: "no promotable evidence record supports this proposal" }
-        : await this.#validateCandidate(base) ?? { ...base, status: "REJECTED" as const, statusReason: "identical to the existing learned skill" }
+    const meta = { id: `sc-${shortDigest(`candidate:${JSON.stringify(input) ?? ""}`).slice(0, 12)}`, evidenceRefs: record?.evidenceRefs ?? [], supportingTaskIds: record?.sourceTaskIds ?? [], createdAt: now, updatedAt: now }
+    const normalized = normalizeSkillCandidate(input)
+    let candidate: LearnedSkillCandidate
+    if (!normalized.ok) {
+      candidate = rejectedCandidateEvidence({ ...meta, ...(record ? { knownRecordId: record.id } : {}) }, input, describeCandidateRejection(normalized))
+    } else {
+      const base: LearnedSkillCandidate = { ...normalized.draft, ...meta, status: "DRAFT" }
+      candidate = !this.enabled
+        ? { ...base, status: "REJECTED", statusReason: "learning is disabled" }
+        : !record || !isPromotable(record)
+          ? { ...base, status: "REJECTED", statusReason: "no promotable evidence record supports this proposal" }
+          : await this.#validateCandidate(base) ?? { ...base, status: "REJECTED", statusReason: "identical to the existing learned skill" }
+    }
     this.#data = { ...this.#data, candidates: [...this.#data.candidates.filter((item) => item.id !== candidate.id), candidate].slice(-LEARNING_LIMITS.maxCandidates) }
     if (this.enabled) await this.#persist()
     return candidate
   }
 
-  /** Fail-closed validation. Returns READY_FOR_REVIEW, REJECTED (with a reason), or undefined when nothing would change. */
-  async #validateCandidate(candidate: LearnedSkillCandidate): Promise<LearnedSkillCandidate | undefined> {
+  /**
+   * Fail-closed validation. Returns READY_FOR_REVIEW, REJECTED (with a reason), or undefined when
+   * nothing would change. Every caller (proposal, submission, approval) passes the candidate through
+   * the normalisation boundary here, so a stored candidate is never trusted as-is.
+   */
+  async #validateCandidate(input: LearnedSkillCandidate): Promise<LearnedSkillCandidate | undefined> {
+    const normalized = normalizeSkillCandidate(input)
+    if (!normalized.ok) return rejectedCandidateEvidence({ ...input, knownRecordId: input.recordId }, input, describeCandidateRejection(normalized))
+    // System-managed fields plus the canonical draft only: unknown keys in a stored candidate are dropped.
+    const { id, evidenceRefs, supportingTaskIds, status, createdAt, updatedAt, updateOf } = input
+    const candidate: LearnedSkillCandidate = { id, evidenceRefs, supportingTaskIds, status, createdAt, updatedAt, ...(updateOf ? { updateOf } : {}), ...normalized.draft }
     const reject = (reason: string): LearnedSkillCandidate => ({ ...candidate, status: "REJECTED", statusReason: reason })
-    const unknownCapability = candidate.proposedCapabilities.find((item) => !(SKILL_CAPABILITIES as readonly string[]).includes(item))
-    if (unknownCapability) return reject(`capability '${unknownCapability.slice(0, 30)}' is not in the skill vocabulary`)
-    const aboveCeiling = candidate.proposedCapabilities.find((item) => !(LEARNED_SKILL_CAPABILITY_CEILING as readonly string[]).includes(item))
-    if (aboveCeiling) return reject(`capability '${aboveCeiling}' exceeds what a learned skill may declare`)
-    const unknownTool = candidate.proposedTools.find((item) => !(KNOWN_SKILL_TOOLS as readonly string[]).includes(item))
-    if (unknownTool) return reject(`tool '${unknownTool.slice(0, 30)}' is not a known skill tool`)
-    const unknownMode = candidate.proposedModes.find((item) => !(SKILL_MODES as readonly string[]).includes(item as AgentMode))
-    if (unknownMode) return reject(`mode '${unknownMode.slice(0, 20)}' is not a known mode`)
     if (this.#options.builtinSkillIds.includes(candidate.proposedSkillId)) return reject(`'${candidate.proposedSkillId}' would shadow a built-in skill; built-in changes need a maintainer`)
 
     const path = learnedSkillPath(candidate.proposedSkillId)
@@ -481,6 +485,14 @@ export class LearningService {
     if (!candidate) return { ok: false, reason: `no learning record or candidate '${id}'` }
     if (candidate.status !== "READY_FOR_REVIEW") return { ok: false, reason: `a ${candidate.status} candidate cannot be approved` }
     if (!this.#options.workspaceTrusted) return { ok: false, reason: "learned skills are workspace skills; trust the workspace first" }
+    const boundary = normalizeSkillCandidate(candidate)
+    if (!boundary.ok) {
+      // A stored candidate that fails the boundary (an older or hand-edited store) is replaced by its stub.
+      const stub = rejectedCandidateEvidence({ ...candidate, updatedAt: now, knownRecordId: candidate.recordId }, candidate, describeCandidateRejection(boundary))
+      this.#data = { ...this.#data, candidates: this.#data.candidates.map((item) => (item.id === id ? stub : item)) }
+      await this.#persist()
+      return { ok: false, reason: stub.statusReason! }
+    }
     // Re-validate at approval time: the workspace may have changed since the proposal.
     const revalidated = await this.#validateCandidate({ ...candidate, status: "DRAFT" })
     if (!revalidated || revalidated.status !== "READY_FOR_REVIEW") return { ok: false, reason: revalidated?.statusReason ?? "the candidate no longer changes anything" }
@@ -648,6 +660,8 @@ function yamlList(key: string, values: readonly string[]): string {
 
 const line = (text: string) => sanitizeLearningText(text, LEARNING_LIMITS.candidateLineChars)
 const items = (values: readonly string[]) => values.slice(0, LEARNING_LIMITS.candidateListItems).map(line)
+/** Frontmatter values get the same sanitiser as the body, then lose YAML-significant characters. */
+const scalar = (text: string, maxChars: number) => sanitizeLearningText(text.replace(/[\n:]/g, " "), maxChars)
 
 /** Renders the canonical Sprint 5A SKILL.md. Provenance stays in the learning store, not the frontmatter. */
 export function renderSkill(candidate: LearnedSkillCandidate, version: number): string {
@@ -663,8 +677,8 @@ export function renderSkill(candidate: LearnedSkillCandidate, version: number): 
   const budget = Math.min(1_200, Math.max(SKILL_LIMITS.minContextBudget, Math.ceil(estimateTokens(body) * 1.25 / 50) * 50))
   const frontmatter = [
     `id: ${candidate.proposedSkillId}`,
-    `name: ${candidate.title.replace(/[\n:]/g, " ").slice(0, SKILL_LIMITS.maxNameChars)}`,
-    `description: ${candidate.description.replace(/[\n:]/g, " ").slice(0, SKILL_LIMITS.maxDescriptionChars)}`,
+    `name: ${scalar(candidate.title, SKILL_LIMITS.maxNameChars)}`,
+    `description: ${scalar(candidate.description, SKILL_LIMITS.maxDescriptionChars)}`,
     `version: ${version}`,
     `category: ${candidate.category}`,
     yamlList("allowed_modes", candidate.proposedModes),
@@ -672,12 +686,12 @@ export function renderSkill(candidate: LearnedSkillCandidate, version: number): 
     yamlList("required_tools", candidate.proposedTools),
     `context_budget: ${budget}`,
     "risk_level: low",
-    ...(candidate.triggers.length > 0 ? [yamlList("triggers", candidate.triggers.slice(0, SKILL_LIMITS.maxTriggers))] : []),
+    ...(candidate.triggers.length > 0 ? [yamlList("triggers", candidate.triggers.slice(0, SKILL_LIMITS.maxTriggers).map((trigger) => scalar(trigger, SKILL_LIMITS.maxTriggerChars)))] : []),
   ].join("\n")
   return `---\n${frontmatter}\n---\n\n${body}\n`
 }
 
-/** Validates a rendered SKILL.md with the exact Sprint 5A schema the registry uses. */
+/** Validates a rendered SKILL.md with the exact Sprint 5A schema the registry uses, plus the candidate safety scan. */
 export function validateRendered(content: string, directory: string): { ok: true } | { ok: false; reason: string } {
   try {
     if (Buffer.byteLength(content, "utf8") > SKILL_LIMITS.maxFileBytes) return { ok: false, reason: "too large" }
@@ -685,8 +699,13 @@ export function validateRendered(content: string, directory: string): { ok: true
     validateSkillMetadata(parseSkillFrontmatter(frontmatter), directory)
     const { sections } = validateSkillBody(body)
     for (const section of REQUIRED_SKILL_SECTIONS) if (!sections.has(section)) return { ok: false, reason: `missing ${section}` }
+    // The 5A body checks do not cover frontmatter; metadata reaches the skill index before the body
+    // does, so the whole document passes the candidate safety scan.
+    const issue = findContentSafetyIssue(content)
+    if (issue) return { ok: false, reason: issue }
     return { ok: true }
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message.slice(0, 160) : "invalid" }
+    // A code only: schema messages may quote the offending text.
+    return { ok: false, reason: error instanceof SkillValidationError ? error.code : "invalid" }
   }
 }

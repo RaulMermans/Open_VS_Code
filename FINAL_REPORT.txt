@@ -301,3 +301,28 @@ V1.1 consolidated deterministic benchmark: docs/evals/V1_1_BENCHMARK.md (compara
 REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO (five-arm contract documented; no model executed; no weights downloaded)
 SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED
 OPEN VS CODE V1.1 DEVELOPMENT COMPLETE — remaining release work: HALO target-host real-model acceptance and V1.1 benchmark
+
+SPRINT 5D FINAL CLOSURE — CANDIDATE SANITIZATION & V1.1 SEAL (2026-10-15, branch sprint-5d-closure off origin/main b759e43312)
+==================================================
+Audited defect: LearningService.submitCandidate stored the raw external/model-drafted candidate ({...input}); the disabled, no-evidence
+  and REJECTED branches persisted every raw field to .open-vs-code/learning/learning.json; rejection reasons quoted content (schema
+  directive excerpts, unknown capability/tool/mode values); and renderSkill only stripped "\n:" from frontmatter name/description,
+  which the 5A body checks never scan.
+Fix: packages/agent-core/src/learning/candidate.ts — normalizeSkillCandidate, the single boundary (exhaustive per-field rules by type)
+  structure + raw bounds → reject HIDDEN_REASONING / SECRET_DETECTED / AUTHORITY_OVERRIDE / EXECUTABLE_CONTENT on every raw field
+  → sanitise + bound (no heading injection) → closed vocabulary + capability ceiling → canonical draft
+  runs at submitCandidate, proposeSkills, #validateCandidate and approve; boundary rejections stored as a content-free stub
+  (status REJECTED, "<CODE> in <field>"); a stored candidate failing the boundary is scrubbed on approval
+  renderSkill sanitises frontmatter scalars and triggers; validateRendered adds a whole-document safety scan and reports codes only
+  learning authority claims += "always approve", "switch/fall back … to cloud/remote/hosted"; 5A skill schema unchanged
+New tests: 11 (candidate-boundary C-01..C-21, on-disk learning.json); L-13 now expects AUTHORITY_OVERRIDE in workflow
+Workspace tests: agent-core 614/614, cli 21/21, ide-adapter 7/7, vscode-integration 23/23 (665 total)
+eval:learning: fixtures 10/10; classification 16/18 (misses kept); dedupe 45/45; precision 2/2; false promotions 0/3;
+  malicious repo text trusted 0/6; escalation candidates rejected 9/9; stale excluded yes
+eval:progress: loops 6/6; false stalls 0/4; classification 6/6; progress tests 53/53 (EP-01..EP-07)
+Regression ladder: npm ci, typecheck, lint, build pass; eval:skills 38/40; eval:workflow 14/14 eligibility, A/B unchanged;
+  eval:coding 30/30 (100%); eval:runtime 14/14; eval:recovery 50/50; eval:performance 5/5;
+  desktop:package ok; desktop:smoke 13/13; desktop:accept 3/3 (real packaged app + extension host)
+REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO (no model executed; no weights downloaded)
+SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED
+OPEN VS CODE V1.1 DEVELOPMENT COMPLETE — remaining release work: HALO target-host real-model acceptance and V1.1 benchmark

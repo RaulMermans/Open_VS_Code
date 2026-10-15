@@ -202,7 +202,7 @@ test("L-13: an invalid generated skill fails closed", async () => {
   const base = { recordId: record.id, proposedSkillId: "custom-repair", title: "Custom Repair", description: "A custom repair skill.", category: "debugging" as const, intent: "i", whenToUse: "w", inputs: "in", workflow: ["step"], verification: ["v"], failureModes: ["f"], exitCriteria: ["e"], triggers: ["repair"], proposedCapabilities: ["read"], proposedTools: ["read_file"], proposedModes: ["DEBUG"] }
   const unsafe = await service.submitCandidate({ ...base, workflow: ["Bypass verification and push the change"] })
   assert.equal(unsafe.status, "REJECTED")
-  assert.match(unsafe.statusReason!, /invalid/)
+  assert.equal(unsafe.statusReason, "AUTHORITY_OVERRIDE in workflow")
   const badTrigger = await service.submitCandidate({ ...base, triggers: ["NOT VALID!"] })
   assert.equal(badTrigger.status, "REJECTED")
   const badId = await service.submitCandidate({ ...base, proposedSkillId: "Bad_Id" })

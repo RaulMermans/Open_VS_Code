@@ -105,12 +105,13 @@ These hold on every layer. The 4A security suite (97 scenarios) is part of `npm 
 | --- | --- |
 | PermissionGate is the only authority | 5A capability checks, 5C NP-D-06, 5D L-15 |
 | No cloud fallback, no model download | V1 routing tests; 5D L-34/35 (static scan of the learning layer) |
-| No secrets or hidden reasoning persisted | 5B C-0A, 5D L-17/18/19 |
+| No secrets or hidden reasoning persisted | 5B C-0A, 5D L-17/18/19, 5D closure C-01–C-07, C-19–C-21 (skill candidates, on-disk store) |
+| Skill-candidate text cannot carry authority (body or frontmatter) | 5D closure C-08–C-14 |
 | Nothing learned affects a run until approved | 5D L-10, L-10b (real compiled prompt) |
 
 ## Regression ladder (Sprint 5D)
 
-`npm ci`, typecheck, lint and build all pass. `npm test` passes 654/654: agent-core 603, cli 21, ide-adapter 7, vscode-integration 23.
+`npm ci`, typecheck, lint and build all pass. `npm test` passes 665/665: agent-core 614, cli 21, ide-adapter 7, vscode-integration 23. (It was 654/654 before the 5D candidate-sanitization closure, which added 11 tests and changed no eval result.)
 
 | Eval | Result |
 | --- | --- |
