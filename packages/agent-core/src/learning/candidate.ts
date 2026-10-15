@@ -19,6 +19,7 @@ export type SkillCandidateDraft = Omit<LearnedSkillCandidate, "id" | "status" | 
 
 export type CandidateRejectionCode =
   | "INVALID_STRUCTURE"
+  | "TOO_MANY_FIELDS"
   | "INPUT_TOO_LARGE"
   | "HIDDEN_REASONING"
   | "SECRET_DETECTED"
@@ -59,7 +60,11 @@ const FIELD_RULES: { readonly [K in keyof SkillCandidateDraft]-?: FieldRule } = 
   proposedModes: { kind: "modes" },
 }
 
-/** Raw-size ceilings, checked before any pattern runs: an oversized draft is rejected, not scanned. */
+/**
+ * Raw-size ceilings, checked before any pattern runs: an oversized draft is rejected, not scanned.
+ * The key cap leaves room for the system-managed fields a stored candidate carries on re-validation.
+ */
+const MAX_RAW_KEYS = 64
 const MAX_RAW_CHARS = 16_000
 const MAX_RAW_LIST_ITEMS = 64
 const MAX_RECORD_ID_CHARS = 64
@@ -90,7 +95,12 @@ export function normalizeSkillCandidate(input: unknown): CandidateNormalization 
   if (typeof input !== "object" || input === null || Array.isArray(input)) return fail("INVALID_STRUCTURE", "candidate")
   const raw = input as Record<string, unknown>
 
-  // 1. structure and raw bounds; unknown keys are dropped, never persisted.
+  // 0. key count, stopping at the cap. Unknown values are never read, serialised or hashed.
+  let keys = 0
+  for (const key in raw) if (typeof key === "string" && ++keys > MAX_RAW_KEYS) return fail("TOO_MANY_FIELDS", "candidate")
+
+  // 1. structure and raw bounds; unknown keys are dropped, never persisted. List length and
+  //    string type are checked before anything is traversed or copied.
   const strings = new Map<string, string[]>()
   let total = 0
   for (const [field, rule] of Object.entries(FIELD_RULES) as [keyof SkillCandidateDraft, FieldRule][]) {
