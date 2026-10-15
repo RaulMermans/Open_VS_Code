@@ -373,18 +373,20 @@ export class LearningService {
    * External proposals (e.g. a model-drafted candidate) go through the same gate: they must point
    * at a promotable record (evidence first) and are validated exactly like generated ones. The raw
    * input is normalised before anything is stored; a draft rejected at that boundary is stored only
-   * as a code-bearing stub, never with its content.
+   * as a code-bearing stub, never with its content. The raw input is never serialised or hashed:
+   * the candidate id comes from the bounded canonical draft, or from the stub's code and ids.
    */
   async submitCandidate(input: SkillCandidateDraft): Promise<LearnedSkillCandidate> {
+    const normalized = normalizeSkillCandidate(input)
     const record = this.#data.records.find((item) => item.id === (input as { recordId?: unknown })?.recordId)
     const now = this.#clock()
-    const meta = { id: `sc-${shortDigest(`candidate:${JSON.stringify(input) ?? ""}`).slice(0, 12)}`, evidenceRefs: record?.evidenceRefs ?? [], supportingTaskIds: record?.sourceTaskIds ?? [], createdAt: now, updatedAt: now }
-    const normalized = normalizeSkillCandidate(input)
+    const meta = { evidenceRefs: record?.evidenceRefs ?? [], supportingTaskIds: record?.sourceTaskIds ?? [], createdAt: now, updatedAt: now }
     let candidate: LearnedSkillCandidate
     if (!normalized.ok) {
-      candidate = rejectedCandidateEvidence({ ...meta, ...(record ? { knownRecordId: record.id } : {}) }, input, describeCandidateRejection(normalized))
+      const stub = rejectedCandidateEvidence({ ...meta, id: "", ...(record ? { knownRecordId: record.id } : {}) }, input, describeCandidateRejection(normalized))
+      candidate = { ...stub, id: candidateId(`rejected:${stub.statusReason}:${stub.recordId}:${stub.proposedSkillId}`) }
     } else {
-      const base: LearnedSkillCandidate = { ...normalized.draft, ...meta, status: "DRAFT" }
+      const base: LearnedSkillCandidate = { ...normalized.draft, ...meta, id: candidateId(`candidate:${JSON.stringify(normalized.draft)}`), status: "DRAFT" }
       candidate = !this.enabled
         ? { ...base, status: "REJECTED", statusReason: "learning is disabled" }
         : !record || !isPromotable(record)
@@ -629,6 +631,11 @@ export function renderMemory(record: LearningRecord): string {
 
 export function learnedSkillPath(skillId: string): string {
   return `${LEARNED_SKILLS_DIR}/${skillId}/SKILL.md`
+}
+
+/** Submitted-candidate id; the seed is always bounded canonical data, never raw input. */
+function candidateId(seed: string): string {
+  return `sc-${shortDigest(seed).slice(0, 12)}`
 }
 
 function candidateFingerprint(recordId: string, skillId: string): string {

@@ -326,3 +326,21 @@ Regression ladder: npm ci, typecheck, lint, build pass; eval:skills 38/40; eval:
 REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO (no model executed; no weights downloaded)
 SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED
 OPEN VS CODE V1.1 DEVELOPMENT COMPLETE — remaining release work: HALO target-host real-model acceptance and V1.1 benchmark
+
+SPRINT 5D FINAL HARDENING — RAW CANDIDATE INPUT BOUNDING (2026-10-15, branch sprint-5d-input-bound off origin/main ea452a5d74)
+==================================================
+Audited defect: LearningService.submitCandidate derived the candidate id from shortDigest(JSON.stringify(input)) on the raw untrusted
+  object BEFORE normalizeSkillCandidate ran, so unknown fields of any size were serialised and hashed (and BigInt/circular values threw).
+Fix: normalizeSkillCandidate counts top-level keys with an early stop (MAX_RAW_KEYS 64 → TOO_MANY_FIELDS; values never read); known
+  fields keep type-before-length and list-length-before-traversal checks; nested objects → INVALID_STRUCTURE without traversal.
+  submitCandidate normalises first; id = digest of the canonical draft, or for a rejected stub digest of "<CODE> in <field>" + known
+  record id + valid skill id. Unknown fields remain ignored (ADR-032 contract) and do not change identity.
+New tests: 3 (C-22 huge/unknown/BigInt/toJSON-trap field + id determinism; C-23 5,000 unknown keys; C-24 nested object, oversized
+  field, 2^32-1 sparse list, 65-item list). All three fail on the previous code.
+Workspace tests: agent-core 617/617, cli 21/21, ide-adapter 7/7, vscode-integration 23/23 (668 total)
+eval:learning unchanged: fixtures 10/10; classification 16/18; dedupe 45/45; precision 100%; false promotions 0/3; malicious 0/6;
+  escalations rejected 9/9; stale excluded yes. eval:progress: loops 6/6; false stalls 0/4; classification 6/6
+Regression ladder: npm ci, typecheck, lint, build pass; eval:skills 38/40; eval:workflow 14/14; eval:coding 30/30 (100%);
+  eval:runtime 14/14; eval:recovery 50/50; eval:performance 5/5; desktop:package ok; desktop:smoke 13/13; desktop:accept 3/3
+REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO
+SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED

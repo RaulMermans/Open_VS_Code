@@ -306,3 +306,85 @@ test("C-21: a stored candidate that fails the boundary (older or edited store) i
     await ws.dispose()
   }
 })
+
+/** An enumerable key whose value counts every read: `JSON.stringify`, spreads and hashing all trip it. */
+function tripwire(target: object, key: string, value: () => unknown): { reads: number } {
+  const counter = { reads: 0 }
+  Object.defineProperty(target, key, { enumerable: true, get: () => (counter.reads += 1, value()) })
+  return counter
+}
+
+test("C-22: a huge unknown field is never read, serialised or hashed before the boundary, and does not change the id", async () => {
+  const ws = await workspace()
+  try {
+    const clean = await ws.service.submitCandidate({ ...SAFE, recordId: ws.recordId })
+    assert.equal(clean.status, "READY_FOR_REVIEW")
+    const huge = "q".repeat(50_000_000)
+    const hostile: Record<string, unknown> = { ...SAFE, recordId: ws.recordId, arbitraryUnknownField: huge, big: 1n, trap: { toJSON: () => assert.fail("raw input serialised") } }
+    const spy = tripwire(hostile, "lazyUnknownField", () => huge)
+    const result = await ws.service.submitCandidate(hostile as SkillCandidateDraft)
+    assert.equal(spy.reads, 0, "unknown value was read before the boundary")
+    assert.equal(result.status, "READY_FOR_REVIEW")
+    assert.equal(result.id, clean.id, "ignored unknown fields must not change candidate identity")
+    const again = await ws.service.submitCandidate({ ...SAFE, recordId: ws.recordId })
+    assert.equal(again.id, clean.id, "same canonical candidate → same id")
+    const stored = await ws.store()
+    assert.ok(stored.length < 100_000, "store stays bounded")
+    for (const literal of ["q".repeat(64), "arbitraryUnknownField", "lazyUnknownField", '"big"', '"trap"']) assert.ok(!stored.includes(literal), literal)
+  } finally {
+    await ws.dispose()
+  }
+})
+
+test("C-23: thousands of unknown keys are rejected by a bounded count, with a deterministic code-only stub", async () => {
+  const ws = await workspace()
+  try {
+    const flood = (prefix: string) => {
+      const draft: Record<string, unknown> = { ...SAFE, recordId: ws.recordId }
+      for (let index = 0; index < 5_000; index += 1) draft[`${prefix}${index}`] = SECRETS.inputs
+      return draft
+    }
+    const first = flood("junkKey")
+    const spy = tripwire(first, "zzLast", () => SECRETS.title)
+    const a = await ws.service.submitCandidate(first as SkillCandidateDraft)
+    assertStub(a, "TOO_MANY_FIELDS in candidate")
+    assert.equal(spy.reads, 0)
+    const b = await ws.service.submitCandidate(flood("otherKey") as SkillCandidateDraft)
+    assert.equal(b.id, a.id, "rejected ids derive only from the code and ids, not from the garbage")
+    assert.equal(a.recordId, ws.recordId)
+    const stored = await ws.store()
+    for (const literal of [SECRETS.inputs, SECRETS.title, "junkKey", "otherKey"]) assert.ok(!stored.includes(literal), literal)
+    // A handful of ignored keys stays under the cap and is dropped as before.
+    const few: Record<string, unknown> = { ...SAFE, recordId: ws.recordId }
+    for (let index = 0; index < 40; index += 1) few[`note${index}`] = "ignored"
+    assert.equal((await ws.service.submitCandidate(few as SkillCandidateDraft)).status, "READY_FOR_REVIEW")
+  } finally {
+    await ws.dispose()
+  }
+})
+
+test("C-24: nested objects, oversized known fields and oversized lists are rejected before traversal", async () => {
+  const ws = await workspace()
+  try {
+    const nested = { deeply: { nested: {} } }
+    const spy = tripwire(nested.deeply.nested, "secret", () => SECRETS.description)
+    const objectField = await ws.service.submitCandidate({ ...SAFE, recordId: ws.recordId, description: nested } as unknown as SkillCandidateDraft)
+    assertStub(objectField, "INVALID_STRUCTURE in description")
+    assert.equal(spy.reads, 0)
+    const oversized = await ws.service.submitCandidate({ ...SAFE, recordId: ws.recordId, description: "o".repeat(20_000) })
+    assertStub(oversized, "INPUT_TOO_LARGE in description")
+    // A maximal sparse array: any traversal before the item cap would not terminate.
+    const endless: string[] = []
+    endless.length = 2 ** 32 - 1
+    const longList = await ws.service.submitCandidate({ ...SAFE, recordId: ws.recordId, workflow: endless })
+    assertStub(longList, "INVALID_STRUCTURE in workflow")
+    const items = await ws.service.submitCandidate({ ...SAFE, recordId: ws.recordId, workflow: Array.from({ length: 65 }, (_, index) => `Step ${index}.`) })
+    assertStub(items, "INVALID_STRUCTURE in workflow")
+    const stored = await ws.store()
+    for (const literal of [SECRETS.description, "o".repeat(64), "deeply"]) assert.ok(!stored.includes(literal), literal)
+    // The normal candidate is unaffected.
+    assert.equal((await ws.service.submitCandidate({ ...SAFE, recordId: ws.recordId })).status, "READY_FOR_REVIEW")
+  } finally {
+    await ws.dispose()
+  }
+})

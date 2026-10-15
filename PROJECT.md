@@ -96,7 +96,7 @@ Sprint 5D ✅ COMPLETE — Bounded Memory-to-Skill Learning & V1.1 deterministic
   - Approved-only retrieval within 10% of the context.
   - Flag `learning.enabled` defaults off.
   - V1.1 deterministic benchmark consolidated in `docs/evals/V1_1_BENCHMARK.md`.
-  - Final closure (candidate sanitization): every skill-candidate field passes one boundary, `normalizeSkillCandidate`, before persistence. Secrets, hidden reasoning, authority overrides and executable markup are rejected (not redacted). Frontmatter gets the same scan as the body, and rejection evidence is a code, never content (C-01–C-21).
+  - Final closure (candidate sanitization): every skill-candidate field passes one boundary, `normalizeSkillCandidate`, before persistence. Secrets, hidden reasoning, authority overrides and executable markup are rejected (not redacted). Frontmatter gets the same scan as the body, and rejection evidence is a code, never content (C-01–C-21). Final hardening: raw candidate input is structurally bounded (keys, list items, characters; no nested values) before canonical serialisation, and candidate ids derive only from the bounded canonical draft (C-22–C-24).
   - Status: SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED; REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO.
 
 - Next: HALO target-host acceptance (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`), then the five-arm V1.1 real-model benchmark (A baseline … E approved learning) in `docs/evals/V1_1_BENCHMARK.md`. No further V1.1 development sprint is planned.

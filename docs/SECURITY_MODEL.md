@@ -202,9 +202,10 @@ UI / future Runtime Evals:
   - Every persisted record string passes `sanitizePersistedText` (canonical redactor plus reasoning strip).
   - **All externally or model-authored skill-candidate text is sanitized and safety-validated before persistence.** One boundary, `normalizeSkillCandidate`, rejects secrets, hidden reasoning, authority overrides and executable markup in any field. It then sanitises and bounds every field and checks the closed vocabularies, at submission, at proposal and again at approval.
   - **Skill metadata/frontmatter is subject to the same safety boundary as skill body text.** The rendered `SKILL.md` is scanned as a whole document, frontmatter included, on top of the 5A schema.
+  - **Raw candidate input is structurally bounded before canonical serialization/fingerprinting.** The boundary caps top-level keys (64), list items (64) and total raw characters (16,000) before it reads or copies values, and rejects nested objects without traversing them. Unknown values are never serialised, hashed, logged or stored. **Candidate identity is derived only from a bounded canonical representation** (the normalised draft, or the rejection stub's code and ids), never from the raw object.
   - **Candidate rejection evidence never stores rejected raw content.** A rejected draft is stored as a stub with a code and a field name (for example `SECRET_DETECTED in description`). Reasons never quote author text or unknown vocabulary values.
   - A corrupt store is never overwritten; a hand-edited learned skill is never silently updated.
-- **Result**: learning cannot grant authority, widen a skill's capabilities, change prompts before approval, persist secrets or reasoning, contact a network, or download a model. Evidence: `packages/agent-core/tests/learning/` (L-10/10b, L-13, L-15, L-16, L-17–19, L-21, L-24, L-34/35; candidate boundary C-01–C-21) and `eval:learning` fixtures G/H.
+- **Result**: learning cannot grant authority, widen a skill's capabilities, change prompts before approval, persist secrets or reasoning, contact a network, or download a model. Evidence: `packages/agent-core/tests/learning/` (L-10/10b, L-13, L-15, L-16, L-17–19, L-21, L-24, L-34/35; candidate boundary C-01–C-24) and `eval:learning` fixtures G/H.
 
 ---
 
