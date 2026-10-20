@@ -1,0 +1,22 @@
+name: Independent Open VS Code Runtime Smoke
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  coding-agent-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Real coding-agent runner, gated patches, repair, and verification
+        working-directory: packages/agent-core
+        run: node --import tsx/esm --test tests/agent/runner.test.ts tests/agent/repair-e2e.test.ts tests/agent/verification-integration.test.ts
+      - name: Real agent recovery tests with scripted provider (no live model)
+        working-directory: packages/agent-core
+        run: node --import tsx/esm --test tests/recovery/*.test.ts
