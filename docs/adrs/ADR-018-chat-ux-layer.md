@@ -40,3 +40,16 @@ Diff UX is explicitly deferred to Sprint 3C.
 - Conversation history is naturally bounded and gracefully integrated.
 - All Chat UX integration tests pass synchronously without real model inference dependencies.
 - File writes are fully blocked until the precise confirmation ID clears the await lock.
+
+## Sprint 7A refinements (presentation only)
+
+Sprint 7A did not change this ADR's authority map. It added Webview chrome and host-side descriptors:
+
+- Explicit attachments are path/range descriptors. They are never file contents. `ContextCompiler` still decides what enters the prompt.
+- Connection status may display HALO as Ready only after a successful health check.
+- Activity rows are mapped from emitted `AgentEvent`s. Unknown events are omitted; progress percentages are not fabricated.
+- Transcript DOM updates skip unchanged messages (`syncTranscript` + content signature).
+- Token-by-token streaming remains out of scope until the provider/bridge emit incremental text events.
+- Persistent multi-session storage remains Sprint 7C.
+
+Record: `docs/sprints/SPRINT_7A_AGENT_EXPERIENCE.md`.
