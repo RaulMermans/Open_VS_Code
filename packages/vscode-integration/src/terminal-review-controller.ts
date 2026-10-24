@@ -10,6 +10,12 @@ export type TerminalReviewStatus =
   | 'CANCELLED'
   | 'REJECTED';
 
+const FINISHED_STATUSES: readonly TerminalReviewStatus[] = ['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'REJECTED'];
+
+export function isFinishedTerminalStatus(status: TerminalReviewStatus): boolean {
+  return FINISHED_STATUSES.includes(status);
+}
+
 export function truncateUtf8Buffer(buf: Buffer, maxBytes: number): { buffer: Buffer; truncated: boolean } {
   if (buf.length <= maxBytes) {
     return { buffer: buf, truncated: false };
@@ -51,6 +57,7 @@ export interface TerminalReviewEntry {
   readonly scriptName?: string;
   readonly scriptBody?: string;
   status: TerminalReviewStatus;
+  startedAt: number | null;
   exitCode: number | null;
   exitSignal: string | null;
   durationMs: number | null;
@@ -77,6 +84,10 @@ export class TerminalReviewController {
   private maxTotalRetainedBytes: number;
   private onDidChangeEmitter = vscode.EventEmitter ? new vscode.EventEmitter<string>() : null;
   readonly onDidChange = this.onDidChangeEmitter?.event;
+
+  get outputLimitBytes(): number {
+    return this.maxOutputBytes;
+  }
 
   constructor(options?: TerminalReviewControllerOptions) {
     this.maxOutputBytes = options?.maxOutputBytes ?? 16 * 1024;
@@ -131,6 +142,7 @@ export class TerminalReviewController {
       scriptName: params.scriptName,
       scriptBody: params.scriptBody,
       status: 'WAITING_APPROVAL',
+      startedAt: null,
       exitCode: null,
       exitSignal: null,
       durationMs: null,
@@ -157,9 +169,18 @@ export class TerminalReviewController {
     return this.reviews.get(executionId);
   }
 
+  /**
+   * Status is monotonic: once an execution has finished (including REJECTED or
+   * CANCELLED), later or forged lifecycle signals cannot move it again.
+   */
   setStatus(executionId: string, status: TerminalReviewStatus): boolean {
     const entry = this.reviews.get(executionId);
     if (!entry) return false;
+    if (isFinishedTerminalStatus(entry.status)) return entry.status === status;
+    if (status === 'RUNNING' && entry.startedAt === null) {
+      entry.startedAt = Date.now();
+      entry.isOutputVisible = true;
+    }
     entry.status = status;
     this.onDidChangeEmitter?.fire(executionId);
     return true;
@@ -188,7 +209,7 @@ export class TerminalReviewController {
     if (!entry) return;
 
     // If already in a terminal finished state, ignore late output
-    if (['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'REJECTED'].includes(entry.status)) {
+    if (isFinishedTerminalStatus(entry.status)) {
       return;
     }
 
@@ -242,11 +263,17 @@ export class TerminalReviewController {
   }): void {
     const entry = this.reviews.get(executionId);
     if (!entry) return;
+    // A rejected command never ran, and a finished result is never overwritten by a
+    // late or duplicate completion. A user cancel may still receive the engine's
+    // exit details, but the status stays CANCELLED.
+    if (entry.status === 'REJECTED') return;
+    if (isFinishedTerminalStatus(entry.status) && entry.status !== 'CANCELLED') return;
+    if (entry.status === 'CANCELLED' && entry.durationMs !== null) return;
 
-    entry.status = details.status;
+    if (entry.status !== 'CANCELLED') entry.status = details.status;
     entry.exitCode = details.exitCode ?? null;
     entry.exitSignal = details.exitSignal ?? null;
-    entry.durationMs = details.durationMs ?? null;
+    entry.durationMs = details.durationMs ?? (entry.startedAt !== null ? Date.now() - entry.startedAt : null);
 
     const outDecoder = this.stdoutDecoders.get(executionId);
     if (outDecoder) {
@@ -290,7 +317,7 @@ export class TerminalReviewController {
   private enforceReviewCountBudget(): void {
     if (this.reviews.size < this.maxReviews) return;
     for (const [id, entry] of this.reviews) {
-      if (['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'REJECTED'].includes(entry.status)) {
+      if (isFinishedTerminalStatus(entry.status)) {
         this.clearReview(id);
         if (this.reviews.size < this.maxReviews) break;
       }
@@ -300,7 +327,7 @@ export class TerminalReviewController {
   private enforceTotalRetainedBytesBudget(): void {
     if (this.totalRetainedBytes <= this.maxTotalRetainedBytes) return;
     for (const [id, entry] of this.reviews) {
-      if (['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'REJECTED'].includes(entry.status)) {
+      if (isFinishedTerminalStatus(entry.status)) {
         this.clearReview(id);
         if (this.totalRetainedBytes <= this.maxTotalRetainedBytes) break;
       }
@@ -326,6 +353,17 @@ export class TerminalReviewController {
     }
   }
 
+  async copyOutput(executionId: string): Promise<boolean> {
+    const entry = this.reviews.get(executionId);
+    if (!entry) return false;
+    try {
+      await vscode.env.clipboard.writeText(formatTerminalTranscript(entry));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   clearReview(executionId: string): void {
     const entry = this.reviews.get(executionId);
     if (entry) {
@@ -342,4 +380,24 @@ export class TerminalReviewController {
     this.stdoutDecoders.clear();
     this.stderrDecoders.clear();
   }
+}
+
+/** Plain-text record of a bounded execution, for the clipboard and the native Output panel. */
+export function formatTerminalTranscript(entry: TerminalReviewEntry): string {
+  const lines = [
+    '$ ' + entry.command,
+    'cwd: ' + entry.cwd,
+    'provenance: ' + entry.provenance,
+    'status: ' + entry.status +
+      (entry.exitCode !== null ? ' · exit ' + entry.exitCode : '') +
+      (entry.exitSignal ? ' · signal ' + entry.exitSignal : '') +
+      (entry.durationMs !== null ? ' · ' + entry.durationMs + ' ms' : ''),
+    '',
+  ];
+  if (entry.stdout) lines.push(entry.stdout);
+  if (entry.stdoutTruncated) lines.push('[stdout truncated at the retained-output limit]');
+  if (entry.stderr) lines.push('--- stderr ---', entry.stderr);
+  if (entry.stderrTruncated) lines.push('[stderr truncated at the retained-output limit]');
+  if (!entry.stdout && !entry.stderr) lines.push('(no output)');
+  return lines.join('\n');
 }

@@ -417,7 +417,7 @@ export function describeAttachment(
   return {
     id,
     kind: request.kind,
-    label: request.label || request.kind,
+    label: request.label || request.kind || "context",
     removable: true,
     unavailable: request.kind !== "selection" && request.kind !== "active-file",
     reason: request.kind === "selection" || request.kind === "active-file" ? undefined : "Nothing to attach",

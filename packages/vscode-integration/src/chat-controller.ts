@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { AgentEvent, ConversationTurn } from '@open-vs-code/agent-core';
-import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit } from './chat-protocol.js';
-import { DiffReviewController } from './diff-review-controller.js';
-import { TerminalReviewController } from './terminal-review-controller.js';
+import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto } from './chat-protocol.js';
+import { DiffReviewController, ReviewStatus } from './diff-review-controller.js';
+import { TerminalReviewController, TerminalReviewEntry, formatTerminalTranscript } from './terminal-review-controller.js';
 import {
   activityFromAgentEvent,
   classifyTurnError,
@@ -18,6 +18,13 @@ import {
   MAX_FILE_SEARCH_RESULTS,
   type ConnectionSnapshotInput,
 } from './chat-ux-model.js';
+import {
+  MAX_REVIEW_RECORDS,
+  describeMutationFailure,
+  reviewStatusFromMutation,
+  reviewStatusFromTerminal,
+  terminalOutputSignature,
+} from './review-model.js';
 
 export class ChatController {
   private state: WebviewState;
@@ -33,6 +40,11 @@ export class ChatController {
   private _confirmationResolver?: (value: "APPROVE" | "REJECT") => void;
   private _confirmationInFlight = false;
   private _connectionInput: ConnectionSnapshotInput = {};
+  /** Mutations applied since the last approved verification, for the review ledger. */
+  private _appliedSinceVerification: string[] = [];
+  private _approvedMutations = new Set<string>();
+  private _lastTerminalSignature = '';
+  private _outputChannel?: { appendLine: (s: string) => void; show: (preserveFocus?: boolean) => void; dispose: () => void };
   
   constructor(host: any, arg2: any, arg3?: any, arg4?: any) {
     this.host = host;
@@ -60,10 +72,13 @@ export class ChatController {
       attachments: [],
       activeTurn: false,
       connection: deriveConnectionStatus(this._connectionInput),
+      reviews: [],
     };
   }
 
   public dispose(): void {
+    this._outputChannel?.dispose();
+    this._outputChannel = undefined;
     this._webviewMessageDisposable?.dispose();
     this._webviewDisposeDisposable?.dispose();
     this._webviewMessageDisposable = undefined;
@@ -80,6 +95,11 @@ export class ChatController {
     if (!this.state.activeTurn) {
       return "REJECT";
     }
+    // The runner asks for one decision at a time. A second request while one is
+    // pending is anomalous: refuse it rather than orphan the first decision.
+    if (this._confirmationResolver || this.state.pendingConfirmation) {
+      return "REJECT";
+    }
 
     const isWriteFile = payload?.action === 'write_file' || payload?.operation === 'patch' || payload?.operation === 'create';
     const isVerification = payload?.action === 'run_known_test' || payload?.action === 'run_verification' || Boolean(payload?.preparedCommand);
@@ -91,12 +111,27 @@ export class ChatController {
     const mutationId = payload?.id || confirmationId;
     const reviewData = payload?.reviewPayload || payload;
 
+    let mutationSummary: MutationSummaryDto | undefined;
     if (isWriteFile && reviewData) {
       this.diffReviewController?.registerReview?.(
         mutationId,
         reviewData.beforeContent || '',
         reviewData.proposedContent || ''
       );
+      mutationSummary = {
+        operation: reviewData.operation || payload?.operation || (payload?.action === 'write_file' ? 'patch' : 'unknown'),
+        linesAdded: typeof reviewData.linesAdded === 'number' ? reviewData.linesAdded : undefined,
+        linesRemoved: typeof reviewData.linesRemoved === 'number' ? reviewData.linesRemoved : undefined,
+        beforeHash: typeof reviewData.beforeHash === 'string' ? reviewData.beforeHash : undefined,
+        afterHash: typeof reviewData.afterHash === 'string' ? reviewData.afterHash : undefined,
+      };
+      this.upsertReview({
+        id: mutationId,
+        kind: 'mutation',
+        status: 'pending',
+        path: payload?.path || payload?.reviewPayload?.path,
+        mutation: mutationSummary,
+      });
     }
 
     let preparedCommandDto: TerminalReviewDto | undefined;
@@ -139,15 +174,15 @@ export class ChatController {
         scriptBody: pc.scriptBody,
       });
 
-      preparedCommandDto = {
-        executionId: entry.executionId,
-        command: entry.command,
-        cwd: entry.cwd,
-        provenance: entry.provenance,
-        timeoutMs: entry.timeoutMs,
-        status: entry.status,
-      };
+      preparedCommandDto = this.terminalDto(entry);
       this.state.activeTerminal = preparedCommandDto;
+      this.upsertReview({
+        id: entry.executionId,
+        kind: 'command',
+        status: 'pending',
+        command: entry.command,
+        verifies: this._appliedSinceVerification.length ? this._appliedSinceVerification.slice() : undefined,
+      });
     }
 
     this._confirmationInFlight = false;
@@ -158,6 +193,7 @@ export class ChatController {
       riskLabel: isWriteFile ? 'High Risk Mutation' : isVerification ? 'Controlled Verification Terminal' : 'Verification/External',
       mutationId: isWriteFile ? mutationId : undefined,
       path: payload?.path || payload?.reviewPayload?.path,
+      mutation: mutationSummary,
       preparedCommand: preparedCommandDto,
       responding: false,
     };
@@ -255,7 +291,7 @@ export class ChatController {
           }
         }
         if (this.state.pendingConfirmation?.mutationId) {
-          this.diffReviewController.setStatus(this.state.pendingConfirmation.mutationId, 'CANCELLED');
+          this.setMutationStatus(this.state.pendingConfirmation.mutationId, 'CANCELLED');
           this.diffReviewController.clearReview(this.state.pendingConfirmation.mutationId);
         }
         if (this.state.pendingConfirmation?.preparedCommand?.executionId) {
@@ -272,7 +308,11 @@ export class ChatController {
           attachments: [],
           activeTurn: false,
           connection: deriveConnectionStatus(this._connectionInput),
+          reviews: [],
         };
+        this._appliedSinceVerification = [];
+        this._approvedMutations.clear();
+        this._lastTerminalSignature = '';
         this.sendMessage({ type: "conversation.reset" });
         this.sendState();
         break;
@@ -315,50 +355,33 @@ export class ChatController {
               );
               if (isDirty) {
                 vscode.window.showErrorMessage("Save or discard unsaved changes before applying this proposal.");
+                this.state.pendingConfirmation.blockedReason = 'Unsaved editor changes in ' + this.state.pendingConfirmation.path + '. Save or discard them, then approve again.';
+                this.sendState();
                 return;
               }
             }
 
             this._confirmationInFlight = true;
+            if (message.action === 'APPROVE' && mutId) this._approvedMutations.add(mutId);
             this.state.pendingConfirmation.responding = true;
             this.sendState();
             this.state.pendingConfirmation = undefined;
             if (termId) {
               if (message.action === 'APPROVE') {
                 this.terminalReviewController.setStatus(termId, 'RUNNING');
-                const tEntry = this.terminalReviewController.getByExecutionId(termId);
-                if (tEntry) {
-                  this.state.activeTerminal = {
-                    executionId: tEntry.executionId,
-                    command: tEntry.command,
-                    cwd: tEntry.cwd,
-                    provenance: tEntry.provenance,
-                    timeoutMs: tEntry.timeoutMs,
-                    status: tEntry.status,
-                    isOutputVisible: tEntry.isOutputVisible,
-                  };
-                }
+                this._appliedSinceVerification = [];
               } else {
                 this.terminalReviewController.setStatus(termId, 'REJECTED');
-                const tEntry = this.terminalReviewController.getByExecutionId(termId);
-                if (tEntry) {
-                  this.state.activeTerminal = {
-                    executionId: tEntry.executionId,
-                    command: tEntry.command,
-                    cwd: tEntry.cwd,
-                    provenance: tEntry.provenance,
-                    timeoutMs: tEntry.timeoutMs,
-                    status: tEntry.status,
-                    isOutputVisible: tEntry.isOutputVisible,
-                  };
-                }
+                this.clearVerifies(termId);
               }
+              const tEntry = this.terminalReviewController.getByExecutionId(termId);
+              if (tEntry) this.syncTerminalState(tEntry);
             }
             this.sendState();
             const resolver = this._confirmationResolver;
             this._confirmationResolver = undefined;
             if (message.action === 'REJECT' && mutId) {
-              this.diffReviewController.setStatus(mutId, 'REJECTED');
+              this.setMutationStatus(mutId, 'REJECTED');
               this.diffReviewController.clearReview(mutId);
             }
             this._confirmationInFlight = false;
@@ -366,25 +389,17 @@ export class ChatController {
           }
         }
         break;
-      case 'terminal.cancel':
-        if (message.executionId) {
-          this.cancelTurn();
-          this.terminalReviewController.setStatus(message.executionId, 'CANCELLED');
-          const tEntry = this.terminalReviewController.getByExecutionId(message.executionId);
-          if (tEntry) {
-            this.state.activeTerminal = {
-              executionId: tEntry.executionId,
-              command: tEntry.command,
-              cwd: tEntry.cwd,
-              provenance: tEntry.provenance,
-              timeoutMs: tEntry.timeoutMs,
-              status: tEntry.status,
-              isOutputVisible: tEntry.isOutputVisible,
-            };
-            this.sendState();
-          }
-        }
+      case 'terminal.cancel': {
+        // Only a command that is actually running can be cancelled from its card;
+        // an unknown or finished id is ignored rather than aborting the turn.
+        const tEntry = this.terminalReviewController.getByExecutionId(message.executionId);
+        if (!tEntry || tEntry.status !== 'RUNNING') break;
+        this.cancelTurn();
+        this.terminalReviewController.setStatus(message.executionId, 'CANCELLED');
+        this.syncTerminalState(tEntry);
+        this.sendState();
         break;
+      }
       case 'terminal.toggleOutput':
         if (message.executionId) {
           this.terminalReviewController.toggleOutput(message.executionId);
@@ -398,6 +413,20 @@ export class ChatController {
       case 'terminal.copyCommand':
         if (message.executionId) {
           await this.terminalReviewController.copyCommand(message.executionId);
+        }
+        break;
+      case 'terminal.copyOutput':
+        await this.terminalReviewController.copyOutput(message.executionId);
+        break;
+      case 'terminal.openOutput':
+        this.showTerminalTranscript(message.executionId);
+        break;
+      case 'review.openChange':
+        await this.openReviewedChange(message.mutationId);
+        break;
+      case 'ui.openSourceControl':
+        if (vscode.commands?.executeCommand) {
+          try { await vscode.commands.executeCommand('workbench.view.scm'); } catch { /* SCM view unavailable */ }
         }
         break;
       case 'ui.openDiff':
@@ -421,13 +450,19 @@ export class ChatController {
     }
   }
 
-  private syncTerminalState(tEntry: import('./terminal-review-controller.js').TerminalReviewEntry) {
-    this.state.activeTerminal = {
+  private terminalDto(tEntry: TerminalReviewEntry): TerminalReviewDto {
+    return {
       executionId: tEntry.executionId,
       command: tEntry.command,
       cwd: tEntry.cwd,
       provenance: tEntry.provenance,
       timeoutMs: tEntry.timeoutMs,
+      executable: tEntry.executable,
+      args: [...tEntry.args],
+      scriptName: tEntry.scriptName,
+      scriptBody: tEntry.scriptBody,
+      startedAt: tEntry.startedAt,
+      outputLimitBytes: this.terminalReviewController.outputLimitBytes,
       status: tEntry.status,
       exitCode: tEntry.exitCode,
       exitSignal: tEntry.exitSignal,
@@ -438,6 +473,99 @@ export class ChatController {
       stderrTruncated: tEntry.stderrTruncated,
       isOutputVisible: tEntry.isOutputVisible,
     };
+  }
+
+  private syncTerminalState(tEntry: TerminalReviewEntry) {
+    this.state.activeTerminal = this.terminalDto(tEntry);
+  }
+
+  private upsertReview(record: ReviewRecordDto): void {
+    const reviews = this.state.reviews || (this.state.reviews = []);
+    const index = reviews.findIndex((r) => r.id === record.id && r.kind === record.kind);
+    if (index >= 0) reviews[index] = { ...reviews[index], ...record };
+    else reviews.push(record);
+    while (reviews.length > MAX_REVIEW_RECORDS) {
+      const evictable = reviews.findIndex((r) => r.status !== 'pending' && r.status !== 'running');
+      reviews.splice(evictable >= 0 ? evictable : 0, 1);
+    }
+  }
+
+  private findReview(id: string, kind: ReviewRecordDto['kind']): ReviewRecordDto | undefined {
+    return this.state.reviews?.find((r) => r.id === id && r.kind === kind);
+  }
+
+  /** The one place a mutation's review status changes, so the diff registry and ledger agree. */
+  private setMutationStatus(mutationId: string, status: ReviewStatus, detail?: string): void {
+    this.diffReviewController?.setStatus?.(mutationId, status);
+    const record = this.findReview(mutationId, 'mutation');
+    if (!record) return;
+    record.status = reviewStatusFromMutation(status);
+    if (detail) record.detail = detail;
+  }
+
+  private clearVerifies(executionId: string): void {
+    const record = this.findReview(executionId, 'command');
+    if (record) record.verifies = undefined;
+  }
+
+  /** Command rows mirror TerminalReviewController; mutation rows link to the latest command that checked them. */
+  private refreshReviews(): void {
+    const reviews = this.state.reviews;
+    if (!reviews?.length) return;
+    for (const record of reviews) {
+      if (record.kind !== 'command') continue;
+      const entry = this.terminalReviewController.getByExecutionId(record.id);
+      if (!entry) continue;
+      record.status = reviewStatusFromTerminal(entry.status);
+      record.exitCode = entry.exitCode;
+      record.durationMs = entry.durationMs;
+      for (const mutationId of record.verifies || []) {
+        const change = this.findReview(mutationId, 'mutation');
+        if (change) change.verifiedBy = { id: record.id, command: record.command || '', status: record.status };
+      }
+    }
+  }
+
+  private showTerminalTranscript(executionId: string): void {
+    const entry = this.terminalReviewController.getByExecutionId(executionId);
+    if (!entry) return;
+    if (!this._outputChannel) {
+      if (typeof vscode.window?.createOutputChannel !== 'function') return;
+      this._outputChannel = vscode.window.createOutputChannel('Open VS Code: Commands');
+    }
+    this._outputChannel.appendLine(formatTerminalTranscript(entry));
+    this._outputChannel.appendLine('');
+    this._outputChannel.show(true);
+  }
+
+  private async openReviewedChange(mutationId: string): Promise<void> {
+    const record = this.findReview(mutationId, 'mutation');
+    if (!record?.path) return;
+    if (record.status === 'pending' && this.state.pendingConfirmation?.mutationId === mutationId) {
+      await this.diffReviewController.openDiff(mutationId, record.path, record.mutation?.operation === 'create');
+      return;
+    }
+    if (record.status === 'applied') {
+      const uri = this.containedWorkspaceUri(record.path);
+      if (uri && vscode.commands?.executeCommand) {
+        try {
+          await vscode.commands.executeCommand('git.openChange', uri);
+          return;
+        } catch { /* No Git change view; fall back to the file. */ }
+      }
+    }
+    await this.openWorkspaceFile(record.path);
+  }
+
+  private containedWorkspaceUri(rawPath: string): any {
+    const relative = sanitizeRelativePath(rawPath);
+    const folders = vscode.workspace?.workspaceFolders;
+    if (!relative || !folders || folders.length === 0 || !vscode.Uri?.joinPath) return undefined;
+    const uri = vscode.Uri.joinPath(folders[0].uri, relative);
+    const root = folders[0].uri.fsPath.replace(/\\/g, '/');
+    const opened = uri.fsPath.replace(/\\/g, '/');
+    if (opened !== root && !opened.startsWith(root + '/')) return undefined;
+    return uri;
   }
   
   private async startTurn(text: string, mode: ChatMode) {
@@ -508,6 +636,7 @@ export class ChatController {
       
       this.state.activeTurn = false;
       this.completePendingActivities(result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
+      this.closeUndecided();
       this.state.pendingConfirmation = undefined;
       if (result.status === 'COMPLETED' && this._connectionInput.inferenceBackend !== 'halo') {
         const { lastError: _ignored, ...rest } = this._connectionInput;
@@ -549,6 +678,7 @@ export class ChatController {
       
       this.state.activeTurn = false;
       this.completePendingActivities('failed');
+      this.closeUndecided();
       this.state.pendingConfirmation = undefined;
       const classified = typeof e.message === 'string' ? classifyTurnError(e.message) : undefined;
       if (classified) {
@@ -610,11 +740,12 @@ export class ChatController {
       this.sendState();
       
       if (mutationId) {
-        this.diffReviewController?.setStatus?.(mutationId, 'CANCELLED');
+        this.setMutationStatus(mutationId, 'CANCELLED', 'Interrupted before a decision — nothing was written.');
         this.diffReviewController?.clearReview?.(mutationId);
       }
       if (termId) {
         this.terminalReviewController.setStatus(termId, 'CANCELLED');
+        this.clearVerifies(termId);
       }
       resolver("REJECT");
     } else {
@@ -634,22 +765,26 @@ export class ChatController {
     } else if (ev.type === 'mutation.applied') {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
-        this.diffReviewController.setStatus(payload.mutationId, 'APPLIED');
+        this.setMutationStatus(payload.mutationId, 'APPLIED');
         this.diffReviewController.clearReview(payload.mutationId);
+        if (this.findReview(payload.mutationId, 'mutation') && !this._appliedSinceVerification.includes(payload.mutationId)) {
+          this._appliedSinceVerification.push(payload.mutationId);
+        }
+        this.sendState();
       }
     } else if (ev.type === 'mutation.failed') {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
-        const error = payload.error;
-        const isStale = error && (error.code === 'STALE_BASE' || error.message?.includes('STALE_BASE') || error.code === 'FILE_EXISTS' || error.message?.includes('FILE_EXISTS'));
-        this.diffReviewController.setStatus(payload.mutationId, isStale ? 'STALE' : 'FAILED');
+        const failure = describeMutationFailure(payload.error);
+        this.setMutationStatus(payload.mutationId, failure.stale ? 'STALE' : 'FAILED', failure.detail);
         this.diffReviewController.clearReview(payload.mutationId);
+        this.sendState();
       }
     } else if (ev.type === 'mutation.rejected') {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
         if (this.diffReviewController.getStatus(payload.mutationId) !== 'CANCELLED') {
-          this.diffReviewController.setStatus(payload.mutationId, 'REJECTED');
+          this.setMutationStatus(payload.mutationId, 'REJECTED');
         }
         this.diffReviewController.clearReview(payload.mutationId);
       }
@@ -684,6 +819,10 @@ export class ChatController {
           this.terminalReviewController.appendOutput(cleanExecId, payload.stream, payload.chunk);
           const tEntry = this.terminalReviewController.getByExecutionId(cleanExecId);
           if (tEntry && this.state.activeTerminal?.executionId === cleanExecId) {
+            // Once a stream hits its bound, further chunks change nothing; skip the post.
+            const signature = terminalOutputSignature(tEntry);
+            if (signature === this._lastTerminalSignature) return;
+            this._lastTerminalSignature = signature;
             this.syncTerminalState(tEntry);
             this.sendMessage({
               type: 'terminal.updated',
@@ -711,6 +850,12 @@ export class ChatController {
             stdout: res?.stdout,
             stderr: res?.stderr,
           });
+          const record = this.findReview(cleanExecId, 'command');
+          if (record && res?.status === 'STALE_VERIFICATION') {
+            record.detail = 'package.json or the script changed after approval was requested, so the command was not run.';
+          } else if (record && res?.status === 'EXECUTION_ERROR') {
+            record.detail = 'The command could not be started. See its output for the reason.';
+          }
           if (this.state.activeTerminal?.executionId === cleanExecId) {
             this.syncTerminalState(tEntry);
           }
@@ -752,6 +897,7 @@ export class ChatController {
   }
   
   private sendState() {
+    this.refreshReviews();
     // Bound messages: max 100 messages, max 200k chars
     while (this.state.messages.length > 100) {
       this.state.messages.shift();
@@ -794,6 +940,32 @@ export class ChatController {
       }
     }
     this.state.activities.push(activity);
+  }
+
+  /**
+   * A turn that ends with an undecided request never acted on it. Release the
+   * orphaned decision as REJECT so it cannot block or be answered in a later turn.
+   */
+  private closeUndecided(): void {
+    const termId = this.state.pendingConfirmation?.preparedCommand?.executionId;
+    if (termId) {
+      this.terminalReviewController.setStatus(termId, 'CANCELLED');
+      this.clearVerifies(termId);
+    }
+    if (this._confirmationResolver) {
+      const resolver = this._confirmationResolver;
+      this._confirmationResolver = undefined;
+      this._confirmationInFlight = false;
+      resolver('REJECT');
+    }
+    for (const record of this.state.reviews || []) {
+      if (record.kind !== 'mutation' || record.status !== 'pending') continue;
+      if (this._approvedMutations.has(record.id)) {
+        this.setMutationStatus(record.id, 'FAILED', 'Approved, but the engine reported no applied result. Check the file before retrying.');
+      } else {
+        this.setMutationStatus(record.id, 'CANCELLED', 'Turn ended before a decision — nothing was written.');
+      }
+    }
   }
 
   private completePendingActivities(status: ChatActivity['status']): void {
@@ -900,12 +1072,8 @@ export class ChatController {
       await this.host.openWorkspaceFile(relative);
       return;
     }
-    const folders = vscode.workspace?.workspaceFolders;
-    if (!folders || folders.length === 0) return;
-    const uri = vscode.Uri.joinPath(folders[0].uri, relative);
-    const root = folders[0].uri.fsPath.replace(/\\/g, '/');
-    const opened = uri.fsPath.replace(/\\/g, '/');
-    if (opened !== root && !opened.startsWith(root + '/')) return;
+    const uri = this.containedWorkspaceUri(relative);
+    if (!uri) return;
     await vscode.window.showTextDocument(uri);
   }
   

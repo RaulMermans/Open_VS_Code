@@ -139,9 +139,9 @@ export function renderChatMessage(
 
 function fillMessageBody(body: any, content: string, d: any, postMessage?: (msg: any) => void): void {
   var segments = parseMessageSegments(content);
-  var onlyPlain = segments.length === 1 && segments[0].kind === "text";
-  if (onlyPlain) {
-    setText(body, segments[0].text);
+  var first = segments[0];
+  if (segments.length === 1 && first.kind === "text") {
+    setText(body, first.text);
     return;
   }
   body.textContent = "";
@@ -408,105 +408,382 @@ export function renderConnectionStatus(container: any, connection: any, doc?: an
   return wrap;
 }
 
+function formatDuration(ms: number): string {
+  if (typeof ms !== 'number' || !(ms >= 0)) return '';
+  if (ms < 1000) return Math.round(ms) + ' ms';
+  var seconds = ms / 1000;
+  if (seconds < 10) return seconds.toFixed(1) + ' s';
+  var total = Math.round(seconds);
+  if (total < 60) return total + ' s';
+  var rest = total % 60;
+  return Math.floor(total / 60) + ' m' + (rest ? ' ' + rest + ' s' : '');
+}
+
+function formatBytes(bytes: number): string {
+  if (typeof bytes !== 'number' || !(bytes > 0)) return '';
+  return bytes >= 1024 ? Math.round(bytes / 1024) + ' KB' : bytes + ' bytes';
+}
+
+function formatArgs(args: any): string {
+  if (!args || !args.length) return '(none)';
+  var out = [];
+  for (var i = 0; i < args.length; i++) {
+    var a = String(args[i]);
+    out.push(a === '' || /[\s"'\\]/.test(a) ? JSON.stringify(a) : a);
+  }
+  return out.join(' ');
+}
+
+function terminalStatusLabel(term: any): string {
+  switch (term.status) {
+    case 'WAITING_APPROVAL': return 'Waiting for approval';
+    case 'RUNNING': return 'Running';
+    case 'SUCCEEDED': return 'Passed';
+    case 'FAILED': return 'Failed';
+    case 'TIMED_OUT': return 'Timed out';
+    case 'CANCELLED': return 'Cancelled';
+    case 'REJECTED': return 'Rejected — not run';
+    default: return String(term.status || 'Unknown');
+  }
+}
+
+function terminalResultText(term: any): string {
+  var parts = [];
+  if (term.status === 'TIMED_OUT') parts.push('Stopped after the ' + formatDuration(term.timeoutMs) + ' limit');
+  if (term.exitCode !== undefined && term.exitCode !== null) parts.push('Exit ' + term.exitCode);
+  if (term.exitSignal) parts.push('Signal ' + term.exitSignal);
+  if (typeof term.durationMs === 'number') parts.push(formatDuration(term.durationMs));
+  if (term.status === 'CANCELLED' && !parts.length) parts.push('Process stopped');
+  return parts.join(' · ');
+}
+
+function terminalOutputText(term: any): string {
+  var text = '';
+  if (term.stdout) text += term.stdout;
+  if (term.stderr) text += (text ? '\n--- stderr ---\n' : '') + term.stderr;
+  if (text) return text;
+  return term.status === 'RUNNING' ? '(waiting for output…)' : '(no output)';
+}
+
+function appendMetaRow(d: any, parent: any, label: string, value: string, mono?: boolean): any {
+  var row = d.createElement('div');
+  row.className = 'terminal-row';
+  var k = d.createElement('span');
+  k.className = 'terminal-row-label';
+  setText(k, label);
+  var v = d.createElement('span');
+  v.className = mono ? 'terminal-row-value mono' : 'terminal-row-value';
+  setText(v, value);
+  row.appendChild(k);
+  row.appendChild(v);
+  parent.appendChild(row);
+  return v;
+}
+
+function appendAction(d: any, parent: any, label: string, aria: string, handler?: () => void): any {
+  var btn = d.createElement('button');
+  btn.className = 'btn-reject';
+  btn.type = 'button';
+  setText(btn, label);
+  setAttr(btn, 'aria-label', aria);
+  if (handler) onClick(btn, handler);
+  parent.appendChild(btn);
+  return btn;
+}
+
+/** Elapsed time for a running command; called by the view's one-second ticker. */
+export function updateTerminalElapsed(container: any, now: number): boolean {
+  var view = container && container.__termView;
+  if (!view || !view.elapsedEl || typeof view.startedAt !== 'number') return false;
+  setText(view.elapsedEl, 'Running for ' + formatDuration(Math.max(0, now - view.startedAt)));
+  return true;
+}
+
+/**
+ * Renders the controlled-terminal card. Streaming updates for the same execution
+ * only replace the output text; the card is rebuilt only when its structure changes.
+ */
 export function renderTerminalOutput(
   container: any,
   term: any,
   doc?: any,
-  postMessage?: (msg: any) => void
+  postMessage?: (msg: any) => void,
+  onRetry?: (term: any) => void
 ): any {
+  if (!term) {
+    container.innerHTML = '';
+    container.__termView = null;
+    return null;
+  }
+  var structure = [term.executionId, term.status, term.isOutputVisible ? 1 : 0, term.stdoutTruncated ? 1 : 0,
+    term.stderrTruncated ? 1 : 0, term.exitCode, term.exitSignal, term.durationMs].join('|');
+  var existing = container.__termView;
+  if (existing && existing.structure === structure) {
+    if (existing.outBox) setText(existing.outBox, terminalOutputText(term));
+    return existing.card;
+  }
+
   container.innerHTML = '';
-  if (!term) return null;
-
-  const d = docOf(doc);
-  const card = d.createElement('div');
-  card.className = 'terminal-card';
+  var d = docOf(doc);
+  var running = term.status === 'RUNNING';
+  var finished = !running && term.status !== 'WAITING_APPROVAL';
+  var card = d.createElement('div');
+  card.className = 'terminal-card status-' + String(term.status || '').toLowerCase();
   setAttr(card, 'role', 'region');
-  setAttr(card, 'aria-label', 'Controlled terminal ' + term.status);
+  setAttr(card, 'aria-label', 'Controlled command: ' + terminalStatusLabel(term));
 
-  const title = d.createElement('div');
-  title.style.fontWeight = 'bold';
-  title.style.marginBottom = '5px';
-  title.textContent = 'Controlled Terminal Execution (' + term.status + ')';
-  card.appendChild(title);
+  var header = d.createElement('div');
+  header.className = 'terminal-header';
+  var title = d.createElement('span');
+  title.className = 'terminal-title';
+  setText(title, 'Command');
+  var badge = d.createElement('span');
+  badge.className = 'status-badge';
+  setAttr(badge, 'role', 'status');
+  setText(badge, terminalStatusLabel(term));
+  header.appendChild(title);
+  header.appendChild(badge);
+  card.appendChild(header);
 
-  const meta = d.createElement('div');
-  meta.className = 'terminal-meta';
-  meta.textContent = 'CWD: ' + term.cwd + ' | Provenance: ' + term.provenance + ' | Timeout: ' + (term.timeoutMs / 1000) + 's';
-  card.appendChild(meta);
-
-  const cmdBox = d.createElement('div');
+  var cmdBox = d.createElement('div');
   cmdBox.className = 'terminal-command-box';
-  cmdBox.textContent = term.command;
+  setAttr(cmdBox, 'aria-label', 'Command line');
+  setText(cmdBox, term.command || '');
   card.appendChild(cmdBox);
 
-  if (term.exitCode !== undefined && term.exitCode !== null) {
-    const resultLine = d.createElement('div');
-    resultLine.className = 'terminal-meta';
-    resultLine.textContent = 'Finished with code ' + term.exitCode + (term.durationMs ? ' (' + term.durationMs + 'ms)' : '');
+  var meta = d.createElement('div');
+  meta.className = 'terminal-meta';
+  if (term.executable) appendMetaRow(d, meta, 'Executable', term.executable, true);
+  if (term.args) appendMetaRow(d, meta, 'Arguments', formatArgs(term.args), true);
+  appendMetaRow(d, meta, 'Directory', term.cwd || '', true);
+  appendMetaRow(d, meta, 'Source', term.provenance || '');
+  if (term.scriptName && term.scriptBody) appendMetaRow(d, meta, 'Script', term.scriptBody, true);
+  appendMetaRow(d, meta, 'Time limit', formatDuration(term.timeoutMs));
+  card.appendChild(meta);
+
+  var elapsedEl = null;
+  if (running && typeof term.startedAt === 'number') {
+    elapsedEl = d.createElement('div');
+    elapsedEl.className = 'terminal-elapsed';
+    card.appendChild(elapsedEl);
+  }
+  var result = finished ? terminalResultText(term) : '';
+  if (result) {
+    var resultLine = d.createElement('div');
+    resultLine.className = 'terminal-result';
+    setText(resultLine, result);
     card.appendChild(resultLine);
   }
 
+  var limit = formatBytes(term.outputLimitBytes) || 'the retained-output limit';
+  var streams = [];
+  if (term.stdoutTruncated) streams.push('stdout');
+  if (term.stderrTruncated) streams.push('stderr');
+  if (streams.length) {
+    var truncWarn = d.createElement('div');
+    truncWarn.className = 'truncation-warning';
+    setAttr(truncWarn, 'role', 'note');
+    setText(truncWarn, 'Output truncated: only the first ' + limit + ' of ' + streams.join(' and ') + ' was kept.');
+    card.appendChild(truncWarn);
+  }
+
+  var outBox = null;
   if (term.isOutputVisible) {
-    const outBox = d.createElement('div');
+    outBox = d.createElement('pre');
     outBox.className = 'terminal-output-box';
-    let text = '';
-    if (term.stdout) text += term.stdout;
-    if (term.stderr) text += (text ? '\n--- STDERR ---\n' : '') + term.stderr;
-    outBox.textContent = text || '(No output)';
+    setAttr(outBox, 'tabindex', '0');
+    setAttr(outBox, 'aria-label', 'Command output');
+    setText(outBox, terminalOutputText(term));
     card.appendChild(outBox);
-
-    if (term.stdoutTruncated || term.stderrTruncated) {
-      const truncWarn = d.createElement('div');
-      truncWarn.className = 'truncation-warning';
-      truncWarn.textContent = '[Output bounded and truncated at limit]';
-      card.appendChild(truncWarn);
-    }
   }
 
-  const actions = d.createElement('div');
+  var actions = d.createElement('div');
   actions.className = 'confirmation-actions';
-
-  const btnToggle = d.createElement('button');
-  btnToggle.className = 'btn-reject';
-  btnToggle.type = 'button';
-  btnToggle.textContent = term.isOutputVisible ? 'Hide Output' : 'Show Output';
-  setAttr(btnToggle, 'aria-label', term.isOutputVisible ? 'Hide terminal output' : 'Show terminal output');
-  if (postMessage && btnToggle.addEventListener) {
-    btnToggle.addEventListener('click', () => {
-      postMessage({ type: 'terminal.toggleOutput', executionId: term.executionId });
-    });
+  var send = postMessage;
+  var id = term.executionId;
+  if (term.status !== 'WAITING_APPROVAL') {
+    appendAction(d, actions, term.isOutputVisible ? 'Hide output' : 'Show output',
+      term.isOutputVisible ? 'Hide command output' : 'Show command output',
+      send ? function () { send!({ type: 'terminal.toggleOutput', executionId: id }); } : undefined);
   }
-  actions.appendChild(btnToggle);
-
-  const btnCopy = d.createElement('button');
-  btnCopy.className = 'btn-reject';
-  btnCopy.type = 'button';
-  btnCopy.textContent = 'Copy Command';
-  setAttr(btnCopy, 'aria-label', 'Copy terminal command');
-  if (postMessage && btnCopy.addEventListener) {
-    btnCopy.addEventListener('click', () => {
-      postMessage({ type: 'terminal.copyCommand', executionId: term.executionId });
-    });
+  appendAction(d, actions, 'Copy command', 'Copy command line',
+    send ? function () { send!({ type: 'terminal.copyCommand', executionId: id }); } : undefined);
+  if (finished && term.status !== 'REJECTED') {
+    appendAction(d, actions, 'Copy output', 'Copy command output',
+      send ? function () { send!({ type: 'terminal.copyOutput', executionId: id }); } : undefined);
+    appendAction(d, actions, 'Output panel', 'Open output in the Output panel',
+      send ? function () { send!({ type: 'terminal.openOutput', executionId: id }); } : undefined);
   }
-  actions.appendChild(btnCopy);
-
-  if (term.status === 'RUNNING') {
-    const btnCancel = d.createElement('button');
-    btnCancel.className = 'btn-reject';
-    btnCancel.type = 'button';
-    btnCancel.textContent = 'Cancel';
-    setAttr(btnCancel, 'aria-label', 'Cancel running command');
-    if (postMessage && btnCancel.addEventListener) {
-      btnCancel.addEventListener('click', () => {
-        postMessage({ type: 'terminal.cancel', executionId: term.executionId });
-      });
-    }
-    actions.appendChild(btnCancel);
+  if (running) {
+    appendAction(d, actions, 'Cancel', 'Cancel the running command and stop the task',
+      send ? function () { send!({ type: 'terminal.cancel', executionId: id }); } : undefined);
   }
-
+  if (onRetry && (term.status === 'FAILED' || term.status === 'TIMED_OUT' || term.status === 'CANCELLED')) {
+    appendAction(d, actions, 'Ask to retry', 'Draft a message asking the agent to run this check again',
+      function () { onRetry(term); });
+  }
   card.appendChild(actions);
   container.appendChild(card);
+  container.__termView = {
+    structure: structure,
+    card: card,
+    outBox: outBox,
+    elapsedEl: elapsedEl,
+    startedAt: running ? term.startedAt : null,
+  };
+  if (elapsedEl) updateTerminalElapsed(container, Date.now());
   return card;
+}
+
+function shortHash(hash: any): string {
+  return typeof hash === 'string' && hash ? hash.slice(0, 12) : '';
+}
+
+function lineDelta(m: any): string {
+  if (!m) return '';
+  var parts = [];
+  if (typeof m.linesAdded === 'number') parts.push('+' + m.linesAdded);
+  if (typeof m.linesRemoved === 'number') parts.push('−' + m.linesRemoved);
+  return parts.join(' ');
+}
+
+function reviewStatusLabel(status: string): string {
+  switch (status) {
+    case 'pending': return 'Awaiting review';
+    case 'applied': return 'Applied';
+    case 'rejected': return 'Rejected';
+    case 'cancelled': return 'Cancelled';
+    case 'stale': return 'Stale — not applied';
+    case 'failed': return 'Failed';
+    case 'running': return 'Running';
+    case 'succeeded': return 'Passed';
+    case 'timed-out': return 'Timed out';
+    default: return String(status || '');
+  }
+}
+
+/** Compact per-conversation ledger of proposed changes and approved commands. */
+export function renderReviewLedger(container: any, reviews: any[], doc?: any, postMessage?: (msg: any) => void): any {
+  var list = reviews || [];
+  var sig = JSON.stringify(list);
+  if (container.__reviewSig === sig) return container.firstChild || null;
+  container.__reviewSig = sig;
+  container.innerHTML = '';
+  if (!list.length) return null;
+
+  var d = docOf(doc);
+  var counts: Record<string, number> = {};
+  for (var c = 0; c < list.length; c++) counts[list[c].status] = (counts[list[c].status] || 0) + 1;
+  var summaryParts = [];
+  var order = ['pending', 'running', 'applied', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled'];
+  for (var o = 0; o < order.length; o++) {
+    if (counts[order[o]]) summaryParts.push(counts[order[o]] + ' ' + reviewStatusLabel(order[o]).toLowerCase());
+  }
+
+  var details = d.createElement('details');
+  details.className = 'review-ledger';
+  details.open = true;
+  var summary = d.createElement('summary');
+  setText(summary, 'Changes & commands · ' + summaryParts.join(' · '));
+  details.appendChild(summary);
+
+  var ul = d.createElement('ul');
+  ul.className = 'review-list';
+  setAttr(ul, 'aria-label', 'Changes and commands in this conversation');
+  var anyApplied = false;
+  for (var i = 0; i < list.length; i++) {
+    var r = list[i];
+    if (r.kind === 'mutation' && r.status === 'applied') anyApplied = true;
+    var li = d.createElement('li');
+    li.className = 'review-item is-' + r.status;
+    var mark = d.createElement('span');
+    mark.className = 'activity-mark';
+    setAttr(mark, 'aria-hidden', 'true');
+    li.appendChild(mark);
+
+    var body = d.createElement('div');
+    body.className = 'review-body';
+    var line = d.createElement('div');
+    line.className = 'review-line';
+    var subject = d.createElement('span');
+    subject.className = 'review-subject mono';
+    if (r.kind === 'mutation') {
+      setText(subject, (r.mutation && r.mutation.operation === 'create' ? 'New ' : '') + (r.path || 'unknown file'));
+    } else {
+      setText(subject, r.command || 'command');
+    }
+    line.appendChild(subject);
+    var delta = r.kind === 'mutation' ? lineDelta(r.mutation) : '';
+    if (delta) {
+      var deltaEl = d.createElement('span');
+      deltaEl.className = 'review-delta';
+      setAttr(deltaEl, 'aria-label', delta.replace('+', 'added ').replace('−', 'removed '));
+      setText(deltaEl, delta);
+      line.appendChild(deltaEl);
+    }
+    var state = d.createElement('span');
+    state.className = 'review-status';
+    var stateText = reviewStatusLabel(r.status);
+    if (r.kind === 'command' && r.exitCode !== undefined && r.exitCode !== null) stateText += ' · exit ' + r.exitCode;
+    if (r.kind === 'command' && typeof r.durationMs === 'number') stateText += ' · ' + formatDuration(r.durationMs);
+    setText(state, stateText);
+    line.appendChild(state);
+    body.appendChild(line);
+
+    if (r.detail) {
+      var detail = d.createElement('div');
+      detail.className = 'review-detail';
+      setText(detail, r.detail);
+      body.appendChild(detail);
+    }
+    if (r.kind === 'mutation' && r.verifiedBy) {
+      var ver = d.createElement('div');
+      ver.className = 'review-detail';
+      setText(ver, 'Checked by ' + r.verifiedBy.command + ': ' + reviewStatusLabel(r.verifiedBy.status).toLowerCase());
+      body.appendChild(ver);
+    }
+    if (r.kind === 'command' && r.verifies && r.verifies.length) {
+      var covers = d.createElement('div');
+      covers.className = 'review-detail';
+      setText(covers, 'Checks ' + r.verifies.length + ' applied change' + (r.verifies.length === 1 ? '' : 's'));
+      body.appendChild(covers);
+    }
+    li.appendChild(body);
+
+    if (postMessage) {
+      var send = postMessage;
+      if (r.kind === 'mutation' && r.path) {
+        var openBtn = d.createElement('button');
+        openBtn.className = 'btn-reject review-action';
+        openBtn.type = 'button';
+        setText(openBtn, r.status === 'applied' ? 'Changes' : 'Open');
+        setAttr(openBtn, 'aria-label', (r.status === 'applied' ? 'Show changes in ' : 'Open ') + r.path);
+        onClick(openBtn, function (mid: string) { return function () { send({ type: 'review.openChange', mutationId: mid }); }; }(r.id));
+        li.appendChild(openBtn);
+      } else if (r.kind === 'command' && r.status !== 'pending' && r.status !== 'rejected') {
+        var outBtn = d.createElement('button');
+        outBtn.className = 'btn-reject review-action';
+        outBtn.type = 'button';
+        setText(outBtn, 'Output');
+        setAttr(outBtn, 'aria-label', 'Open output of ' + (r.command || 'command') + ' in the Output panel');
+        onClick(outBtn, function (eid: string) { return function () { send({ type: 'terminal.openOutput', executionId: eid }); }; }(r.id));
+        li.appendChild(outBtn);
+      }
+    }
+    ul.appendChild(li);
+  }
+  details.appendChild(ul);
+
+  if (anyApplied && postMessage) {
+    var scmRow = d.createElement('div');
+    scmRow.className = 'review-footer';
+    var send2 = postMessage;
+    appendAction(d, scmRow, 'Source Control', 'Open the Source Control view to review applied changes',
+      function () { send2({ type: 'ui.openSourceControl' }); });
+    details.appendChild(scmRow);
+  }
+  container.appendChild(details);
+  return details;
 }
 
 export function renderConfirmationSummary(
@@ -535,20 +812,40 @@ export function renderConfirmationSummary(
   summary.style.marginBottom = '10px';
   summary.textContent = conf.summary;
 
+  div.appendChild(title);
+  div.appendChild(summary);
   if (conf.preparedCommand) {
-    var cmdMeta = d.createElement('div');
-    cmdMeta.className = 'terminal-meta';
-    setText(cmdMeta, 'CWD: ' + (conf.preparedCommand.cwd || '') + ' | ' + (conf.preparedCommand.provenance || ''));
+    var pc = conf.preparedCommand;
     var cmdBox = d.createElement('div');
     cmdBox.className = 'terminal-command-box';
-    setText(cmdBox, conf.preparedCommand.command || '');
-    div.appendChild(title);
-    div.appendChild(summary);
-    div.appendChild(cmdMeta);
+    setAttr(cmdBox, 'aria-label', 'Command line');
+    setText(cmdBox, pc.command || '');
     div.appendChild(cmdBox);
-  } else {
-    div.appendChild(title);
-    div.appendChild(summary);
+    var cmdMeta = d.createElement('div');
+    cmdMeta.className = 'terminal-meta';
+    if (pc.executable) appendMetaRow(d, cmdMeta, 'Executable', pc.executable, true);
+    if (pc.args) appendMetaRow(d, cmdMeta, 'Arguments', formatArgs(pc.args), true);
+    appendMetaRow(d, cmdMeta, 'Directory', pc.cwd || '', true);
+    appendMetaRow(d, cmdMeta, 'Source', pc.provenance || '');
+    if (pc.scriptName && pc.scriptBody) appendMetaRow(d, cmdMeta, 'Script', pc.scriptBody, true);
+    if (typeof pc.timeoutMs === 'number') appendMetaRow(d, cmdMeta, 'Time limit', formatDuration(pc.timeoutMs));
+    div.appendChild(cmdMeta);
+  } else if (conf.mutationId) {
+    var m = conf.mutation || {};
+    var mutMeta = d.createElement('div');
+    mutMeta.className = 'terminal-meta';
+    appendMetaRow(d, mutMeta, m.operation === 'create' ? 'New file' : 'File', conf.path || 'unknown', true);
+    var delta = lineDelta(m);
+    if (delta) appendMetaRow(d, mutMeta, 'Lines', delta);
+    if (m.beforeHash) appendMetaRow(d, mutMeta, 'Base', 'sha256 ' + shortHash(m.beforeHash) + ' — re-checked before writing', true);
+    div.appendChild(mutMeta);
+  }
+  if (conf.blockedReason) {
+    var blocked = d.createElement('div');
+    blocked.className = 'confirmation-blocked';
+    setAttr(blocked, 'role', 'alert');
+    setText(blocked, conf.blockedReason);
+    div.appendChild(blocked);
   }
 
   const actions = d.createElement('div');
@@ -575,8 +872,17 @@ export function renderConfirmationSummary(
     btnDiff.id = 'btn-diff';
     btnDiff.type = 'button';
     btnDiff.textContent = 'Open Diff';
-    setAttr(btnDiff, 'aria-label', 'Preview file change');
+    setAttr(btnDiff, 'aria-label', 'Preview file change in a diff editor');
     actions.appendChild(btnDiff);
+  }
+  var btnOpen: any = null;
+  if (conf.mutationId && conf.path && !(conf.mutation && conf.mutation.operation === 'create')) {
+    btnOpen = d.createElement('button');
+    btnOpen.className = 'btn-reject';
+    btnOpen.type = 'button';
+    btnOpen.textContent = 'Open File';
+    setAttr(btnOpen, 'aria-label', 'Open the current ' + conf.path);
+    actions.appendChild(btnOpen);
   }
 
   actions.appendChild(btnReject);
@@ -598,7 +904,20 @@ export function renderConfirmationSummary(
     lockButtons();
   }
 
+  // Move keyboard focus to the new decision once, never onto Approve.
+  var focusTarget = btnDiff || btnReject;
+  if (container.__focusedConfirmation !== conf.id && !conf.responding) {
+    container.__focusedConfirmation = conf.id;
+    if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
+  }
+
   if (postMessage) {
+    if (btnOpen && btnOpen.addEventListener) {
+      var openPath = conf.path;
+      btnOpen.addEventListener('click', () => {
+        postMessage({ type: 'ui.openFile', path: openPath });
+      });
+    }
     if (btnDiff && btnDiff.addEventListener) {
       btnDiff.addEventListener('click', () => {
         postMessage({ type: 'ui.openDiff', mutationId: conf.mutationId, path: conf.path || 'unknown', isCreate: conf.type === 'create' });
@@ -659,7 +978,20 @@ export function webviewRenderRuntime(): string {
     renderActivityTimeline.toString(),
     renderContextChips.toString(),
     renderConnectionStatus.toString(),
+    formatDuration.toString(),
+    formatBytes.toString(),
+    formatArgs.toString(),
+    terminalStatusLabel.toString(),
+    terminalResultText.toString(),
+    terminalOutputText.toString(),
+    appendMetaRow.toString(),
+    appendAction.toString(),
+    updateTerminalElapsed.toString(),
     renderTerminalOutput.toString(),
+    shortHash.toString(),
+    lineDelta.toString(),
+    reviewStatusLabel.toString(),
+    renderReviewLedger.toString(),
     renderConfirmationSummary.toString(),
     handleComposerKeydown.toString(),
   ].join("\n");

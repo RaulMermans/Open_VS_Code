@@ -9,6 +9,8 @@ import {
   renderActivityTimeline,
   renderContextChips,
   renderConnectionStatus,
+  renderReviewLedger,
+  updateTerminalElapsed,
   handleComposerKeydown,
   webviewRenderRuntime,
 } from './webview-render-helpers.js';
@@ -22,6 +24,8 @@ export {
   renderActivityTimeline,
   renderContextChips,
   renderConnectionStatus,
+  renderReviewLedger,
+  updateTerminalElapsed,
   handleComposerKeydown,
   webviewRenderRuntime,
 };
@@ -276,6 +280,78 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             color: var(--vscode-descriptionForeground);
             margin-bottom: 6px;
         }
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+        .terminal-title { font-weight: 600; }
+        .status-badge {
+            font-size: 0.8em;
+            padding: 1px 8px;
+            border-radius: 10px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+        }
+        .status-succeeded .status-badge { background: var(--vscode-testing-iconPassed, #89d185); color: var(--vscode-editor-background); }
+        .status-failed .status-badge, .status-timed_out .status-badge { background: var(--vscode-errorForeground); color: var(--vscode-editor-background); }
+        .status-running .status-badge { background: var(--vscode-charts-blue, #75beff); color: var(--vscode-editor-background); }
+        .terminal-row {
+            display: grid;
+            grid-template-columns: 6.5em 1fr;
+            gap: 6px;
+            padding: 1px 0;
+        }
+        .terminal-row-label { color: var(--vscode-descriptionForeground); }
+        .terminal-row-value { color: var(--vscode-foreground); overflow-wrap: anywhere; }
+        .mono { font-family: var(--vscode-editor-font-family, monospace); }
+        .terminal-elapsed, .terminal-result {
+            font-size: 0.85em;
+            margin-top: 4px;
+        }
+        .confirmation-blocked {
+            color: var(--vscode-errorForeground);
+            font-size: 0.85em;
+            margin-top: 6px;
+        }
+        #reviews {
+            padding: 0 10px 6px;
+            flex-shrink: 0;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .review-ledger summary {
+            cursor: pointer;
+            font-size: 0.85em;
+            color: var(--vscode-descriptionForeground);
+            padding: 2px 0;
+        }
+        .review-list { list-style: none; margin: 0; padding: 0; }
+        .review-item {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            font-size: 0.85em;
+            padding: 3px 0;
+        }
+        .review-item .activity-mark { margin-top: 5px; }
+        .review-item.is-pending .activity-mark, .review-item.is-running .activity-mark { background: var(--vscode-charts-blue, #75beff); }
+        .review-item.is-applied .activity-mark, .review-item.is-succeeded .activity-mark { background: var(--vscode-testing-iconPassed, #89d185); }
+        .review-item.is-failed .activity-mark, .review-item.is-stale .activity-mark, .review-item.is-timed-out .activity-mark { background: var(--vscode-errorForeground); }
+        .review-item.is-rejected .activity-mark, .review-item.is-cancelled .activity-mark { background: var(--vscode-disabledForeground, #888); }
+        .review-body { flex: 1; min-width: 0; }
+        .review-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+        .review-subject { overflow-wrap: anywhere; }
+        .review-delta { color: var(--vscode-descriptionForeground); }
+        .review-status { color: var(--vscode-descriptionForeground); margin-left: auto; }
+        .review-detail { color: var(--vscode-descriptionForeground); }
+        .review-action { padding: 2px 8px; flex-shrink: 0; }
+        .review-footer { margin-top: 4px; }
+        button:focus-visible, summary:focus-visible, .terminal-output-box:focus-visible {
+            outline: 1px solid var(--vscode-focusBorder);
+            outline-offset: 1px;
+        }
         .terminal-output-box {
             background: var(--vscode-terminal-background, #1e1e1e);
             color: var(--vscode-terminal-foreground, #cccccc);
@@ -288,6 +364,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             white-space: pre-wrap;
             word-break: break-all;
             margin-top: 8px;
+            margin-bottom: 0;
         }
         .truncation-warning {
             color: var(--vscode-editorWarning-foreground, #e5a50a);
@@ -296,6 +373,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         .confirmation-actions {
             display: flex;
+            flex-wrap: wrap;
             gap: 8px;
             margin-top: 10px;
         }
@@ -442,6 +520,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div id="transcript" role="log" aria-live="polite" aria-relevant="additions"></div>
     
     <div id="activities"></div>
+    <div id="reviews"></div>
     <div id="terminal-container"></div>
     <div id="confirmation-container"></div>
     
@@ -474,6 +553,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const transcript = document.getElementById('transcript');
         const activities = document.getElementById('activities');
         const terminalContainer = document.getElementById('terminal-container');
+        const reviewsContainer = document.getElementById('reviews');
         const confirmationContainer = document.getElementById('confirmation-container');
         const implicitChips = document.getElementById('implicit-chips');
         const contextChips = document.getElementById('context-chips');
@@ -511,7 +591,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'conversation.reset':
                     transcript.innerHTML = '';
                     activities.innerHTML = '';
-                    terminalContainer.innerHTML = '';
+                    renderTerminalOutput(terminalContainer, null, document);
+                    renderReviewLedger(reviewsContainer, [], document);
                     confirmationContainer.innerHTML = '';
                     filePicker.innerHTML = '';
                     filePicker.className = '';
@@ -532,6 +613,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             renderTerminal(state.activeTerminal);
             renderConfirmationSummary(confirmationContainer, state.pendingConfirmation, document, vscode.postMessage);
             renderActivityTimeline(activities, state.activities || [], document);
+            renderReviewLedger(reviewsContainer, state.reviews || [], document, vscode.postMessage);
             renderContextChips(implicitChips, state.context || [], document, vscode.postMessage, false);
             renderContextChips(contextChips, state.attachments || [], document, vscode.postMessage, true);
             renderConnectionStatus(connectionStatus, state.connection, document, vscode.postMessage);
@@ -550,8 +632,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
+        let elapsedTimer = null;
         function renderTerminal(term) {
-            renderTerminalOutput(terminalContainer, term, document, vscode.postMessage);
+            renderTerminalOutput(terminalContainer, term, document, vscode.postMessage, draftRetry);
+            const running = !!(term && term.status === 'RUNNING');
+            if (running && !elapsedTimer) {
+                elapsedTimer = setInterval(function () {
+                    if (!updateTerminalElapsed(terminalContainer, Date.now())) {
+                        clearInterval(elapsedTimer);
+                        elapsedTimer = null;
+                    }
+                }, 1000);
+            } else if (!running && elapsedTimer) {
+                clearInterval(elapsedTimer);
+                elapsedTimer = null;
+            }
+        }
+
+        // Drafts a follow-up for the user to edit and send; nothing runs until a new turn is approved.
+        function draftRetry(term) {
+            if (currentState && currentState.activeTurn) return;
+            composer.value = 'The command "' + term.command + '" ended as ' + String(term.status).toLowerCase() + '. Please investigate and run the check again.';
+            if (vscode.setState) vscode.setState({ draft: composer.value });
+            composer.focus();
         }
 
         function renderFileHits(files) {
