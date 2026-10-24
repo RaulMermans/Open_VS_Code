@@ -1,9 +1,23 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { AgentEvent, AgentResult, calculateBudget, estimateTokens, ConversationTurn } from '@open-vs-code/agent-core';
-import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, ChatContextChip, ConfirmationRequestPayload, parseWebviewMessage, TerminalReviewDto } from './chat-protocol.js';
+import { AgentEvent, ConversationTurn } from '@open-vs-code/agent-core';
+import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit } from './chat-protocol.js';
 import { DiffReviewController } from './diff-review-controller.js';
 import { TerminalReviewController } from './terminal-review-controller.js';
+import {
+  activityFromAgentEvent,
+  classifyTurnError,
+  deriveConnectionStatus,
+  describeAttachment,
+  formatAttachmentInstruction,
+  implicitContextChips,
+  removeAttachment,
+  sanitizeRelativePath,
+  sanitizeSearchQuery,
+  upsertAttachment,
+  MAX_FILE_SEARCH_RESULTS,
+  type ConnectionSnapshotInput,
+} from './chat-ux-model.js';
 
 export class ChatController {
   private state: WebviewState;
@@ -12,15 +26,19 @@ export class ChatController {
   private diffReviewController: DiffReviewController;
   private terminalReviewController: TerminalReviewController;
   private _webviewView?: vscode.WebviewView;
+  private _webviewMessageDisposable?: { dispose: () => void };
+  private _webviewDisposeDisposable?: { dispose: () => void };
   private _activeAbortController?: AbortController;
   private _activeSessionBridge?: AgentSessionBridge;
   private _confirmationResolver?: (value: "APPROVE" | "REJECT") => void;
+  private _confirmationInFlight = false;
+  private _connectionInput: ConnectionSnapshotInput = {};
   
   constructor(host: any, arg2: any, arg3?: any, arg4?: any) {
     this.host = host;
     if (typeof arg2 === 'function') {
       this.bridgeFactory = arg2;
-      this.diffReviewController = { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {} } as any;
+      this.diffReviewController = { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => undefined } as any;
       this.terminalReviewController = new TerminalReviewController();
     } else {
       this.diffReviewController = arg2;
@@ -39,8 +57,19 @@ export class ChatController {
       messages: [],
       activities: [],
       context: [],
-      activeTurn: false
+      attachments: [],
+      activeTurn: false,
+      connection: deriveConnectionStatus(this._connectionInput),
     };
+  }
+
+  public dispose(): void {
+    this._webviewMessageDisposable?.dispose();
+    this._webviewDisposeDisposable?.dispose();
+    this._webviewMessageDisposable = undefined;
+    this._webviewDisposeDisposable = undefined;
+    this._webviewView = undefined;
+    this.cancelTurn();
   }
 
   public getTerminalReviewController(): TerminalReviewController {
@@ -51,12 +80,13 @@ export class ChatController {
     if (!this.state.activeTurn) {
       return "REJECT";
     }
-    
-    // Clear old activities to keep UI clean
-    this.state.activities = [];
 
     const isWriteFile = payload?.action === 'write_file' || payload?.operation === 'patch' || payload?.operation === 'create';
     const isVerification = payload?.action === 'run_known_test' || payload?.action === 'run_verification' || Boolean(payload?.preparedCommand);
+    this.pushActivity({
+      type: 'permission.requested',
+      payload: { name: isVerification ? 'verification' : isWriteFile ? 'write_file' : 'confirmation' },
+    });
     const confirmationId = this.generateId();
     const mutationId = payload?.id || confirmationId;
     const reviewData = payload?.reviewPayload || payload;
@@ -120,6 +150,7 @@ export class ChatController {
       this.state.activeTerminal = preparedCommandDto;
     }
 
+    this._confirmationInFlight = false;
     this.state.pendingConfirmation = {
       id: confirmationId,
       type: payload?.action || payload?.operation || (isVerification ? 'run_known_test' : 'unknown'),
@@ -128,6 +159,7 @@ export class ChatController {
       mutationId: isWriteFile ? mutationId : undefined,
       path: payload?.path || payload?.reviewPayload?.path,
       preparedCommand: preparedCommandDto,
+      responding: false,
     };
     
     this.sendState();
@@ -138,10 +170,24 @@ export class ChatController {
   }
 
   public setWebviewView(webviewView: vscode.WebviewView) {
+    this._webviewMessageDisposable?.dispose();
+    this._webviewDisposeDisposable?.dispose();
     this._webviewView = webviewView;
-    webviewView.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
-      this.handleWebviewMessage(message);
+    const listener = webviewView.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
+      void this.handleWebviewMessage(message);
     });
+    this._webviewMessageDisposable = listener && typeof (listener as any).dispose === 'function'
+      ? listener
+      : { dispose: () => {} };
+    if (typeof (webviewView as any).onDidDispose === 'function') {
+      this._webviewDisposeDisposable = (webviewView as any).onDidDispose(() => {
+        if (this._webviewView === webviewView) {
+          this._webviewView = undefined;
+          this._webviewMessageDisposable?.dispose();
+          this._webviewMessageDisposable = undefined;
+        }
+      });
+    }
     this.sendState();
   }
   
@@ -153,25 +199,34 @@ export class ChatController {
   }
   
   public refreshContext(snapshot: IdeContextSnapshot) {
-    const chips: ChatContextChip[] = [];
-    if (snapshot.activeDocument) {
-      chips.push({ label: snapshot.activeDocument.workspaceRelativePath || snapshot.activeDocument.uri });
+    this.state.context = implicitContextChips(snapshot);
+    this.sendState();
+  }
+
+  public setConnectionInput(input: Partial<ConnectionSnapshotInput>): void {
+    this._connectionInput = { ...this._connectionInput, ...input };
+    this.state.connection = deriveConnectionStatus({
+      ...this._connectionInput,
+      activeTurn: this.state.activeTurn,
+    });
+    this.sendState();
+  }
+
+  public async refreshConnection(): Promise<void> {
+    if (typeof this.host.getConnectionSnapshot === 'function') {
+      const snapshot = await this.host.getConnectionSnapshot();
+      if (snapshot) {
+        this._connectionInput = { ...this._connectionInput, ...snapshot };
+      }
     }
-    if (snapshot.selection && snapshot.selection.selectedText) {
-      chips.push({ label: 'Selection' });
-    }
-    if (snapshot.diagnostics && snapshot.diagnostics.length > 0) {
-      chips.push({ label: `${snapshot.diagnostics.length} diagnostics` });
-    }
-    if (snapshot.workspaceRoots && snapshot.workspaceRoots.length > 0) {
-      chips.push({ label: `${snapshot.workspaceRoots.length} workspace roots` });
-    }
-    
-    this.state.context = chips;
+    this.state.connection = deriveConnectionStatus({
+      ...this._connectionInput,
+      activeTurn: this.state.activeTurn,
+    });
     this.sendState();
   }
   
-  private async handleWebviewMessage(rawMessage: any) {
+  public async handleWebviewMessage(rawMessage: any) {
     const message = parseWebviewMessage(rawMessage);
     if (!message) return;
     
@@ -206,19 +261,48 @@ export class ChatController {
         if (this.state.pendingConfirmation?.preparedCommand?.executionId) {
           this.terminalReviewController.setStatus(this.state.pendingConfirmation.preparedCommand.executionId, 'CANCELLED');
         }
+        this._confirmationInFlight = false;
+        this._confirmationResolver = undefined;
         this.state = {
           conversationId: this.generateId(),
           mode: this.state.mode,
           messages: [],
           activities: [],
           context: this.state.context,
-          activeTurn: false
+          attachments: [],
+          activeTurn: false,
+          connection: deriveConnectionStatus(this._connectionInput),
         };
         this.sendMessage({ type: "conversation.reset" });
         this.sendState();
         break;
+      case 'chat.checkConnection':
+        if (typeof this.host.checkConnection === 'function') {
+          await this.host.checkConnection();
+        } else if (vscode.commands?.executeCommand) {
+          await vscode.commands.executeCommand('open-vs-code.checkHaloConnection');
+        }
+        await this.refreshConnection();
+        break;
+      case 'context.attach':
+        await this.attachFromEditor(message.target);
+        break;
+      case 'context.attachFile':
+        await this.attachPath(message.path);
+        break;
+      case 'context.remove':
+        this.state.attachments = removeAttachment(this.state.attachments, message.id);
+        this.sendState();
+        break;
+      case 'context.search':
+        await this.searchWorkspaceFiles(message.query);
+        break;
+      case 'context.pickFile':
+        await this.pickWorkspaceFile();
+        break;
       case 'confirmation.respond':
       case 'terminal.respond':
+        if (this._confirmationInFlight) return;
         if (this.state.pendingConfirmation && this._confirmationResolver) {
           if (message.confirmationId === this.state.pendingConfirmation.id) {
             const mutId = this.state.pendingConfirmation.mutationId;
@@ -235,6 +319,9 @@ export class ChatController {
               }
             }
 
+            this._confirmationInFlight = true;
+            this.state.pendingConfirmation.responding = true;
+            this.sendState();
             this.state.pendingConfirmation = undefined;
             if (termId) {
               if (message.action === 'APPROVE') {
@@ -274,6 +361,7 @@ export class ChatController {
               this.diffReviewController.setStatus(mutId, 'REJECTED');
               this.diffReviewController.clearReview(mutId);
             }
+            this._confirmationInFlight = false;
             resolver(message.action);
           }
         }
@@ -320,6 +408,16 @@ export class ChatController {
       case 'ui.copyCode':
         vscode.env.clipboard.writeText(message.text);
         break;
+      case 'ui.openFile':
+        await this.openWorkspaceFile(message.path);
+        break;
+      case 'ui.openModelConfig':
+        if (typeof this.host.openModelConfig === 'function') {
+          await this.host.openModelConfig();
+        } else if (vscode.commands?.executeCommand) {
+          await vscode.commands.executeCommand('open-vs-code.openModelConfig');
+        }
+        break;
     }
   }
 
@@ -343,11 +441,13 @@ export class ChatController {
   }
   
   private async startTurn(text: string, mode: ChatMode) {
+    const attached = this.state.attachments.slice();
     const userMsg: ChatMessage = {
       id: this.generateId(),
       role: 'user',
       content: text,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      attachments: attached.length ? attached : undefined,
     };
     this.state.messages.push(userMsg);
     
@@ -360,12 +460,14 @@ export class ChatController {
       recentTurns.unshift({ role: msg.role as "user" | "assistant", content: msg.content });
     }
     
-    const fullInstruction = text;
+    const attachmentNote = formatAttachmentInstruction(attached);
+    const fullInstruction = attachmentNote ? text + '\n\n' + attachmentNote : text;
     
     this.state.activeTurn = true;
     this.state.activities = [];
     this.state.pendingConfirmation = undefined;
     this.state.activeTerminal = undefined;
+    this.state.connection = deriveConnectionStatus({ ...this._connectionInput, activeTurn: true });
     this.sendState();
     
     const snapshot = await this.host.getSnapshot();
@@ -373,6 +475,7 @@ export class ChatController {
     if (!resolvedRoot) {
       this.state.activeTurn = false;
       this.state.activities = [];
+      this.state.connection = deriveConnectionStatus(this._connectionInput);
       const errorMsg: ChatMessage = {
         id: this.generateId(),
         role: 'system',
@@ -404,8 +507,13 @@ export class ChatController {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
       
       this.state.activeTurn = false;
-      this.state.activities = [];
+      this.completePendingActivities(result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
       this.state.pendingConfirmation = undefined;
+      if (result.status === 'COMPLETED' && this._connectionInput.inferenceBackend !== 'halo') {
+        const { lastError: _ignored, ...rest } = this._connectionInput;
+        this._connectionInput = { ...rest, endpointVerified: true };
+      }
+      this.state.connection = deriveConnectionStatus(this._connectionInput);
       
       if (result.status === 'CANCELLED') {
         const cancelMsg: ChatMessage = {
@@ -440,14 +548,31 @@ export class ChatController {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
       
       this.state.activeTurn = false;
-      this.state.activities = [];
+      this.completePendingActivities('failed');
       this.state.pendingConfirmation = undefined;
+      const classified = typeof e.message === 'string' ? classifyTurnError(e.message) : undefined;
+      if (classified) {
+        this._connectionInput = {
+          ...this._connectionInput,
+          lastError: classified,
+          endpointVerified: classified === 'disconnected' || classified === 'invalid-credentials' || classified === 'model-unavailable'
+            ? false
+            : this._connectionInput.endpointVerified,
+        };
+      }
+      this.state.connection = deriveConnectionStatus({ ...this._connectionInput, lastError: classified });
       
       let errorMessage = `Agent Error: ${e.message}`;
-      if (typeof e.message === 'string' && e.message.includes('No model routing configuration found')) {
+      if (classified === 'missing-config' || (typeof e.message === 'string' && e.message.includes('No model routing configuration found'))) {
         errorMessage = 'No model configuration found (`.open-vs-code/models.json`). Open VS Code requires a local or self-hosted OpenAI-compatible inference endpoint (e.g. Ollama, vLLM, or HALO). Run the command "Open VS Code: Create Starter Model Configuration" to initialize.';
-      } else if (typeof e.message === 'string' && (e.message.includes('ECONNREFUSED') || e.message.includes('fetch failed'))) {
+      } else if (classified === 'disconnected' || (typeof e.message === 'string' && (e.message.includes('ECONNREFUSED') || e.message.includes('fetch failed')))) {
         errorMessage = 'Inference endpoint unreachable. Ensure your local or self-hosted model server (e.g. Ollama or HALO) is running at the configured endpoint.';
+      } else if (classified === 'invalid-credentials') {
+        errorMessage = 'Configured credentials are missing or invalid. Set the provider apiKeyEnv or HALO application token, then retry.';
+      } else if (classified === 'model-unavailable') {
+        errorMessage = 'The configured model is not available on the inference endpoint. Open Model Configuration to correct the served model id.';
+      } else if (classified === 'timeout') {
+        errorMessage = 'The model request timed out or was cancelled.';
       }
 
       const errorMsg: ChatMessage = {
@@ -473,39 +598,38 @@ export class ChatController {
     if (this._activeAbortController) {
       this._activeAbortController.abort();
     }
+    this.completePendingActivities('cancelled');
+    this._confirmationInFlight = false;
     if (this._confirmationResolver) {
       const resolver = this._confirmationResolver;
       const mutationId = this.state.pendingConfirmation?.mutationId;
       const termId = this.state.pendingConfirmation?.preparedCommand?.executionId;
       this._confirmationResolver = undefined;
       this.state.pendingConfirmation = undefined;
+      this.state.connection = deriveConnectionStatus(this._connectionInput);
       this.sendState();
       
       if (mutationId) {
-        this.diffReviewController.setStatus(mutationId, 'CANCELLED');
-        this.diffReviewController.clearReview(mutationId);
+        this.diffReviewController?.setStatus?.(mutationId, 'CANCELLED');
+        this.diffReviewController?.clearReview?.(mutationId);
       }
       if (termId) {
         this.terminalReviewController.setStatus(termId, 'CANCELLED');
       }
       resolver("REJECT");
+    } else {
+      this.state.connection = deriveConnectionStatus(this._connectionInput);
+      this.sendState();
     }
   }
   
   private handleAgentEvent(ev: AgentEvent) {
+    this.pushActivity(ev);
     if (ev.type === 'tool.requested') {
-      const toolName = (ev.payload as any)?.name || 'tool';
-      this.state.activities.push({
-        id: this.generateId(),
-        kind: 'tool',
-        label: `Running ${toolName}...`,
-        status: 'pending'
-      });
       this.sendState();
-    } else if (ev.type === 'tool.completed') {
-      if (this.state.activities.length > 0) {
-         this.state.activities[this.state.activities.length - 1].status = 'completed';
-      }
+    } else if (ev.type === 'tool.completed' || ev.type === 'tool.failed' || ev.type === 'tool.rejected') {
+      this.sendState();
+    } else if (ev.type === 'model.requested' || ev.type === 'model.completed' || ev.type === 'model.failed' || ev.type === 'task.started' || ev.type === 'context.compiled' || ev.type === 'permission.requested' || ev.type === 'mutation.prepared' || ev.type === 'mutation.confirmation_requested' || ev.type === 'verification.requested' || ev.type === 'verification.confirmation_requested') {
       this.sendState();
     } else if (ev.type === 'mutation.applied') {
       const payload = ev.payload as any;
@@ -652,6 +776,137 @@ export class ChatController {
     if (this._webviewView) {
       this._webviewView.webview.postMessage(msg);
     }
+  }
+
+  private pushActivity(ev: { type?: string; payload?: any }): void {
+    const activity = activityFromAgentEvent(ev, this.generateId());
+    if (!activity) return;
+    if (
+      (ev.type === 'tool.completed' || ev.type === 'tool.failed' || ev.type === 'tool.rejected') &&
+      this.state.activities.length > 0
+    ) {
+      const last = this.state.activities[this.state.activities.length - 1];
+      if (last.kind === 'tool' && last.status === 'pending') {
+        last.status = activity.status;
+        last.label = activity.label;
+        last.toolName = activity.toolName || last.toolName;
+        return;
+      }
+    }
+    this.state.activities.push(activity);
+  }
+
+  private completePendingActivities(status: ChatActivity['status']): void {
+    for (const activity of this.state.activities) {
+      if (activity.status === 'pending') activity.status = status;
+    }
+  }
+
+  private trustedSnapshot(snapshot: IdeContextSnapshot): boolean {
+    return snapshot.isTrusted !== false;
+  }
+
+  private async attachFromEditor(target: 'current-file' | 'selection'): Promise<void> {
+    const snapshot = await this.host.getSnapshot();
+    const trusted = this.trustedSnapshot(snapshot);
+    if (target === 'current-file') {
+      const doc = snapshot.activeDocument;
+      if (!doc) {
+        this.host.showError?.('No active editor file to attach.');
+        return;
+      }
+      const path = doc.workspaceRelativePath || sanitizeRelativePath(String(doc.uri || '')) || undefined;
+      const chip = describeAttachment(
+        { kind: 'active-file', path, label: doc.workspaceRelativePath || doc.uri },
+        { trusted, nextId: () => this.generateId() },
+      );
+      this.state.attachments = upsertAttachment(this.state.attachments, chip);
+      this.sendState();
+      return;
+    }
+    const selection = snapshot.selection;
+    if (!selection || !selection.selectedText) {
+      this.host.showError?.('No selected code to attach.');
+      return;
+    }
+    const activePath = snapshot.activeDocument?.workspaceRelativePath;
+    const chip = describeAttachment(
+      {
+        kind: 'selection',
+        path: activePath,
+        label: activePath ? activePath + ' selection' : 'Selection',
+        startLine: selection.start?.line,
+        endLine: selection.end?.line,
+      },
+      { trusted, nextId: () => this.generateId() },
+    );
+    this.state.attachments = upsertAttachment(this.state.attachments, chip);
+    this.sendState();
+  }
+
+  private async attachPath(rawPath: string): Promise<void> {
+    let trusted = true;
+    if (typeof this.host.isWorkspaceTrusted === 'function') {
+      trusted = (await this.host.isWorkspaceTrusted()) !== false;
+    }
+    const chip = describeAttachment(
+      { kind: 'file', path: rawPath, label: sanitizeRelativePath(rawPath) || rawPath },
+      { trusted, nextId: () => this.generateId() },
+    );
+    this.state.attachments = upsertAttachment(this.state.attachments, chip);
+    this.sendState();
+  }
+
+  private async searchWorkspaceFiles(query: string): Promise<void> {
+    const cleaned = sanitizeSearchQuery(query);
+    let files: FileSearchHit[] = [];
+    if (typeof this.host.searchWorkspaceFiles === 'function') {
+      files = await this.host.searchWorkspaceFiles(cleaned);
+    }
+    this.sendMessage({
+      type: 'context.searchResults',
+      query: cleaned,
+      files: (files || []).slice(0, MAX_FILE_SEARCH_RESULTS),
+    });
+  }
+
+  private async pickWorkspaceFile(): Promise<void> {
+    if (typeof this.host.pickWorkspaceFile === 'function') {
+      const picked = await this.host.pickWorkspaceFile();
+      if (picked) await this.attachPath(picked);
+      return;
+    }
+    if (vscode.window?.showQuickPick && vscode.workspace?.findFiles) {
+      const cleaned = '';
+      const exclude = '{**/node_modules/**,**/.git/**,**/dist/**,**/.cache/**,**/build/**}';
+      const uris = await vscode.workspace.findFiles('**/*', exclude, MAX_FILE_SEARCH_RESULTS);
+      const items = uris.map((uri) => {
+        const label = vscode.workspace.asRelativePath(uri);
+        return { label, description: label, path: label };
+      });
+      const picked = await vscode.window.showQuickPick(items, {
+        title: 'Attach workspace file',
+        placeHolder: cleaned || 'Select a file to attach',
+        matchOnDescription: true,
+      });
+      if (picked?.path) await this.attachPath(picked.path);
+    }
+  }
+
+  private async openWorkspaceFile(rawPath: string): Promise<void> {
+    const relative = sanitizeRelativePath(rawPath);
+    if (!relative) return;
+    if (typeof this.host.openWorkspaceFile === 'function') {
+      await this.host.openWorkspaceFile(relative);
+      return;
+    }
+    const folders = vscode.workspace?.workspaceFolders;
+    if (!folders || folders.length === 0) return;
+    const uri = vscode.Uri.joinPath(folders[0].uri, relative);
+    const root = folders[0].uri.fsPath.replace(/\\/g, '/');
+    const opened = uri.fsPath.replace(/\\/g, '/');
+    if (opened !== root && !opened.startsWith(root + '/')) return;
+    await vscode.window.showTextDocument(uri);
   }
   
   private generateId() {

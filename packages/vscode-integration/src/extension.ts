@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, type AutocompleteGateway } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, type AutocompleteGateway } from '@open-vs-code/agent-core';
 import * as path from 'node:path';
 
 
@@ -147,6 +147,122 @@ class VSCodeIdeHost implements IdeHost {
       isTrusted: await this.isWorkspaceTrusted()
     };
   }
+
+  async searchWorkspaceFiles(query: string): Promise<Array<{ path: string; label: string; unavailable?: boolean; reason?: string }>> {
+    const q = String(query || '').replace(/[*?{}[\]\\]/g, '').trim().slice(0, 80);
+    if (!q) return [];
+    const trusted = vscode.workspace.isTrusted !== false;
+    const uris = await vscode.workspace.findFiles('**/*' + q + '*', '{**/node_modules/**,**/.git/**,**/dist/**,**/.cache/**,**/build/**,**/.next/**}', 20);
+    return uris.map((uri) => {
+      const rel = vscode.workspace.asRelativePath(uri);
+      return trusted
+        ? { path: rel, label: rel }
+        : { path: rel, label: rel, unavailable: true, reason: 'Workspace is untrusted' };
+    });
+  }
+
+  async pickWorkspaceFile(): Promise<string | undefined> {
+    const hits = await this.listWorkspaceFiles();
+    const picked = await vscode.window.showQuickPick(
+      hits.map((hit) => ({ label: hit.label, description: hit.path, path: hit.path })),
+      { title: 'Attach workspace file', matchOnDescription: true }
+    );
+    return (picked as { path?: string } | undefined)?.path;
+  }
+
+  private async listWorkspaceFiles(): Promise<Array<{ path: string; label: string }>> {
+    const uris = await vscode.workspace.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/dist/**,**/.cache/**,**/build/**}', 40);
+    return uris.map((uri) => {
+      const rel = vscode.workspace.asRelativePath(uri);
+      return { path: rel, label: rel };
+    });
+  }
+
+  async openWorkspaceFile(relativePath: string): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return;
+    const uri = vscode.Uri.joinPath(folders[0].uri, relativePath);
+    const root = folders[0].uri.fsPath.replace(/\\/g, '/');
+    const opened = uri.fsPath.replace(/\\/g, '/');
+    if (opened !== root && !opened.startsWith(root + '/')) {
+      await this.showError('File is outside the workspace.');
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+  }
+
+  async getConnectionSnapshot(): Promise<{
+    inferenceBackend: string;
+    modelLabel?: string;
+    providerLabel?: string;
+    configStatus: 'present' | 'missing' | 'invalid';
+  }> {
+    const settings = haloSettings();
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    let configStatus: 'present' | 'missing' | 'invalid' = 'missing';
+    let modelLabel: string | undefined;
+    let providerLabel: string | undefined;
+    if (root) {
+      try {
+        const config = loadRoutingConfigSync(root);
+        if (config) {
+          configStatus = 'present';
+          const model = config.models?.[0];
+          modelLabel = model?.displayName || model?.id;
+          providerLabel = config.providers?.[0]?.id;
+        }
+      } catch {
+        configStatus = 'invalid';
+      }
+    }
+    return {
+      inferenceBackend: settings.backend,
+      modelLabel,
+      providerLabel: settings.backend === 'halo' ? 'HALO' : (providerLabel || 'Standalone local'),
+      configStatus,
+    };
+  }
+
+  async checkConnection(): Promise<void> {
+    const settings = haloSettings();
+    if (settings.backend !== 'halo') {
+      await this.showOutput('Standalone local inference is configured. Endpoint reachability is reported from actual chat turns; HALO is not claimed online.');
+      if (chatController) {
+        const snapshot = await this.getConnectionSnapshot();
+        chatController.setConnectionInput({ ...snapshot, haloHealthChecked: false, haloReachable: false });
+      }
+      return;
+    }
+    try {
+      const reachable = await probeHalo(settings.coreUrl);
+      await this.showOutput(reachable ? 'HALO reachable.' : 'HALO Core is unavailable.');
+      if (chatController) {
+        const snapshot = await this.getConnectionSnapshot();
+        chatController.setConnectionInput({
+          ...snapshot,
+          haloHealthChecked: true,
+          haloReachable: reachable,
+          lastError: reachable ? undefined : 'unavailable',
+        });
+      }
+    } catch {
+      await this.showOutput('HALO Core is unreachable.');
+      if (chatController) {
+        chatController.setConnectionInput({
+          inferenceBackend: 'halo',
+          providerLabel: 'HALO',
+          haloHealthChecked: true,
+          haloReachable: false,
+          lastError: 'disconnected',
+        });
+      }
+    }
+  }
+
+  async openModelConfig(): Promise<void> {
+    await vscode.commands.executeCommand('open-vs-code.openModelConfig');
+  }
   
   dispose() {
     this.outputChannel.dispose();
@@ -162,6 +278,11 @@ export {
   renderChatMessage,
   renderTerminalOutput,
   renderConfirmationSummary,
+  parseMessageSegments,
+  syncTranscript,
+  renderActivityTimeline,
+  renderContextChips,
+  renderConnectionStatus,
 } from './webview-render-helpers.js';
 
 let activeBridge: AgentSessionBridge | null = null;
@@ -330,8 +451,11 @@ export function activate(context: vscode.ExtensionContext) {
   const provider = new ChatViewProvider(context.extensionUri, chatController);
 
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider)
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    })
   );
+  void chatController.refreshConnection();
   
   const updateContext = async () => {
     if (chatController && host) {
@@ -524,7 +648,11 @@ export async function deactivate(): Promise<void> {
   const ctrl = autocompleteController;
   autocompleteController = null;
   if (chatController) {
-    chatController.cancelTurn();
+    if (typeof (chatController as any).dispose === 'function') {
+      chatController.dispose();
+    } else {
+      chatController.cancelTurn();
+    }
     chatController = null;
   }
   if (diffReviewController) {

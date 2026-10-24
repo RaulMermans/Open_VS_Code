@@ -21,9 +21,15 @@ const mockVscode = {
   workspace: {
     workspaceFolders: [{ uri: { fsPath: "/test/workspace", toString: () => "file:///test/workspace" }, name: "workspace" }],
     isTrusted: true,
+    getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }),
     getWorkspaceFolder: () => null,
     asRelativePath: () => "f.ts",
+    findFiles: async () => [],
     onDidChangeWorkspaceFolders: () => ({ dispose: () => {} })
+  },
+  Uri: {
+    file: (s: string) => ({ fsPath: s, toString: () => "file://" + s }),
+    joinPath: (base: any, ...parts: string[]) => ({ fsPath: [base.fsPath, ...parts].join("/"), toString: () => "file://" + [base.fsPath, ...parts].join("/") }),
   },
   languages: {
     onDidChangeDiagnostics: () => ({ dispose: () => {} }),

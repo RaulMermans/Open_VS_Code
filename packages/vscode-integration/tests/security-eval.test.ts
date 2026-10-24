@@ -770,6 +770,8 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
         appendChild(child: MockDomElement) {
           this.children.push(child)
         }
+        setAttribute(_name: string, _value: string) {}
+        getAttribute(_name: string) { return "" }
       }
 
       const mockDoc = {
@@ -784,6 +786,7 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
 
       // Real production renderer invoked
       const renderedDiv = renderChatMessage(transcript, { role: "user", content: maliciousChatText }, mockDoc)
+      const body = (renderedDiv?.children || []).find((child: MockDomElement) => String(child.className).includes("message-body"))
 
       rec({
         id: "webview.10",
@@ -794,7 +797,7 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
           scriptExecutionCount: scriptExecutions,
           eventHandlerExecutionCount: eventHandlerExecutions,
           unsafeNavigationCount: unsafeNavigations,
-          textVisibleAsInertContent: transcript.children.length === 1 && transcript.children[0].textContent === maliciousChatText,
+          textVisibleAsInertContent: Boolean(body) && body!.textContent === maliciousChatText,
         },
         expected: {
           inputReachedProductionRenderer: true,

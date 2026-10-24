@@ -22,6 +22,8 @@ Local Model Providers
 
 The dependency direction is fixed. `agent-core` must be runnable independently of VS Code. IDE APIs belong behind adapter interfaces, and model-specific behavior belongs behind the model gateway.
 
+Chat presentation (Sprint 7A) stays on the IDE / UI side of this map: `Webview → ChatController → AgentSessionBridge → Agent Runtime`. The Webview may describe files and selections; it does not compile prompts, approve mutations, or spawn processes. See ADR-018 and `docs/sprints/SPRINT_7A_AGENT_EXPERIENCE.md`.
+
 ## Implemented agent core
 
 `packages/agent-core` is the first executable implementation of the editor-independent core. It is a Node 22+ TypeScript package with no runtime dependencies and no imports from the imported Kilo packages.

@@ -360,6 +360,15 @@ Sprint 5D — Bounded Memory-to-Skill Learning & V1.1 Benchmark Closure ✅ COMP
   - Final closure (candidate sanitization): every skill-candidate field passes one boundary, `normalizeSkillCandidate`, before persistence. Secrets, hidden reasoning, authority overrides and executable markup are rejected (not redacted). Frontmatter gets the same scan as the body, and rejection evidence is a code, never content (C-01–C-21). 665/665 tests; all evals and desktop package/smoke/accept unchanged and green.
   - Final hardening (raw candidate input bounding): `submitCandidate` used to `JSON.stringify` the raw untrusted object to derive the candidate id before the boundary ran. Raw input is now structurally bounded first (≤ 64 top-level keys, counted without reading values; list length and string type checked before traversal; nested objects rejected), and the id derives only from the bounded canonical draft or the rejection stub's code and ids (C-22–C-24). 668/668 tests; eval metrics unchanged; full ladder and desktop accept green.
 
+Sprint 7A — Agent Experience & Chat UX — SPRINT_7A_PARTIALLY_VERIFIED
+  - Presentation-only Webview polish on the existing ChatController bridge (ADR-018). No second agent engine. ContextCompiler remains prompt authority; PermissionGate remains side-effect authority.
+  - Header (mode, backend/model, truthful connection, New), composer (Enter/Shift+Enter/Escape, duplicate-submit guard), explicit file/selection descriptors (`@` search, trust/sensitive/ignored unavailable states), incremental transcript rendering, activity timeline from real AgentEvents, confirmation double-click lock, retainContextWhenHidden.
+  - HALO is never shown Ready without a health check. No model downloader, cloud fallback, or token streaming.
+  - Evidence: `packages/vscode-integration` 45/45 tests including new `sprint-7a-*.test.ts`. V1.1 flags remain default-off.
+  - Record: `docs/sprints/SPRINT_7A_AGENT_EXPERIENCE.md`.
+  - Blocked here: live VSCodium GUI/theme walkthrough; `tsc --noEmit` idle hang for this package (ship path is esbuild).
+
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
+3. Optional UX follow-up: packaged GUI checklist; provider-contract streaming; Sprint 7C persistent multi-session chat.

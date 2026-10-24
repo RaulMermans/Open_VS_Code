@@ -30,6 +30,8 @@
 
 ## Current sprint
 
+Sprint 7A — Agent Experience & Chat UX (`docs/sprints/SPRINT_7A_AGENT_EXPERIENCE.md`). Presentation-only polish of the existing Webview chat (header, composer, explicit file/selection descriptors, honest activity timeline, connection status). V1.1 flags remain default-off. HALO real-model acceptance is not a blocker for this UX work.
+
 Sprint 5D ✅ COMPLETE — Bounded Memory-to-Skill Learning & V1.1 deterministic benchmark (ADR-032; `docs/evals/V1_1_BENCHMARK.md`). **Open VS Code V1.1 development is complete**; remaining release work is HALO target-host real-model acceptance and the V1.1 benchmark (REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO). Sprint 5C ✅ COMPLETE — Non-Progress Detection & Bounded Recovery, including the progress-epoch closure verified in 5D. Sprint 5B ✅ COMPLETE — Structured Engineering Loop & Fresh-Context Review, including its closure (sanitized persistence, net-diff review) verified in 5C. Sprint 5A ✅ COMPLETE — Portable Skills Runtime verified, including injected-state truth. V1 Desktop Candidate remains gated only on HALO target-host acceptance.
 
 - Phase A (Sprint 2): Core capabilities, Project Memory, Skills, MCP, Provider Routing.
@@ -99,4 +101,6 @@ Sprint 5D ✅ COMPLETE — Bounded Memory-to-Skill Learning & V1.1 deterministic
   - Final closure (candidate sanitization): every skill-candidate field passes one boundary, `normalizeSkillCandidate`, before persistence. Secrets, hidden reasoning, authority overrides and executable markup are rejected (not redacted). Frontmatter gets the same scan as the body, and rejection evidence is a code, never content (C-01–C-21). Final hardening: raw candidate input is structurally bounded (keys, list items, characters; no nested values) before canonical serialisation, and candidate ids derive only from the bounded canonical draft (C-22–C-24).
   - Status: SPRINT 5D COMPLETE — BOUNDED MEMORY-TO-SKILL LEARNING & V1.1 DETERMINISTIC BENCHMARK VERIFIED; REAL-MODEL V1.1 BENCHMARK — DEFERRED_TO_HALO.
 
-- Next: HALO target-host acceptance (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`), then the five-arm V1.1 real-model benchmark (A baseline … E approved learning) in `docs/evals/V1_1_BENCHMARK.md`. No further V1.1 development sprint is planned.
+- Phase P (Sprint 7A): Agent Experience & Chat UX. Status: SPRINT_7A_PARTIALLY_VERIFIED — deterministic vscode-integration tests green without HALO or live inference; live packaged GUI theme/keyboard walkthrough blocked in the implementation environment. See `docs/sprints/SPRINT_7A_AGENT_EXPERIENCE.md`.
+
+- Next: HALO target-host acceptance (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`), then the five-arm V1.1 real-model benchmark (A baseline … E approved learning) in `docs/evals/V1_1_BENCHMARK.md`. No further V1.1 development sprint is planned. UX follow-ups: optional live GUI checklist, event-based streaming if the provider emits deltas, persistent multi-session chat in Sprint 7C.
