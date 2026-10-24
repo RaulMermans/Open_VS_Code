@@ -1,7 +1,17 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { AgentEvent, ConversationTurn } from '@open-vs-code/agent-core';
-import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto } from './chat-protocol.js';
+import { AgentEvent, ConversationTurn, inspectRunRecovery, type RunRecoveryInspection } from '@open-vs-code/agent-core';
+import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto } from './chat-protocol.js';
+import {
+  ConversationStore,
+  MAX_RUN_IDS,
+  deriveTitle,
+  newConversationId,
+  normalizeTitle,
+  prepareForRestore,
+  type PersistedConversation,
+  type StoreIssue,
+} from './conversation-store.js';
 import { DiffReviewController, ReviewStatus } from './diff-review-controller.js';
 import { TerminalReviewController, TerminalReviewEntry, formatTerminalTranscript } from './terminal-review-controller.js';
 import {
@@ -45,6 +55,15 @@ export class ChatController {
   private _approvedMutations = new Set<string>();
   private _lastTerminalSignature = '';
   private _outputChannel?: { appendLine: (s: string) => void; show: (preserveFocus?: boolean) => void; dispose: () => void };
+  /** Sprint 7C: visible history for this workspace. Undefined means history is not saved. */
+  private _store?: ConversationStore;
+  private _meta: { createdAt: number; title?: string; titleSource: 'auto' | 'user'; runIds: string[] } = { createdAt: Date.now(), titleSource: 'auto', runIds: [] };
+  private _persistChain: Promise<void> = Promise.resolve();
+  private _historyReady: Promise<void> = Promise.resolve();
+  /** Strictly increasing save time, so "most recent first" never ties within a millisecond. */
+  private _lastStamp = 0;
+  /** Seam for tests; production uses Agent Core's read-only recovery inspection. */
+  public recoveryInspector: (options: { workspaceRoot: string; runId: string }) => Promise<RunRecoveryInspection> = inspectRunRecovery;
   
   constructor(host: any, arg2: any, arg3?: any, arg4?: any) {
     this.host = host;
@@ -64,7 +83,11 @@ export class ChatController {
     }
     
     this.state = {
-      conversationId: this.generateId(),
+      conversationId: newConversationId(),
+      conversationTitle: 'New conversation',
+      lastStatus: 'idle',
+      conversations: [],
+      history: { enabled: false, notice: 'History is not saved in this window.' },
       mode: 'ASK',
       messages: [],
       activities: [],
@@ -74,6 +97,57 @@ export class ChatController {
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: [],
     };
+  }
+
+  /** Resolves once stored history has been loaded (or immediately when there is none). */
+  public get historyReady(): Promise<void> {
+    return this._historyReady;
+  }
+
+  public getState(): Readonly<WebviewState> {
+    return this.state;
+  }
+
+  public listConversations(): ConversationSummaryDto[] {
+    return this._store ? this._store.list() : [];
+  }
+
+  public setHistoryUnavailable(notice: string): void {
+    this._store = undefined;
+    this.state.history = { enabled: false, notice };
+    this.sendState();
+  }
+
+  /**
+   * Binds this window's conversation store and reopens the most recent
+   * conversation as display history. Nothing is resumed or re-approved.
+   */
+  public attachConversationStore(store: ConversationStore): Promise<void> {
+    this._store = store;
+    this._historyReady = (async () => {
+      try {
+        const { conversations, issues } = await store.load();
+        this.state.history = { enabled: true, notice: describeStoreIssues(issues) };
+        this.state.conversations = conversations;
+        const latest = conversations.find((c) => !c.archived);
+        // Only restore into an untouched window.
+        if (latest && !this.state.activeTurn && this.state.messages.length === 0) {
+          const record = await store.read(latest.id);
+          if (record && !this.state.activeTurn && this.state.messages.length === 0) this.loadConversation(record);
+        }
+      } catch (e: any) {
+        this.state.history = { enabled: false, notice: 'Conversation history could not be loaded (' + storeErrorCode(e) + '). New conversations are not saved.' };
+        this._store = undefined;
+      }
+      this.sendState();
+    })();
+    return this._historyReady;
+  }
+
+  /** Waits for every queued history write. */
+  public async flushPersistence(): Promise<void> {
+    await this._persistChain;
+    await this._store?.flush();
   }
 
   public dispose(): void {
@@ -197,7 +271,9 @@ export class ChatController {
       preparedCommand: preparedCommandDto,
       responding: false,
     };
-    
+
+    // The ledger row (never the decision itself) is saved so a restart can show it as interrupted.
+    this.persistConversation();
     this.sendState();
     
     return new Promise<"APPROVE" | "REJECT">((resolve) => {
@@ -279,6 +355,7 @@ export class ChatController {
         break;
       case 'chat.setMode':
         this.state.mode = message.mode;
+        this.persistConversation();
         this.sendState();
         break;
       case 'chat.newConversation':
@@ -286,6 +363,9 @@ export class ChatController {
           const res = await vscode.window.showWarningMessage("A session is already running. Cancel it to start a new chat?", "Cancel", "Ignore");
           if (res === "Cancel") {
             this.cancelTurn();
+            // The cancelled turn will not report back to a replaced conversation; record it here.
+            this.state.lastStatus = 'cancelled';
+            this.persistConversation();
           } else {
             return;
           }
@@ -299,21 +379,28 @@ export class ChatController {
         }
         this._confirmationInFlight = false;
         this._confirmationResolver = undefined;
-        this.state = {
-          conversationId: this.generateId(),
-          mode: this.state.mode,
-          messages: [],
-          activities: [],
-          context: this.state.context,
-          attachments: [],
-          activeTurn: false,
-          connection: deriveConnectionStatus(this._connectionInput),
-          reviews: [],
-        };
-        this._appliedSinceVerification = [];
-        this._approvedMutations.clear();
-        this._lastTerminalSignature = '';
-        this.sendMessage({ type: "conversation.reset" });
+        this.startFreshConversation();
+        break;
+      case 'conversation.open':
+        await this.openConversation(message.conversationId);
+        break;
+      case 'conversation.rename':
+        await this.renameConversation(message.conversationId, message.title);
+        break;
+      case 'conversation.delete':
+        await this.deleteConversation(message.conversationId);
+        break;
+      case 'conversation.archive':
+        await this.archiveConversation(message.conversationId, message.archived);
+        break;
+      case 'conversation.continueFrom':
+        await this.continueFromConversation(message.conversationId);
+        break;
+      case 'conversation.inspectRecovery':
+        await this.inspectRecovery(message.conversationId);
+        break;
+      case 'conversation.closeRecovery':
+        this.state.recovery = undefined;
         this.sendState();
         break;
       case 'chat.checkConnection':
@@ -501,6 +588,7 @@ export class ChatController {
     if (!record) return;
     record.status = reviewStatusFromMutation(status);
     if (detail) record.detail = detail;
+    this.persistConversation();
   }
 
   private clearVerifies(executionId: string): void {
@@ -515,6 +603,8 @@ export class ChatController {
     for (const record of reviews) {
       if (record.kind !== 'command') continue;
       const entry = this.terminalReviewController.getByExecutionId(record.id);
+      // Restored rows have no live entry, so there is no retained output to open.
+      record.outputAvailable = Boolean(entry);
       if (!entry) continue;
       record.status = reviewStatusFromTerminal(entry.status);
       record.exitCode = entry.exitCode;
@@ -595,7 +685,11 @@ export class ChatController {
     this.state.activities = [];
     this.state.pendingConfirmation = undefined;
     this.state.activeTerminal = undefined;
+    this.state.recovery = undefined;
     this.state.connection = deriveConnectionStatus({ ...this._connectionInput, activeTurn: true });
+    // Durable "running" marker: if the editor closes mid-turn, the restored record shows it as interrupted.
+    this.state.lastStatus = 'running';
+    this.persistConversation();
     this.sendState();
     
     const snapshot = await this.host.getSnapshot();
@@ -612,6 +706,8 @@ export class ChatController {
         status: 'failed'
       };
       this.state.messages.push(errorMsg);
+      this.state.lastStatus = 'failed';
+      this.persistConversation();
       this.sendState();
       return;
     }
@@ -672,6 +768,8 @@ export class ChatController {
         };
         this.state.messages.push(assistantMsg);
       }
+      this.state.lastStatus = result.status === 'CANCELLED' ? 'cancelled' : result.status === 'FAILED' ? 'failed' : 'completed';
+      this.persistConversation();
       this.sendState();
     } catch (e: any) {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
@@ -713,6 +811,8 @@ export class ChatController {
         status: 'failed'
       };
       this.state.messages.push(errorMsg);
+      this.state.lastStatus = 'failed';
+      this.persistConversation();
       this.sendState();
     } finally {
       if (this._activeAbortController === currentAbortController) {
@@ -756,6 +856,7 @@ export class ChatController {
   
   private handleAgentEvent(ev: AgentEvent) {
     this.pushActivity(ev);
+    if (ev.type === 'task.started') this.recordRunId((ev.payload as any)?.task?.id);
     if (ev.type === 'tool.requested') {
       this.sendState();
     } else if (ev.type === 'tool.completed' || ev.type === 'tool.failed' || ev.type === 'tool.rejected') {
@@ -856,6 +957,8 @@ export class ChatController {
           } else if (record && res?.status === 'EXECUTION_ERROR') {
             record.detail = 'The command could not be started. See its output for the reason.';
           }
+          this.refreshReviews();
+          this.persistConversation();
           if (this.state.activeTerminal?.executionId === cleanExecId) {
             this.syncTerminalState(tEntry);
           }
@@ -898,6 +1001,9 @@ export class ChatController {
   
   private sendState() {
     this.refreshReviews();
+    this.state.conversationTitle = this._meta.titleSource === 'user' && this._meta.title
+      ? this._meta.title
+      : deriveTitle(this.state.messages);
     // Bound messages: max 100 messages, max 200k chars
     while (this.state.messages.length > 100) {
       this.state.messages.shift();
@@ -1080,4 +1186,273 @@ export class ChatController {
   private generateId() {
     return Math.random().toString(36).substring(2, 9);
   }
+
+  // ---- Sprint 7C: conversation history -------------------------------------
+
+  private recordRunId(raw: unknown): void {
+    if (typeof raw !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(raw)) return;
+    if (this._meta.runIds.includes(raw)) return;
+    this._meta.runIds = [...this._meta.runIds, raw].slice(-MAX_RUN_IDS);
+    this.persistConversation();
+  }
+
+  /** Queues a save of the visible conversation. A conversation with no message of its own is not saved. */
+  private persistConversation(): void {
+    const store = this._store;
+    if (!store || !this.state.messages.some((m) => m.role === 'user' && !m.inherited)) return;
+    const snapshot = {
+      id: this.state.conversationId,
+      title: this._meta.title,
+      titleSource: this._meta.titleSource,
+      createdAt: this._meta.createdAt,
+      updatedAt: this._lastStamp = Math.max(Date.now(), this._lastStamp + 1),
+      mode: this.state.mode,
+      messages: this.state.messages.map((m) => ({ ...m })),
+      attachments: this.state.attachments.slice(),
+      reviews: (this.state.reviews || []).map((r) => ({ ...r })),
+      lastStatus: this.state.lastStatus || 'idle',
+      runIds: this._meta.runIds.slice(),
+    };
+    this._persistChain = this._persistChain
+      .then(() => store.save(snapshot, { protect: [this.state.conversationId] }))
+      .then(() => this.refreshConversationList())
+      .catch((e: any) => {
+        this.state.history = { enabled: true, notice: 'The latest changes to this conversation could not be saved (' + storeErrorCode(e) + ').' };
+        this.sendState();
+      });
+  }
+
+  private refreshConversationList(): void {
+    if (!this._store) return;
+    const next = this._store.list();
+    if (JSON.stringify(next) === JSON.stringify(this.state.conversations || [])) return;
+    this.state.conversations = next;
+    this.sendState();
+  }
+
+  /** Drops everything that belongs to a live turn: decisions and links to applied changes. Pending diff content is cleared per mutation where it is decided. */
+  private resetTransientState(): void {
+    this._confirmationInFlight = false;
+    this._confirmationResolver = undefined;
+    this._appliedSinceVerification = [];
+    this._approvedMutations.clear();
+    this._lastTerminalSignature = '';
+  }
+
+  private startFreshConversation(seed: ChatMessage[] = []): void {
+    this.resetTransientState();
+    this._meta = { createdAt: Date.now(), titleSource: 'auto', runIds: [] };
+    this.state = {
+      conversationId: newConversationId(),
+      conversationTitle: 'New conversation',
+      lastStatus: 'idle',
+      conversations: this._store ? this._store.list() : [],
+      history: this.state.history,
+      mode: this.state.mode,
+      messages: seed,
+      activities: [],
+      context: this.state.context,
+      attachments: [],
+      activeTurn: false,
+      connection: deriveConnectionStatus(this._connectionInput),
+      reviews: [],
+    };
+    this.sendMessage({ type: "conversation.reset" });
+    this.sendState();
+  }
+
+  private loadConversation(stored: PersistedConversation): void {
+    const record = prepareForRestore(stored);
+    this.resetTransientState();
+    this._meta = {
+      createdAt: record.createdAt,
+      title: record.titleSource === 'user' ? record.title : undefined,
+      titleSource: record.titleSource,
+      runIds: record.runIds.slice(),
+    };
+    this.state = {
+      conversationId: record.id,
+      conversationTitle: record.title,
+      lastStatus: record.lastStatus,
+      conversations: this._store ? this._store.list() : [],
+      history: this.state.history,
+      mode: record.mode,
+      messages: record.messages,
+      activities: [],
+      context: this.state.context,
+      attachments: record.attachments,
+      activeTurn: false,
+      connection: deriveConnectionStatus(this._connectionInput),
+      reviews: record.reviews,
+    };
+    this.sendMessage({ type: "conversation.reset" });
+    this.sendState();
+  }
+
+  /** Switching never stops, detaches or moves a running task: it is refused until the task ends. */
+  private refuseWhileBusy(action: string): boolean {
+    if (!this.state.activeTurn && !this._confirmationResolver && !this.state.pendingConfirmation) return false;
+    void vscode.window.showWarningMessage?.(
+      `A task is still running in this conversation. Wait for it to finish or cancel it before you ${action}. Running tasks are never stopped or moved by switching.`
+    );
+    return true;
+  }
+
+  public async openConversation(id: string): Promise<void> {
+    if (id === this.state.conversationId) {
+      this.sendState();
+      return;
+    }
+    if (this.refuseWhileBusy('switch conversations')) return;
+    if (!this._store) return;
+    await this.flushPersistence();
+    const record = await this._store.read(id).catch(() => null);
+    if (this.state.activeTurn) return;
+    if (!record) {
+      this.state.history = { enabled: true, notice: 'That conversation could not be opened. If its file was damaged, it was set aside and the rest of your history is unaffected.' };
+      this.state.conversations = this._store.list();
+      this.sendState();
+      return;
+    }
+    this.loadConversation(record);
+  }
+
+  public async renameConversation(id: string, rawTitle: string): Promise<void> {
+    const title = normalizeTitle(rawTitle);
+    if (id === this.state.conversationId) {
+      this._meta = { ...this._meta, title: title || undefined, titleSource: title ? 'user' : 'auto' };
+      this.persistConversation();
+      this.sendState();
+      return;
+    }
+    if (!this._store) return;
+    await this.flushPersistence();
+    await this._store.rename(id, rawTitle).catch(() => null);
+    this.refreshConversationList();
+    this.sendState();
+  }
+
+  public async archiveConversation(id: string, archived: boolean): Promise<void> {
+    if (!this._store) return;
+    await this.flushPersistence();
+    await this._store.setArchived(id, archived).catch(() => null);
+    this.refreshConversationList();
+    this.sendState();
+  }
+
+  public async deleteConversation(id: string): Promise<void> {
+    if (!this._store) return;
+    const isCurrent = id === this.state.conversationId;
+    if (isCurrent && this.refuseWhileBusy('delete it')) return;
+    const summary = this._store.get(id);
+    if (!summary && !isCurrent) return;
+    const title = summary?.title || this.state.conversationTitle || 'this conversation';
+    const choice = await vscode.window.showWarningMessage(
+      `Delete "${title}"? Its visible history is removed from this workspace. Files, checkpoints and agent memory are not changed.`,
+      { modal: true },
+      'Delete'
+    );
+    if (choice !== 'Delete') return;
+    if (isCurrent && this.refuseWhileBusy('delete it')) return;
+    await this.flushPersistence();
+    await this._store.delete(id).catch(() => false);
+    if (isCurrent) this.startFreshConversation();
+    else {
+      this.refreshConversationList();
+      this.sendState();
+    }
+  }
+
+  /**
+   * Starts a new conversation that carries a bounded, read-only copy of the
+   * earlier conversation's last turns as background context. Nothing is re-run.
+   */
+  public async continueFromConversation(id: string): Promise<void> {
+    if (this.refuseWhileBusy('start a new conversation')) return;
+    let source: ChatMessage[] = [];
+    if (id === this.state.conversationId) source = this.state.messages;
+    else if (this._store) source = (await this._store.read(id).catch(() => null))?.messages || [];
+    const seed: ChatMessage[] = [];
+    let chars = 0;
+    for (let i = source.length - 1; i >= 0 && seed.length < MAX_SEED_MESSAGES; i--) {
+      const m = source[i];
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      if (chars + m.content.length > MAX_SEED_CHARS) break;
+      chars += m.content.length;
+      seed.unshift({ id: this.generateId(), role: m.role, content: m.content, timestamp: m.timestamp, inherited: true });
+    }
+    this.startFreshConversation(seed);
+  }
+
+  public async inspectRecovery(id: string): Promise<void> {
+    if (id === this.state.conversationId && this.state.activeTurn) {
+      this.state.history = { ...(this.state.history || { enabled: false }), notice: 'Recovery status is available once the current task stops.' };
+      this.sendState();
+      return;
+    }
+    let runIds: string[] = [];
+    let lastStatus: ConversationExecutionStatus = 'idle';
+    if (id === this.state.conversationId) {
+      runIds = this._meta.runIds;
+      lastStatus = this.state.lastStatus || 'idle';
+    } else if (this._store) {
+      const record = await this._store.read(id).catch(() => null);
+      if (!record) return;
+      const restored = prepareForRestore(record);
+      runIds = restored.runIds;
+      lastStatus = restored.lastStatus;
+    }
+    const runId = runIds[runIds.length - 1];
+    const view: RecoveryStatusDto = {
+      conversationId: id,
+      lastStatus,
+      state: 'NO_RUN',
+      reasons: [],
+      manualInspectionRequired: false,
+      resumeAvailable: false,
+      operations: [],
+      files: [],
+    };
+    if (runId) {
+      view.runId = runId;
+      const snapshot = await this.host.getSnapshot();
+      const root = resolveWorkspaceRoot(snapshot);
+      if (!root) {
+        view.state = 'UNREADABLE';
+        view.reasons = ['NO_WORKSPACE'];
+      } else {
+        const inspection = await this.recoveryInspector({ workspaceRoot: root, runId });
+        view.state = inspection.state;
+        view.reasons = inspection.reasons.slice();
+        view.manualInspectionRequired = inspection.manualInspectionRequired;
+        view.operations = inspection.operations.map((o) => ({ ...o }));
+        view.files = inspection.files.slice();
+        if (inspection.checkpoint) {
+          const { reason, phase, status, createdAt, fromEarlierProcess, awaitingApproval } = inspection.checkpoint;
+          view.checkpoint = { reason, phase, status, createdAt, fromEarlierProcess, awaitingApproval };
+        }
+      }
+    }
+    if (this.state.conversationId === id || !this.state.activeTurn) {
+      this.state.recovery = view;
+      this.sendState();
+    }
+  }
+}
+
+const MAX_SEED_MESSAGES = 6;
+const MAX_SEED_CHARS = 8000;
+
+function storeErrorCode(e: any): string {
+  const code = typeof e?.code === 'string' ? e.code : '';
+  return /^[A-Z_]{2,40}$/.test(code) ? code : 'STORAGE_ERROR';
+}
+
+function describeStoreIssues(issues: StoreIssue[]): string | undefined {
+  const setAside = issues.filter((i) => i.code === 'CORRUPT' || i.code === 'OVERSIZED').length;
+  const newer = issues.filter((i) => i.code === 'UNSUPPORTED_VERSION').length;
+  const parts: string[] = [];
+  if (setAside) parts.push(`${setAside} damaged conversation file${setAside === 1 ? ' was' : 's were'} set aside`);
+  if (newer) parts.push(`${newer} conversation${newer === 1 ? ' was' : 's were'} saved by a newer version and left untouched`);
+  return parts.length ? parts.join('; ') + '.' : undefined;
 }

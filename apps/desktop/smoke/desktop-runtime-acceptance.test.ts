@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { existsSync, mkdirSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, mkdtempSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { spawn, execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -161,6 +161,8 @@ async function doRun() {
     'open-vs-code.listSkills',
     'open-vs-code.showActiveSkill',
     'open-vs-code.reviewLearningCandidates',
+    'open-vs-code.showConversationHistory',
+    'open-vs-code.newConversation',
   ];
 
   for (const cmd of requiredCommands) {
@@ -248,6 +250,122 @@ module.exports = { run };
       assert.strictEqual(existsSync(cliPath), true, 'CLI launcher script must exist in archive');
     } finally {
       rmSync(extractTmp, { recursive: true, force: true });
+    }
+  });
+
+  test('4. Sprint 7C: a saved conversation is visible after the packaged app restarts', async () => {
+    assert.strictEqual(existsSync(APP_EXE), true, `Executable must exist at ${APP_EXE}`);
+    const bundledExtDir = join(APP_PATH, 'Contents', 'Resources', 'app', 'extensions', 'open-vs-code.vscode-integration');
+    const testTmp = mkdtempSync(join(tmpdir(), 'ovsc-restart-accept-'));
+    const userDataDir = join(testTmp, 'userData');
+    const extDir = join(testTmp, 'extDir');
+    const workspaceDir = join(testTmp, 'workspace');
+    for (const dir of [userDataDir, extDir, workspaceDir]) mkdirSync(dir, { recursive: true });
+    const outFile = join(testTmp, 'probe.json');
+
+    // Both phases drive the live ChatController of the extension the host actually loaded
+    // (the module's existing _testSeam), never a second copy and never a mocked vscode.
+    const preamble = `
+const vscode = require('vscode');
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+async function liveChat() {
+  const ext = vscode.extensions.getExtension('open-vs-code.vscode-integration');
+  assert.ok(ext, 'bundled extension discovered');
+  await ext.activate();
+  const mod = require(path.join(ext.extensionPath, 'dist', 'extension.js'));
+  const chat = mod._testSeam.chatController;
+  assert.ok(chat, 'live ChatController available');
+  await chat.historyReady;
+  return chat;
+}
+function withTimeout(promise, ms, what) {
+  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(what + ' timed out')), ms))]);
+}
+function run(testsRoot, clb) {
+  return doRun().then(
+    () => { if (typeof clb === 'function') clb(null, 0); },
+    (err) => { console.error('[restart-accept]', err && err.stack || err); if (typeof clb === 'function') clb(err); throw err; }
+  );
+}
+module.exports = { run };
+`;
+    const phase1 = preamble + `
+async function doRun() {
+  const chat = await liveChat();
+  const state = chat.getState();
+  assert.strictEqual(state.history.enabled, true, 'history is enabled for a folder workspace: ' + JSON.stringify(state.history));
+  assert.strictEqual(state.messages.length, 0, 'fresh profile starts empty');
+  // No model is configured, so the turn fails; the user's message is still saved.
+  await withTimeout(chat.handleWebviewMessage({ type: 'chat.send', text: 'Sprint 7C restart probe message', mode: 'ASK' }), 60000, 'probe turn');
+  const id = chat.getState().conversationId;
+  await chat.handleWebviewMessage({ type: 'conversation.rename', conversationId: id, title: 'Restart probe' });
+  await chat.flushPersistence();
+  const after = chat.getState();
+  fs.writeFileSync(${JSON.stringify(outFile)}, JSON.stringify({ id, messages: after.messages.map((m) => ({ role: m.role, content: m.content, status: m.status ?? null })), lastStatus: after.lastStatus }));
+  console.log('[restart-accept] phase 1 saved conversation', id);
+}
+`;
+    const phase2 = preamble + `
+async function doRun() {
+  const saved = JSON.parse(fs.readFileSync(${JSON.stringify(outFile)}, 'utf8'));
+  const chat = await liveChat();
+  const state = chat.getState();
+  assert.strictEqual(state.conversationId, saved.id, 'the most recent conversation is reopened');
+  assert.strictEqual(state.conversationTitle, 'Restart probe');
+  assert.deepStrictEqual(state.messages.map((m) => ({ role: m.role, content: m.content, status: m.status ?? null })), saved.messages, 'visible history restored exactly: ' + JSON.stringify({ restored: state.messages.map((m) => ({ role: m.role, content: m.content, status: m.status ?? null })), saved: saved.messages }));
+  assert.strictEqual(state.lastStatus, saved.lastStatus);
+  assert.strictEqual(state.activeTurn, false, 'restoring starts no task');
+  assert.strictEqual(state.pendingConfirmation, undefined, 'restoring grants no approval');
+  assert.ok(chat.listConversations().some((c) => c.id === saved.id && c.title === 'Restart probe'), 'listed in history');
+  fs.writeFileSync(${JSON.stringify(outFile)} + '.phase2', JSON.stringify({ ok: true, messages: state.messages.length }));
+  console.log('[restart-accept] phase 2 restored conversation', saved.id);
+}
+`;
+
+    const launch = (runnerPath: string) => new Promise<number>((resolve, reject) => {
+      const proc = spawn(APP_EXE, [
+        '--extensionDevelopmentPath=' + bundledExtDir,
+        '--extensionTestsPath=' + runnerPath,
+        '--user-data-dir=' + userDataDir,
+        '--extensions-dir=' + extDir,
+        '--password-store=basic',
+        '--use-mock-keychain',
+        '--disable-gpu',
+        '--disable-crash-reporter',
+        '--disable-telemetry',
+        '--disable-workspace-trust',
+        workspaceDir,
+      ], { stdio: 'inherit', env: cleanAppEnv() });
+      const timer = setTimeout(() => { try { process.kill(proc.pid!, 'SIGKILL'); } catch {} reject(new Error('packaged app did not exit')); }, 180_000);
+      proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+      proc.on('exit', (code) => { clearTimeout(timer); resolve(code ?? 0); });
+    });
+
+    try {
+      const runner1 = join(testTmp, 'phase1.js');
+      const runner2 = join(testTmp, 'phase2.js');
+      writeFileSync(runner1, phase1, 'utf8');
+      writeFileSync(runner2, phase2, 'utf8');
+
+      assert.strictEqual(await launch(runner1), 0, 'phase 1 (save) must exit 0');
+      const saved = JSON.parse(readFileSync(outFile, 'utf8'));
+      assert.ok(saved.messages.some((m: any) => m.role === 'user' && m.content === 'Sprint 7C restart probe message'));
+
+      // The record lives in VS Code's per-workspace storage, not in the workspace.
+      const storageRoot = join(userDataDir, 'User', 'workspaceStorage');
+      const records = readdirSync(storageRoot).flatMap((hash) => {
+        const dir = join(storageRoot, hash, 'open-vs-code.vscode-integration', 'conversations');
+        return existsSync(dir) ? readdirSync(dir).filter((n) => n === saved.id + '.json') : [];
+      });
+      assert.strictEqual(records.length, 1, 'exactly one saved record for the probe conversation');
+      assert.strictEqual(existsSync(join(workspaceDir, '.open-vs-code', 'conversations')), false);
+
+      assert.strictEqual(await launch(runner2), 0, 'phase 2 (restart and restore) must exit 0');
+      assert.strictEqual(JSON.parse(readFileSync(outFile + '.phase2', 'utf8')).ok, true);
+    } finally {
+      rmSync(testTmp, { recursive: true, force: true });
     }
   });
 });

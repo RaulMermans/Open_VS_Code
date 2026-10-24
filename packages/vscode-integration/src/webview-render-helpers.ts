@@ -78,18 +78,19 @@ function docOf(doc?: any): any {
   return doc || (typeof (globalThis as any).document !== "undefined" ? (globalThis as any).document : undefined);
 }
 
-function appendRoleLabel(d: any, div: any, role: string, status?: string): void {
+function appendRoleLabel(d: any, div: any, role: string, status?: string, inherited?: boolean): void {
   var meta = d.createElement("div");
   meta.className = "message-meta";
   var label = role === "assistant" ? "Assistant" : role === "system" ? "System" : "You";
   if (status && status !== "completed" && status !== "pending") label += " · " + status;
+  if (inherited) label += " · from an earlier conversation";
   setText(meta, label);
   div.appendChild(meta);
 }
 
 export function renderChatMessage(
   container: any,
-  message: { id?: string; role?: string; content: string; status?: string; attachments?: any[] } | string,
+  message: { id?: string; role?: string; content: string; status?: string; attachments?: any[]; inherited?: boolean } | string,
   doc?: any,
   postMessage?: (msg: any) => void
 ): any {
@@ -99,12 +100,13 @@ export function renderChatMessage(
   var content = typeof message === "object" && message ? (message.content ?? "") : String(message ?? "");
   var status = typeof message === "object" && message ? message.status : undefined;
   var id = typeof message === "object" && message && message.id ? message.id : "";
-  div.className = "message " + role + (status ? " is-" + status : "");
+  var inherited = typeof message === "object" && message ? message.inherited === true : false;
+  div.className = "message " + role + (status ? " is-" + status : "") + (inherited ? " is-inherited" : "");
   setAttr(div, "data-message-id", id);
   setAttr(div, "role", "article");
-  setAttr(div, "aria-label", (role === "assistant" ? "Assistant" : role === "system" ? "System" : "User") + " message");
+  setAttr(div, "aria-label", (role === "assistant" ? "Assistant" : role === "system" ? "System" : "User") + " message" + (inherited ? " from an earlier conversation" : ""));
 
-  appendRoleLabel(d, div, role, status);
+  appendRoleLabel(d, div, role, status, inherited);
 
   var body = d.createElement("div");
   body.className = "message-body";
@@ -658,6 +660,7 @@ function reviewStatusLabel(status: string): string {
     case 'running': return 'Running';
     case 'succeeded': return 'Passed';
     case 'timed-out': return 'Timed out';
+    case 'interrupted': return 'Interrupted';
     default: return String(status || '');
   }
 }
@@ -675,7 +678,7 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
   var counts: Record<string, number> = {};
   for (var c = 0; c < list.length; c++) counts[list[c].status] = (counts[list[c].status] || 0) + 1;
   var summaryParts = [];
-  var order = ['pending', 'running', 'applied', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled'];
+  var order = ['pending', 'running', 'applied', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled', 'interrupted'];
   for (var o = 0; o < order.length; o++) {
     if (counts[order[o]]) summaryParts.push(counts[order[o]] + ' ' + reviewStatusLabel(order[o]).toLowerCase());
   }
@@ -760,7 +763,7 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
         setAttr(openBtn, 'aria-label', (r.status === 'applied' ? 'Show changes in ' : 'Open ') + r.path);
         onClick(openBtn, function (mid: string) { return function () { send({ type: 'review.openChange', mutationId: mid }); }; }(r.id));
         li.appendChild(openBtn);
-      } else if (r.kind === 'command' && r.status !== 'pending' && r.status !== 'rejected') {
+      } else if (r.kind === 'command' && r.status !== 'pending' && r.status !== 'rejected' && r.outputAvailable !== false) {
         var outBtn = d.createElement('button');
         outBtn.className = 'btn-reject review-action';
         outBtn.type = 'button';
@@ -960,6 +963,385 @@ export function handleComposerKeydown(event: any, send: () => void): boolean {
  * because Function.prototype.toString() of a bundled export does not close
  * over sibling module locals (MAX_CODE_CHARS, setText, fillMessageBody, ...).
  */
+// ---- Sprint 7C: conversation history, title bar and recovery view -------------
+
+function conversationStatusLabel(status: string): string {
+  switch (status) {
+    case 'running': return 'Running';
+    case 'interrupted': return 'Interrupted';
+    case 'failed': return 'Failed';
+    case 'cancelled': return 'Cancelled';
+    default: return '';
+  }
+}
+
+function relativeTime(ts: number, now: number): string {
+  if (typeof ts !== 'number' || !(ts > 0)) return '';
+  var diff = Math.max(0, now - ts);
+  var minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return minutes + ' min ago';
+  var hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + ' h ago';
+  var days = Math.floor(hours / 24);
+  return days === 1 ? 'yesterday' : days + ' days ago';
+}
+
+export function filterConversations(conversations: any[], filter: string, showArchived: boolean): any[] {
+  var q = String(filter || '').trim().toLowerCase();
+  var out = [];
+  for (var i = 0; i < (conversations || []).length; i++) {
+    var c = conversations[i];
+    if (!c || (c.archived && !showArchived)) continue;
+    if (q) {
+      var hay = (String(c.title || '') + '\n' + String(c.preview || '') + '\n' + String(c.mode || '')).toLowerCase();
+      if (hay.indexOf(q) === -1) continue;
+    }
+    out.push(c);
+  }
+  return out;
+}
+
+/** Title of the active conversation, its status, and entry points to history and recovery. */
+export function renderConversationBar(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var title = (state && state.conversationTitle) || 'New conversation';
+  var status = (state && state.lastStatus) || 'idle';
+  var sig = [state && state.conversationId, title, status, state && state.activeTurn ? 1 : 0, state && state.recovery ? 1 : 0].join('\u0000');
+  if (container.__barSig === sig) return container.firstChild || null;
+  container.__barSig = sig;
+  container.innerHTML = '';
+  var d = docOf(doc);
+  var bar = d.createElement('div');
+  bar.className = 'conversation-bar';
+  var titleEl = d.createElement('span');
+  titleEl.className = 'conversation-title';
+  setAttr(titleEl, 'title', title);
+  setText(titleEl, title);
+  bar.appendChild(titleEl);
+  var label = conversationStatusLabel(status);
+  if (label && !(state && state.activeTurn && status === 'running')) {
+    var badge = d.createElement('span');
+    badge.className = 'conversation-status is-' + status;
+    setText(badge, label);
+    bar.appendChild(badge);
+  }
+  if (postMessage && (status === 'interrupted' || status === 'failed' || status === 'cancelled') && !(state && state.activeTurn)) {
+    var send = postMessage;
+    var id = state.conversationId;
+    var rec = appendAction(d, bar, 'Recovery', 'Show recovery status for this conversation', function () {
+      send({ type: 'conversation.inspectRecovery', conversationId: id });
+    });
+    rec.className = 'btn-reject conversation-action';
+  }
+  container.appendChild(bar);
+  return bar;
+}
+
+/** Moves keyboard focus between the open buttons of the history list. */
+export function moveListFocus(items: any[], current: any, delta: number): any {
+  if (!items || !items.length) return null;
+  var index = -1;
+  for (var i = 0; i < items.length; i++) if (items[i] === current) index = i;
+  var next = items[Math.max(0, Math.min(items.length - 1, index < 0 ? 0 : index + delta))];
+  if (next && typeof next.focus === 'function') next.focus();
+  return next;
+}
+
+/**
+ * Conversation picker. Safe metadata only (title, time, mode, status, short
+ * preview). Opening, renaming, archiving and deleting are requests to the host;
+ * deleting is confirmed natively there.
+ */
+export function renderHistoryPanel(
+  container: any,
+  conversations: any[],
+  options: any,
+  doc?: any,
+  postMessage?: (msg: any) => void,
+  handlers?: any
+): { visible: number; openButtons: any[] } {
+  var opts = options || {};
+  var list = filterConversations(conversations, opts.filter, opts.showArchived);
+  var sig = JSON.stringify([list, opts.activeId, opts.filter, opts.showArchived, opts.renamingId, opts.history, Math.floor((opts.now || 0) / 60000)]);
+  if (container.__historySig === sig && container.__historyResult) return container.__historyResult;
+  container.__historySig = sig;
+  container.innerHTML = '';
+  var d = docOf(doc);
+  var h = handlers || {};
+  var openButtons: any[] = [];
+  var result = { visible: list.length, openButtons: openButtons };
+  container.__historyResult = result;
+
+  if (opts.history && opts.history.notice) {
+    var notice = d.createElement('div');
+    notice.className = 'history-notice';
+    setAttr(notice, 'role', 'status');
+    setText(notice, opts.history.notice);
+    container.appendChild(notice);
+  }
+  if (!list.length) {
+    var empty = d.createElement('div');
+    empty.className = 'history-empty';
+    if (opts.history && opts.history.enabled === false) setText(empty, 'History is not saved in this window.');
+    else if (!(conversations || []).length) setText(empty, 'No saved conversations yet. Send a message to start one.');
+    else if (opts.filter) setText(empty, 'No conversations match "' + opts.filter + '".');
+    else setText(empty, 'Only archived conversations exist. Turn on "Show archived" to see them.');
+    container.appendChild(empty);
+    return result;
+  }
+
+  var ul = d.createElement('ul');
+  ul.className = 'history-list';
+  setAttr(ul, 'aria-label', 'Conversations in this workspace, most recent first');
+  var send = postMessage || function () {};
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i];
+    var li = d.createElement('li');
+    var isActive = c.id === opts.activeId;
+    li.className = 'history-item' + (isActive ? ' is-active' : '') + (c.archived ? ' is-archived' : '');
+
+    if (opts.renamingId === c.id) {
+      var input = d.createElement('input');
+      input.className = 'history-rename';
+      input.type = 'text';
+      input.value = c.title || '';
+      setAttr(input, 'aria-label', 'New title for ' + (c.title || 'conversation') + '. Enter to save, Escape to cancel.');
+      setAttr(input, 'maxlength', '80');
+      if (typeof input.addEventListener === 'function') {
+        input.addEventListener('keydown', function (cid: string, el: any) {
+          return function (e: any) {
+            if (e.key === 'Enter') {
+              if (typeof e.preventDefault === 'function') e.preventDefault();
+              send({ type: 'conversation.rename', conversationId: cid, title: String(el.value || '') });
+              if (h.onRenameDone) h.onRenameDone(cid);
+            } else if (e.key === 'Escape') {
+              if (typeof e.preventDefault === 'function') e.preventDefault();
+              if (typeof e.stopPropagation === 'function') e.stopPropagation();
+              if (h.onRenameDone) h.onRenameDone(cid);
+            }
+          };
+        }(c.id, input));
+      }
+      li.appendChild(input);
+      ul.appendChild(li);
+      if (typeof input.focus === 'function') input.focus();
+      continue;
+    }
+
+    var open = d.createElement('button');
+    open.className = 'history-open';
+    open.type = 'button';
+    if (isActive) setAttr(open, 'aria-current', 'true');
+    var meta = [relativeTime(c.updatedAt, opts.now || Date.now()), c.mode, c.messageCount + ' message' + (c.messageCount === 1 ? '' : 's')];
+    var statusLabel = conversationStatusLabel(c.lastStatus);
+    if (statusLabel) meta.push(statusLabel);
+    if (c.archived) meta.push('Archived');
+    if (isActive) meta.push('Current');
+    var titleSpan = d.createElement('span');
+    titleSpan.className = 'history-title';
+    setText(titleSpan, c.title || 'New conversation');
+    open.appendChild(titleSpan);
+    var metaSpan = d.createElement('span');
+    metaSpan.className = 'history-meta';
+    setText(metaSpan, meta.filter(function (x: string) { return !!x; }).join(' · '));
+    open.appendChild(metaSpan);
+    setAttr(open, 'aria-label', (c.title || 'New conversation') + ', ' + metaSpan.textContent + '. Enter to open, F2 to rename, Delete to delete.');
+    onClick(open, function (cid: string) { return function () { send({ type: 'conversation.open', conversationId: cid }); if (h.onOpen) h.onOpen(cid); }; }(c.id));
+    if (typeof open.addEventListener === 'function') {
+      open.addEventListener('keydown', function (cid: string) {
+        return function (e: any) {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            if (typeof e.preventDefault === 'function') e.preventDefault();
+            moveListFocus(openButtons, e.currentTarget || e.target, e.key === 'ArrowDown' ? 1 : -1);
+          } else if (e.key === 'Home' || e.key === 'End') {
+            if (typeof e.preventDefault === 'function') e.preventDefault();
+            var edge = openButtons[e.key === 'Home' ? 0 : openButtons.length - 1];
+            if (edge && typeof edge.focus === 'function') edge.focus();
+          } else if (e.key === 'F2') {
+            if (typeof e.preventDefault === 'function') e.preventDefault();
+            if (h.onRenameStart) h.onRenameStart(cid);
+          } else if (e.key === 'Delete') {
+            if (typeof e.preventDefault === 'function') e.preventDefault();
+            send({ type: 'conversation.delete', conversationId: cid });
+          }
+        };
+      }(c.id));
+    }
+    li.appendChild(open);
+    openButtons.push(open);
+
+    var actions = d.createElement('div');
+    actions.className = 'history-actions';
+    var title = c.title || 'conversation';
+    appendAction(d, actions, 'Rename', 'Rename ' + title, function (cid: string) { return function () { if (h.onRenameStart) h.onRenameStart(cid); }; }(c.id));
+    appendAction(d, actions, 'Continue', 'Start a new conversation using ' + title + ' as background context', function (cid: string) { return function () { send({ type: 'conversation.continueFrom', conversationId: cid }); }; }(c.id));
+    appendAction(d, actions, c.archived ? 'Unarchive' : 'Archive', (c.archived ? 'Unarchive ' : 'Archive ') + title, function (cid: string, archived: boolean) { return function () { send({ type: 'conversation.archive', conversationId: cid, archived: !archived }); }; }(c.id, !!c.archived));
+    appendAction(d, actions, 'Delete', 'Delete ' + title + ' (asks for confirmation)', function (cid: string) { return function () { send({ type: 'conversation.delete', conversationId: cid }); }; }(c.id));
+    if (c.lastStatus === 'interrupted' || c.lastStatus === 'failed' || c.lastStatus === 'cancelled') {
+      appendAction(d, actions, 'Recovery', 'Show recovery status for ' + title, function (cid: string) { return function () { send({ type: 'conversation.inspectRecovery', conversationId: cid }); }; }(c.id));
+    }
+    li.appendChild(actions);
+    ul.appendChild(li);
+  }
+  container.appendChild(ul);
+  return result;
+}
+
+function recoveryStateText(state: string): string {
+  switch (state) {
+    case 'NO_RUN': return 'No agent run was recorded for this conversation.';
+    case 'NO_RECORD': return 'No checkpoint or journal remains for the last run. It may never have reached a checkpoint, or it was pruned.';
+    case 'COMPLETED': return 'The last run completed. Nothing is waiting to resume.';
+    case 'STOPPED': return 'The last run stopped or failed. Agent Core does not retry it automatically.';
+    case 'INTERRUPTED': return 'The last run was interrupted between steps. No unfinished change or command is recorded.';
+    case 'REVERIFY': return 'The last run was interrupted after a change or during a check. Re-run your checks before relying on the result.';
+    case 'RECONFIRM': return 'The last run was waiting for your approval. That approval ended with the run; the pending change or command was not applied.';
+    case 'MANUAL_INSPECTION': return 'Files are not in a state Agent Core can reconcile. Inspect the files below before continuing.';
+    case 'UNREADABLE': return 'The recovery records for the last run could not be read. Inspect the files manually.';
+    default: return String(state || '');
+  }
+}
+
+function operationKindLabel(kind: string): string {
+  switch (kind) {
+    case 'MUTATION': return 'Change';
+    case 'ROLLBACK_MUTATION': return 'Rollback';
+    case 'VERIFICATION': return 'Command';
+    case 'MCP_SIDE_EFFECT': return 'External tool call';
+    case 'MCP_READ': return 'External read';
+    case 'MODEL_CALL': return 'Model call';
+    case 'CONTEXT_READ': return 'Context read';
+    default: return String(kind || 'Operation');
+  }
+}
+
+function operationStatusLabel(status: string): string {
+  switch (status) {
+    case 'PREPARED': return 'prepared';
+    case 'STARTED': return 'started';
+    case 'COMPLETED': return 'completed';
+    case 'FAILED': return 'failed';
+    case 'INTERRUPTED': return 'interrupted';
+    case 'RECONCILED_APPLIED': return 'found applied on disk';
+    case 'RECONCILED_NOT_APPLIED': return 'not applied';
+    case 'AMBIGUOUS': return 'outcome unknown — inspect';
+    case 'ROLLED_BACK': return 'rolled back';
+    case 'SUPERSEDED': return 'superseded';
+    default: return String(status || '').toLowerCase();
+  }
+}
+
+/**
+ * Read-only recovery view. It separates the three things a user might mean by
+ * "recover": the restored display, a new task with this context, and resuming
+ * the interrupted run, which the editor does not offer.
+ */
+export function renderRecoveryPanel(container: any, recovery: any, title: string, doc?: any, postMessage?: (msg: any) => void): any {
+  var sig = recovery ? JSON.stringify([recovery, title]) : '';
+  if (container.__recoverySig === sig) return container.firstChild || null;
+  container.__recoverySig = sig;
+  container.innerHTML = '';
+  if (!recovery) return null;
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+  var panel = d.createElement('section');
+  panel.className = 'recovery-panel' + (recovery.manualInspectionRequired ? ' needs-inspection' : '');
+  setAttr(panel, 'aria-label', 'Recovery status for ' + (title || 'this conversation'));
+
+  var header = d.createElement('div');
+  header.className = 'terminal-header';
+  var h = d.createElement('span');
+  h.className = 'terminal-title';
+  setText(h, 'Recovery status');
+  header.appendChild(h);
+  var badge = d.createElement('span');
+  badge.className = 'status-badge';
+  setAttr(badge, 'role', 'status');
+  setText(badge, recovery.manualInspectionRequired ? 'Manual inspection required' : 'Read-only');
+  header.appendChild(badge);
+  panel.appendChild(header);
+
+  appendMetaRow(d, panel, 'Conversation', title || 'this conversation');
+  appendMetaRow(d, panel, 'Last task', conversationStatusLabel(recovery.lastStatus) || (recovery.lastStatus === 'completed' ? 'Completed' : 'No task yet'));
+  if (recovery.checkpoint) {
+    var cp = recovery.checkpoint;
+    appendMetaRow(d, panel, 'Checkpoint', cp.reason + ' · ' + cp.phase + ' · ' + cp.status + (cp.fromEarlierProcess ? ' · from an earlier editor session' : ''));
+    if (cp.createdAt) appendMetaRow(d, panel, 'Saved at', String(cp.createdAt));
+  } else {
+    appendMetaRow(d, panel, 'Checkpoint', 'None recorded');
+  }
+  var stateRow = d.createElement('div');
+  stateRow.className = 'recovery-state';
+  setText(stateRow, recoveryStateText(recovery.state));
+  panel.appendChild(stateRow);
+  if (recovery.reasons && recovery.reasons.length) {
+    var reasons = d.createElement('div');
+    reasons.className = 'review-detail';
+    setText(reasons, 'Agent Core: ' + recovery.reasons.join(' '));
+    panel.appendChild(reasons);
+  }
+
+  if (recovery.operations && recovery.operations.length) {
+    var ops = d.createElement('ul');
+    ops.className = 'review-list';
+    setAttr(ops, 'aria-label', 'Recorded operations of the last run');
+    for (var i = 0; i < recovery.operations.length; i++) {
+      var op = recovery.operations[i];
+      var li = d.createElement('li');
+      li.className = 'review-item' + (op.blocked ? ' is-failed' : '');
+      var text = operationKindLabel(op.kind) + (op.path ? ' ' + op.path : '') + ': ' + operationStatusLabel(op.journalStatus);
+      if (op.observedStatus && op.observedStatus !== op.journalStatus) text += ' → ' + operationStatusLabel(op.observedStatus);
+      setText(li, text);
+      ops.appendChild(li);
+    }
+    panel.appendChild(ops);
+  }
+
+  if (recovery.files && recovery.files.length) {
+    var files = d.createElement('div');
+    files.className = 'recovery-files';
+    var fl = d.createElement('span');
+    fl.className = 'terminal-row-label';
+    setText(fl, 'Files');
+    files.appendChild(fl);
+    for (var f = 0; f < recovery.files.length; f++) {
+      var fb = d.createElement('button');
+      fb.className = 'file-ref';
+      fb.type = 'button';
+      setText(fb, recovery.files[f]);
+      setAttr(fb, 'aria-label', 'Open ' + recovery.files[f]);
+      onClick(fb, function (p: string) { return function () { send({ type: 'ui.openFile', path: p }); }; }(recovery.files[f]));
+      files.appendChild(fb);
+    }
+    panel.appendChild(files);
+  }
+
+  var options = d.createElement('ul');
+  options.className = 'recovery-options';
+  var o1 = d.createElement('li');
+  setText(o1, 'Conversation display: restored. Restoring shows history only; it runs nothing and grants no approval.');
+  options.appendChild(o1);
+  var o2 = d.createElement('li');
+  setText(o2, 'New task with this context: starts a fresh conversation with the last turns as background. Every change and command needs a new approval.');
+  options.appendChild(o2);
+  var o3 = d.createElement('li');
+  setText(o3, 'Resume the interrupted run: not available from the editor. Interrupted changes, commands and external tool calls are never replayed.');
+  options.appendChild(o3);
+  panel.appendChild(options);
+
+  var actions = d.createElement('div');
+  actions.className = 'confirmation-actions';
+  var cid = recovery.conversationId;
+  var cont = appendAction(d, actions, 'Start new task with this context', 'Start a new conversation using this conversation as background context', function () {
+    send({ type: 'conversation.continueFrom', conversationId: cid });
+  });
+  cont.className = 'btn-approve';
+  appendAction(d, actions, 'Close', 'Close recovery status', function () { send({ type: 'conversation.closeRecovery' }); });
+  panel.appendChild(actions);
+  container.appendChild(panel);
+  return panel;
+}
+
 export function webviewRenderRuntime(): string {
   return [
     "var MAX_CODE_CHARS = " + MAX_CODE_CHARS + ";",
@@ -994,5 +1376,15 @@ export function webviewRenderRuntime(): string {
     renderReviewLedger.toString(),
     renderConfirmationSummary.toString(),
     handleComposerKeydown.toString(),
+    conversationStatusLabel.toString(),
+    relativeTime.toString(),
+    filterConversations.toString(),
+    renderConversationBar.toString(),
+    moveListFocus.toString(),
+    renderHistoryPanel.toString(),
+    recoveryStateText.toString(),
+    operationKindLabel.toString(),
+    operationStatusLabel.toString(),
+    renderRecoveryPanel.toString(),
   ].join("\n");
 }

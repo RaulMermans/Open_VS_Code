@@ -19,6 +19,8 @@ export interface ChatMessage {
   timestamp: number;
   status?: "pending" | "completed" | "failed" | "cancelled";
   attachments?: ChatContextChip[];
+  /** Copied from an earlier conversation as background context; never re-run. */
+  inherited?: boolean;
 }
 
 export interface ChatActivity {
@@ -111,7 +113,9 @@ export type ReviewRecordStatus =
   | "failed"
   | "running"
   | "succeeded"
-  | "timed-out";
+  | "timed-out"
+  /** Restored from history: the editor closed before an outcome was recorded. */
+  | "interrupted";
 
 /**
  * One row of the per-conversation "Changes & commands" ledger. A view-model only:
@@ -132,10 +136,64 @@ export interface ReviewRecordDto {
   verifies?: string[];
   /** Latest command that ran after this change was applied (mutation rows only). */
   verifiedBy?: { id: string; command: string; status: ReviewRecordStatus };
+  /** False when no retained output exists in this window (e.g. a restored command row). */
+  outputAvailable?: boolean;
+}
+
+/** Stable conversation id; the only form accepted from the webview or used as a file name. */
+export const CONVERSATION_ID_PATTERN = /^c-[0-9a-f]{16}$/;
+
+export type ConversationExecutionStatus = "idle" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+
+/** Safe, local metadata for the conversation picker. No message bodies beyond a short redacted preview. */
+export interface ConversationSummaryDto {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  mode: ChatMode;
+  messageCount: number;
+  lastStatus: ConversationExecutionStatus;
+  archived?: boolean;
+  preview?: string;
+}
+
+export type RecoveryViewState =
+  | "NO_RUN"
+  | "NO_RECORD"
+  | "COMPLETED"
+  | "STOPPED"
+  | "INTERRUPTED"
+  | "REVERIFY"
+  | "RECONFIRM"
+  | "MANUAL_INSPECTION"
+  | "UNREADABLE";
+
+/**
+ * Read-only recovery view for one conversation. Built from Agent Core's
+ * checkpoint, journal and recovery planner; it carries no authority.
+ */
+export interface RecoveryStatusDto {
+  conversationId: string;
+  lastStatus: ConversationExecutionStatus;
+  runId?: string;
+  state: RecoveryViewState;
+  reasons: string[];
+  manualInspectionRequired: boolean;
+  /** Always false: resuming an interrupted run is not offered from the editor. */
+  resumeAvailable: false;
+  checkpoint?: { reason: string; phase: string; status: string; createdAt: string; fromEarlierProcess: boolean; awaitingApproval: boolean };
+  operations: Array<{ kind: string; journalStatus: string; observedStatus: string; blocked: boolean; path?: string }>;
+  files: string[];
 }
 
 export interface WebviewState {
   conversationId: string;
+  conversationTitle?: string;
+  lastStatus?: ConversationExecutionStatus;
+  conversations?: ConversationSummaryDto[];
+  history?: { enabled: boolean; notice?: string };
+  recovery?: RecoveryStatusDto;
   mode: ChatMode;
   messages: ChatMessage[];
   activities: ChatActivity[];
@@ -174,7 +232,14 @@ export type WebviewToHostMessage =
   | { type: "terminal.copyOutput"; executionId: string }
   | { type: "terminal.openOutput"; executionId: string }
   | { type: "review.openChange"; mutationId: string }
-  | { type: "ui.openSourceControl" };
+  | { type: "ui.openSourceControl" }
+  | { type: "conversation.open"; conversationId: string }
+  | { type: "conversation.rename"; conversationId: string; title: string }
+  | { type: "conversation.delete"; conversationId: string }
+  | { type: "conversation.archive"; conversationId: string; archived: boolean }
+  | { type: "conversation.continueFrom"; conversationId: string }
+  | { type: "conversation.inspectRecovery"; conversationId: string }
+  | { type: "conversation.closeRecovery" };
 
 // Host -> Webview
 export type HostToWebviewMessage =
@@ -270,6 +335,29 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
 
     case "ui.openSourceControl":
       return { type: "ui.openSourceControl" };
+
+    case "conversation.open":
+    case "conversation.delete":
+    case "conversation.continueFrom":
+    case "conversation.inspectRecovery": {
+      if (typeof raw.conversationId !== 'string' || !CONVERSATION_ID_PATTERN.test(raw.conversationId)) return null;
+      return { type: raw.type, conversationId: raw.conversationId };
+    }
+
+    case "conversation.rename": {
+      if (typeof raw.conversationId !== 'string' || !CONVERSATION_ID_PATTERN.test(raw.conversationId)) return null;
+      if (typeof raw.title !== 'string' || raw.title.length > 500) return null;
+      return { type: "conversation.rename", conversationId: raw.conversationId, title: raw.title };
+    }
+
+    case "conversation.archive": {
+      if (typeof raw.conversationId !== 'string' || !CONVERSATION_ID_PATTERN.test(raw.conversationId)) return null;
+      if (typeof raw.archived !== 'boolean') return null;
+      return { type: "conversation.archive", conversationId: raw.conversationId, archived: raw.archived };
+    }
+
+    case "conversation.closeRecovery":
+      return { type: "conversation.closeRecovery" };
       
     case "ui.openDiff": {
       if (typeof raw.mutationId !== 'string' || !raw.mutationId) return null;

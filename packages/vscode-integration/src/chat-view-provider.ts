@@ -12,6 +12,10 @@ import {
   renderReviewLedger,
   updateTerminalElapsed,
   handleComposerKeydown,
+  renderConversationBar,
+  renderHistoryPanel,
+  renderRecoveryPanel,
+  filterConversations,
   webviewRenderRuntime,
 } from './webview-render-helpers.js';
 
@@ -27,6 +31,10 @@ export {
   renderReviewLedger,
   updateTerminalElapsed,
   handleComposerKeydown,
+  renderConversationBar,
+  renderHistoryPanel,
+  renderRecoveryPanel,
+  filterConversations,
   webviewRenderRuntime,
 };
 
@@ -492,6 +500,105 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .file-hit:hover, .file-hit:focus {
             background: var(--vscode-list-hoverBackground);
         }
+        #conversation-bar { padding: 4px 10px 0; flex-shrink: 0; }
+        .conversation-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+        .conversation-title {
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            flex: 1;
+        }
+        .conversation-status {
+            font-size: 0.8em;
+            padding: 1px 8px;
+            border-radius: 10px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            flex-shrink: 0;
+        }
+        .conversation-status.is-interrupted, .conversation-status.is-failed {
+            background: var(--vscode-inputValidation-warningBackground, var(--vscode-badge-background));
+            color: var(--vscode-inputValidation-warningForeground, var(--vscode-badge-foreground));
+            border: 1px solid var(--vscode-inputValidation-warningBorder, transparent);
+        }
+        .conversation-action { padding: 2px 8px; flex-shrink: 0; }
+        #history-panel {
+            margin: 6px 10px 0;
+            padding: 8px;
+            background: var(--vscode-editorWidget-background);
+            border: 1px solid var(--vscode-editorWidget-border);
+            border-radius: 4px;
+            flex-shrink: 0;
+            max-height: 45vh;
+            overflow-y: auto;
+        }
+        #history-panel[hidden] { display: none; }
+        .history-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+        #history-filter, .history-rename {
+            flex: 1;
+            min-width: 120px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border, transparent);
+            padding: 4px 6px;
+            font-family: inherit;
+            font-size: inherit;
+        }
+        #history-filter:focus-visible, .history-rename:focus-visible, .history-open:focus-visible, input[type=checkbox]:focus-visible {
+            outline: 1px solid var(--vscode-focusBorder);
+            outline-offset: 1px;
+        }
+        .history-archived-toggle { font-size: 0.85em; color: var(--vscode-descriptionForeground); display: inline-flex; gap: 4px; align-items: center; }
+        .history-list { list-style: none; margin: 0; padding: 0; }
+        .history-item { padding: 4px 0; border-top: 1px solid var(--vscode-widget-border, transparent); }
+        .history-item:first-child { border-top: none; }
+        .history-open {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            width: 100%;
+            text-align: left;
+            background: transparent;
+            color: var(--vscode-foreground);
+            padding: 4px 6px;
+        }
+        .history-open:hover { background: var(--vscode-list-hoverBackground); }
+        .history-item.is-active .history-open {
+            background: var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-hoverBackground));
+            border-left: 2px solid var(--vscode-focusBorder);
+        }
+        .history-title { font-weight: 600; overflow-wrap: anywhere; }
+        .history-meta { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+        .history-item.is-archived .history-title { font-style: italic; }
+        .history-actions { display: flex; gap: 4px; flex-wrap: wrap; padding: 2px 6px 0; }
+        .history-actions button { padding: 1px 6px; font-size: 0.85em; }
+        .history-empty, .history-notice { font-size: 0.85em; color: var(--vscode-descriptionForeground); padding: 4px 2px; }
+        .history-notice { color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground)); }
+        .recovery-panel {
+            background: var(--vscode-editorWidget-background);
+            border: 1px solid var(--vscode-editorWidget-border);
+            padding: 10px;
+            margin: 6px 10px;
+            border-radius: 4px;
+            flex-shrink: 0;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+        .recovery-panel.needs-inspection { border-color: var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-foreground, #cca700)); }
+        .recovery-state { margin: 6px 0; }
+        .recovery-files { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; margin: 4px 0; }
+        .recovery-options { margin: 6px 0 0; padding-left: 18px; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+        .message.is-inherited {
+            opacity: 0.8;
+            border-style: dashed;
+        }
         .sr-only {
             position: absolute;
             width: 1px;
@@ -514,8 +621,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             </select>
             <div id="connection-status"></div>
         </div>
+        <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
         <button id="new-chat-btn" class="secondary" aria-label="Start a new conversation">New</button>
     </div>
+    <div id="conversation-bar"></div>
+    <div id="history-panel" role="region" aria-label="Conversation history" hidden>
+        <div class="history-controls">
+            <label class="sr-only" for="history-filter">Filter conversations</label>
+            <input id="history-filter" type="search" placeholder="Filter by title or first message" aria-label="Filter conversations by title or first message" autocomplete="off">
+            <label class="history-archived-toggle"><input id="history-archived" type="checkbox"> Show archived</label>
+        </div>
+        <div id="history-list"></div>
+    </div>
+    <div id="recovery-container"></div>
     
     <div id="transcript" role="log" aria-live="polite" aria-relevant="additions"></div>
     
@@ -566,7 +684,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const pickFileBtn = document.getElementById('pick-file-btn');
         const filePicker = document.getElementById('file-picker');
         
-        let currentState = { activeTurn: false, attachments: [], context: [], messages: [], activities: [] };
+        const historyBtn = document.getElementById('history-btn');
+        const historyPanel = document.getElementById('history-panel');
+        const historyList = document.getElementById('history-list');
+        const historyFilter = document.getElementById('history-filter');
+        const historyArchived = document.getElementById('history-archived');
+        const conversationBar = document.getElementById('conversation-bar');
+        const recoveryContainer = document.getElementById('recovery-container');
+        let historyOpen = false;
+        let showArchived = false;
+        let renamingId = null;
+        let historyResult = null;
+
+        let currentState = { activeTurn: false, attachments: [], context: [], messages: [], activities: [], conversations: [] };
         let sendInFlight = false;
         let lastAtQuery = '';
         const persisted = vscode.getState && vscode.getState();
@@ -589,6 +719,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     renderFileHits(message.files || []);
                     break;
                 case 'conversation.reset':
+                    renamingId = null;
+                    renderRecoveryPanel(recoveryContainer, null, '', document);
                     transcript.innerHTML = '';
                     activities.innerHTML = '';
                     renderTerminalOutput(terminalContainer, null, document);
@@ -617,6 +749,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             renderContextChips(implicitChips, state.context || [], document, vscode.postMessage, false);
             renderContextChips(contextChips, state.attachments || [], document, vscode.postMessage, true);
             renderConnectionStatus(connectionStatus, state.connection, document, vscode.postMessage);
+            renderConversationBar(conversationBar, state, document, vscode.postMessage);
+            renderRecoveryPanel(recoveryContainer, state.recovery, state.conversationTitle, document, vscode.postMessage);
+            renderHistory();
             transcript.scrollTop = transcript.scrollHeight;
             if (state.activeTurn) {
                 sendBtn.style.display = 'none';
@@ -648,6 +783,57 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 elapsedTimer = null;
             }
         }
+
+        function renderHistory() {
+            if (!historyOpen) return;
+            historyResult = renderHistoryPanel(historyList, currentState.conversations || [], {
+                activeId: currentState.conversationId,
+                filter: historyFilter.value,
+                showArchived: showArchived,
+                renamingId: renamingId,
+                history: currentState.history,
+                now: Date.now(),
+            }, document, vscode.postMessage, {
+                onRenameStart: function (id) { renamingId = id; renderHistory(); },
+                onRenameDone: function (id) { renamingId = null; renderHistory(); focusHistoryItem(id); },
+                onOpen: function () { setHistoryOpen(false, false); },
+            });
+        }
+
+        function focusHistoryItem(id) {
+            if (!historyResult || !historyResult.openButtons.length) return;
+            var list = filterConversations(currentState.conversations || [], historyFilter.value, showArchived);
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].id === id && historyResult.openButtons[i]) { historyResult.openButtons[i].focus(); return; }
+            }
+            historyResult.openButtons[0].focus();
+        }
+
+        function setHistoryOpen(open, restoreFocus) {
+            historyOpen = open;
+            historyPanel.hidden = !open;
+            historyBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            if (open) {
+                renderHistory();
+                historyFilter.focus();
+            } else {
+                renamingId = null;
+                if (restoreFocus) historyBtn.focus(); else composer.focus();
+            }
+        }
+
+        historyBtn.addEventListener('click', function () { setHistoryOpen(!historyOpen, true); });
+        historyFilter.addEventListener('input', function () { renderHistory(); });
+        historyFilter.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown' && historyResult && historyResult.openButtons.length) {
+                e.preventDefault();
+                historyResult.openButtons[0].focus();
+            }
+        });
+        historyArchived.addEventListener('change', function () { showArchived = !!historyArchived.checked; renderHistory(); });
+        historyPanel.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !renamingId) { e.preventDefault(); setHistoryOpen(false, true); }
+        });
 
         // Drafts a follow-up for the user to edit and send; nothing runs until a new turn is approved.
         function draftRetry(term) {

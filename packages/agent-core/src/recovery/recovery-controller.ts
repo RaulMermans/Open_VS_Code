@@ -58,7 +58,10 @@ export class RecoveryController {
   /**
    * Produce a structured, truthful RecoveryPlan for a run
    */
-  async buildRecoveryPlan(runId: string): Promise<RecoveryPlan> {
+  async buildRecoveryPlan(
+    runId: string,
+    options?: { readonly persistReconciliation?: boolean }
+  ): Promise<RecoveryPlan> {
     const recoveryId = `rec_${randomUUID().slice(0, 8)}`
     const latestCheckpoint = await this.#checkpointStore.getLatestCheckpoint(runId)
     const allOps = await this.#operationJournal.getAllOperations(runId)
@@ -107,8 +110,8 @@ export class RecoveryController {
         hasReconciledApplied = true
       }
 
-      // Update journal with reconciled status if changed
-      if (rec.summary.reconciledStatus !== op.status) {
+      // Update journal with reconciled status if changed (skipped for read-only inspection)
+      if (options?.persistReconciliation !== false && rec.summary.reconciledStatus !== op.status) {
         await this.#operationJournal.recordStatusUpdate(
           op.operationId,
           runId,

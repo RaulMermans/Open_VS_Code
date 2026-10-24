@@ -271,6 +271,7 @@ class VSCodeIdeHost implements IdeHost {
 
 import { ChatController } from './chat-controller.js';
 import { ChatViewProvider } from './chat-view-provider.js';
+import { ConversationStore, computeWorkspaceId } from './conversation-store.js';
 import { DiffReviewController } from './diff-review-controller.js';
 import { TerminalReviewController } from './terminal-review-controller.js';
 import { AutocompleteController } from './autocomplete-controller.js';
@@ -456,6 +457,18 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
   void chatController.refreshConnection();
+
+  // Sprint 7C: visible conversation history lives in VS Code's per-workspace storage
+  // (outside the repository), never in .open-vs-code/sessions.jsonl.
+  const historyRoot = context.storageUri?.fsPath;
+  if (historyRoot && workspaceRoot) {
+    void chatController.attachConversationStore(new ConversationStore({
+      storageRoot: historyRoot,
+      workspaceId: computeWorkspaceId(workspaceRoot),
+    }));
+  } else {
+    chatController.setHistoryUnavailable('Conversations are not saved because no folder is open.');
+  }
   
   const updateContext = async () => {
     if (chatController && host) {
@@ -482,6 +495,13 @@ export function activate(context: vscode.ExtensionContext) {
     registerAgentCommand('open-vs-code.build', 'BUILD'),
     registerAgentCommand('open-vs-code.debug', 'DEBUG'),
     registerAgentCommand('open-vs-code.review', 'REVIEW'),
+    vscode.commands.registerCommand('open-vs-code.showConversationHistory', async () => {
+      await showConversationHistory();
+    }),
+    vscode.commands.registerCommand('open-vs-code.newConversation', async () => {
+      await chatController?.handleWebviewMessage({ type: 'chat.newConversation' });
+      await vscode.commands.executeCommand('open-vs-code.chat.focus');
+    }),
     vscode.commands.registerCommand('open-vs-code.setHaloToken', async () => {
       const token = await vscode.window.showInputBox({
         prompt: 'HALO application token for Open VS Code',
@@ -640,7 +660,40 @@ export const STARTER_MODELS_JSON = JSON.stringify({
 }, null, 2) + "\n";
 
 
+/** Native, keyboard-first conversation picker over safe local metadata. */
+async function showConversationHistory(): Promise<void> {
+  const controller = chatController;
+  if (!controller) return;
+  await controller.historyReady;
+  const state = controller.getState();
+  const conversations = controller.listConversations();
+  if (!state.history?.enabled) {
+    vscode.window.showInformationMessage(state.history?.notice || 'Conversation history is not available in this window.');
+    return;
+  }
+  if (conversations.length === 0) {
+    vscode.window.showInformationMessage('No saved conversations in this workspace yet.');
+    return;
+  }
+  const items = conversations.map((c) => ({
+    label: (c.id === state.conversationId ? '$(comment-discussion) ' : '') + c.title,
+    description: [c.archived ? 'archived' : '', c.lastStatus === 'interrupted' ? 'interrupted' : '', `${c.messageCount} messages`].filter(Boolean).join(' · '),
+    detail: c.preview,
+    id: c.id,
+  }));
+  const picked = await vscode.window.showQuickPick(items, {
+    title: 'Open VS Code: Conversations in this workspace',
+    placeHolder: 'Search conversations by title or first message',
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+  if (!picked) return;
+  await controller.openConversation(picked.id);
+  await vscode.commands.executeCommand('open-vs-code.chat.focus');
+}
+
 export async function deactivate(): Promise<void> {
+  const chat = chatController;
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
@@ -674,5 +727,10 @@ export async function deactivate(): Promise<void> {
     } catch {
       // Safe containment
     }
+  }
+  if (chat) {
+    // Let queued history writes land. A task that was still running stays recorded
+    // as running and is shown as interrupted on the next start.
+    try { await chat.flushPersistence(); } catch { /* history is best effort at shutdown */ }
   }
 }
