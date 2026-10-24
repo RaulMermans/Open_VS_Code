@@ -65,3 +65,13 @@ Sprint 7B did not change the authority map either. The webview gained more to di
 - Per-hunk approval is not offered: one `MutationEngine` mutation is one hashed hunk.
 
 Record: `docs/sprints/SPRINT_7B_TERMINAL_DIFF_EXPERIENCE.md`.
+
+## Sprint 7C refinements (conversation history)
+
+The authority map is unchanged. New Webview → Host messages, all carrying only a `c-<16 hex>` conversation id (and a bounded title or boolean):
+
+- `conversation.open`, `conversation.rename`, `conversation.archive`
+- `conversation.delete` (the host asks for native modal confirmation)
+- `conversation.continueFrom`, `conversation.inspectRecovery`, `conversation.closeRecovery`
+
+None of them approves, applies or executes anything. Switching is refused while a turn or decision is active. Restored history carries no pending confirmation. See ADR-033 and `docs/sprints/SPRINT_7C_SESSIONS_WORKSPACE_CONTINUITY.md`.

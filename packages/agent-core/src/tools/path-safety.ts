@@ -24,7 +24,14 @@ export async function resolveRepositoryPath(
   expectedType?: "file" | "directory",
 ): Promise<string> {
   const root = await realpath(workspaceRoot)
-  const candidate = resolve(root, requestedPath)
+  let candidate = resolve(root, requestedPath)
+  // An absolute path spelled through the workspace's own symlinked location
+  // (e.g. macOS /var -> /private/var, or a symlinked project folder) is re-rooted
+  // onto the canonical root. The realpath containment check below stays the authority.
+  const lexicalRoot = resolve(workspaceRoot)
+  if (!isContained(root, candidate) && isAbsolute(requestedPath) && lexicalRoot !== root && isContained(lexicalRoot, candidate)) {
+    candidate = resolve(root, relative(lexicalRoot, candidate))
+  }
   if (!isContained(root, candidate)) throw new RepositoryPathError("OUTSIDE_WORKSPACE", `Path is outside workspace: ${requestedPath}`)
 
   let resolved: string

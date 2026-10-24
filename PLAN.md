@@ -376,9 +376,22 @@ Sprint 7B — Terminal, Diff Review & Developer Workflow — SPRINT_7B_PARTIALLY
   - Evidence: `tests/sprint-7b-terminal-diff.test.ts` (17 tests, all 7 safety mutants killed); full repo gate and packaged desktop green.
   - Open: human live-GUI checklist; per-hunk approval (needs MutationEngine partial apply); agent-core `resolveRepositoryPath` absolute-path-through-symlink false rejection (fails closed).
   - Record: `docs/sprints/SPRINT_7B_TERMINAL_DIFF_EXPERIENCE.md`.
+  - Closed in 7C: the symlink false rejection (fixed with tests) and the security flake (PID-file race in the test harnesses, fixed).
+
+Sprint 7C — Persistent Conversations, Workspace Sessions & Recovery UX — SPRINT_7C_PARTIALLY_VERIFIED
+  - ADR-033. `ConversationStore` holds display history only, in `ExtensionContext.storageUri`, separate from agent memory (`sessions.jsonl`) and checkpoints.
+    - Atomic exclusive-temp + rename writes, checksums, quarantine, per-record workspace identity, one sanitization boundary (redaction, bounds, relative paths).
+    - Bounds: 50 conversations, 100 messages, 200k characters, 512 KiB per record.
+  - Chat: create, switch, rename, archive, confirmed delete, filter, continue-in-new-conversation (≤ 6 inherited turns), native "Show Conversation History".
+    - Switching is refused during an active task.
+    - Restore shows unfinished work as interrupted and restores no approval.
+  - Read-only recovery view: `inspectRunRecovery` (agent-core) over `buildRecoveryPlan(runId, { persistReconciliation: false })`. Executable resume is not offered.
+  - Fixes: `resolveRepositoryPath` re-roots absolute paths spelled through a symlinked workspace root. Process-tree test harnesses publish PIDs atomically and clean up on failure.
+  - Evidence: `tests/sprint-7c-sessions.test.ts` (28), `recovery-inspection.test.ts` (8), `path-safety-symlink.test.ts` (4). All 16 safety mutants were killed. Packaged restart acceptance is `desktop:accept` test 4.
+  - Open: human live-GUI checklist (themes, VoiceOver); executable resume from the editor.
+  - Record: `docs/sprints/SPRINT_7C_SESSIONS_WORKSPACE_CONTINUITY.md`.
 
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
-3. Optional UX follow-up: packaged GUI checklist (7A + 7B); provider-contract streaming; Sprint 7C persistent multi-session chat.
-4. agent-core: realpath absolute candidates in `resolveRepositoryPath` before the lexical containment check (with path-safety tests), so symlinked workspace paths can run verification.
+3. Optional UX follow-up: packaged GUI checklist (7A–7C); provider-contract streaming; executable resume from the editor behind a UI re-authorization contract (ADR-033 §5).

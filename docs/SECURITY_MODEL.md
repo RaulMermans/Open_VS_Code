@@ -96,7 +96,14 @@ UI / future Runtime Evals:
 - **Input**: crafted `postMessage` payloads from the webview
 - **Control**: `parseWebviewMessage` validates type, field types, ID lengths, enum values; rejects unknown types; prototype-pollution guarded
 - **Control (Sprint 7B)**: review/output messages carry only ids. `review.openChange` takes a mutationId; the host resolves the path from its own record and checks containment. `terminal.cancel` acts only on a RUNNING executionId. Terminal status is monotonic once finished, so forged or late lifecycle events cannot rewrite outcomes
+- **Control (Sprint 7C)**: conversation messages accept only ids matching `c-<16 hex>`; titles are bounded and normalised. Opening, switching or continuing a conversation never restores a pending confirmation; an old confirmation id resolves nothing. Switching is refused during an active turn
 - **Result**: forged IDs/actions return `null` and are ignored
+
+### Conversation History Storage (Sprint 7C, ADR-033)
+- **Input**: record files in `ExtensionContext.storageUri/conversations/`, possibly corrupt, tampered, foreign, symlinked or from a newer version
+- **Control**: ids validated before any path is built; plain-directory and regular-file checks plus `O_NOFOLLOW`; checksum integrity; per-record workspace identity; one sanitization boundary on save and load (secret redaction, bounds, relative paths only); atomic exclusive-temp + rename writes; quarantine (bounded) instead of trust or silent deletion
+- **Never stored**: credentials, approval state, tool output, hidden reasoning, file contents
+- **Result**: damaged or foreign records are reported and skipped; nothing in history can grant authority or replay a side effect
 
 ### Prototype Pollution
 - **Input**: `__proto__`, `constructor`, `prototype` as own properties in a message object

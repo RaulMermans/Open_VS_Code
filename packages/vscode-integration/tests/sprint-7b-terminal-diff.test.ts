@@ -15,6 +15,7 @@ import {
 } from "../src/webview-render-helpers.ts";
 import { parseWebviewMessage } from "../src/chat-protocol.ts";
 import { describeMutationFailure } from "../src/review-model.ts";
+import { PUBLISH_OWN_PID_INLINE, PUBLISH_PID_SOURCE, readPublishedPid } from "./helpers/process-tree.ts";
 
 const commandCalls: Array<{ id: string; args: any[] }> = [];
 const outputChannels: Array<{ name: string; lines: string[]; shown: number }> = [];
@@ -377,9 +378,9 @@ describe("Sprint 7B terminal experience", () => {
     const parentPidFile = join(fx.tmpRoot, "parent.pid");
     writeFileSync(join(fx.tmpRoot, "spawn.cjs"), [
       "const { spawn } = require('node:child_process');",
-      "const fs = require('node:fs');",
-      "fs.writeFileSync(process.argv[3], String(process.pid));",
-      "const c = spawn(process.execPath, ['-e', 'require(\"node:fs\").writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);', process.argv[2]], { stdio: 'ignore' });",
+      PUBLISH_PID_SOURCE,
+      "publishPid(process.argv[3], process.pid);",
+      "const c = spawn(process.execPath, ['-e', " + JSON.stringify(PUBLISH_OWN_PID_INLINE + " setInterval(() => {}, 1000);") + ", process.argv[2]], { stdio: 'ignore' });",
       "console.log('spawned');",
       "setInterval(() => {}, 1000);",
     ].join("\n"));
@@ -410,11 +411,8 @@ describe("Sprint 7B terminal experience", () => {
       const resultPromise = engine.execute(prepared, t.signal, (chunk: any) => {
         t.onEvent({ type: "verification.output", payload: { executionId: id, ...chunk } });
       });
-      await waitFor(() => {
-        try { readFileSync(childPidFile + id); readFileSync(parentPidFile + id); return true; } catch { return false; }
-      });
-      const childPid = Number(readFileSync(childPidFile + id, "utf8"));
-      const parentPid = Number(readFileSync(parentPidFile + id, "utf8"));
+      const childPid = await readPublishedPid(childPidFile + id);
+      const parentPid = await readPublishedPid(parentPidFile + id);
       assert.equal(isAlive(childPid), true);
       if (cancel) await fx.view.webview.send({ type: "terminal.cancel", executionId: id });
       const result = await resultPromise;

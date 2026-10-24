@@ -20,3 +20,7 @@ We implement **Bounded Session Continuity** via `SessionSummaryStorage` and `Mem
 ## Consequences
 * **Pros:** Strict token budgets are respected. Current Markdown is always the source of truth. Corruption cannot silently wipe out history.
 * **Cons:** Granular, step-by-step reasoning details are lost between sessions.
+
+## Sprint 7C note — not conversation history
+
+Sprint 7C added visible, per-workspace conversation history (ADR-033). It is a separate store in VS Code's workspace storage. It never reads or writes `.open-vs-code/sessions.jsonl`. `SessionSummaryStorage` remains the only bounded agent-memory continuity mechanism, and its bounds, freshness and authority rules above are unchanged.

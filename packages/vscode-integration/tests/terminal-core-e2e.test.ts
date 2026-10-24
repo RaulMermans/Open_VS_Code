@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { PUBLISH_OWN_PID_INLINE, PUBLISH_PID_SOURCE, readPublishedPid, waitForExit } from "./helpers/process-tree.ts";
 import { VerificationEngine, ScriptedModelProvider } from "@open-vs-code/agent-core";
 
 const executedCommands: { command: string, args: any[] }[] = [];
@@ -83,11 +84,11 @@ const freshTerminalFixtures = () => {
   const treeScript = path.join(tmpRoot, "tree-runner.cjs");
   fs.writeFileSync(treeScript, [
     "const { spawn } = require('node:child_process');",
-    "const fs = require('node:fs');",
-    "fs.writeFileSync(process.argv[2], String(process.pid));",
+    PUBLISH_PID_SOURCE,
+    "publishPid(process.argv[2], process.pid);",
     "const child = spawn(process.execPath, [",
     "  '-e',",
-    "  'const fs = require(\"node:fs\"); fs.writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 10000);',",
+    "  " + JSON.stringify(PUBLISH_OWN_PID_INLINE + " setInterval(() => {}, 10000);") + ",",
     "  process.argv[3]",
     "], { stdio: 'ignore' });",
     "setInterval(() => {}, 10000);"
@@ -1388,13 +1389,8 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
     scriptBody: "echo test-ok",
   }, cancelAbort.signal);
 
-  let cancelTries = 0;
-  while ((!fs.existsSync(parentPidPath) || !fs.existsSync(childPidPath)) && cancelTries < 100) {
-    await new Promise(r => setTimeout(r, 20));
-    cancelTries++;
-  }
-  const parentCancelPid = parseInt(fs.readFileSync(parentPidPath, "utf-8"), 10);
-  const childCancelPid = parseInt(fs.readFileSync(childPidPath, "utf-8"), 10);
+  const parentCancelPid = await readPublishedPid(parentPidPath);
+  const childCancelPid = await readPublishedPid(childPidPath);
 
   let parentAliveBefore = false;
   let childAliveBefore = false;
@@ -1404,14 +1400,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   cancelAbort.abort();
   const cancelTreeResult = await cancelExecPromise;
 
-  let parentAliveAfter = true;
-  let childAliveAfter = true;
-  for (let i = 0; i < 50; i++) {
-    try { process.kill(parentCancelPid, 0); parentAliveAfter = true; } catch { parentAliveAfter = false; }
-    try { process.kill(childCancelPid, 0); childAliveAfter = true; } catch { childAliveAfter = false; }
-    if (!parentAliveAfter && !childAliveAfter) break;
-    await new Promise(r => setTimeout(r, 25));
-  }
+  const [parentAliveAfter, childAliveAfter] = await waitForExit([parentCancelPid, childCancelPid]);
 
   results.push({
     id: "real-parent-child-cleanup-cancellation-deterministic",
@@ -1451,13 +1440,8 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
     scriptBody: "echo test-ok",
   });
 
-  let timeoutTries = 0;
-  while ((!fs.existsSync(parentTimeoutPidPath) || !fs.existsSync(childTimeoutPidPath)) && timeoutTries < 200) {
-    await new Promise(r => setTimeout(r, 20));
-    timeoutTries++;
-  }
-  const parentTimeoutPid = parseInt(fs.readFileSync(parentTimeoutPidPath, "utf-8"), 10);
-  const childTimeoutPid = parseInt(fs.readFileSync(childTimeoutPidPath, "utf-8"), 10);
+  const parentTimeoutPid = await readPublishedPid(parentTimeoutPidPath);
+  const childTimeoutPid = await readPublishedPid(childTimeoutPidPath);
 
   let parentAliveBeforeTimeout = false;
   let childAliveBeforeTimeout = false;
@@ -1466,14 +1450,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
 
   const timeoutTreeResult = await timeoutExecPromise;
 
-  let parentAliveAfterTimeout = true;
-  let childAliveAfterTimeout = true;
-  for (let i = 0; i < 50; i++) {
-    try { process.kill(parentTimeoutPid, 0); parentAliveAfterTimeout = true; } catch { parentAliveAfterTimeout = false; }
-    try { process.kill(childTimeoutPid, 0); childAliveAfterTimeout = true; } catch { childAliveAfterTimeout = false; }
-    if (!parentAliveAfterTimeout && !childAliveAfterTimeout) break;
-    await new Promise(r => setTimeout(r, 25));
-  }
+  const [parentAliveAfterTimeout, childAliveAfterTimeout] = await waitForExit([parentTimeoutPid, childTimeoutPid]);
 
   results.push({
     id: "real-parent-child-cleanup-timeout-deterministic",
@@ -1519,13 +1496,8 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   }, deactAbort.signal);
 
   // Wait deterministically for both PIDs to appear (both processes running)
-  let deactTries = 0;
-  while ((!fs.existsSync(deactParentPid) || !fs.existsSync(deactChildPid)) && deactTries < 250) {
-    await new Promise(r => setTimeout(r, 20));
-    deactTries++;
-  }
-  const parentDeactPid = parseInt(fs.readFileSync(deactParentPid, "utf-8"), 10);
-  const childDeactPid = parseInt(fs.readFileSync(deactChildPid, "utf-8"), 10);
+  const parentDeactPid = await readPublishedPid(deactParentPid);
+  const childDeactPid = await readPublishedPid(deactChildPid);
 
   // Confirm both processes are alive before deactivation
   let parentAliveBeforeDeact = false;
@@ -1547,14 +1519,9 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
   // Wait for process death after deactivate
   await deactExecPromise;
 
-  let pDeadAfterDeact = false;
-  let cDeadAfterDeact = false;
-  for (let i = 0; i < 60; i++) {
-    try { process.kill(parentDeactPid, 0); pDeadAfterDeact = false; } catch { pDeadAfterDeact = true; }
-    try { process.kill(childDeactPid, 0); cDeadAfterDeact = false; } catch { cDeadAfterDeact = true; }
-    if (pDeadAfterDeact && cDeadAfterDeact) break;
-    await new Promise(r => setTimeout(r, 25));
-  }
+  const [parentStillAlive, childStillAlive] = await waitForExit([parentDeactPid, childDeactPid]);
+  const pDeadAfterDeact = !parentStillAlive;
+  const cDeadAfterDeact = !childStillAlive;
 
   results.push({
     id: "real-extension-deactivation-during-command",

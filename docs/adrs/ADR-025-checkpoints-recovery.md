@@ -277,3 +277,12 @@ Sprint 4C.4 seals rollback durability so that rollback operations provide the ex
 9. **Sprint 4C Permanent Closure:**
    - Sprint 4C, 4C.1, 4C.2, 4C.3, and 4C.4 are PERMANENTLY CLOSED.
    - Roadmap canonically advances to Sprint 4D — Performance & Large Repositories.
+
+## Sprint 7C amendment — read-only inspection for the editor
+
+- `RecoveryController.buildRecoveryPlan(runId, { persistReconciliation: false })` computes the same plan without appending reconciliation status updates to the journal. The default (persisting) behaviour is unchanged.
+- `inspectRunRecovery` (`recovery/recovery-inspection.ts`) composes the stores and that read-only plan for the editor's recovery view.
+  - It refuses unsafe run ids before touching disk and returns `NO_RECORD` for unknown runs without creating anything.
+  - It reports only states, codes and workspace-relative paths, and `executableResume` is always `false`.
+  - Journal and checkpoint files stay byte-identical (tested). The stores may create empty subdirectories inside a run directory that already exists.
+- Executable resume stays behind `AgentRunner.resumeFromRecovery`. The editor does not offer it (ADR-033 §5).

@@ -22,10 +22,11 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { mkdtemp, writeFile, readFile, mkdir, symlink, rm, realpath } from "node:fs/promises"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { spawn } from "node:child_process"
+import { PUBLISH_OWN_PID_INLINE, PUBLISH_PID_SOURCE, killQuietly, readPublishedPid, waitForExit } from "./helpers/process-tree.ts"
 import crypto from "node:crypto"
 import Module from "node:module"
 
@@ -1211,11 +1212,11 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
           treeScript,
           [
             "const { spawn } = require('node:child_process');",
-            "const fs = require('node:fs');",
-            "fs.writeFileSync(process.argv[2], String(process.pid));",
+            PUBLISH_PID_SOURCE,
+            "publishPid(process.argv[2], process.pid);",
             "const child = spawn(process.execPath, [",
             "  '-e',",
-            "  'const fs = require(\"node:fs\"); fs.writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 10000);',",
+            "  " + JSON.stringify(PUBLISH_OWN_PID_INLINE + " setInterval(() => {}, 10000);") + ",",
             "  process.argv[3]",
             "], { stdio: 'ignore' });",
             "setInterval(() => {}, 10000);",
@@ -1247,14 +1248,11 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
           abortCtrl.signal
         )
 
-        let tries = 0
-        while ((!existsSync(parentPidPath) || !existsSync(childPidPath)) && tries < 100) {
-          await new Promise(r => setTimeout(r, 20))
-          tries++
-        }
-
-        const parentPid = parseInt(readFileSync(parentPidPath, "utf-8"), 10)
-        const childPid = parseInt(readFileSync(childPidPath, "utf-8"), 10)
+        let parentPid: number | undefined
+        let childPid: number | undefined
+        try {
+        parentPid = await readPublishedPid(parentPidPath)
+        childPid = await readPublishedPid(childPidPath)
 
         let parentAliveBefore = false
         let childAliveBefore = false
@@ -1264,14 +1262,7 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
         abortCtrl.abort()
         const cancelResult = await execPromise
 
-        let parentAliveAfter = true
-        let childAliveAfter = true
-        for (let i = 0; i < 50; i++) {
-          try { process.kill(parentPid, 0); parentAliveAfter = true } catch { parentAliveAfter = false }
-          try { process.kill(childPid, 0); childAliveAfter = true } catch { childAliveAfter = false }
-          if (!parentAliveAfter && !childAliveAfter) break
-          await new Promise(r => setTimeout(r, 25))
-        }
+        const [parentAliveAfter, childAliveAfter] = await waitForExit([parentPid, childPid])
 
         rec({
           id: "terminal.13",
@@ -1292,6 +1283,11 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
             childAliveAfter: false,
           },
         })
+        } finally {
+          // A failed scenario must not leak a running tree into the next scenario or run.
+          abortCtrl.abort()
+          killQuietly([parentPid, childPid])
+        }
       } finally {
         await cleanup(treeWs)
       }
@@ -2260,12 +2256,12 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
           treeScript,
           [
             "const { spawn } = require('node:child_process');",
-            "const fs = require('node:fs');",
+            PUBLISH_PID_SOURCE,
             "const parentPidPath = process.argv[2];",
             "const childPidPath = process.argv[3];",
-            "fs.writeFileSync(parentPidPath, String(process.pid));",
+            "publishPid(parentPidPath, process.pid);",
             "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 10000);'], { stdio: 'ignore' });",
-            "fs.writeFileSync(childPidPath, String(child.pid));",
+            "publishPid(childPidPath, child.pid);",
             "setInterval(() => {}, 10000);",
           ].join("\n")
         )
@@ -2331,14 +2327,12 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
           abortCtrl.signal
         )
 
-        let tries = 0
-        while ((!existsSync(parentPidPath) || !existsSync(childPidPath)) && tries < 100) {
-          await new Promise(r => setTimeout(r, 20))
-          tries++
-        }
-
-        const parentPid = parseInt(readFileSync(parentPidPath, "utf-8"), 10)
-        const childPid = parseInt(readFileSync(childPidPath, "utf-8"), 10)
+        let parentPid: number | undefined
+        let childPid: number | undefined
+        let deactivated = false
+        try {
+        parentPid = await readPublishedPid(parentPidPath)
+        childPid = await readPublishedPid(childPidPath)
 
         let parentAliveBefore = false
         let childAliveBefore = false
@@ -2346,18 +2340,12 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
         try { process.kill(childPid, 0); childAliveBefore = true } catch {}
 
         // Canonical extension deactivation — the single authoritative trigger
+        deactivated = true
         deactivate()
 
         const cancelResult = await execPromise
 
-        let parentAliveAfter = true
-        let childAliveAfter = true
-        for (let i = 0; i < 50; i++) {
-          try { process.kill(parentPid, 0); parentAliveAfter = true } catch { parentAliveAfter = false }
-          try { process.kill(childPid, 0); childAliveAfter = true } catch { childAliveAfter = false }
-          if (!parentAliveAfter && !childAliveAfter) break
-          await new Promise(r => setTimeout(r, 25))
-        }
+        const [parentAliveAfter, childAliveAfter] = await waitForExit([parentPid, childPid])
 
         rec({
           id: "lifecycle.4",
@@ -2391,6 +2379,12 @@ async function runSecurityEvaluation(): Promise<SecurityScenarioResult[]> {
             extensionControllersCleared: true,
           },
         })
+        } finally {
+          // Never leave the injected controllers or a live tree behind for Run 2.
+          if (!deactivated) await deactivate()
+          abortCtrl.abort()
+          killQuietly([parentPid, childPid])
+        }
       } finally {
         await cleanup(treeWs)
       }

@@ -205,6 +205,8 @@ No third-party code was copied. These are uses of public APIs of the pinned edit
 - **agent-core finding (not fixed, out of scope):** `resolveRepositoryPath` realpaths the root, but its first containment check compares an *absolute* requested path lexically. A workspace opened through a symlinked path (e.g. macOS `/var/…` temp dirs, or a symlinked project folder) therefore fails verification with `OUTSIDE_WORKSPACE` when `cwd = workspaceRoot`. It fails closed (safe direction). Fix it in agent-core with path-safety tests: realpath an absolute candidate before the lexical check.
 - One unreproduced security-suite flake (§7).
 
+> **Resolved in Sprint 7C** (`SPRINT_7C_SESSIONS_WORKSPACE_CONTINUITY.md` §8). The symlinked-workspace rejection is fixed in `resolveRepositoryPath`, with regression tests. The security flake was traced to a non-atomic PID-file race in the process-tree test harnesses and fixed without relaxing any assertion.
+
 ## 12. Verdict
 
 **SPRINT_7B_PARTIALLY_VERIFIED.** All automated checks pass on the final branch, including the packaged desktop. Only the human GUI checklist above is outstanding. Not merged; awaiting authorization.
