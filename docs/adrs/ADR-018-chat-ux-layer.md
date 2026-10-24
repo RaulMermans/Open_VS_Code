@@ -53,3 +53,15 @@ Sprint 7A did not change this ADR's authority map. It added Webview chrome and h
 - Persistent multi-session storage remains Sprint 7C.
 
 Record: `docs/sprints/SPRINT_7A_AGENT_EXPERIENCE.md`.
+
+## Sprint 7B refinements (review surface)
+
+Sprint 7B did not change the authority map either. The webview gained more to display and four read-only actions:
+
+- The "Changes & commands" ledger is a host view-model. Mutation status changes in one place (`ChatController.setMutationStatus`, which also updates `DiffReviewController`). Command rows are re-derived from `TerminalReviewController`, so neither registry is duplicated.
+- New Webview → Host messages: `terminal.copyOutput`, `terminal.openOutput` (by executionId), `review.openChange` (by mutationId only; the host resolves and contains the path), and `ui.openSourceControl`. None of them decides, applies or executes anything.
+- Terminal status is monotonic once finished. `terminal.cancel` acts only on a RUNNING execution.
+- The host refuses a second confirmation request while one is pending. When a turn ends, any orphaned decision is released as REJECT.
+- Per-hunk approval is not offered: one `MutationEngine` mutation is one hashed hunk.
+
+Record: `docs/sprints/SPRINT_7B_TERMINAL_DIFF_EXPERIENCE.md`.

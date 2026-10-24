@@ -367,8 +367,18 @@ Sprint 7A — Agent Experience & Chat UX — SPRINT_7A_PARTIALLY_VERIFIED
   - Evidence: `packages/vscode-integration` 45/45 tests including new `sprint-7a-*.test.ts`. V1.1 flags remain default-off.
   - Record: `docs/sprints/SPRINT_7A_AGENT_EXPERIENCE.md`.
   - Blocked here: live VSCodium GUI/theme walkthrough; `tsc --noEmit` idle hang for this package (ship path is esbuild).
+  - Closed in 7B: the hang was the iCloud-evicted checkout; two hidden type errors fixed; packaged desktop smoke 13/13, accept 3/3.
+
+Sprint 7B — Terminal, Diff Review & Developer Workflow — SPRINT_7B_PARTIALLY_VERIFIED
+  - Presentation and review-path hardening over the existing ChatController / TerminalReviewController / DiffReviewController. No agent-core change, no new execution or permission path, no new dependency.
+  - Command card, change approval details, "Changes & commands" ledger, native Output panel / Git change / Source Control, draft-only retry.
+  - Fixes: monotonic terminal status; `terminal.cancel` only for a RUNNING id; conflicting confirmation refused; orphaned confirmation released as REJECT at turn end; output posts stop at the bound.
+  - Evidence: `tests/sprint-7b-terminal-diff.test.ts` (17 tests, all 7 safety mutants killed); full repo gate and packaged desktop green.
+  - Open: human live-GUI checklist; per-hunk approval (needs MutationEngine partial apply); agent-core `resolveRepositoryPath` absolute-path-through-symlink false rejection (fails closed).
+  - Record: `docs/sprints/SPRINT_7B_TERMINAL_DIFF_EXPERIENCE.md`.
 
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
-3. Optional UX follow-up: packaged GUI checklist; provider-contract streaming; Sprint 7C persistent multi-session chat.
+3. Optional UX follow-up: packaged GUI checklist (7A + 7B); provider-contract streaming; Sprint 7C persistent multi-session chat.
+4. agent-core: realpath absolute candidates in `resolveRepositoryPath` before the lexical containment check (with path-safety tests), so symlinked workspace paths can run verification.

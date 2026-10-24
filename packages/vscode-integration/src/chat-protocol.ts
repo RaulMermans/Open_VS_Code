@@ -64,6 +64,12 @@ export interface TerminalReviewDto {
   cwd: string;
   provenance: string;
   timeoutMs: number;
+  executable?: string;
+  args?: string[];
+  scriptName?: string;
+  scriptBody?: string;
+  startedAt?: number | null;
+  outputLimitBytes?: number;
   status: 'WAITING_APPROVAL' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED' | 'REJECTED';
   exitCode?: number | null;
   exitSignal?: string | null;
@@ -75,6 +81,14 @@ export interface TerminalReviewDto {
   isOutputVisible?: boolean;
 }
 
+export interface MutationSummaryDto {
+  operation: "patch" | "create" | string;
+  linesAdded?: number;
+  linesRemoved?: number;
+  beforeHash?: string;
+  afterHash?: string;
+}
+
 export interface ConfirmationRequestPayload {
   id: string;
   type: string;
@@ -82,8 +96,42 @@ export interface ConfirmationRequestPayload {
   riskLabel: string;
   mutationId?: string;
   path?: string;
+  mutation?: MutationSummaryDto;
   preparedCommand?: TerminalReviewDto;
   responding?: boolean;
+  blockedReason?: string;
+}
+
+export type ReviewRecordStatus =
+  | "pending"
+  | "applied"
+  | "rejected"
+  | "cancelled"
+  | "stale"
+  | "failed"
+  | "running"
+  | "succeeded"
+  | "timed-out";
+
+/**
+ * One row of the per-conversation "Changes & commands" ledger. A view-model only:
+ * diff content and status live in DiffReviewController, command output in
+ * TerminalReviewController. Nothing here can approve or apply anything.
+ */
+export interface ReviewRecordDto {
+  id: string;
+  kind: "mutation" | "command";
+  status: ReviewRecordStatus;
+  path?: string;
+  mutation?: MutationSummaryDto;
+  command?: string;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  detail?: string;
+  /** Mutation ids applied before this command ran (command rows only). */
+  verifies?: string[];
+  /** Latest command that ran after this change was applied (mutation rows only). */
+  verifiedBy?: { id: string; command: string; status: ReviewRecordStatus };
 }
 
 export interface WebviewState {
@@ -96,6 +144,7 @@ export interface WebviewState {
   activeTurn: boolean;
   pendingConfirmation?: ConfirmationRequestPayload;
   activeTerminal?: TerminalReviewDto;
+  reviews?: ReviewRecordDto[];
   error?: string;
   connection?: ConnectionStatus;
 }
@@ -121,7 +170,11 @@ export type WebviewToHostMessage =
   | { type: "terminal.respond"; confirmationId: string; action: "APPROVE" | "REJECT" }
   | { type: "terminal.cancel"; executionId: string }
   | { type: "terminal.toggleOutput"; executionId: string }
-  | { type: "terminal.copyCommand"; executionId: string };
+  | { type: "terminal.copyCommand"; executionId: string }
+  | { type: "terminal.copyOutput"; executionId: string }
+  | { type: "terminal.openOutput"; executionId: string }
+  | { type: "review.openChange"; mutationId: string }
+  | { type: "ui.openSourceControl" };
 
 // Host -> Webview
 export type HostToWebviewMessage =
@@ -203,6 +256,20 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
       if (typeof raw.executionId !== 'string' || !raw.executionId || raw.executionId.length > 100) return null;
       return { type: "terminal.copyCommand", executionId: raw.executionId };
     }
+
+    case "terminal.copyOutput":
+    case "terminal.openOutput": {
+      if (typeof raw.executionId !== 'string' || !raw.executionId || raw.executionId.length > 100) return null;
+      return { type: raw.type, executionId: raw.executionId };
+    }
+
+    case "review.openChange": {
+      if (typeof raw.mutationId !== 'string' || !raw.mutationId || raw.mutationId.length > 100) return null;
+      return { type: "review.openChange", mutationId: raw.mutationId };
+    }
+
+    case "ui.openSourceControl":
+      return { type: "ui.openSourceControl" };
       
     case "ui.openDiff": {
       if (typeof raw.mutationId !== 'string' || !raw.mutationId) return null;

@@ -95,6 +95,7 @@ UI / future Runtime Evals:
 ### Webview Message Forgery
 - **Input**: crafted `postMessage` payloads from the webview
 - **Control**: `parseWebviewMessage` validates type, field types, ID lengths, enum values; rejects unknown types; prototype-pollution guarded
+- **Control (Sprint 7B)**: review/output messages carry only ids. `review.openChange` takes a mutationId; the host resolves the path from its own record and checks containment. `terminal.cancel` acts only on a RUNNING executionId. Terminal status is monotonic once finished, so forged or late lifecycle events cannot rewrite outcomes
 - **Result**: forged IDs/actions return `null` and are ignored
 
 ### Prototype Pollution

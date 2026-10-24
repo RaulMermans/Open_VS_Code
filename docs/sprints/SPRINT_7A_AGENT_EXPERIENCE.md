@@ -206,3 +206,15 @@ Full Chromium/VS Code heap traces were not taken (GUI blocked). Token streaming 
 2. **Streaming follow-up:** add an explicit `model.delta` (or equivalent) to the provider contract; until then keep event-based progress.
 3. **Sprint 7C:** durable conversation list and restore, still bounded, still not a second memory engine.
 4. Keep MCP/Skills/Modes/Capability Packs as additive header/slots — the 7A chrome leaves room without implementing them.
+
+---
+
+## Verification closure (Sprint 7B, 2026-10-24)
+
+Closed in Sprint 7B from a fresh clone outside iCloud. Full detail: `docs/sprints/SPRINT_7B_TERMINAL_DIFF_EXPERIENCE.md` §1.
+
+- **Typecheck "hang" — environmental.** This record was produced in an iCloud-synced checkout whose files were evicted ("dataless"), so reads blocked at ~0% CPU. Off iCloud, `tsc --noEmit` for this package completes in 1.84 s (319 files).
+- **Two type errors this sprint shipped were hidden by the hang** and are now fixed: `chat-ux-model.ts` attachment label could be `undefined`; `webview-render-helpers.ts` segment union was not narrowed. `npm run typecheck` passes for all workspaces.
+- **Packaged desktop works.** `desktop:prepare` + `desktop:package` succeed; `desktop:smoke` 13/13 and `desktop:accept` 3/3 on the 7A baseline. The "missing app bundle" above was a missing local cache, not an application failure.
+- Correction: the regression table above swaps two counts. `@open-vs-code/cli` has 21 tests and `@open-vs-code/ide-adapter` has 7.
+- Still open: human live-GUI theme / screen-reader walkthrough.
