@@ -131,6 +131,8 @@ const {
   AUTOCOMPLETE_TOGGLE_COMMAND,
 } = require("../src/autocomplete-controller.ts")
 const extension = require("../src/extension.ts")
+// Sprint 7D: documents follow VS Code's offset/range model (the controller reads a bounded window).
+const { MockTextDocument } = require("./helpers/text-document.ts")
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1235,16 +1237,7 @@ async function runAutocompleteEvaluation(label: string): Promise<ScenarioResult[
     const docUri = "file:///workspace/app.ts"
     const docText = "function main() {\n  return "
     const pos = new MockPosition(1, 9)
-    const mockDoc = {
-      uri: { toString: () => docUri },
-      version: 1,
-      languageId: "typescript",
-      getText: (range?: any) => {
-        if (!range) return docText
-        return docText.slice(0, 27)
-      },
-      positionAt: (_offset: number) => new MockPosition(1, 9),
-    }
+    const mockDoc = new MockTextDocument(docText, 1, "typescript", docUri)
 
     activeEditorMock = {
       document: mockDoc,
@@ -1603,13 +1596,7 @@ async function runAutocompleteEvaluation(label: string): Promise<ScenarioResult[
     ctrl.register(context as any)
 
     const docUri = "file:///workspace/late.ts"
-    const mockDoc = {
-      uri: { toString: () => docUri },
-      version: 1,
-      languageId: "typescript",
-      getText: () => "const late = ",
-      positionAt: () => new MockPosition(0, 13),
-    }
+    const mockDoc = new MockTextDocument("const late = ", 1, "typescript", docUri)
     const pos = new MockPosition(0, 13)
     activeEditorMock = { document: mockDoc, selection: { active: pos, start: pos, end: pos, isEmpty: true } }
     const token = { isCancellationRequested: false, onCancellationRequested: () => {} }
@@ -1646,13 +1633,7 @@ async function runAutocompleteEvaluation(label: string): Promise<ScenarioResult[
     const disabledState = !ctrl.service.enabled
 
     const docUri = "file:///workspace/toggle.ts"
-    const mockDoc = {
-      uri: { toString: () => docUri },
-      version: 1,
-      languageId: "typescript",
-      getText: () => "const t = ",
-      positionAt: () => new MockPosition(0, 10),
-    }
+    const mockDoc = new MockTextDocument("const t = ", 1, "typescript", docUri)
     const pos = new MockPosition(0, 10)
     activeEditorMock = { document: mockDoc, selection: { active: pos, start: pos, end: pos, isEmpty: true } }
     const token = { isCancellationRequested: false, onCancellationRequested: () => {} }

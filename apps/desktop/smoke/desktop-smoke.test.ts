@@ -526,15 +526,20 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
       assert.ok(controller, 'AutocompleteController must be initialized by extension');
 
       // 3. Simulate VS Code TextDocument and Position
+      // Offsets follow VS Code's document model (Sprint 7D: the controller reads a bounded range).
+      const docText = 'def compute():\n    ';
+      const lineStarts = [0, 15];
+      const offsetAt = (p: any) => Math.min(docText.length, lineStarts[Math.min(p.line, 1)] + p.character);
       const mockDoc: any = {
-        getText: (range?: any) => {
-          if (!range) return 'def compute():\n    ';
-          return 'def compute():\n    ';
-        },
+        getText: (range?: any) => (range ? docText.slice(offsetAt(range.start), offsetAt(range.end)) : docText),
         languageId: 'python',
         uri: { fsPath: join(tempWorkspace, 'test.py'), toString: () => `file://${join(tempWorkspace, 'test.py')}` },
         version: 1,
-        positionAt: () => new mockVscode.Position(1, 4),
+        offsetAt,
+        positionAt: (offset: number) => {
+          const o = Math.max(0, Math.min(docText.length, Math.floor(offset)));
+          return o >= 15 ? new mockVscode.Position(1, o - 15) : new mockVscode.Position(0, o);
+        },
       };
 
       const mockPos = new mockVscode.Position(1, 4);

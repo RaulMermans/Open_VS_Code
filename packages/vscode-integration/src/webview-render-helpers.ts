@@ -78,13 +78,17 @@ function docOf(doc?: any): any {
   return doc || (typeof (globalThis as any).document !== "undefined" ? (globalThis as any).document : undefined);
 }
 
-function appendRoleLabel(d: any, div: any, role: string, status?: string, inherited?: boolean): void {
-  var meta = d.createElement("div");
-  meta.className = "message-meta";
+function roleLabel(role: string, status?: string, inherited?: boolean): string {
   var label = role === "assistant" ? "Assistant" : role === "system" ? "System" : "You";
   if (status && status !== "completed" && status !== "pending") label += " · " + status;
   if (inherited) label += " · from an earlier conversation";
-  setText(meta, label);
+  return label;
+}
+
+function appendRoleLabel(d: any, div: any, role: string, status?: string, inherited?: boolean): void {
+  var meta = d.createElement("div");
+  meta.className = "message-meta";
+  setText(meta, roleLabel(role, status, inherited));
   div.appendChild(meta);
 }
 
@@ -218,7 +222,7 @@ function messageSig(
 
 export function updateChatMessage(
   el: any,
-  message: { id?: string; role?: string; content: string; status?: string; attachments?: any[] },
+  message: { id?: string; role?: string; content: string; status?: string; attachments?: any[]; inherited?: boolean },
   doc?: any,
   postMessage?: (msg: any) => void
 ): any {
@@ -226,11 +230,15 @@ export function updateChatMessage(
   var d = docOf(doc);
   var role = message.role || "user";
   var status = message.status;
-  el.className = "message " + role + (status ? " is-" + status : "");
+  var inherited = message.inherited === true;
+  el.className = "message " + role + (status ? " is-" + status : "") + (inherited ? " is-inherited" : "");
   var body = null;
   var children = el.children || [];
   for (var i = 0; i < children.length; i++) {
-    if (children[i].className && String(children[i].className).indexOf("message-body") !== -1) {
+    var cls = children[i].className ? String(children[i].className) : "";
+    // The visible status ("Assistant · failed") follows the message, not just its class.
+    if (cls === "message-meta") setText(children[i], roleLabel(role, status, inherited));
+    if (cls.indexOf("message-body") !== -1) {
       body = children[i];
       break;
     }
@@ -306,13 +314,18 @@ export function syncTranscript(
 }
 
 export function renderActivityTimeline(container: any, activities: any[], doc?: any): any {
+  var all = activities || [];
+  var start = Math.max(0, all.length - 20);
+  var sig = "";
+  for (var s = start; s < all.length; s++) sig += (all[s].id || "") + "\u0000" + (all[s].status || "") + "\u0000" + (all[s].label || all[s].kind || "") + "\u0001";
+  if (container.__activitySig === sig) return container.firstChild || null;
+  container.__activitySig = sig;
   container.innerHTML = "";
-  if (!activities || !activities.length) return null;
+  if (!all.length) return null;
   var d = docOf(doc);
   var list = d.createElement("ol");
   list.className = "activity-list";
   setAttr(list, "aria-label", "Agent activity");
-  var start = Math.max(0, activities.length - 20);
   for (var i = start; i < activities.length; i++) {
     var act = activities[i];
     var li = d.createElement("li");
@@ -339,6 +352,9 @@ export function renderContextChips(
   postMessage?: (msg: any) => void,
   removable?: boolean
 ): any {
+  var sig = JSON.stringify([chips || [], !!removable, !!postMessage]);
+  if (container.__chipsSig === sig) return container.firstChild ? container : null;
+  container.__chipsSig = sig;
   container.innerHTML = "";
   if (!chips || !chips.length) return null;
   var d = docOf(doc);
@@ -378,6 +394,10 @@ export function renderContextChips(
 }
 
 export function renderConnectionStatus(container: any, connection: any, doc?: any, postMessage?: (msg: any) => void): any {
+  // The button is a live region: rebuilding it unchanged would drop focus and can re-announce.
+  var sig = JSON.stringify([connection || null, !!postMessage]);
+  if (container.__connectionSig === sig && container.firstChild) return container.firstChild;
+  container.__connectionSig = sig;
   container.innerHTML = "";
   var d = docOf(doc);
   var status = connection || { state: "unavailable", backend: "unknown", healthChecked: false, detail: "Not verified" };
@@ -795,6 +815,11 @@ export function renderConfirmationSummary(
   doc?: any,
   postMessage?: (msg: any) => void
 ): any {
+  // An unchanged request keeps its card, so keyboard focus and the click lock survive
+  // unrelated state pushes (activity, connection, history).
+  var sig = conf ? JSON.stringify([conf, !!postMessage]) : '';
+  if (container.__confirmationSig === sig && (!conf || container.firstChild)) return container.firstChild || null;
+  container.__confirmationSig = sig;
   container.innerHTML = '';
   if (!conf) return null;
 
@@ -1351,6 +1376,7 @@ export function webviewRenderRuntime(): string {
     docOf.toString(),
     pushTextWithFileRefs.toString(),
     parseMessageSegments.toString(),
+    roleLabel.toString(),
     appendRoleLabel.toString(),
     fillMessageBody.toString(),
     messageSig.toString(),

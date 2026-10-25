@@ -75,3 +75,15 @@ The authority map is unchanged. New Webview → Host messages, all carrying only
 - `conversation.continueFrom`, `conversation.inspectRecovery`, `conversation.closeRecovery`
 
 None of them approves, applies or executes anything. Switching is refused while a turn or decision is active. Restored history carries no pending confirmation. See ADR-033 and `docs/sprints/SPRINT_7C_SESSIONS_WORKSPACE_CONTINUITY.md`.
+
+## Sprint 7D refinements (responsiveness)
+
+The authority map is unchanged; no new Webview → Host message.
+
+- Host → Webview `chat.state` may carry `transcript: "unchanged"` and omit `messages`. The webview then keeps the transcript it already rendered. The host compares id, role, status, content, attachments and the inherited flag with what it last posted, and re-sends the full transcript after a new view, a page reload (`chat.ready`) and every `conversation.reset`.
+- Editor context refreshes with identical chips post nothing. Editor events are coalesced to one snapshot in flight plus one trailing refresh.
+- The page re-renders the activity timeline, context chips, connection status and approval card only when their input changed. An unchanged approval keeps its card, so focus and the click lock survive unrelated pushes. New messages scroll into view only when the reader is at the bottom or has just sent.
+- A model response resolves the row that announced it, and the timeline holds at most 50 rows in total.
+- `ChatController.uiMetrics`: in-memory counters (numbers only), never persisted, logged or used to decide anything.
+
+Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`; ADR-026 (Sprint 7D amendment).

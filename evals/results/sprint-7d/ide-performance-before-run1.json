@@ -1,0 +1,349 @@
+{
+  "label": "before-run1",
+  "date": "2026-10-24T15:38:35.615Z",
+  "commit": "42fefcaed52ff0d37eb3101af22458a2a8bdaf5a",
+  "sourceDiff": "none",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "darwin",
+    "arch": "arm64",
+    "gcExposed": true
+  },
+  "machine": {
+    "cpu": "Apple M3 Pro",
+    "cores": 11,
+    "memoryGiB": 18
+  },
+  "fixtures": {
+    "longConversation": "100 messages × 1,950 chars (≈195k chars, the 200k cap), code fences every 5th message, 20 activities, 20 ledger rows, 50 history summaries, 1 pending change approval",
+    "cjk": "100 × 1,950 CJK chars (3 UTF-8 bytes each, over the 512 KiB record cap)",
+    "emoji": "100 × ≈1,950 chars with emoji (surrogate pairs, 4 UTF-8 bytes each)",
+    "documents": "synthetic TypeScript, 100 KB / 1 MB / 5 MB, cursor mid-file"
+  },
+  "methodology": [
+    "Timings are wall-clock performance.now() per iteration; median, p95, min, max, mean reported in ms.",
+    "mock-DOM = the real generated page script run against tests/helpers/fake-webview.ts; it measures script and DOM-call work, not Chromium layout or paint.",
+    "Host posts are JSON-serialized and parsed (approximating VS Code's webview message serialization) before delivery to the page.",
+    "Store scenarios use the real ConversationStore on the local APFS disk (exclusive temp file, fsync, rename).",
+    "No inference: autocomplete uses an in-process fake gateway; no model latency, tokens/s or quality is measured."
+  ],
+  "durationMs": 13492,
+  "scenarios": {
+    "W1_initial_render_long_conversation": {
+      "method": "mock-DOM",
+      "iterations": 20,
+      "ms": {
+        "n": 20,
+        "median": 0.667,
+        "p95": 3.113,
+        "min": 0.52,
+        "max": 4.499,
+        "mean": 1.153
+      },
+      "elementsCreated": 984
+    },
+    "W2_state_push_activity_only": {
+      "method": "mock-DOM",
+      "iterations": 200,
+      "ms": {
+        "n": 200,
+        "median": 0.106,
+        "p95": 0.339,
+        "min": 0.096,
+        "max": 5.546,
+        "mean": 0.181
+      },
+      "perPush": {
+        "elementsCreated": 87,
+        "listenersAdded": 8,
+        "scrollWrites": 1,
+        "layoutReads": 1
+      }
+    },
+    "W2b_state_push_unchanged": {
+      "method": "mock-DOM",
+      "iterations": 200,
+      "ms": {
+        "n": 200,
+        "median": 0.086,
+        "p95": 0.096,
+        "min": 0.084,
+        "max": 0.454,
+        "mean": 0.097
+      },
+      "perPush": {
+        "elementsCreated": 87,
+        "listenersAdded": 8,
+        "scrollWrites": 1,
+        "layoutReads": 1
+      }
+    },
+    "W3_focus_and_scroll_across_unrelated_push": {
+      "method": "mock-DOM",
+      "confirmationFocusKept": false,
+      "scrollPositionKept": false
+    },
+    "W4_switch_long_conversations": {
+      "method": "mock-DOM",
+      "iterations": 40,
+      "ms": {
+        "n": 40,
+        "median": 0.399,
+        "p95": 1.103,
+        "min": 0.331,
+        "max": 1.442,
+        "mean": 0.465
+      },
+      "elementsCreatedPerSwitch": 812
+    },
+    "W5_terminal_output_flood": {
+      "method": "mock-DOM",
+      "iterations": 2000,
+      "ms": {
+        "n": 2000,
+        "median": 0.001,
+        "p95": 0.001,
+        "min": 0.001,
+        "max": 0.272,
+        "mean": 0.001
+      },
+      "elementsCreatedTotal": 27
+    },
+    "R1_webview_retention_1000_pushes": {
+      "method": "mock-DOM",
+      "liveNodes": {
+        "before": 1018,
+        "after": 1018
+      },
+      "liveListeners": {
+        "before": 163,
+        "after": 163
+      },
+      "listenersAddedTotal": 8163,
+      "heapDeltaMB": 0.25,
+      "transcriptTextIntact": true
+    },
+    "H1_cursor_storm_500_identical_context_refreshes": {
+      "method": "node host + mock-DOM page; JSON round-trip approximates webview message serialization",
+      "iterations": 500,
+      "statePosts": 500,
+      "bytesPosted": 102143000,
+      "hostStringifyMs": 159.5,
+      "pageRenderMs": 144.4,
+      "totalMs": 321.9,
+      "pageElementsCreated": 2500,
+      "messagesInState": 100
+    },
+    "H2_agent_turn_80_events": {
+      "method": "node host + mock-DOM page",
+      "statePosts": 86,
+      "bytesPosted": 17602971,
+      "hostStringifyMs": 26.9,
+      "pageRenderMs": 25.8,
+      "saves": 3,
+      "saveMs": {
+        "n": 3,
+        "median": 12.043,
+        "p95": 64.644,
+        "min": 10.46,
+        "max": 64.644,
+        "mean": 29.049
+      }
+    },
+    "H3_open_conversation_switch": {
+      "method": "node host + real store on disk + mock-DOM page",
+      "iterations": 20,
+      "ms": {
+        "n": 20,
+        "median": 3.608,
+        "p95": 4.926,
+        "min": 3.435,
+        "max": 6.832,
+        "mean": 3.931
+      },
+      "bytesPerSwitch": 202395
+    },
+    "R2_host_retention_1000_events": {
+      "method": "node host",
+      "retained": {
+        "messages": 100,
+        "activities": 250,
+        "reviews": 0,
+        "conversations": 2
+      },
+      "heapDeltaMB": 0.49
+    },
+    "S1_save_long_ascii": {
+      "method": "node + real fs (APFS)",
+      "iterations": 30,
+      "ms": {
+        "n": 30,
+        "median": 8.884,
+        "p95": 9.745,
+        "min": 7.786,
+        "max": 9.998,
+        "mean": 8.707
+      }
+    },
+    "S2_save_long_cjk_over_byte_cap": {
+      "method": "node + real fs (APFS)",
+      "iterations": 10,
+      "ms": {
+        "n": 10,
+        "median": 33.08,
+        "p95": 34.944,
+        "min": 32.756,
+        "max": 34.944,
+        "mean": 33.427
+      },
+      "keptMessages": 87
+    },
+    "S3_save_long_emoji_over_byte_cap": {
+      "method": "node + real fs (APFS)",
+      "iterations": 10,
+      "ms": {
+        "n": 10,
+        "median": 9.478,
+        "p95": 10.979,
+        "min": 8.852,
+        "max": 10.979,
+        "mean": 9.738
+      },
+      "keptMessages": 100
+    },
+    "S3b_save_escape_dense_over_byte_cap": {
+      "method": "node + real fs (APFS)",
+      "iterations": 10,
+      "ms": {
+        "n": 10,
+        "median": 269.997,
+        "p95": 331.042,
+        "min": 197.555,
+        "max": 331.042,
+        "mean": 255.406
+      },
+      "keptMessages": 58
+    },
+    "S4_load_50_with_index": {
+      "method": "node + real fs",
+      "iterations": 20,
+      "ms": {
+        "n": 20,
+        "median": 0.962,
+        "p95": 1.587,
+        "min": 0.928,
+        "max": 2.007,
+        "mean": 1.055
+      }
+    },
+    "S5_load_50_rebuild_index": {
+      "method": "node + real fs",
+      "iterations": 10,
+      "ms": {
+        "n": 10,
+        "median": 172.813,
+        "p95": 236.058,
+        "min": 159.77,
+        "max": 236.058,
+        "mean": 186.61
+      }
+    },
+    "S6_read_largest": {
+      "method": "node + real fs",
+      "iterations": 30,
+      "ms": {
+        "n": 30,
+        "median": 3.163,
+        "p95": 4.001,
+        "min": 3.095,
+        "max": 4.028,
+        "mean": 3.258
+      }
+    },
+    "S7_store_retention_200_save_read": {
+      "method": "node + real fs",
+      "heapDeltaMB": 0.03,
+      "indexEntries": 49
+    },
+    "A1_keystroke_extraction_100KB": {
+      "method": "node + MockTextDocument (VS Code extension-host line model)",
+      "iterations": 30,
+      "ms": {
+        "n": 30,
+        "median": 0.205,
+        "p95": 0.566,
+        "min": 0.164,
+        "max": 1.508,
+        "mean": 0.267
+      },
+      "charsCopiedPerKeystroke": 200040
+    },
+    "A1_keystroke_extraction_1000KB": {
+      "method": "node + MockTextDocument (VS Code extension-host line model)",
+      "iterations": 30,
+      "ms": {
+        "n": 30,
+        "median": 0.862,
+        "p95": 1.723,
+        "min": 0.796,
+        "max": 1.851,
+        "mean": 0.964
+      },
+      "charsCopiedPerKeystroke": 2000032
+    },
+    "A1_keystroke_extraction_5000KB": {
+      "method": "node + MockTextDocument (VS Code extension-host line model)",
+      "iterations": 30,
+      "ms": {
+        "n": 30,
+        "median": 5.518,
+        "p95": 7.859,
+        "min": 4.468,
+        "max": 8.765,
+        "mean": 5.895
+      },
+      "charsCopiedPerKeystroke": 10000024
+    },
+    "A2_rapid_typing_300_keystrokes": {
+      "method": "node + fake gateway (no inference)",
+      "providerInvocations": 1,
+      "completionsShown": 1,
+      "lastKeystrokeGotCompletion": true,
+      "telemetry": {
+        "requests": 300,
+        "providerInvocations": 1,
+        "shown": 1,
+        "accepted": 0,
+        "cancelled": 299,
+        "staleDiscarded": 0,
+        "empty": 0,
+        "failed": 0,
+        "generatedChars": 10,
+        "acceptedChars": 0
+      }
+    },
+    "A3_late_cancel_of_older_request": {
+      "method": "node + fake gateway (no inference)",
+      "newerRequestCancelledByOlderToken": true,
+      "newerRequestCompleted": false,
+      "telemetryCancelled": 2
+    },
+    "A4_unavailable_endpoint": {
+      "method": "node + failing fake gateway",
+      "resultIsNull": true,
+      "msToNull": 1.5,
+      "telemetry": {
+        "requests": 1,
+        "providerInvocations": 1,
+        "shown": 0,
+        "accepted": 0,
+        "cancelled": 0,
+        "staleDiscarded": 0,
+        "empty": 0,
+        "failed": 1,
+        "generatedChars": 0,
+        "acceptedChars": 0
+      }
+    }
+  }
+}

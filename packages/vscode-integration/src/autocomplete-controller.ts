@@ -21,12 +21,39 @@
 import * as vscode from 'vscode';
 import {
   AutocompleteService,
+  MIN_PREFIX_NON_WS_CHARS,
+  PREFIX_CHAR_CEILING,
+  SUFFIX_CHAR_CEILING,
   type AutocompleteGateway,
   type AutocompleteScheduler,
 } from '@open-vs-code/agent-core';
 
 export const AUTOCOMPLETE_ACCEPTED_COMMAND = 'open-vs-code.autocompleteAccepted';
 export const AUTOCOMPLETE_TOGGLE_COMMAND = 'open-vs-code.toggleAutocomplete';
+
+/** Extra characters past each ceiling, so the context builder's surrogate-safe cut matches cutting the full text. */
+const WINDOW_MARGIN = 16;
+
+/**
+ * Editor text around the cursor (Sprint 7D). Only the last PREFIX_CHAR_CEILING and the
+ * first SUFFIX_CHAR_CEILING characters can reach the model, so this copies a bounded
+ * window instead of the whole document on every keystroke. The context built from it
+ * is identical to the one built from the full text.
+ */
+export function editorTextAround(document: vscode.TextDocument, position: vscode.Position): { rawPrefix: string; rawSuffix: string } {
+  const offset = document.offsetAt(position);
+  const prefixStart = Math.max(0, offset - PREFIX_CHAR_CEILING - WINDOW_MARGIN);
+  let rawPrefix = document.getText(new vscode.Range(document.positionAt(prefixStart), position));
+  // The empty-prefix check looks at the whole prefix; when the window alone could fail it,
+  // decide on the full prefix as before.
+  if (prefixStart > 0 && rawPrefix.replace(/\s+/g, '').length < MIN_PREFIX_NON_WS_CHARS) {
+    rawPrefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+  }
+  const rawSuffix = document.getText(
+    new vscode.Range(position, document.positionAt(offset + SUFFIX_CHAR_CEILING + WINDOW_MARGIN)),
+  );
+  return { rawPrefix, rawSuffix };
+}
 
 export interface AutocompleteControllerOptions {
   readonly gateway: AutocompleteGateway;
@@ -105,12 +132,7 @@ export class AutocompleteController implements vscode.InlineCompletionItemProvid
     }
 
     // Build EditorSnapshot from live document (unsaved buffer)
-    const rawPrefix = document.getText(
-      new vscode.Range(new vscode.Position(0, 0), position),
-    );
-    const rawSuffix = document.getText(
-      new vscode.Range(position, document.positionAt(document.getText().length)),
-    );
+    const { rawPrefix, rawSuffix } = editorTextAround(document, position);
 
     const snapshot = {
       rawPrefix,
@@ -136,18 +158,24 @@ export class AutocompleteController implements vscode.InlineCompletionItemProvid
 
     // Map VS Code CancellationToken to AbortSignal
     const abortController = new AbortController();
+    let cancellation: { dispose(): void } | undefined;
     if (token.isCancellationRequested) {
       abortController.abort();
     } else {
-      token.onCancellationRequested(() => abortController.abort());
+      cancellation = token.onCancellationRequested(() => abortController.abort());
     }
 
-    const result = await this.service.trigger(
-      snapshot,
-      document.uri.toString(),
-      abortController.signal,
-      liveEditorSupplier,
-    );
+    let result;
+    try {
+      result = await this.service.trigger(
+        snapshot,
+        document.uri.toString(),
+        abortController.signal,
+        liveEditorSupplier,
+      );
+    } finally {
+      cancellation?.dispose?.();
+    }
 
     if (!result || !result.text) {
       return null;

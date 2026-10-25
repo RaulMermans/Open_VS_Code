@@ -391,7 +391,24 @@ Sprint 7C — Persistent Conversations, Workspace Sessions & Recovery UX — SPR
   - Open: human live-GUI checklist (themes, VoiceOver); executable resume from the editor.
   - Record: `docs/sprints/SPRINT_7C_SESSIONS_WORKSPACE_CONTINUITY.md`.
 
+Sprint 7D — IDE Responsiveness, Performance & UX Hardening — SPRINT_7D_PARTIALLY_VERIFIED
+  - Baseline first (`npm run eval:ide-performance`, `desktop:accept` test 5 in the packaged app), interleaved before/after runs; results in `evals/results/sprint-7d/`.
+  - Fixed:
+    - identical editor context posted full state;
+    - every agent event re-sent the transcript (`transcript: "unchanged"`);
+    - the webview rebuilt unchanged sections, lost approval focus and yanked scroll;
+    - status labels were not updated;
+    - pending model rows escaped the 50-row bound;
+    - autocomplete copied the whole document twice per keystroke;
+    - a late cancel cancelled a newer request;
+    - the byte-cap loop re-serialised the record per dropped message;
+    - redactor gaps (quoted JSON keys, URL credentials, more token formats).
+  - Tradeoff: about 1.5 ms more CPU per full history save or read for the wider redaction.
+  - Evidence: 38 new tests (`sprint-7d-performance.test.ts` 33, `redaction-formats.test.ts` 4, `desktop:accept` test 5); 25/26 mutants killed (1 equivalent).
+  - Open: human GUI/VoiceOver checklist. On this near-full disk, filesystem-bound 4D agent-core tests intermittently time out on `main` too (0 failures in any run).
+  - Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`.
+
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
-3. Optional UX follow-up: packaged GUI checklist (7A–7C); provider-contract streaming; executable resume from the editor behind a UI re-authorization contract (ADR-033 §5).
+3. Optional UX follow-up: packaged GUI checklist (7A–7D); provider-contract streaming; executable resume from the editor behind a UI re-authorization contract (ADR-033 §5).

@@ -368,4 +368,159 @@ async function doRun() {
       rmSync(testTmp, { recursive: true, force: true });
     }
   });
+
+  test('5. Sprint 7D: responsiveness probe inside the real packaged extension host', async () => {
+    assert.strictEqual(existsSync(APP_EXE), true, `Executable must exist at ${APP_EXE}`);
+    const bundledExtDir = join(APP_PATH, 'Contents', 'Resources', 'app', 'extensions', 'open-vs-code.vscode-integration');
+    const testTmp = mkdtempSync(join(tmpdir(), 'ovsc-perf-probe-'));
+    const userDataDir = join(testTmp, 'userData');
+    const extDir = join(testTmp, 'extDir');
+    const workspaceDir = join(testTmp, 'workspace');
+    for (const dir of [userDataDir, extDir, workspaceDir]) mkdirSync(dir, { recursive: true });
+    const outFile = join(testTmp, 'probe.json');
+
+    // Drives the live extension through APIs that predate Sprint 7D, so the same probe
+    // measures a baseline build and a changed build. No model is configured: chat turns
+    // fail fast and autocomplete finds no route, so no inference latency is involved.
+    const runner = `
+const vscode = require('vscode');
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { performance } = require('perf_hooks');
+const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+const ms = (x) => Math.round(x * 100) / 100;
+function stats(xs) { const s = xs.slice().sort((a, b) => a - b); const q = (p) => s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)]; return { n: s.length, median: ms(q(0.5)), p95: ms(q(0.95)), max: ms(s[s.length - 1]) }; }
+function cpuMs(since) { const d = process.cpuUsage(since); return ms((d.user + d.system) / 1000); }
+async function doRun() {
+  const ext = vscode.extensions.getExtension('open-vs-code.vscode-integration');
+  assert.ok(ext, 'bundled extension discovered');
+  const a0 = performance.now();
+  await ext.activate();
+  const activationMs = ms(performance.now() - a0);
+  const mod = require(path.join(ext.extensionPath, 'dist', 'extension.js'));
+  const chat = mod._testSeam.chatController;
+  await chat.historyReady;
+  await vscode.commands.executeCommand('open-vs-code.chat.focus');
+  for (let i = 0; i < 100 && !chat._webviewView; i++) await tick(100);
+  const webviewOpen = !!chat._webviewView;
+  let posts = 0;
+  if (webviewOpen) {
+    const wv = chat._webviewView.webview;
+    const original = wv.postMessage.bind(wv);
+    wv.postMessage = (m) => { posts++; return original(m); };
+  }
+  const mem0 = process.memoryUsage();
+
+  const sendMs = [];
+  for (let i = 0; i < 40; i++) {
+    const t = performance.now();
+    await chat.handleWebviewMessage({ type: 'chat.send', text: 'Probe ' + i + ' ' + 'lorem ipsum '.repeat(330), mode: 'ASK' });
+    sendMs.push(performance.now() - t);
+  }
+  await chat.flushPersistence();
+  const convA = chat.getState().conversationId;
+  const messagesA = chat.getState().messages.length;
+  await chat.handleWebviewMessage({ type: 'chat.newConversation' });
+  for (let i = 0; i < 40; i++) await chat.handleWebviewMessage({ type: 'chat.send', text: 'Second ' + i + ' ' + 'dolor sit '.repeat(400), mode: 'ASK' });
+  await chat.flushPersistence();
+  const convB = chat.getState().conversationId;
+  assert.notStrictEqual(convA, convB);
+
+  const switchMs = [];
+  for (let i = 0; i < 20; i++) {
+    const target = i % 2 ? convB : convA;
+    const t = performance.now();
+    await chat.openConversation(target);
+    switchMs.push(performance.now() - t);
+    assert.strictEqual(chat.getState().conversationId, target, 'switched to the requested conversation');
+  }
+
+  // Editor activity while the chat view is open: 300 cursor moves in a 1 MB file.
+  const lines = [];
+  for (let i = 0; i < 14000; i++) lines.push('  const value_' + i + ' = compute(alpha, beta, gamma) + offset;');
+  const doc = await vscode.workspace.openTextDocument({ content: lines.join('\\n'), language: 'typescript' });
+  const editor = await vscode.window.showTextDocument(doc);
+  await tick(1000);
+  posts = 0;
+  const c0 = process.cpuUsage();
+  const s0 = performance.now();
+  for (let i = 0; i < 300; i++) {
+    editor.selection = new vscode.Selection(i * 10, 4, i * 10, 4);
+    if (i % 10 === 9) await tick(0);
+  }
+  await tick(1500);
+  const selectionStorm = { moves: 300, extensionHostCpuMs: cpuMs(c0), wallMs: ms(performance.now() - s0), webviewPosts: posts };
+
+  // Rapid typing in a 5 MB document: 50 inline-completion requests, each superseding the last.
+  const bigLines = [];
+  for (let i = 0; i < 70000; i++) bigLines.push('  const value_' + i + ' = compute(alpha, beta, gamma) + offset; // ' + i);
+  const big = await vscode.workspace.openTextDocument({ content: bigLines.join('\\n'), language: 'typescript' });
+  const bigEditor = await vscode.window.showTextDocument(big);
+  await tick(1000);
+  const ac = mod._testSeam.autocompleteController;
+  const c1 = process.cpuUsage();
+  const t1 = performance.now();
+  const pending = [];
+  let prev = null;
+  for (let i = 0; i < 50; i++) {
+    if (prev) prev.cancel();
+    prev = new vscode.CancellationTokenSource();
+    const pos = new vscode.Position(35000, 10 + (i % 20));
+    bigEditor.selection = new vscode.Selection(pos, pos);
+    pending.push(ac.provideInlineCompletionItems(big, pos, { triggerKind: 1 }, prev.token));
+  }
+  const syncCpu = cpuMs(c1);
+  await Promise.all(pending);
+  const autocomplete = { documentChars: big.getText().length, requests: 50, extensionHostCpuMs: cpuMs(c1), cpuMsBeforeFirstAwait: syncCpu, wallMs: ms(performance.now() - t1) };
+
+  const mem1 = process.memoryUsage();
+  fs.writeFileSync(${JSON.stringify(outFile)}, JSON.stringify({
+    activationMs, webviewOpen,
+    send: stats(sendMs), messagesInConversationA: messagesA,
+    switch: stats(switchMs),
+    selectionStorm, autocomplete,
+    memoryMB: { heapUsedBefore: ms(mem0.heapUsed / 1048576), heapUsedAfter: ms(mem1.heapUsed / 1048576), rssAfter: ms(mem1.rss / 1048576) },
+    versions: { vscode: vscode.version, node: process.version, electron: process.versions.electron },
+  }));
+}
+function run(testsRoot, clb) {
+  return doRun().then(
+    () => { if (typeof clb === 'function') clb(null, 0); },
+    (err) => { console.error('[perf-probe]', err && err.stack || err); if (typeof clb === 'function') clb(err); throw err; }
+  );
+}
+module.exports = { run };
+`;
+    try {
+      const runnerPath = join(testTmp, 'probe.js');
+      writeFileSync(runnerPath, runner, 'utf8');
+      const code = await new Promise<number>((resolve, reject) => {
+        const proc = spawn(APP_EXE, [
+          '--extensionDevelopmentPath=' + bundledExtDir,
+          '--extensionTestsPath=' + runnerPath,
+          '--user-data-dir=' + userDataDir,
+          '--extensions-dir=' + extDir,
+          '--password-store=basic',
+          '--use-mock-keychain',
+          '--disable-gpu',
+          '--disable-crash-reporter',
+          '--disable-telemetry',
+          '--disable-workspace-trust',
+          workspaceDir,
+        ], { stdio: 'inherit', env: cleanAppEnv() });
+        const timer = setTimeout(() => { try { process.kill(proc.pid!, 'SIGKILL'); } catch {} reject(new Error('packaged app did not exit')); }, 300_000);
+        proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+        proc.on('exit', (c) => { clearTimeout(timer); resolve(c ?? 0); });
+      });
+      assert.strictEqual(code, 0, 'the probe must exit 0');
+      const probe = JSON.parse(readFileSync(outFile, 'utf8'));
+      assert.strictEqual(probe.webviewOpen, true, 'the chat view was resolved, so posts reached a real webview');
+      assert.ok(probe.messagesInConversationA > 0 && probe.messagesInConversationA <= 100, 'transcript bound holds');
+      console.log('[perf-probe] ' + JSON.stringify(probe));
+      if (process.env.OVSC_PERF_PROBE_OUT) writeFileSync(process.env.OVSC_PERF_PROBE_OUT, JSON.stringify(probe, null, 2) + '\n');
+    } finally {
+      rmSync(testTmp, { recursive: true, force: true });
+    }
+  });
 });

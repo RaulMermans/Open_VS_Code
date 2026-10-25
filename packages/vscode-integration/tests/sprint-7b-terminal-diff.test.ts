@@ -685,10 +685,13 @@ describe("Sprint 7B accessibility, performance and authority", () => {
     const container = new MockElement();
     const conf = { id: "c13", summary: "s", riskLabel: "High Risk Mutation", mutationId: "m13", path: "src/a.ts", mutation: { operation: "patch", linesAdded: 1, linesRemoved: 1 } };
     renderConfirmationSummary(container, conf, mockDoc());
-    assert.equal(button(container, "Open Diff")!.focused, 1);
+    const openDiff = button(container, "Open Diff")!;
+    assert.equal(openDiff.focused, 1);
     assert.equal(button(container, "Approve")!.focused, 0);
     renderConfirmationSummary(container, conf, mockDoc());
-    assert.equal(button(container, "Open Diff")!.focused, 0, "re-render does not steal focus again");
+    // Sprint 7D: an unchanged request keeps its card (same button), and focus is not moved again.
+    assert.equal(button(container, "Open Diff"), openDiff);
+    assert.equal(openDiff.focused, 1, "re-render does not steal focus again");
     const cmd = new MockElement();
     renderConfirmationSummary(cmd, { id: "c13b", summary: "s", riskLabel: "r", preparedCommand: { command: "npm test", cwd: "/w" } }, mockDoc());
     assert.equal(button(cmd, "Reject")!.focused, 1);

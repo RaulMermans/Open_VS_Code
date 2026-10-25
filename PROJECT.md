@@ -30,6 +30,17 @@
 
 ## Current sprint
 
+Sprint 7D — IDE Responsiveness, Performance & UX Hardening (`docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`; ADR-026, ADR-018, ADR-022 and ADR-033 amendments). Measured before/after on the same machine (`npm run eval:ide-performance`, `desktop:accept` test 5). Results:
+- Editor cursor and selection activity no longer posts chat state: 300 real cursor moves went from 300 posts to 0, and extension-host CPU from 960 to 273 ms.
+- An unchanged transcript is not re-sent: 80 agent events went from 17.6 MB to 0.66 MB.
+- The webview re-renders only changed sections, so approval focus and the reader's scroll position survive pushes.
+- Autocomplete reads a bounded window: per keystroke on 5 MB, 10 M → 12 k characters copied; 50 real requests cost 364 → 69 ms CPU.
+- A late cancel can no longer cancel a newer request.
+- History saves over the byte cap: 270 → 20–32 ms.
+- Model activity rows resolve, with a hard 50-row bound.
+- The redactor covers quoted JSON keys, URL credentials and more token formats.
+No new dependency, authority or subsystem. HALO is not a prerequisite.
+
 Sprint 7C — Persistent Conversations, Workspace Sessions & Recovery UX (`docs/sprints/SPRINT_7C_SESSIONS_WORKSPACE_CONTINUITY.md`, ADR-033). Several conversations per workspace, saved in VS Code workspace storage and reopened after a restart. A conversation picker supports rename, archive, delete-with-confirmation and "continue in a new conversation". Interrupted tasks are shown honestly, with a read-only recovery view over Agent Core's checkpoints and journal. Restoring runs nothing and grants no approval, and the editor does not offer executable resume. Also fixed: the symlinked-workspace verification rejection (agent-core) and a PID-file race in the process-tree test harnesses. Agent memory (`sessions.jsonl`) and checkpoints keep their own responsibilities. HALO is not a prerequisite.
 
 Sprint 7B — Terminal, Diff Review & Developer Workflow (`docs/sprints/SPRINT_7B_TERMINAL_DIFF_EXPERIENCE.md`). A clearer command card and change review over the existing `VerificationEngine`/`MutationEngine`/PermissionGate path, plus a per-conversation "Changes & commands" ledger. No new execution or permission path. V1.1 flags remain default-off.
@@ -108,4 +119,6 @@ Sprint 5D ✅ COMPLETE — Bounded Memory-to-Skill Learning & V1.1 deterministic
 
 - Phase R (Sprint 7C): Persistent Conversations, Workspace Sessions & Recovery UX (ADR-033). Per-workspace display history in VS Code workspace storage, conversation picker, interrupted-task display, read-only recovery view. No executable resume from the editor. Also fixed: symlinked-workspace verification and the 7B security-test flake (PID-file race). Status: SPRINT_7C_PARTIALLY_VERIFIED — automated gates and packaged restart acceptance green; live GUI checklist manual. See `docs/sprints/SPRINT_7C_SESSIONS_WORKSPACE_CONTINUITY.md`.
 
-- Next: HALO target-host acceptance (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`), then the five-arm V1.1 real-model benchmark (A baseline … E approved learning) in `docs/evals/V1_1_BENCHMARK.md`. No further V1.1 development sprint is planned. UX follow-ups: optional live GUI checklist (7A–7C), event-based streaming if the provider emits deltas, executable resume from the editor (needs a UI re-authorization contract).
+- Phase S (Sprint 7D): IDE Responsiveness, Performance & UX Hardening. Status: SPRINT_7D_PARTIALLY_VERIFIED — profiled before/after, automated gates and packaged desktop (smoke 13/13, accept 5/5) green; live GUI/VoiceOver checklist manual. See `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`.
+
+- Next: HALO target-host acceptance (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`), then the five-arm V1.1 real-model benchmark (A baseline … E approved learning) in `docs/evals/V1_1_BENCHMARK.md`. No further V1.1 development sprint is planned. UX follow-ups: optional live GUI checklist (7A–7D), event-based streaming if the provider emits deltas, executable resume from the editor (needs a UI re-authorization contract).
