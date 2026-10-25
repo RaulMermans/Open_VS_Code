@@ -118,6 +118,20 @@ export class McpCatalog {
     return this.metrics;
   }
 
+  /**
+   * Register or update an MCP server configuration in the catalog.
+   * State defaults to DISCONNECTED (if enabled) or DISABLED (if disabled).
+   * Does NOT auto-connect or execute tools.
+   */
+  registerServer(serverId: string, config: McpServerConfig): void {
+    this.config.servers[serverId] = config;
+    if (config.enabled) {
+      this.serverStates.set(serverId, "DISCONNECTED");
+    } else {
+      this.serverStates.set(serverId, "DISABLED");
+    }
+  }
+
   getServerState(serverId: string): McpConnectionState {
     return this.serverStates.get(serverId) ?? "DISCONNECTED";
   }

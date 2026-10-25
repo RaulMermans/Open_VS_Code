@@ -30,6 +30,16 @@
 
 ## Current sprint
 
+Sprint 8B — Private Account Backend, Authentication & Persistent Integration Profiles (`docs/sprints/SPRINT_8B_PRIVATE_ACCOUNTS.md`; ADR-035).
+Establishes a private, administrator-controlled account service and desktop integration profile management without transforming Open VS Code into a public SaaS or compromising local-first runtime independence:
+- Separately deployable `@open-vs-code/account-service` package with strict separation between account management and the local Agent Runtime (`PermissionGate`, local tool execution, model inference).
+- Private administrator provisioning: invite-free model, no public registration, secure one-time bootstrap CLI (`open-vs-code-admin bootstrap`), explicit roles (`ADMIN`, `USER`), account activation/disabling, and immutable audit logs.
+- High-assurance authentication: Scrypt password hashing (RFC 7914, $N=16384, r=8, p=1$), constant-time comparison, timing-equalized dummy verification against username enumeration, 32-byte opaque session tokens (`ovsc_sess_...`), verifier-only database persistence (SHA-256), and sliding-window brute-force rate limiting.
+- Persistence & migrations: embedded SQLite (`node:sqlite` on Node 22+ with robust CLI fallback), versioned schema migrations, foreign keys with `ON DELETE CASCADE`, and server-side ownership enforcement.
+- Integration registry & credential boundaries: per-user MCP configuration registry; client-executed integrations keep provider secrets in VS Code `SecretStorage`, while future server-side integrations use an AES-256-GCM vault with external master keys.
+- Desktop integration surface: `DesktopAccountManager` in `@open-vs-code/vscode-integration` provides native QuickPick login/logout, profile inspection, and MCP synchronization, with clean fallback to `OFFLINE` or `STALE` states while preserving 100% of local editing and inference functionality.
+- Comprehensive verification: 56/56 account-service tests green, 137/137 vscode-integration tests green, 13/13 desktop smoke tests green, 5/5 packaged desktop acceptance tests green, 0 linter errors, 0 TypeScript errors.
+
 Sprint 8A.1 — MCP Protocol Conformance & Security Closure (`docs/sprints/SPRINT_8A1_MCP_CONFORMANCE_SECURITY.md`; ADR-034 Amendment).
 Corrective sprint establishing verified interoperability with the official MCP 2026-07-28 specification and closing all security gaps:
 - Official Wire Conformance: strictly formatted `params._meta` with `protocolVersion: "2026-07-28"`, `clientCapabilities: {}`, and `clientInfo: { name: "open-vs-code", version: "0.1.0" }`. Root `_meta` and session headers on stateless requests strictly eliminated.

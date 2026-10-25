@@ -118,6 +118,22 @@
       {
         "command": "open-vs-code.viewMcpDiagnostics",
         "title": "Open VS Code: View Actionable MCP Diagnostics"
+      },
+      {
+        "command": "open-vs-code.accountLogin",
+        "title": "Open VS Code: Account Login"
+      },
+      {
+        "command": "open-vs-code.accountLogout",
+        "title": "Open VS Code: Account Logout"
+      },
+      {
+        "command": "open-vs-code.showAccountProfile",
+        "title": "Open VS Code: View Account Profile"
+      },
+      {
+        "command": "open-vs-code.syncAccountIntegrations",
+        "title": "Open VS Code: Sync Account MCP Integrations"
       }
     ],
 
@@ -160,6 +176,16 @@
           "type": "boolean",
           "default": false,
           "description": "After each task, record compact evidence-backed lessons and propose project memory or project-local skills for your review (Open VS Code: Review Learning Candidates). Only what you approve is ever used in prompts; learning never grants permissions. Off until the HALO benchmark is recorded."
+        },
+        "open-vs-code.account.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:4040",
+          "description": "URL of the Open VS Code Account Service."
+        },
+        "open-vs-code.account.autoSyncIntegrations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically synchronize saved MCP integrations upon login."
         }
       }
     }
@@ -171,6 +197,7 @@
     "eval:performance": "node --expose-gc --import tsx tests/perf/ide-performance.bench.ts"
   },
   "dependencies": {
+    "@open-vs-code/account-service": "*",
     "@open-vs-code/agent-core": "*",
     "@open-vs-code/ide-adapter": "*"
   },

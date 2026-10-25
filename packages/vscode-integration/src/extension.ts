@@ -3,8 +3,10 @@ import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorD
 import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, type AutocompleteGateway } from '@open-vs-code/agent-core';
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
+import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
 
 let mcpService: McpService | null = null;
+let accountManager: DesktopAccountManager | null = null;
 
 
 class VSCodeIdeHost implements IdeHost {
@@ -642,6 +644,11 @@ export function activate(context: vscode.ExtensionContext) {
   const secretProvider = new VsCodeSecretProvider(context.secrets);
   mcpService = new McpService(workspaceRoot, secretProvider, host.outputChannel);
   context.subscriptions.push(...registerMcpCommands(context, mcpService, host.outputChannel));
+
+  // Initialize and register Account Management (Sprint 8B)
+  accountManager = new DesktopAccountManager(context, host.outputChannel);
+  context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel));
+  void accountManager.initialize(mcpService);
 }
 
 export const STARTER_MODELS_JSON = JSON.stringify({
@@ -768,6 +775,7 @@ export async function deactivate(): Promise<void> {
     }
     mcpService = null;
   }
+  accountManager = null;
   if (chat) {
     // Let queued history writes land. A task that was still running stays recorded
     // as running and is shown as interrupted on the next start.
