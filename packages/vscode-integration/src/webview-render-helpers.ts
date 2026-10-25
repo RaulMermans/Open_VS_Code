@@ -1367,6 +1367,973 @@ export function renderRecoveryPanel(container: any, recovery: any, title: string
   return panel;
 }
 
+export function renderProfileSection(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+  var account = (state && state.account) || {};
+
+  var card = d.createElement('div');
+  card.className = 'hub-card profile-card';
+
+  var header = d.createElement('div');
+  header.className = 'hub-card-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, 'Account Profile');
+  header.appendChild(title);
+
+  var statusBadge = d.createElement('span');
+  statusBadge.className = 'status-badge ' + (account.status === 'ONLINE' ? 'is-success' : account.status === 'OFFLINE' ? 'is-failed' : 'is-disabled');
+  setText(statusBadge, account.status === 'ONLINE' ? 'Online' : account.status === 'OFFLINE' ? 'Offline' : 'Unauthenticated');
+  header.appendChild(statusBadge);
+  card.appendChild(header);
+
+  if (account.status === 'ONLINE' || account.status === 'OFFLINE') {
+    var user = account.user || {};
+    appendMetaRow(d, card, 'User', (user.username || 'Unknown') + ' (' + (user.role || 'USER') + ')');
+    appendMetaRow(d, card, 'Account Status', user.status || 'ACTIVE');
+    appendMetaRow(d, card, 'Backend URL', account.serverUrl || 'http://127.0.0.1:4040');
+    if (account.isStale) {
+      appendMetaRow(d, card, 'Profile Cache', 'Stale (cached from previous session; local features functional)');
+    }
+    if (account.lastSyncTime) {
+      appendMetaRow(d, card, 'Last Sync', String(account.lastSyncTime));
+    }
+    if (account.error) {
+      appendMetaRow(d, card, 'Diagnostic', String(account.error));
+    }
+
+    var actions = d.createElement('div');
+    actions.className = 'confirmation-actions';
+    if (account.status === 'ONLINE') {
+      var syncBtn = appendAction(d, actions, 'Sync Integrations', 'Synchronize saved MCP configurations from account', function () {
+        send({ type: 'integration.syncAccount' });
+      });
+      syncBtn.className = 'btn-approve';
+    }
+    var logoutBtn = appendAction(d, actions, 'Log Out', 'Revoke session and disconnect account integrations', function () {
+      send({ type: 'integration.accountLogout' });
+    });
+    logoutBtn.className = 'btn-reject';
+    card.appendChild(actions);
+  } else {
+    appendMetaRow(d, card, 'Status', 'Not logged in. Open VS Code operates in local-first standalone mode.');
+    appendMetaRow(d, card, 'Local Features', '100% operational: local editing, local inference and local MCP tools are available.');
+
+    var actions = d.createElement('div');
+    actions.className = 'confirmation-actions';
+    var loginBtn = appendAction(d, actions, 'Log In', 'Log in to an Open VS Code Account', function () {
+      send({ type: 'integration.accountLogin' });
+    });
+    loginBtn.className = 'btn-approve';
+    card.appendChild(actions);
+  }
+
+  container.appendChild(card);
+  return card;
+}
+
+export function renderMcpDashboard(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+
+  if (state && state.wizard) {
+    return renderAddMcpWizard(container, state, d, send);
+  }
+
+  if (state && state.inspectingServerId) {
+    return renderToolInspector(container, state, d, send);
+  }
+
+  // Dashboard Toolbar
+  var toolbar = d.createElement('div');
+  toolbar.className = 'hub-toolbar';
+
+  var addBtn = appendAction(d, toolbar, '+ Add Server', 'Open Add MCP Server wizard', function () {
+    send({ type: 'integration.startWizard' });
+  });
+  addBtn.className = 'btn-approve';
+
+  var refreshBtn = appendAction(d, toolbar, 'Refresh Discovery', 'Re-scan tool definitions from all servers', function () {
+    send({ type: 'integration.refreshDiscovery' });
+  });
+  refreshBtn.className = 'hub-btn-secondary';
+
+  var syncBtn = appendAction(d, toolbar, 'Sync Account', 'Fetch latest integrations from private account profile', function () {
+    send({ type: 'integration.syncAccount' });
+  });
+  syncBtn.className = 'hub-btn-secondary';
+
+  container.appendChild(toolbar);
+
+  // Servers List
+  var servers = (state && state.servers) || [];
+  if (servers.length === 0) {
+    var empty = d.createElement('div');
+    empty.className = 'hub-empty-state';
+    setText(empty, 'No MCP servers configured yet. Click "+ Add Server" to connect an MCP server.');
+    container.appendChild(empty);
+    return container;
+  }
+
+  var list = d.createElement('div');
+  list.className = 'hub-server-list';
+  setAttr(list, 'role', 'list');
+  setAttr(list, 'aria-label', 'Configured MCP Servers');
+
+  for (var i = 0; i < servers.length; i++) {
+    var s = servers[i];
+    var card = d.createElement('div');
+    card.className = 'hub-server-card is-' + String(s.state || 'disconnected').toLowerCase();
+    setAttr(card, 'role', 'listitem');
+
+    var cardHeader = d.createElement('div');
+    cardHeader.className = 'hub-server-header';
+
+    var titleGroup = d.createElement('div');
+    titleGroup.className = 'hub-server-title-group';
+    var nameEl = d.createElement('span');
+    nameEl.className = 'hub-server-name';
+    setText(nameEl, s.name || s.id);
+    titleGroup.appendChild(nameEl);
+
+    var idEl = d.createElement('span');
+    idEl.className = 'hub-server-id';
+    setText(idEl, '(' + s.id + ')');
+    titleGroup.appendChild(idEl);
+    cardHeader.appendChild(titleGroup);
+
+    var badgeGroup = d.createElement('div');
+    badgeGroup.className = 'hub-badge-group';
+
+    var transportBadge = d.createElement('span');
+    transportBadge.className = 'status-badge hub-transport-badge';
+    setText(transportBadge, s.transport || 'unknown');
+    badgeGroup.appendChild(transportBadge);
+
+    var provBadge = d.createElement('span');
+    provBadge.className = 'status-badge hub-provenance-badge ' + (s.source === 'account' ? 'is-account' : s.source === 'local' ? 'is-local' : 'is-workspace');
+    setText(provBadge, s.source === 'account' ? 'Account' : s.source === 'local' ? 'Local' : 'Workspace');
+    badgeGroup.appendChild(provBadge);
+
+    var stateBadge = d.createElement('span');
+    stateBadge.className = 'status-badge ' + (s.state === 'CONNECTED' ? 'is-success' : s.state === 'AUTH_REQUIRED' ? 'is-failed' : s.state === 'DISABLED' ? 'is-disabled' : 'is-disconnected');
+    setText(stateBadge, s.state || 'DISCONNECTED');
+    badgeGroup.appendChild(stateBadge);
+
+    cardHeader.appendChild(badgeGroup);
+    card.appendChild(cardHeader);
+
+    // Meta details
+    appendMetaRow(d, card, 'Target', s.urlOrCommand || 'N/A');
+    appendMetaRow(d, card, 'Discovered Tools', String(s.toolCount || (s.tools ? s.tools.length : 0)));
+    appendMetaRow(d, card, 'Workspace Scope', s.workspaceEnabled ? 'Enabled in this workspace' : 'Disabled by workspace policy');
+    if (s.lastConnectedAt) {
+      appendMetaRow(d, card, 'Last Connected', String(s.lastConnectedAt));
+    }
+    if (s.error) {
+      var errRow = d.createElement('div');
+      errRow.className = 'hub-error-row';
+      setText(errRow, 'Error: ' + s.error);
+      card.appendChild(errRow);
+    }
+
+    // Action buttons
+    var actions = d.createElement('div');
+    actions.className = 'hub-card-actions';
+
+    var sid = s.id;
+    var isConnected = s.state === 'CONNECTED' || s.state === 'DEGRADED';
+    var isEnabled = Boolean(s.enabled);
+    var isWsAllowed = Boolean(s.workspaceEnabled);
+
+    if (isConnected) {
+      var dcBtn = appendAction(d, actions, 'Disconnect', 'Disconnect transport', (function (id) {
+        return function () { send({ type: 'integration.disconnectMcp', serverId: id }); };
+      })(sid));
+      dcBtn.className = 'btn-reject';
+    } else {
+      var connBtn = appendAction(d, actions, 'Connect', 'Connect to MCP server and discover tools', (function (id) {
+        return function () { send({ type: 'integration.connectMcp', serverId: id }); };
+      })(sid));
+      connBtn.className = isEnabled && isWsAllowed ? 'btn-approve' : 'btn-approve is-disabled';
+      if (!isEnabled || !isWsAllowed) {
+        setAttr(connBtn, 'title', !isEnabled ? 'Server is disabled' : 'Disabled by workspace policy');
+      }
+    }
+
+    var toggleBtn = appendAction(d, actions, isEnabled ? 'Disable' : 'Enable', 'Toggle server enabled preference', (function (id, en) {
+      return function () { send({ type: 'integration.toggleMcp', serverId: id, enabled: !en }); };
+    })(sid, isEnabled));
+    toggleBtn.className = 'hub-btn-secondary';
+
+    var wsToggleBtn = appendAction(d, actions, isWsAllowed ? 'Workspace: On' : 'Workspace: Off', 'Toggle activation for current workspace', (function (id, wsEn) {
+      return function () { send({ type: 'integration.toggleWorkspacePolicy', serverId: id, enabled: !wsEn }); };
+    })(sid, isWsAllowed));
+    wsToggleBtn.className = 'hub-btn-secondary';
+
+    var inspectBtn = appendAction(d, actions, 'Inspect Tools (' + String(s.toolCount || 0) + ')', 'Inspect tools and local permissions', (function (id) {
+      return function () { send({ type: 'integration.inspectTools', serverId: id }); };
+    })(sid));
+    inspectBtn.className = 'hub-btn-secondary';
+
+    if (s.source === 'account' || s.source === 'local') {
+      var sName = s.name || s.id;
+      var rmBtn = appendAction(d, actions, 'Remove', 'Remove this server configuration', (function (id, name) {
+        return function () { send({ type: 'integration.promptRemoveServer', serverId: id, serverName: name }); };
+      })(sid, sName));
+      rmBtn.className = 'btn-reject hub-btn-sm';
+    }
+
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+
+  container.appendChild(list);
+  return container;
+}
+
+export function renderAddMcpWizard(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+  var wizard = (state && state.wizard) || { step: 1, draft: { transport: 'streamable_http' } };
+  var draft = wizard.draft || {};
+  var step = wizard.step || 1;
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-wizard-panel';
+
+  var header = d.createElement('div');
+  header.className = 'hub-wizard-header';
+  var h = d.createElement('h3');
+  h.className = 'hub-card-title';
+  setText(h, 'Add MCP Server — Step ' + step + ' of 5');
+  header.appendChild(h);
+
+  var cancelBtn = appendAction(d, header, 'Cancel', 'Cancel wizard and return to server list', function () {
+    send({ type: 'integration.cancelWizard' });
+  });
+  cancelBtn.className = 'btn-reject';
+  panel.appendChild(header);
+
+  // Stepper indicator
+  var stepsIndicator = d.createElement('div');
+  stepsIndicator.className = 'hub-wizard-stepper';
+  var stepNames = ['Transport', 'Configuration', 'Validation', 'Save & Connect', 'Discovered Tools'];
+  for (var s = 1; s <= 5; s++) {
+    var stepDot = d.createElement('span');
+    stepDot.className = 'hub-step-dot' + (step === s ? ' is-current' : step > s ? ' is-done' : '');
+    setText(stepDot, s + '. ' + stepNames[s - 1]);
+    stepsIndicator.appendChild(stepDot);
+  }
+  panel.appendChild(stepsIndicator);
+
+  // Error alert
+  if (wizard.error) {
+    var errBox = d.createElement('div');
+    errBox.className = 'hub-error-banner';
+    setText(errBox, 'Error: ' + wizard.error);
+    panel.appendChild(errBox);
+  }
+
+  // Step 1: Transport Selection
+  if (step === 1) {
+    var desc1 = d.createElement('p');
+    desc1.className = 'hub-wizard-desc';
+    setText(desc1, 'Select a supported Model Context Protocol transport:');
+    panel.appendChild(desc1);
+
+    var transList = d.createElement('div');
+    transList.className = 'hub-transport-picker';
+
+    var optHttp = d.createElement('button');
+    optHttp.type = 'button';
+    optHttp.className = 'hub-transport-card' + (draft.transport === 'streamable_http' ? ' is-selected' : '');
+    setText(optHttp, 'Streamable HTTP (Stateless MCP 2026-07-28 POST — Recommended)');
+    onClick(optHttp, function () { send({ type: 'integration.wizardTransport', transport: 'streamable_http' }); });
+    transList.appendChild(optHttp);
+
+    var optSse = d.createElement('button');
+    optSse.type = 'button';
+    optSse.className = 'hub-transport-card' + (draft.transport === 'sse' ? ' is-selected' : '');
+    setText(optSse, 'SSE (Server-Sent Events 2024-11-05 Stream)');
+    onClick(optSse, function () { send({ type: 'integration.wizardTransport', transport: 'sse' }); });
+    transList.appendChild(optSse);
+
+    var optStdio = d.createElement('button');
+    optStdio.type = 'button';
+    optStdio.className = 'hub-transport-card' + (draft.transport === 'stdio' ? ' is-selected' : '');
+    setText(optStdio, 'stdio (Local Process with isolated environment)');
+    onClick(optStdio, function () { send({ type: 'integration.wizardTransport', transport: 'stdio' }); });
+    transList.appendChild(optStdio);
+
+    panel.appendChild(transList);
+  }
+
+  // Step 2: Configuration
+  else if (step === 2) {
+    var form = d.createElement('div');
+    form.className = 'hub-wizard-form';
+
+    // Server ID
+    var idRow = d.createElement('div');
+    idRow.className = 'hub-form-row';
+    var idLabel = d.createElement('label');
+    setText(idLabel, 'Server Identifier (ID):');
+    idRow.appendChild(idLabel);
+    var idInput = d.createElement('input');
+    idInput.type = 'text';
+    idInput.className = 'hub-input';
+    idInput.value = draft.serverId || '';
+    idInput.placeholder = 'e.g. postgres-tools';
+    idRow.appendChild(idInput);
+    form.appendChild(idRow);
+
+    // Display Name
+    var nameRow = d.createElement('div');
+    nameRow.className = 'hub-form-row';
+    var nameLabel = d.createElement('label');
+    setText(nameLabel, 'Display Name:');
+    nameRow.appendChild(nameLabel);
+    var nameInput = d.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'hub-input';
+    nameInput.value = draft.displayName || '';
+    nameInput.placeholder = 'e.g. PostgreSQL Tools';
+    nameRow.appendChild(nameInput);
+    form.appendChild(nameRow);
+
+    var urlInput: any = null;
+    var cmdInput: any = null;
+    var argsInput: any = null;
+    var credInput: any = null;
+    var secretValInput: any = null;
+
+    if (draft.transport === 'streamable_http' || draft.transport === 'sse') {
+      var urlRow = d.createElement('div');
+      urlRow.className = 'hub-form-row';
+      var urlLabel = d.createElement('label');
+      setText(urlLabel, 'Endpoint URL (HTTPS or verified loopback):');
+      urlRow.appendChild(urlLabel);
+      urlInput = d.createElement('input');
+      urlInput.type = 'text';
+      urlInput.className = 'hub-input';
+      urlInput.value = draft.url || '';
+      urlInput.placeholder = 'https://mcp.internal.net/v1 or http://127.0.0.1:8080/mcp';
+      urlRow.appendChild(urlInput);
+      form.appendChild(urlRow);
+
+      var credRow = d.createElement('div');
+      credRow.className = 'hub-form-row';
+      var credLabel = d.createElement('label');
+      setText(credLabel, 'SecretStorage Key for Bearer Token (Optional):');
+      credRow.appendChild(credLabel);
+      credInput = d.createElement('input');
+      credInput.type = 'text';
+      credInput.className = 'hub-input';
+      credInput.value = draft.credentialRef || '';
+      credInput.placeholder = 'e.g. mcp_bearer_token';
+      credRow.appendChild(credInput);
+      form.appendChild(credRow);
+
+      var secretValRow = d.createElement('div');
+      secretValRow.className = 'hub-form-row';
+      var secLabel = d.createElement('label');
+      setText(secLabel, 'Token Value (Stored securely in VS Code SecretStorage; never sent in plaintext):');
+      secretValRow.appendChild(secLabel);
+      secretValInput = d.createElement('input');
+      secretValInput.type = 'password';
+      secretValInput.className = 'hub-input';
+      secretValInput.placeholder = 'Enter secret token to store in SecretStorage';
+      secretValRow.appendChild(secretValInput);
+      form.appendChild(secretValRow);
+    } else if (draft.transport === 'stdio') {
+      var cmdRow = d.createElement('div');
+      cmdRow.className = 'hub-form-row';
+      var cmdLabel = d.createElement('label');
+      setText(cmdLabel, 'Command Executable:');
+      cmdRow.appendChild(cmdLabel);
+      cmdInput = d.createElement('input');
+      cmdInput.type = 'text';
+      cmdInput.className = 'hub-input';
+      cmdInput.value = draft.command || '';
+      cmdInput.placeholder = 'e.g. sqlite3 or uv';
+      cmdRow.appendChild(cmdInput);
+      form.appendChild(cmdRow);
+
+      var argsRow = d.createElement('div');
+      argsRow.className = 'hub-form-row';
+      var argsLabel = d.createElement('label');
+      setText(argsLabel, 'Arguments (space-separated):');
+      argsRow.appendChild(argsLabel);
+      argsInput = d.createElement('input');
+      argsInput.type = 'text';
+      argsInput.className = 'hub-input';
+      argsInput.value = draft.args ? draft.args.join(' ') : '';
+      argsInput.placeholder = 'e.g. run mcp-server-sqlite --db /path/to/db';
+      argsRow.appendChild(argsInput);
+      form.appendChild(argsRow);
+    }
+
+    var wsRow = d.createElement('div');
+    wsRow.className = 'hub-form-row is-checkbox';
+    var wsCheck = d.createElement('input');
+    wsCheck.type = 'checkbox';
+    wsCheck.checked = draft.workspaceScoped !== false;
+    wsRow.appendChild(wsCheck);
+    var wsLabel = d.createElement('label');
+    setText(wsLabel, ' Scope activation to current workspace only');
+    wsRow.appendChild(wsLabel);
+    form.appendChild(wsRow);
+
+    var persistRow = d.createElement('div');
+    persistRow.className = 'hub-form-row is-checkbox';
+    var persistCheck = d.createElement('input');
+    persistCheck.type = 'checkbox';
+    persistCheck.checked = Boolean(draft.persistToAccount);
+    persistRow.appendChild(persistCheck);
+    var persistLabel = d.createElement('label');
+    setText(persistLabel, ' Save to private account profile (persists across devices)');
+    persistRow.appendChild(persistLabel);
+    form.appendChild(persistRow);
+
+    var btnRow = d.createElement('div');
+    btnRow.className = 'confirmation-actions';
+    var backBtn = appendAction(d, btnRow, '← Back', 'Return to transport selection', function () {
+      send({ type: 'integration.wizardStep', step: 1 });
+    });
+    backBtn.className = 'hub-btn-secondary';
+
+    var validateBtn = appendAction(d, btnRow, 'Validate Configuration →', 'Perform local validation of this configuration', function () {
+      var updates: any = {
+        serverId: idInput.value,
+        displayName: nameInput.value,
+        workspaceScoped: wsCheck.checked,
+        persistToAccount: persistCheck.checked,
+      };
+      if (urlInput) updates.url = urlInput.value;
+      if (credInput) updates.credentialRef = credInput.value;
+      if (secretValInput && secretValInput.value) updates.secretValue = secretValInput.value;
+      if (cmdInput) updates.command = cmdInput.value;
+      if (argsInput) updates.args = argsInput.value ? argsInput.value.split(/\s+/).filter(Boolean) : [];
+
+      send({ type: 'integration.wizardDraft', draft: updates });
+      send({ type: 'integration.wizardValidate' });
+    });
+    validateBtn.className = 'btn-approve';
+
+    form.appendChild(btnRow);
+    panel.appendChild(form);
+  }
+
+  // Step 3: Local Validation Results
+  else if (step === 3) {
+    var vRes = wizard.validationResult || { valid: true, warnings: [] };
+    var valBox = d.createElement('div');
+    valBox.className = 'hub-validation-results ' + (vRes.valid ? 'is-valid' : 'is-invalid');
+
+    appendMetaRow(d, valBox, 'Configuration Status', vRes.valid ? 'Valid' : 'Validation Failed');
+    appendMetaRow(d, valBox, 'Network Policy Guard', vRes.networkPolicyCheck || 'Passed');
+    appendMetaRow(d, valBox, 'Target Availability', vRes.executableOrUrlCheck || 'Passed');
+    appendMetaRow(d, valBox, 'Credential Boundary', vRes.credentialCheck || 'None required');
+
+    if (vRes.warnings && vRes.warnings.length) {
+      var warnTitle = d.createElement('div');
+      warnTitle.className = 'hub-warning-title';
+      setText(warnTitle, 'Security & Policy Warnings:');
+      valBox.appendChild(warnTitle);
+      var wList = d.createElement('ul');
+      wList.className = 'hub-warning-list';
+      for (var w = 0; w < vRes.warnings.length; w++) {
+        var wLi = d.createElement('li');
+        setText(wLi, vRes.warnings[w]);
+        wList.appendChild(wLi);
+      }
+      valBox.appendChild(wList);
+    }
+
+    panel.appendChild(valBox);
+
+    var vActions = d.createElement('div');
+    vActions.className = 'confirmation-actions';
+
+    var editBtn = appendAction(d, vActions, '← Edit Draft', 'Go back and edit configuration fields', function () {
+      send({ type: 'integration.wizardStep', step: 2 });
+    });
+    editBtn.className = 'hub-btn-secondary';
+
+    if (vRes.valid) {
+      var proceedBtn = appendAction(d, vActions, 'Proceed to Save →', 'Advance to save options', function () {
+        send({ type: 'integration.wizardStep', step: 4 });
+      });
+      proceedBtn.className = 'btn-approve';
+    }
+
+    panel.appendChild(vActions);
+  }
+
+  // Step 4: Save & Optionally Connect
+  else if (step === 4) {
+    var saveDesc = d.createElement('p');
+    saveDesc.className = 'hub-wizard-desc';
+    setText(saveDesc, 'Ready to register MCP server "' + (draft.serverId || '') + '". Saving creates the registration without starting executables.');
+    panel.appendChild(saveDesc);
+
+    var sActions = d.createElement('div');
+    sActions.className = 'confirmation-actions';
+
+    var saveConnBtn = appendAction(d, sActions, 'Save & Connect Now', 'Persist configuration and establish connection immediately', function () {
+      send({ type: 'integration.wizardSave', connectNow: true });
+    });
+    saveConnBtn.className = 'btn-approve';
+
+    var saveOnlyBtn = appendAction(d, sActions, 'Save Only (Disconnected)', 'Persist configuration without connecting', function () {
+      send({ type: 'integration.wizardSave', connectNow: false });
+    });
+    saveOnlyBtn.className = 'hub-btn-secondary';
+
+    var backToVal = appendAction(d, sActions, '← Back', 'Return to validation step', function () {
+      send({ type: 'integration.wizardStep', step: 3 });
+    });
+    backToVal.className = 'hub-btn-secondary';
+
+    panel.appendChild(sActions);
+  }
+
+  // Step 5: Discovered Tools
+  else if (step === 5) {
+    var dTools = wizard.discoveredTools || [];
+    var doneDesc = d.createElement('p');
+    doneDesc.className = 'hub-wizard-desc';
+    setText(doneDesc, 'Successfully connected to server "' + (draft.serverId || '') + '". Discovered ' + dTools.length + ' tools:');
+    panel.appendChild(doneDesc);
+
+    var tList = d.createElement('ul');
+    tList.className = 'hub-tool-list';
+    for (var ti = 0; ti < dTools.length; ti++) {
+      var tool = dTools[ti];
+      var tLi = d.createElement('li');
+      tLi.className = 'hub-tool-item';
+      var tName = d.createElement('strong');
+      setText(tName, tool.toolName || tool.canonicalName);
+      tLi.appendChild(tName);
+      var tDesc = d.createElement('div');
+      tDesc.className = 'hub-tool-desc';
+      setText(tDesc, tool.description || 'No description provided.');
+      tLi.appendChild(tDesc);
+      tList.appendChild(tLi);
+    }
+    panel.appendChild(tList);
+
+    var dActions = d.createElement('div');
+    dActions.className = 'confirmation-actions';
+    var doneBtn = appendAction(d, dActions, 'Done', 'Close wizard and view server list', function () {
+      send({ type: 'integration.cancelWizard' });
+    });
+    doneBtn.className = 'btn-approve';
+    panel.appendChild(dActions);
+  }
+
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderToolInspector(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+  var serverId = state && state.inspectingServerId;
+  var servers = (state && state.servers) || [];
+  var server = servers.find(function (s: any) { return s.id === serverId; });
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-inspector-panel';
+
+  var header = d.createElement('div');
+  header.className = 'hub-inspector-header';
+  var backBtn = appendAction(d, header, '← Back to Servers', 'Return to MCP servers list', function () {
+    send({ type: 'integration.inspectTools', serverId: undefined });
+  });
+  backBtn.className = 'hub-btn-secondary';
+
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, 'Discovered Tools: ' + (server ? server.name : serverId));
+  header.appendChild(title);
+  panel.appendChild(header);
+
+  // Security Policy Callout Banner
+  var securityNotice = d.createElement('div');
+  securityNotice.className = 'hub-security-notice';
+  setText(securityNotice, 'Security Notice: Tool permissions derive from trusted local policy. Server-authored annotations cannot lower risk. UI settings cannot override mandatory runtime constraints.');
+  panel.appendChild(securityNotice);
+
+  var tools = (server && server.tools) || [];
+  if (tools.length === 0) {
+    var empty = d.createElement('div');
+    empty.className = 'hub-empty-state';
+    setText(empty, 'No tools discovered for this server yet. Connect the server to discover available tools.');
+    panel.appendChild(empty);
+    container.appendChild(panel);
+    return panel;
+  }
+
+  var list = d.createElement('div');
+  list.className = 'hub-tool-inspector-list';
+
+  for (var i = 0; i < tools.length; i++) {
+    var t = tools[i];
+    var card = d.createElement('div');
+    card.className = 'hub-tool-card';
+
+    var cHeader = d.createElement('div');
+    cHeader.className = 'hub-tool-header';
+
+    var tTitle = d.createElement('span');
+    tTitle.className = 'hub-tool-name';
+    setText(tTitle, t.canonicalName || t.toolName);
+    cHeader.appendChild(tTitle);
+
+    var permClass = t.permissionGate || 'CONFIRM';
+    var isReadOnly = t.annotations && t.annotations.readOnlyHint;
+    var permBadge = d.createElement('span');
+    permBadge.className = 'status-badge ' + (permClass === 'ALLOW' ? 'is-success' : 'is-warning');
+    setText(permBadge, permClass === 'ALLOW' ? 'ALLOW (Read-Only)' : 'CONFIRM (Human Review Required)');
+    cHeader.appendChild(permBadge);
+
+    card.appendChild(cHeader);
+
+    // Description (safely rendered textContent)
+    var descEl = d.createElement('p');
+    descEl.className = 'hub-tool-description';
+    setText(descEl, t.description || 'No description provided by server.');
+    card.appendChild(descEl);
+
+    // Side-effects / warnings
+    if (t.isDestructive) {
+      var wDestr = d.createElement('div');
+      wDestr.className = 'hub-warning-banner is-destructive';
+      setText(wDestr, '⚠️ Destructive Operation: Executes potentially irreversible changes.');
+      card.appendChild(wDestr);
+    }
+    if (t.isSensitive) {
+      var wSens = d.createElement('div');
+      wSens.className = 'hub-warning-banner is-sensitive';
+      setText(wSens, '🔒 Workspace Content Transmission: Transmits editor data externally.');
+      card.appendChild(wSens);
+    }
+
+    // Input parameters schema
+    if (t.inputSchema) {
+      var schemaDetails = d.createElement('details');
+      schemaDetails.className = 'hub-schema-details';
+      var summary = d.createElement('summary');
+      setText(summary, 'Input Schema Parameters');
+      schemaDetails.appendChild(summary);
+      var codePre = d.createElement('pre');
+      codePre.className = 'hub-schema-pre';
+      setText(codePre, JSON.stringify(t.inputSchema, null, 2));
+      schemaDetails.appendChild(codePre);
+      card.appendChild(schemaDetails);
+    }
+
+    list.appendChild(card);
+  }
+
+  panel.appendChild(list);
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderSkillsSection(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-skills-panel';
+
+  var header = d.createElement('div');
+  header.className = 'hub-card-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, 'Portable Skills Inventory');
+  header.appendChild(title);
+
+  var isRuntimeEn = Boolean(state && state.skillsRuntimeEnabled);
+  var rBadge = d.createElement('span');
+  rBadge.className = 'status-badge ' + (isRuntimeEn ? 'is-success' : 'is-disabled');
+  setText(rBadge, isRuntimeEn ? 'Runtime: Enabled' : 'Runtime: Off (Guidance Only)');
+  header.appendChild(rBadge);
+  panel.appendChild(header);
+
+  var notice = d.createElement('p');
+  notice.className = 'hub-wizard-desc';
+  setText(notice, 'Skills provide structured task instructions and guidance. They load lazily upon task match and never grant automatic tool execution or mutation authority.');
+  panel.appendChild(notice);
+
+  var skills = (state && state.skills) || [];
+  if (skills.length === 0) {
+    var empty = d.createElement('div');
+    empty.className = 'hub-empty-state';
+    setText(empty, 'No built-in or workspace skills discovered.');
+    panel.appendChild(empty);
+    container.appendChild(panel);
+    return panel;
+  }
+
+  var list = d.createElement('div');
+  list.className = 'hub-skills-list';
+
+  for (var i = 0; i < skills.length; i++) {
+    var sk = skills[i];
+    var card = d.createElement('div');
+    card.className = 'hub-skill-card';
+
+    var sHead = d.createElement('div');
+    sHead.className = 'hub-skill-header';
+    var sName = d.createElement('strong');
+    setText(sName, sk.name || sk.id);
+    sHead.appendChild(sName);
+
+    var sSrc = d.createElement('span');
+    sSrc.className = 'status-badge ' + (sk.source === 'workspace' ? 'is-workspace' : 'is-local');
+    setText(sSrc, sk.source === 'workspace' ? 'Workspace' : 'Built-in');
+    sHead.appendChild(sSrc);
+    card.appendChild(sHead);
+
+    var sDesc = d.createElement('p');
+    sDesc.className = 'hub-tool-description';
+    setText(sDesc, sk.description || 'No description.');
+    card.appendChild(sDesc);
+
+    appendMetaRow(d, card, 'File Path', sk.filePath || 'N/A');
+
+    if (sk.diagnostics && sk.diagnostics.length) {
+      var dList = d.createElement('div');
+      dList.className = 'hub-error-row';
+      setText(dList, 'Diagnostics: ' + sk.diagnostics.join(', '));
+      card.appendChild(dList);
+    }
+
+    var actions = d.createElement('div');
+    actions.className = 'confirmation-actions';
+    var openBtn = appendAction(d, actions, 'Open SKILL.md', 'Open skill instruction file in editor', (function (sid) {
+      return function () { send({ type: 'integration.openSkillFile', skillId: sid }); };
+    })(sk.id));
+    openBtn.className = 'hub-btn-secondary';
+    card.appendChild(actions);
+
+    list.appendChild(card);
+  }
+
+  panel.appendChild(list);
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderModesSection(container: any, _state: any, doc?: any, _postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var panel = d.createElement('div');
+  panel.className = 'hub-modes-placeholder';
+
+  var header = d.createElement('div');
+  header.className = 'hub-card-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, 'Capability Packs & Custom Modes');
+  header.appendChild(title);
+
+  var badge = d.createElement('span');
+  badge.className = 'status-badge is-disabled';
+  setText(badge, 'Planned Future Release');
+  header.appendChild(badge);
+  panel.appendChild(header);
+
+  var desc = d.createElement('p');
+  desc.className = 'hub-placeholder-desc';
+  setText(desc, 'Custom Modes (Design Mode, Reverse Engineering Mode) and Capability Packs are scheduled for future milestones. In Sprint 8C, this surface is intentionally non-interactive to prevent dead controls.');
+  panel.appendChild(desc);
+
+  var bulletList = d.createElement('ul');
+  bulletList.className = 'hub-placeholder-bullets';
+  var b1 = d.createElement('li');
+  setText(b1, 'Design Mode: visual canvas integration, component extraction, and layout preview.');
+  bulletList.appendChild(b1);
+  var b2 = d.createElement('li');
+  setText(b2, 'Reverse Engineering Mode: binary disassembly, protocol dissection, and symbol map recovery.');
+  bulletList.appendChild(b2);
+  var b3 = d.createElement('li');
+  setText(b3, 'Capability Packs: bundles combining MCP servers, skills, and model route profiles.');
+  bulletList.appendChild(b3);
+  panel.appendChild(bulletList);
+
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderDiagnosticsSection(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-diagnostics-panel';
+
+  var header = d.createElement('div');
+  header.className = 'hub-card-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, 'System & Integration Diagnostics');
+  header.appendChild(title);
+
+  var refreshBtn = appendAction(d, header, 'Refresh', 'Re-scan system diagnostics', function () {
+    send({ type: 'integration.refreshDiscovery' });
+  });
+  refreshBtn.className = 'hub-btn-secondary';
+  panel.appendChild(header);
+
+  var diags = (state && state.diagnostics) || [];
+  if (diags.length === 0) {
+    var clean = d.createElement('div');
+    clean.className = 'hub-empty-state is-clean';
+    setText(clean, 'All systems clean. No warnings or errors reported across MCP servers, account backend, or skills.');
+    panel.appendChild(clean);
+  } else {
+    var list = d.createElement('ul');
+    list.className = 'hub-diagnostic-list';
+    for (var i = 0; i < diags.length; i++) {
+      var item = d.createElement('li');
+      item.className = 'hub-diagnostic-item';
+      setText(item, diags[i]);
+      list.appendChild(item);
+    }
+    panel.appendChild(list);
+  }
+
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderIntegrationsHub(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  if (!state) return null;
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+  container.innerHTML = '';
+
+  var hub = d.createElement('section');
+  hub.className = 'integrations-hub';
+  setAttr(hub, 'aria-label', 'Visual Integration Manager');
+
+  // Top header with title and close button
+  var header = d.createElement('div');
+  header.className = 'hub-header';
+
+  var titleGroup = d.createElement('div');
+  titleGroup.className = 'hub-title-group';
+  var h = d.createElement('h2');
+  h.className = 'hub-title';
+  setText(h, 'Integrations & Account');
+  titleGroup.appendChild(h);
+  header.appendChild(titleGroup);
+
+  var closeBtn = d.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'btn-reject hub-close-btn';
+  setText(closeBtn, '✕ Close');
+  setAttr(closeBtn, 'aria-label', 'Close Integrations Hub and return to Chat');
+  onClick(closeBtn, function () { send({ type: 'integration.closeHub' }); });
+  header.appendChild(closeBtn);
+  hub.appendChild(header);
+
+  // Navigation tab bar
+  var tabNav = d.createElement('nav');
+  tabNav.className = 'hub-nav';
+  setAttr(tabNav, 'role', 'tablist');
+  setAttr(tabNav, 'aria-label', 'Integration Management Tabs');
+
+  var tabs = [
+    { id: 'profile', label: 'Profile' },
+    { id: 'mcp', label: 'MCP Servers' },
+    { id: 'skills', label: 'Skills' },
+    { id: 'modes', label: 'Modes (Planned)' },
+    { id: 'diagnostics', label: 'Diagnostics' },
+  ];
+
+  var activeTab = (state && state.activeTab) || 'profile';
+
+  for (var i = 0; i < tabs.length; i++) {
+    var t = tabs[i];
+    var tabBtn = d.createElement('button');
+    tabBtn.type = 'button';
+    tabBtn.className = 'hub-tab-btn' + (activeTab === t.id ? ' is-active' : '') + (t.id === 'modes' ? ' is-placeholder' : '');
+    setAttr(tabBtn, 'role', 'tab');
+    setAttr(tabBtn, 'aria-selected', activeTab === t.id ? 'true' : 'false');
+    setAttr(tabBtn, 'id', 'tab-' + t.id);
+    setText(tabBtn, t.label);
+    if (t.id === 'modes') {
+      setAttr(tabBtn, 'title', 'Capability Packs & Custom Modes (Planned for future release)');
+    }
+    onClick(tabBtn, (function (tid) {
+      return function () { send({ type: 'integration.setTab', tab: tid }); };
+    })(t.id));
+    tabNav.appendChild(tabBtn);
+  }
+  hub.appendChild(tabNav);
+
+  // Status message bar (if present)
+  if (state.statusMessage || state.isLoading) {
+    var statusBar = d.createElement('div');
+    statusBar.className = 'hub-status-bar' + (state.isLoading ? ' is-loading' : '');
+    setAttr(statusBar, 'role', 'status');
+    setText(statusBar, (state.isLoading ? '⌛ ' : '') + (state.statusMessage || 'Loading...'));
+    hub.appendChild(statusBar);
+  }
+
+  // Pending Confirmation Modal (e.g. Remove Server)
+  if (state.pendingConfirmation) {
+    var confCard = d.createElement('div');
+    confCard.className = 'hub-confirmation-card';
+    var confTitle = d.createElement('div');
+    confTitle.className = 'confirmation-prompt';
+    setText(confTitle, 'Are you sure you want to remove MCP server "' + state.pendingConfirmation.serverName + '"?');
+    confCard.appendChild(confTitle);
+
+    var confActions = d.createElement('div');
+    confActions.className = 'confirmation-actions';
+    var removeBtn = appendAction(d, confActions, 'Remove Server', 'Confirm removal of this integration', function () {
+      send({ type: 'integration.executeRemoveServer', serverId: state.pendingConfirmation.serverId });
+    });
+    removeBtn.className = 'btn-reject';
+
+    var cancelBtn = appendAction(d, confActions, 'Cancel', 'Cancel server removal', function () {
+      send({ type: 'integration.cancelConfirmation' });
+    });
+    cancelBtn.className = 'btn-approve';
+    confCard.appendChild(confActions);
+    hub.appendChild(confCard);
+  }
+
+  // Content panel container
+  var content = d.createElement('div');
+  content.className = 'hub-tab-content';
+  setAttr(content, 'role', 'tabpanel');
+  setAttr(content, 'aria-labelledby', 'tab-' + activeTab);
+
+  if (activeTab === 'profile') {
+    renderProfileSection(content, state, d, send);
+  } else if (activeTab === 'mcp') {
+    renderMcpDashboard(content, state, d, send);
+  } else if (activeTab === 'skills') {
+    renderSkillsSection(content, state, d, send);
+  } else if (activeTab === 'modes') {
+    renderModesSection(content, state, d, send);
+  } else if (activeTab === 'diagnostics') {
+    renderDiagnosticsSection(content, state, d, send);
+  }
+
+  hub.appendChild(content);
+  container.appendChild(hub);
+  return hub;
+}
+
 export function webviewRenderRuntime(): string {
   return [
     "var MAX_CODE_CHARS = " + MAX_CODE_CHARS + ";",
@@ -1412,5 +2379,13 @@ export function webviewRenderRuntime(): string {
     operationKindLabel.toString(),
     operationStatusLabel.toString(),
     renderRecoveryPanel.toString(),
+    renderProfileSection.toString(),
+    renderMcpDashboard.toString(),
+    renderAddMcpWizard.toString(),
+    renderToolInspector.toString(),
+    renderSkillsSection.toString(),
+    renderModesSection.toString(),
+    renderDiagnosticsSection.toString(),
+    renderIntegrationsHub.toString(),
   ].join("\n");
 }

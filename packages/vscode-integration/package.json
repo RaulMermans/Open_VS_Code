@@ -134,6 +134,10 @@
       {
         "command": "open-vs-code.syncAccountIntegrations",
         "title": "Open VS Code: Sync Account MCP Integrations"
+      },
+      {
+        "command": "open-vs-code.openIntegrationManager",
+        "title": "Open VS Code: Open Visual Integration Manager"
       }
     ],
 

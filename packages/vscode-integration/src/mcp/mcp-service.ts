@@ -13,6 +13,8 @@ import {
   McpMetricsTracker,
 } from "@open-vs-code/agent-core";
 
+export type IntegrationProvenance = "workspace" | "local" | "account";
+
 export interface McpServerSummary {
   readonly id: string;
   readonly name: string;
@@ -26,12 +28,17 @@ export interface McpServerSummary {
   readonly policy?: McpPolicyConfig;
   readonly workspaceScoped: boolean;
   readonly enabled: boolean;
+  readonly workspaceEnabled: boolean;
+  readonly effectiveEnabled: boolean;
+  readonly source: IntegrationProvenance;
 }
 
 export class McpService {
   private catalog?: McpCatalog;
   private currentConfigResult?: McpConfigLoadResult;
   private metrics = new McpMetricsTracker();
+  private provenanceMap = new Map<string, IntegrationProvenance>();
+  private workspaceDisabledServerIds = new Set<string>();
 
   constructor(
     private readonly workspaceRoot: string | undefined,
@@ -49,9 +56,27 @@ export class McpService {
 
   public async getConfigResult(): Promise<McpConfigLoadResult> {
     if (!this.workspaceRoot) {
-      return { config: { servers: {} }, diagnostics: [], rawFound: false };
+      if (!this.currentConfigResult) {
+        this.currentConfigResult = { config: { servers: {} }, diagnostics: [], rawFound: false };
+      }
+      return this.currentConfigResult;
     }
     const result = await loadMcpConfigWithDiagnostics(this.workspaceRoot);
+    // Mark workspace-authored servers as "workspace" provenance if not already tracked
+    for (const serverId of Object.keys(result.config.servers)) {
+      if (!this.provenanceMap.has(serverId)) {
+        this.provenanceMap.set(serverId, "workspace");
+      }
+    }
+    // Retain any dynamically registered account/local servers
+    if (this.currentConfigResult) {
+      for (const [id, srv] of Object.entries(this.currentConfigResult.config.servers)) {
+        const prov = this.provenanceMap.get(id);
+        if (prov === "account" || prov === "local") {
+          result.config.servers[id] = srv;
+        }
+      }
+    }
     this.currentConfigResult = result;
     return result;
   }
@@ -74,6 +99,60 @@ export class McpService {
     return this.catalog;
   }
 
+  public async registerServer(
+    serverId: string,
+    config: McpServerConfig,
+    source: IntegrationProvenance = "local"
+  ): Promise<void> {
+    const configResult = await this.getConfigResult();
+    configResult.config.servers[serverId] = config;
+    this.provenanceMap.set(serverId, source);
+    const catalog = await this.getCatalog();
+    catalog.registerServer(serverId, config);
+  }
+
+  public async unregisterServer(serverId: string): Promise<void> {
+    const configResult = await this.getConfigResult();
+    delete configResult.config.servers[serverId];
+    this.provenanceMap.delete(serverId);
+    this.workspaceDisabledServerIds.delete(serverId);
+    if (this.catalog) {
+      await this.catalog.unregisterServer(serverId);
+    }
+  }
+
+  public getServerProvenance(serverId: string): IntegrationProvenance | undefined {
+    return this.provenanceMap.get(serverId);
+  }
+
+  public isWorkspaceAllowed(serverId: string): boolean {
+    return !this.workspaceDisabledServerIds.has(serverId);
+  }
+
+  public async setWorkspacePolicy(serverId: string, enabledInWorkspace: boolean): Promise<void> {
+    if (enabledInWorkspace) {
+      this.workspaceDisabledServerIds.delete(serverId);
+    } else {
+      this.workspaceDisabledServerIds.add(serverId);
+      // Disconnect if currently active
+      await this.disconnectServer(serverId);
+    }
+  }
+
+  public async setServerEnabled(serverId: string, enabled: boolean): Promise<void> {
+    const configResult = await this.getConfigResult();
+    const serverConfig = configResult.config.servers[serverId];
+    if (serverConfig) {
+      const updatedConfig: McpServerConfig = { ...serverConfig, enabled };
+      (configResult.config.servers as Record<string, McpServerConfig>)[serverId] = updatedConfig;
+      const catalog = await this.getCatalog();
+      catalog.registerServer(serverId, updatedConfig);
+      if (!enabled) {
+        await catalog.disconnectServer(serverId);
+      }
+    }
+  }
+
   public async listServers(): Promise<McpServerSummary[]> {
     const configResult = await this.getConfigResult();
     const catalog = await this.getCatalog();
@@ -91,11 +170,16 @@ export class McpService {
           ? srv.url || ""
           : `${srv.command} ${(srv.args || []).join(" ")}`.trim();
 
+      const workspaceEnabled = this.isWorkspaceAllowed(serverId);
+      const effectiveEnabled = srv.enabled && workspaceEnabled;
+      const state = !effectiveEnabled ? "DISABLED" : (status?.state || (srv.enabled ? "DISCONNECTED" : "DISABLED"));
+      const source: IntegrationProvenance = this.getServerProvenance(serverId) || "workspace";
+
       summaries.push({
         id: serverId,
         name: srv.displayName || (srv as any).name || serverId,
         transport: srv.transport,
-        state: status?.state || (srv.enabled ? "DISCONNECTED" : "DISABLED"),
+        state,
         toolCount: serverTools.length,
         tools: serverTools,
         auth: srv.auth,
@@ -104,6 +188,9 @@ export class McpService {
         policy: srv.policy,
         workspaceScoped: srv.workspaceScoped ?? true,
         enabled: srv.enabled,
+        workspaceEnabled,
+        effectiveEnabled,
+        source,
       });
     }
 
@@ -116,6 +203,21 @@ export class McpService {
     if (!serverConfig) {
       return { success: false, message: `Server "${serverId}" is not defined in configuration.` };
     }
+
+    if (!this.isWorkspaceAllowed(serverId)) {
+      return {
+        success: false,
+        message: `Server "${serverId}" is disabled by workspace policy for this workspace.`,
+      };
+    }
+
+    if (!serverConfig.enabled) {
+      return {
+        success: false,
+        message: `Server "${serverId}" is currently disabled. Enable it before connecting.`,
+      };
+    }
+
     const catalog = await this.getCatalog();
     const ok = await catalog.connectServer(serverId, serverConfig);
     const status = catalog.getServerStatus(serverId);

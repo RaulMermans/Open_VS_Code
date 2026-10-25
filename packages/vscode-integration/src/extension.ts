@@ -4,9 +4,11 @@ import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutoco
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
+import { IntegrationManagerController } from './integrations/index.js';
 
 let mcpService: McpService | null = null;
 let accountManager: DesktopAccountManager | null = null;
+let integrationManager: IntegrationManagerController | null = null;
 
 
 class VSCodeIdeHost implements IdeHost {
@@ -326,6 +328,7 @@ export const _testSeam = {
   get activeBridge() { return activeBridge; },
   bridgeFactory: null as any,
   get chatController() { return chatController; },
+  get integrationManager() { return integrationManager; },
   get terminalReviewController() { return terminalReviewController; },
   get autocompleteController() { return autocompleteController; },
   get diffReviewController() { return diffReviewController; },
@@ -649,6 +652,19 @@ export function activate(context: vscode.ExtensionContext) {
   accountManager = new DesktopAccountManager(context, host.outputChannel);
   context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel));
   void accountManager.initialize(mcpService);
+
+  // Initialize and register Visual Integration Manager (Sprint 8C)
+  integrationManager = new IntegrationManagerController(context, accountManager, mcpService, host.outputChannel);
+  if (chatController) {
+    chatController.attachIntegrationManager(integrationManager);
+  }
+  context.subscriptions.push(
+    integrationManager,
+    vscode.commands.registerCommand('open-vs-code.openIntegrationManager', async () => {
+      vscode.commands.executeCommand('open-vs-code.chat.focus');
+      await chatController?.openIntegrationsHub();
+    })
+  );
 }
 
 export const STARTER_MODELS_JSON = JSON.stringify({
@@ -774,6 +790,14 @@ export async function deactivate(): Promise<void> {
       // Safe containment
     }
     mcpService = null;
+  }
+  if (integrationManager) {
+    try {
+      integrationManager.dispose();
+    } catch {
+      // Safe containment
+    }
+    integrationManager = null;
   }
   accountManager = null;
   if (chat) {

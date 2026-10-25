@@ -1,5 +1,11 @@
 import type * as vscode from "vscode";
-import { AccountClient, type UserProfile, type IntegrationRegistration } from "@open-vs-code/account-service";
+import {
+  AccountClient,
+  type UserProfile,
+  type IntegrationRegistration,
+  type EffectiveWorkspaceIntegration,
+  validateAccountServerUrl,
+} from "@open-vs-code/account-service";
 import type { McpService } from "../mcp/mcp-service.js";
 import type { McpServerConfig } from "@open-vs-code/agent-core";
 
@@ -40,6 +46,7 @@ export class DesktopAccountManager {
   private lastSyncTime?: string | undefined;
   private lastError?: string | undefined;
   private readonly stateChangeListeners = new Set<(state: AccountState) => void>();
+  private accountOwnedServerIds = new Set<string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -47,6 +54,10 @@ export class DesktopAccountManager {
   ) {
     const configUrl = this.getConfiguredServerUrl();
     this.client = new AccountClient({ baseUrl: configUrl });
+  }
+
+  public getAccountOwnedServerIds(): ReadonlySet<string> {
+    return this.accountOwnedServerIds;
   }
 
   private getConfiguredServerUrl(): string {
@@ -105,10 +116,20 @@ export class DesktopAccountManager {
     return this.client;
   }
 
-  public async initialize(mcpService?: McpService): Promise<AccountState> {
-    const serverUrl = this.getConfiguredServerUrl();
-    this.client.setBaseUrl(serverUrl);
+  public async cleanupAccountIntegrations(mcpService?: McpService): Promise<void> {
+    if (mcpService && this.accountOwnedServerIds.size > 0) {
+      for (const serverId of Array.from(this.accountOwnedServerIds)) {
+        try {
+          await mcpService.unregisterServer(serverId);
+        } catch {
+          // Safe unregister
+        }
+      }
+    }
+    this.accountOwnedServerIds.clear();
+  }
 
+  public async initialize(mcpService?: McpService): Promise<AccountState> {
     let rawSecret: string | undefined;
     try {
       rawSecret = await this.context.secrets.get(ACCOUNT_SESSION_SECRET_KEY);
@@ -117,6 +138,7 @@ export class DesktopAccountManager {
     }
 
     if (!rawSecret) {
+      await this.cleanupAccountIntegrations(mcpService);
       this.status = "UNAUTHENTICATED";
       this.user = undefined;
       this.isStale = false;
@@ -129,11 +151,38 @@ export class DesktopAccountManager {
       sessionData = JSON.parse(rawSecret);
     } catch {
       await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
+      await this.cleanupAccountIntegrations(mcpService);
       this.status = "UNAUTHENTICATED";
       this.notify();
       return this.getState();
     }
 
+    const configuredUrl = this.getConfiguredServerUrl();
+    const effectiveUrl = sessionData.serverUrl || configuredUrl;
+
+    // Origin integrity: if user explicitly configured a server URL setting that differs in origin from the session,
+    // invalidate to prevent accidental credential forwarding across distinct backend servers.
+    if (configuredUrl !== "http://127.0.0.1:4040" && sessionData.serverUrl) {
+      try {
+        const storedOrigin = validateAccountServerUrl(sessionData.serverUrl).origin;
+        const configuredOrigin = validateAccountServerUrl(configuredUrl).origin;
+        if (storedOrigin !== configuredOrigin) {
+          this.outputChannel?.appendLine(
+            `[Account] Configured server URL origin (${configuredOrigin}) differs from session origin (${storedOrigin}). Invalidating session to prevent credential forwarding.`
+          );
+          await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
+          await this.cleanupAccountIntegrations(mcpService);
+          this.status = "UNAUTHENTICATED";
+          this.user = undefined;
+          this.notify();
+          return this.getState();
+        }
+      } catch {
+        // Safe check
+      }
+    }
+
+    this.client.setBaseUrl(effectiveUrl);
     this.client.setToken(sessionData.token);
     this.status = "CONNECTING";
     this.notify();
@@ -158,9 +207,15 @@ export class DesktopAccountManager {
         await this.syncIntegrations(mcpService);
       }
     } catch (err: any) {
-      if (err.statusCode === 401 || err.statusCode === 403 || err.code === "UNAUTHORIZED" || err.code === "ACCOUNT_DISABLED") {
+      if (
+        err.statusCode === 401 ||
+        err.statusCode === 403 ||
+        err.code === "UNAUTHORIZED" ||
+        err.code === "ACCOUNT_DISABLED"
+      ) {
         this.outputChannel?.appendLine(`[Account] Session rejected (${err.code}): ${err.message}. Clearing credentials.`);
         await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
+        await this.cleanupAccountIntegrations(mcpService);
         this.status = "UNAUTHENTICATED";
         this.user = undefined;
         this.isStale = false;
@@ -186,8 +241,11 @@ export class DesktopAccountManager {
     mcpService?: McpService
   ): Promise<UserProfile> {
     const effectiveUrl = serverUrl || this.getConfiguredServerUrl();
-    this.client.setBaseUrl(effectiveUrl);
 
+    // Clean up any existing account integrations prior to new login to guarantee account isolation
+    await this.cleanupAccountIntegrations(mcpService);
+
+    this.client.setBaseUrl(effectiveUrl);
     this.status = "CONNECTING";
     this.notify();
 
@@ -219,28 +277,32 @@ export class DesktopAccountManager {
       this.status = "UNAUTHENTICATED";
       this.user = undefined;
       this.lastError = err.message;
+      this.client.setToken(undefined);
+      await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
       this.notify();
       throw err;
     }
   }
 
-  public async logout(): Promise<void> {
+  public async logout(mcpService?: McpService): Promise<void> {
     try {
       await this.client.logout();
     } catch {
       // Best effort remote revocation
     } finally {
+      this.client.setToken(undefined);
+      await this.cleanupAccountIntegrations(mcpService);
       await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
       this.status = "UNAUTHENTICATED";
       this.user = undefined;
       this.isStale = false;
       this.lastError = undefined;
-      this.outputChannel?.appendLine("[Account] Logged out successfully.");
+      this.outputChannel?.appendLine("[Account] Logged out successfully. Account integrations removed.");
       this.notify();
     }
   }
 
-  public async syncIntegrations(mcpService: McpService): Promise<SyncResult> {
+  public async syncIntegrations(mcpService: McpService, workspaceIdentity?: string): Promise<SyncResult> {
     if (this.status === "UNAUTHENTICATED") {
       return { total: 0, restored: 0, skipped: 0, isOffline: false, errors: ["Not authenticated."] };
     }
@@ -251,23 +313,75 @@ export class DesktopAccountManager {
     }
 
     const errors: string[] = [];
-    let registrations: IntegrationRegistration[] = [];
+    const effectiveWs = workspaceIdentity || mcpService.getRoot() || "default";
+
+    interface SyncItem {
+      registration: IntegrationRegistration;
+      effectiveEnabled: boolean;
+    }
+
+    let itemsToSync: SyncItem[] = [];
 
     try {
-      registrations = await this.client.listIntegrations();
+      if (effectiveWs) {
+        try {
+          const effective = await this.client.getEffectiveWorkspaceIntegrations(effectiveWs);
+          itemsToSync = effective.map((e) => ({
+            registration: e.registration,
+            effectiveEnabled: e.effectiveEnabled,
+          }));
+        } catch {
+          // Fall back to plain list if workspace query fails
+          const regs = await this.client.listIntegrations();
+          itemsToSync = regs.map((r) => ({
+            registration: r,
+            effectiveEnabled: r.enabledPreference,
+          }));
+        }
+      } else {
+        const regs = await this.client.listIntegrations();
+        itemsToSync = regs.map((r) => ({
+          registration: r,
+          effectiveEnabled: r.enabledPreference,
+        }));
+      }
     } catch (err: any) {
       const msg = `Failed to fetch registrations: ${err.message}`;
       this.outputChannel?.appendLine(`[Account] ${msg}`);
       return { total: 0, restored: 0, skipped: 0, isOffline: true, errors: [msg] };
     }
 
+    const remoteServerIds = new Set<string>(itemsToSync.map((item) => item.registration.serverId));
+
+    // Stale reconciliation: unregister account-owned servers that were deleted on the backend
+    for (const serverId of Array.from(this.accountOwnedServerIds)) {
+      if (!remoteServerIds.has(serverId)) {
+        try {
+          await mcpService.unregisterServer(serverId);
+          this.accountOwnedServerIds.delete(serverId);
+          this.outputChannel?.appendLine(`[Account] Removed stale account integration "${serverId}".`);
+        } catch (err: any) {
+          errors.push(`Failed to remove stale integration "${serverId}": ${err.message}`);
+        }
+      }
+    }
+
     let restored = 0;
     let skipped = 0;
 
-    const catalog = await mcpService.getCatalog();
-
-    for (const reg of registrations) {
+    for (const item of itemsToSync) {
+      const reg = item.registration;
       try {
+        // Integrity check: if server is already defined by workspace configuration (.open-vs-code/mcp.json),
+        // do NOT overwrite it with account-owned configuration!
+        const existingProvenance = mcpService.getServerProvenance(reg.serverId);
+        if (existingProvenance === "workspace") {
+          skipped++;
+          const notice = `Integration "${reg.serverId}" is already defined in workspace configuration; preserving workspace configuration.`;
+          this.outputChannel?.appendLine(`[Account] ${notice}`);
+          continue;
+        }
+
         const config: McpServerConfig = {
           name: reg.serverId,
           displayName: reg.displayName,
@@ -277,8 +391,10 @@ export class DesktopAccountManager {
           ...(reg.nonSecretConfig as any),
         };
 
-        // Register into catalog; status will be DISCONNECTED or DISABLED (never automatically connected)
-        catalog.registerServer(reg.serverId, config);
+        // Register with source "account"
+        await mcpService.registerServer(reg.serverId, config, "account");
+        await mcpService.setWorkspacePolicy(reg.serverId, item.effectiveEnabled);
+        this.accountOwnedServerIds.add(reg.serverId);
         restored++;
       } catch (err: any) {
         skipped++;
@@ -290,12 +406,12 @@ export class DesktopAccountManager {
 
     this.lastSyncTime = new Date().toISOString();
     this.outputChannel?.appendLine(
-      `[Account] Synchronized ${restored}/${registrations.length} integrations from account profile.`
+      `[Account] Synchronized ${restored}/${itemsToSync.length} integrations from account profile.`
     );
     this.notify();
 
     return {
-      total: registrations.length,
+      total: itemsToSync.length,
       restored,
       skipped,
       isOffline: false,
