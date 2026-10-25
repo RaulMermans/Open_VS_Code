@@ -30,6 +30,16 @@
 
 ## Current sprint
 
+Sprint 8A.1 — MCP Protocol Conformance & Security Closure (`docs/sprints/SPRINT_8A1_MCP_CONFORMANCE_SECURITY.md`; ADR-034 Amendment).
+Corrective sprint establishing verified interoperability with the official MCP 2026-07-28 specification and closing all security gaps:
+- Official Wire Conformance: strictly formatted `params._meta` with `protocolVersion: "2026-07-28"`, `clientCapabilities: {}`, and `clientInfo: { name: "open-vs-code", version: "0.1.0" }`. Root `_meta` and session headers on stateless requests strictly eliminated.
+- Header Routing: mandatory `Mcp-Method` on all requests and `Mcp-Name` on `tools/call` for gateway and proxy transparency.
+- Connection-Time DNS Pinning & Security Guard: `createSafeLookupFunction` on native `http.Agent`/`https.Agent` validates IPs at the exact moment of socket creation, neutralizing DNS rebinding attacks. Alternate IP encodings (octal, hex, dword, IPv4-mapped IPv6) fully normalized and blocked.
+- Streaming Response Bounding: eliminates unbounded buffer allocation (`res.arrayBuffer()`) in favor of chunk-by-chunk stream limits with early socket destruction on `maxResponseBytes` breach.
+- Robust SSE Parser: maintains parser state across arbitrary network chunk boundaries, joins multiline `data:` events with `\n`, safely strips trailing CRLF, and preserves multibyte UTF-8 code points.
+- Truthful Authentication: accurately distinguishes supported Bearer/SecretStorage/RFC 9728/RFC 8414/PKCE primitives from unsupported interactive OAuth browser flows.
+- Comprehensive Testing: 9/9 new tests against `StrictMcpReferenceServer` in `mcp-conformance-security.test.ts`, all 52 agent-core MCP tests green, 8/8 vscode-integration MCP command tests green, 13/13 desktop smoke tests green, 5/5 real packaged desktop runtime acceptance tests green. Zero regressions.
+
 Sprint 8A — MCP Integration 2.0: Modern Transports, Secure Connections & Tool Governance (`docs/sprints/SPRINT_8A_MCP_INTEGRATION_2.md`; ADR-034).
 Evolves existing MCP infrastructure into an enterprise-grade integration foundation:
 - Modern Stateless Streamable HTTP transport (MCP spec 2026-07-28 POST per-request `_meta`) with seamless negotiation and backwards compatibility with 2025-11-25 (`Mcp-Session-Id`) and 2024-11-05 (handshake).

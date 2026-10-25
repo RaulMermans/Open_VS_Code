@@ -27,6 +27,21 @@ export class InMemorySecretProvider implements SecretProvider {
   }
 }
 
+/**
+ * Supported vs Unsupported Authentication Boundaries:
+ * - SUPPORTED:
+ *   - Bearer token resolution via SecretProvider (vscode.SecretStorage)
+ *   - Bearer token resolution via environment variables (tokenEnv)
+ *   - Pre-issued OAuth2 tokens referenced via secretKey / tokenEnv
+ *   - RFC 9728 Protected Resource Metadata discovery parser
+ *   - RFC 8414 OAuth 2.0 Authorization Server Metadata parser
+ *   - RFC 7636 S256 PKCE code challenge generation (generatePkce)
+ * - UNSUPPORTED / DEFERRED (not full end-to-end OAuth flow):
+ *   - Interactive browser authorization flow
+ *   - Local redirect callback server / authorization-code exchange
+ *   - Token refresh and rotation loops
+ *   - Token revocation RPCs
+ */
 export type McpAuthType = "none" | "bearer" | "oauth2" | "secret_ref";
 
 export interface McpAuthConfig {
@@ -101,7 +116,7 @@ export async function resolveMcpAuthHeaders(
       return {
         headers: {},
         authRequired: true,
-        reason: "OAuth 2.1 authorization required. Complete authorization in VS Code.",
+        reason: `OAuth 2.1 authorization required: Interactive authorization flow is not supported in this runtime. Configure a pre-issued bearer token in SecretStorage ("${authConfig.secretKey ?? "token"}") or set environment variable "${authConfig.tokenEnv ?? ""}".`,
       };
     }
 

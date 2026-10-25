@@ -4,6 +4,12 @@ import type { AddressInfo } from "node:net";
 export class HttpMcpFixtureServer {
   private server?: http.Server | undefined;
   private port?: number | undefined;
+  public lastRequest?: {
+    method: string;
+    pathname: string;
+    headers: http.IncomingHttpHeaders;
+    body: any;
+  } | undefined;
 
   async start(): Promise<{ port: number; url: string }> {
     return new Promise((resolve, reject) => {
@@ -114,6 +120,12 @@ export class HttpMcpFixtureServer {
       req.on("end", () => {
         try {
           const json = JSON.parse(body);
+          this.lastRequest = {
+            method: req.method || "",
+            pathname,
+            headers: req.headers,
+            body: json,
+          };
           this.handleJsonRpc(req, res, pathname, json);
         } catch {
           res.writeHead(400, { "Content-Type": "application/json" });
