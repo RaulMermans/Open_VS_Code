@@ -21,6 +21,8 @@ test("classifies the baseline action table deterministically in BUILD mode", () 
     unknown: "DENY",
     mcp_external_read: "ALLOW",
     mcp_external_side_effect: "CONFIRM",
+    mcp_sensitive_data_transmission: "CONFIRM",
+    mcp_external_destructive: "CONFIRM",
     mcp_external_unknown: "CONFIRM",
   }
   for (const [action, permission] of Object.entries(expected)) {
@@ -32,6 +34,8 @@ test("PLAN narrows mutating and execution actions", () => {
   assert.equal(classifyPermission({ action: "write_file", mode: "PLAN" }), "DENY")
   assert.equal(classifyPermission({ action: "terminal_command", mode: "PLAN" }), "DENY")
   assert.equal(classifyPermission({ action: "read_repository", mode: "PLAN" }), "ALLOW")
+  assert.equal(classifyPermission({ action: "mcp_sensitive_data_transmission", mode: "PLAN" }), "DENY")
+  assert.equal(classifyPermission({ action: "mcp_external_destructive", mode: "PLAN" }), "DENY")
 })
 
 test("ASK mode denies all mutation actions", () => {

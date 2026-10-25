@@ -408,7 +408,19 @@ Sprint 7D — IDE Responsiveness, Performance & UX Hardening — SPRINT_7D_PARTI
   - Open: human GUI/VoiceOver checklist. On this near-full disk, filesystem-bound 4D agent-core tests intermittently time out on `main` too (0 failures in any run).
   - Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`.
 
+Sprint 8A — MCP Integration 2.0: Modern Transports, Secure Connections & Tool Governance — SPRINT_8A_ACCEPTED
+  - ADR-034. Modernization to official MCP protocol specifications (2026-07-28 stateless POST, 2025-11-25 Mcp-Session-Id, 2024-11-05 handshake).
+  - Evaluated `@modelcontextprotocol/sdk` and maintained zero-dependency footprint via native WHATWG fetch/SSE `StreamableHttpMcpTransport`.
+  - Comprehensive network guard (`McpNetworkGuard`): HTTPS default, loopback allowed, private IP/cloud metadata blocked, safe manual redirect validation.
+  - Secret management: `SecretProvider` abstraction with VS Code `SecretStorage` bridge (`VsCodeSecretProvider`); zero credentials stored in plaintext.
+  - Enhanced tool governance: `mcp_sensitive_data_transmission` and `mcp_external_destructive` mapped to CONFIRM in baseline and DENY in plan/ask/review; anti-tampering prevents server annotation lowering.
+  - Bounded connection states: DISABLED, DISCONNECTED, CONNECTING, AUTH_REQUIRED, CONNECTED, DEGRADED, FAILED with bounded reconnect (max 3 retries).
+  - 8 native VS Code commands for server and tool inspection/lifecycle management via QuickPicks without HALO or live LLM requirement.
+  - Verification evidence: 37/37 deterministic modern matrix tests (including real local HTTP fixture server), 8/8 VS Code command tests, 13/13 desktop smoke, 5/5 real packaged desktop runtime acceptance, 0 linter errors, 0 TypeScript errors.
+  - Record: `docs/sprints/SPRINT_8A_MCP_INTEGRATION_2.md`.
+
 Next:
-1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
+1. Sprint 8B — Visual MCP Management Surface & Configuration Hub.
+2. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
 3. Optional UX follow-up: packaged GUI checklist (7A–7D); provider-contract streaming; executable resume from the editor behind a UI re-authorization contract (ADR-033 §5).

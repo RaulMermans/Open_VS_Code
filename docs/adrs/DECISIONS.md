@@ -18,3 +18,4 @@
 - [ADR-031: Non-Progress Detection & Bounded Recovery](ADR-031-non-progress-detection-and-recovery.md)
 - [ADR-032: Bounded Memory-to-Skill Learning](ADR-032-bounded-memory-to-skill-learning.md)
 - [ADR-033: Persistent Conversation History & Read-only Recovery View](ADR-033-persistent-conversation-history.md)
+- [ADR-034: MCP Modern Transports, Secure Connections & Tool Governance](ADR-034-mcp-modern-transports-and-governance.md)

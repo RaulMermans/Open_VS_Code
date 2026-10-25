@@ -2,10 +2,13 @@ import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, type AutocompleteGateway } from '@open-vs-code/agent-core';
 import * as path from 'node:path';
+import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
+
+let mcpService: McpService | null = null;
 
 
 class VSCodeIdeHost implements IdeHost {
-  private outputChannel: vscode.OutputChannel;
+  public outputChannel: vscode.OutputChannel;
   
   constructor() {
     this.outputChannel = vscode.window.createOutputChannel("Open VS Code Agent");
@@ -634,6 +637,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     { dispose: () => host?.dispose() }
   );
+
+  // Initialize and register MCP 2.0 integrations and management commands
+  const secretProvider = new VsCodeSecretProvider(context.secrets);
+  mcpService = new McpService(workspaceRoot, secretProvider, host.outputChannel);
+  context.subscriptions.push(...registerMcpCommands(context, mcpService, host.outputChannel));
 }
 
 export const STARTER_MODELS_JSON = JSON.stringify({
@@ -751,6 +759,14 @@ export async function deactivate(): Promise<void> {
     } catch {
       // Safe containment
     }
+  }
+  if (mcpService) {
+    try {
+      await mcpService.dispose();
+    } catch {
+      // Safe containment
+    }
+    mcpService = null;
   }
   if (chat) {
     // Let queued history writes land. A task that was still running stays recorded

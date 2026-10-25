@@ -86,6 +86,38 @@
       {
         "command": "open-vs-code.newConversation",
         "title": "Open VS Code: New Conversation"
+      },
+      {
+        "command": "open-vs-code.listMcpServers",
+        "title": "Open VS Code: List Configured MCP Servers"
+      },
+      {
+        "command": "open-vs-code.inspectMcpServer",
+        "title": "Open VS Code: Inspect MCP Server"
+      },
+      {
+        "command": "open-vs-code.inspectMcpTools",
+        "title": "Open VS Code: Inspect Discovered MCP Tools"
+      },
+      {
+        "command": "open-vs-code.openMcpConfig",
+        "title": "Open VS Code: Open MCP Configuration"
+      },
+      {
+        "command": "open-vs-code.connectMcpServer",
+        "title": "Open VS Code: Connect MCP Server"
+      },
+      {
+        "command": "open-vs-code.disconnectMcpServer",
+        "title": "Open VS Code: Disconnect MCP Server"
+      },
+      {
+        "command": "open-vs-code.refreshMcpDiscovery",
+        "title": "Open VS Code: Refresh MCP Tool Discovery"
+      },
+      {
+        "command": "open-vs-code.viewMcpDiagnostics",
+        "title": "Open VS Code: View Actionable MCP Diagnostics"
       }
     ],
 
