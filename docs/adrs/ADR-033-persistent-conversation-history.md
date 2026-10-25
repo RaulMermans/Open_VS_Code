@@ -87,3 +87,10 @@ The UI separates three things a user might mean by "recover":
 - `RecoveryController.buildRecoveryPlan` gained an opt-out of reconciliation write-back. Its default behaviour is unchanged.
 - Secrets typed into the chat are redacted in the saved copy, so a restored conversation shows `[REDACTED]` where the live one showed the value.
 - Deferred: executable resume from the editor; cross-window live sync (the last writer wins on the index, and records are self-healing); cloud sync (never by default).
+
+## Sprint 7D amendment
+
+- **Byte cap in one pass.** Over 512 KiB, `writeRecord` used to re-serialise and re-hash the whole record once per dropped message, synchronously on the extension host. It now computes the same oldest-first cut in one pass (dropping message *i* shrinks the body by exactly its JSON plus one comma) and verifies it with one serialisation. The kept messages are identical; the one-at-a-time loop remains for the single-message clip.
+- **Redaction coverage.** The canonical redactor now also covers quoted JSON keys, credentials in URLs, Hugging Face, npm, GitLab, Google and Stripe restricted tokens, Slack webhooks, labelled access keys and `Cookie:` headers. Redaction is still pattern-based: an unrecognised format can still be saved, which is why records stay local (0600, outside the repository).
+
+Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`.

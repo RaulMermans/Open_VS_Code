@@ -36,6 +36,37 @@ import {
   terminalOutputSignature,
 } from './review-model.js';
 
+/** Activity rows kept for the timeline (the webview shows the last 20). */
+const MAX_ACTIVITIES = 50;
+
+/** Sprint 7D responsiveness counters: numbers only, no prompts, paths or output. */
+export interface ChatUiMetrics {
+  /** chat.state messages produced (posted when a view is attached). */
+  statePosts: number;
+  /** Of those, posts that carried the transcript. */
+  transcriptPosts: number;
+  /** Editor context refreshes that changed nothing and posted nothing. */
+  contextRefreshesSkipped: number;
+  peakMessages: number;
+  peakActivities: number;
+  turns: number;
+  lastTurnMs: number;
+  maxTurnMs: number;
+  /** From the cancel request to the turn settling; -1 until a turn is cancelled. */
+  lastCancelLatencyMs: number;
+  saves: number;
+  saveFailures: number;
+  lastSaveMs: number;
+  maxSaveMs: number;
+}
+
+function emptyUiMetrics(): ChatUiMetrics {
+  return {
+    statePosts: 0, transcriptPosts: 0, contextRefreshesSkipped: 0, peakMessages: 0, peakActivities: 0,
+    turns: 0, lastTurnMs: 0, maxTurnMs: 0, lastCancelLatencyMs: -1, saves: 0, saveFailures: 0, lastSaveMs: 0, maxSaveMs: 0,
+  };
+}
+
 export class ChatController {
   private state: WebviewState;
   private bridgeFactory: (options: { host: any, workspaceRoot: string, mode: ChatMode }) => AgentSessionBridge;
@@ -62,6 +93,11 @@ export class ChatController {
   private _historyReady: Promise<void> = Promise.resolve();
   /** Strictly increasing save time, so "most recent first" never ties within a millisecond. */
   private _lastStamp = 0;
+  /** What the webview last received of the transcript (shallow copies), so unchanged transcripts are not re-sent. */
+  private _sentTranscript?: ChatMessage[];
+  private _metrics: ChatUiMetrics = emptyUiMetrics();
+  private _turnStartedAt = 0;
+  private _cancelRequestedAt = 0;
   /** Seam for tests; production uses Agent Core's read-only recovery inspection. */
   public recoveryInspector: (options: { workspaceRoot: string; runId: string }) => Promise<RunRecoveryInspection> = inspectRunRecovery;
   
@@ -285,6 +321,7 @@ export class ChatController {
     this._webviewMessageDisposable?.dispose();
     this._webviewDisposeDisposable?.dispose();
     this._webviewView = webviewView;
+    this.forgetSentTranscript();
     const listener = webviewView.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
       void this.handleWebviewMessage(message);
     });
@@ -310,8 +347,14 @@ export class ChatController {
     vscode.commands.executeCommand('open-vs-code.chat.focus');
   }
   
+  /** Editor activity (cursor, selection, diagnostics) calls this often; identical chips post nothing (Sprint 7D). */
   public refreshContext(snapshot: IdeContextSnapshot) {
-    this.state.context = implicitContextChips(snapshot);
+    const chips = implicitContextChips(snapshot);
+    if (JSON.stringify(chips) === JSON.stringify(this.state.context)) {
+      this._metrics.contextRefreshesSkipped++;
+      return;
+    }
+    this.state.context = chips;
     this.sendState();
   }
 
@@ -344,6 +387,7 @@ export class ChatController {
     
     switch (message.type) {
       case 'chat.ready':
+        this.forgetSentTranscript();
         this.sendState();
         break;
       case 'chat.send':
@@ -682,6 +726,8 @@ export class ChatController {
     const fullInstruction = attachmentNote ? text + '\n\n' + attachmentNote : text;
     
     this.state.activeTurn = true;
+    this._turnStartedAt = performance.now();
+    this._cancelRequestedAt = 0;
     this.state.activities = [];
     this.state.pendingConfirmation = undefined;
     this.state.activeTerminal = undefined;
@@ -817,6 +863,7 @@ export class ChatController {
     } finally {
       if (this._activeAbortController === currentAbortController) {
         this._activeAbortController = undefined;
+        this.recordTurnEnd();
       }
       if (this._activeSessionBridge === currentBridge) {
         this._activeSessionBridge = undefined;
@@ -826,6 +873,7 @@ export class ChatController {
   
   public cancelTurn() {
     if (this._activeAbortController) {
+      if (!this._cancelRequestedAt) this._cancelRequestedAt = performance.now();
       this._activeAbortController.abort();
     }
     this.completePendingActivities('cancelled');
@@ -1014,14 +1062,52 @@ export class ChatController {
       chars -= (removed?.content?.length || 0);
     }
     
-    // Bound activities: max 50 entries, keeping pending ones
-    if (this.state.activities.length > 50) {
-      const pending = this.state.activities.filter(a => a.status === 'pending');
+    // Bound activities: max 50 entries, pending ones first; never more than 50 in total.
+    if (this.state.activities.length > MAX_ACTIVITIES) {
+      const pending = this.state.activities.filter(a => a.status === 'pending').slice(-MAX_ACTIVITIES);
       const others = this.state.activities.filter(a => a.status !== 'pending');
-      this.state.activities = [...others.slice(-(50 - pending.length)), ...pending];
+      const room = MAX_ACTIVITIES - pending.length;
+      this.state.activities = [...(room > 0 ? others.slice(-room) : []), ...pending];
     }
 
+    const m = this._metrics;
+    m.statePosts++;
+    m.peakMessages = Math.max(m.peakMessages, this.state.messages.length);
+    m.peakActivities = Math.max(m.peakActivities, this.state.activities.length);
+    if (!this._webviewView) return;
+    // The transcript is most of each post (up to 200k characters). Agent events and
+    // context changes rarely touch it, so an unchanged transcript is not re-sent.
+    if (this.transcriptUnchanged()) {
+      const { messages: _omitted, ...rest } = this.state;
+      this.sendMessage({ type: 'chat.state', state: rest, transcript: 'unchanged' });
+      return;
+    }
+    this._sentTranscript = this.state.messages.map((msg) => ({ ...msg }));
+    m.transcriptPosts++;
     this.sendMessage({ type: 'chat.state', state: this.state });
+  }
+
+  private transcriptUnchanged(): boolean {
+    const sent = this._sentTranscript;
+    const now = this.state.messages;
+    if (!sent || sent.length !== now.length) return false;
+    for (let i = 0; i < now.length; i++) {
+      const a = sent[i];
+      const b = now[i];
+      if (a.id !== b.id || a.role !== b.role || a.status !== b.status || a.content !== b.content ||
+          a.inherited !== b.inherited || a.attachments !== b.attachments) return false;
+    }
+    return true;
+  }
+
+  /** The webview's transcript is unknown (new view, page reload, reset): the next post carries it. */
+  private forgetSentTranscript(): void {
+    this._sentTranscript = undefined;
+  }
+
+  /** Bounded, content-free counters (Sprint 7D). In memory only: never persisted, logged or used to decide anything. */
+  public get uiMetrics(): Readonly<ChatUiMetrics> {
+    return { ...this._metrics };
   }
   
   private sendMessage(msg: HostToWebviewMessage) {
@@ -1030,18 +1116,30 @@ export class ChatController {
     }
   }
 
+  private recordTurnEnd(): void {
+    const m = this._metrics;
+    const now = performance.now();
+    m.turns++;
+    m.lastTurnMs = Math.round(now - this._turnStartedAt);
+    m.maxTurnMs = Math.max(m.maxTurnMs, m.lastTurnMs);
+    if (this._cancelRequestedAt) m.lastCancelLatencyMs = Math.round((now - this._cancelRequestedAt) * 10) / 10;
+    this._cancelRequestedAt = 0;
+  }
+
+  /**
+   * A tool or model outcome resolves the row that announced it, so the timeline
+   * shows one row per call and no request stays "pending" after it finished.
+   */
   private pushActivity(ev: { type?: string; payload?: any }): void {
     const activity = activityFromAgentEvent(ev, this.generateId());
     if (!activity) return;
-    if (
-      (ev.type === 'tool.completed' || ev.type === 'tool.failed' || ev.type === 'tool.rejected') &&
-      this.state.activities.length > 0
-    ) {
-      const last = this.state.activities[this.state.activities.length - 1];
-      if (last.kind === 'tool' && last.status === 'pending') {
-        last.status = activity.status;
-        last.label = activity.label;
-        last.toolName = activity.toolName || last.toolName;
+    if (activity.status !== 'pending' && (activity.kind === 'tool' || activity.kind === 'model')) {
+      for (let i = this.state.activities.length - 1; i >= 0; i--) {
+        const prior = this.state.activities[i];
+        if (prior.kind !== activity.kind || prior.status !== 'pending') continue;
+        prior.status = activity.status;
+        prior.label = activity.label;
+        prior.toolName = activity.toolName || prior.toolName;
         return;
       }
     }
@@ -1213,13 +1311,22 @@ export class ChatController {
       lastStatus: this.state.lastStatus || 'idle',
       runIds: this._meta.runIds.slice(),
     };
+    let started = 0;
     this._persistChain = this._persistChain
-      .then(() => store.save(snapshot, { protect: [this.state.conversationId] }))
-      .then(() => this.refreshConversationList())
+      .then(() => { started = performance.now(); return store.save(snapshot, { protect: [this.state.conversationId] }); })
+      .then(() => { this.recordSave(performance.now() - started); this.refreshConversationList(); })
       .catch((e: any) => {
+        this._metrics.saveFailures++;
         this.state.history = { enabled: true, notice: 'The latest changes to this conversation could not be saved (' + storeErrorCode(e) + ').' };
         this.sendState();
       });
+  }
+
+  private recordSave(ms: number): void {
+    const m = this._metrics;
+    m.saves++;
+    m.lastSaveMs = Math.round(ms * 10) / 10;
+    m.maxSaveMs = Math.max(m.maxSaveMs, m.lastSaveMs);
   }
 
   private refreshConversationList(): void {
@@ -1257,6 +1364,7 @@ export class ChatController {
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: [],
     };
+    this.forgetSentTranscript();
     this.sendMessage({ type: "conversation.reset" });
     this.sendState();
   }
@@ -1285,6 +1393,7 @@ export class ChatController {
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: record.reviews,
     };
+    this.forgetSentTranscript();
     this.sendMessage({ type: "conversation.reset" });
     this.sendState();
   }

@@ -244,6 +244,8 @@ export type WebviewToHostMessage =
 // Host -> Webview
 export type HostToWebviewMessage =
   | { type: "chat.state"; state: WebviewState }
+  /** Sprint 7D: the transcript is unchanged since the last post, so it is omitted; the webview keeps its own. */
+  | { type: "chat.state"; state: Omit<WebviewState, "messages">; transcript: "unchanged" }
   | { type: "turn.started" }
   | { type: "turn.status"; activity: ChatActivity }
   | { type: "turn.completed"; message: ChatMessage }

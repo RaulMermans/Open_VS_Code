@@ -569,6 +569,19 @@ export class ConversationStore {
     const bounded = { ...record, messages: record.messages.slice() };
     let body = JSON.stringify({ ...bounded, checksum: checksumOf(bounded) });
     // Byte cap: drop the oldest messages first; a single huge message is clipped.
+    // Dropping message i shrinks the body by exactly its JSON plus one comma (the
+    // checksum has a fixed length), so the oldest-first cut is found in one pass
+    // instead of re-serialising and re-hashing the record once per message (Sprint 7D).
+    let excess = Buffer.byteLength(body, 'utf8') - this.maxRecordBytes;
+    if (excess > 0 && bounded.messages.length > 1) {
+      let drop = 0;
+      while (excess > 0 && drop < bounded.messages.length - 1) {
+        excess -= Buffer.byteLength(JSON.stringify(bounded.messages[drop]), 'utf8') + 1;
+        drop++;
+      }
+      bounded.messages.splice(0, drop);
+      body = JSON.stringify({ ...bounded, checksum: checksumOf(bounded) });
+    }
     while (Buffer.byteLength(body, 'utf8') > this.maxRecordBytes) {
       if (bounded.messages.length > 1) bounded.messages.shift();
       else if (bounded.messages.length === 1) {

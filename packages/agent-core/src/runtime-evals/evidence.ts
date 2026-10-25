@@ -35,6 +35,15 @@ export function redactRuntimeEvalSecrets(text: string): string {
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g, "[REDACTED_TOKEN]")
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[REDACTED_JWT]")
     .replace(/\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIALS?)[A-Z0-9_]*\s*[:=]\s*["']?)(?!\[REDACTED)[^"'\s]+/g, "$1[REDACTED]")
+    // Formats found missing in Sprint 7D: quoted JSON keys, URL credentials, more
+    // provider token prefixes, labelled access keys and cookie headers.
+    .replace(/(["'][A-Za-z0-9_-]*(?:api[_-]?key|secret|token|password|passwd|auth(?:orization)?|credentials?|access[_-]?key)["']\s*:\s*["'])(?!\[REDACTED)[^"']+/gi, "$1[REDACTED]")
+    // Bounded repetitions keep this linear on long runs such as "a.a.a.…".
+    .replace(/\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:/@]{1,256}:)[^\s@/]{1,256}@/gi, "$1[REDACTED]@")
+    .replace(/\b(?:hf_[A-Za-z0-9]{30,}|npm_[A-Za-z0-9]{36}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|rk_(?:live|test)_[A-Za-z0-9]{16,})/g, "[REDACTED_TOKEN]")
+    .replace(/https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g, "[REDACTED_WEBHOOK]")
+    .replace(/(access[_-]?key(?:[_-]?id)?\s*[:=]\s*["']?)(?!\[REDACTED)[^"'\s]+/gi, "$1[REDACTED]")
+    .replace(/\b((?:set-)?cookie\s*:\s*)[^\r\n]+/gi, "$1[REDACTED]")
 }
 
 export const redactEvalSecrets = redactRuntimeEvalSecrets

@@ -1,0 +1,40 @@
+{
+  "activationMs": 77.9,
+  "webviewOpen": true,
+  "send": {
+    "n": 40,
+    "median": 3.61,
+    "p95": 9.18,
+    "max": 11.88
+  },
+  "messagesInConversationA": 80,
+  "switch": {
+    "n": 20,
+    "median": 7.22,
+    "p95": 46.55,
+    "max": 65.74
+  },
+  "selectionStorm": {
+    "moves": 300,
+    "extensionHostCpuMs": 960.12,
+    "wallMs": 2900.61,
+    "webviewPosts": 300
+  },
+  "autocomplete": {
+    "documentChars": 4807779,
+    "requests": 50,
+    "extensionHostCpuMs": 363.59,
+    "cpuMsBeforeFirstAwait": 255.76,
+    "wallMs": 415.72
+  },
+  "memoryMB": {
+    "heapUsedBefore": 37.25,
+    "heapUsedAfter": 365.27,
+    "rssAfter": 435.58
+  },
+  "versions": {
+    "vscode": "1.135.0",
+    "node": "v24.18.1",
+    "electron": "42.8.1"
+  }
+}

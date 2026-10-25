@@ -58,3 +58,4 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 5C**: Non-Progress Detection & Bounded Recovery (ADR-031) — Accepted; deterministic verification complete, real-model delta deferred to HALO. Progress-epoch amendment closed in Sprint 5D.
 - **Sprint 5D**: Bounded Memory-to-Skill Learning (ADR-032) — Accepted; deterministic verification complete, V1.1 deterministic benchmark consolidated (`docs/evals/V1_1_BENCHMARK.md`), real-model benchmark deferred to HALO.
 - **Sprint 7C**: Persistent Conversation History & Read-only Recovery View (ADR-033) — Accepted; display-only store in VS Code workspace storage, read-only recovery inspection over ADR-025, no executable resume from the editor.
+- **Sprint 7D**: IDE responsiveness amendments to ADR-026 (with ADR-018, ADR-022, ADR-033 notes) — Accepted; measured before/after, no new subsystem, dependency or authority.

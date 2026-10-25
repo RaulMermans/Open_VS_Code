@@ -294,6 +294,29 @@ let diffReviewController: DiffReviewController | null = null;
 let terminalReviewController: TerminalReviewController | null = null;
 let autocompleteController: AutocompleteController | null = null;
 
+/**
+ * Sprint 7D: runs at most one refresh at a time. Calls that arrive while one is
+ * running are folded into a single trailing refresh, so a burst of editor events
+ * costs two snapshots instead of one per event, and the last state always wins.
+ */
+export function coalesceRefresh(run: () => Promise<void>): () => Promise<void> {
+  let running: Promise<void> | undefined;
+  let again = false;
+  return () => {
+    if (running) {
+      again = true;
+      return running;
+    }
+    running = (async () => {
+      do {
+        again = false;
+        await run();
+      } while (again);
+    })().finally(() => { running = undefined; });
+    return running;
+  };
+}
+
 export const _testSeam = {
   get activeBridge() { return activeBridge; },
   bridgeFactory: null as any,
@@ -470,7 +493,8 @@ export function activate(context: vscode.ExtensionContext) {
     chatController.setHistoryUnavailable('Conversations are not saved because no folder is open.');
   }
   
-  const updateContext = async () => {
+  // Editor events arrive in storms (typing, cursor moves, diagnostics); see coalesceRefresh.
+  const updateContext = coalesceRefresh(async () => {
     if (chatController && host) {
       try {
         chatController.refreshContext(await host.getSnapshot());
@@ -478,7 +502,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Safe context refresh ignore
       }
     }
-  };
+  });
   
   context.subscriptions.push(host.onWorkspaceChange(updateContext));
   updateContext(); // Initial context

@@ -698,6 +698,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         let currentState = { activeTurn: false, attachments: [], context: [], messages: [], activities: [], conversations: [] };
         let sendInFlight = false;
+        // Follow new output only when the reader is at the bottom, or after they send.
+        // "At the bottom" is tracked from scroll events, so state pushes never read layout.
+        let scrollOnNextChange = true;
+        let pinnedToBottom = true;
         let lastAtQuery = '';
         const persisted = vscode.getState && vscode.getState();
         if (persisted && typeof persisted.draft === 'string') composer.value = persisted.draft;
@@ -706,7 +710,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             const message = event.data;
             switch (message.type) {
                 case 'chat.state':
-                    updateState(message.state);
+                    updateState(message.state, message.transcript === 'unchanged');
                     break;
                 case 'terminal.updated':
                     const updatedTerm = message.terminal || message.review;
@@ -722,10 +726,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     renamingId = null;
                     renderRecoveryPanel(recoveryContainer, null, '', document);
                     transcript.innerHTML = '';
-                    activities.innerHTML = '';
+                    currentState = Object.assign({}, currentState, { messages: [] });
+                    scrollOnNextChange = true;
+                    renderActivityTimeline(activities, [], document);
                     renderTerminalOutput(terminalContainer, null, document);
                     renderReviewLedger(reviewsContainer, [], document);
-                    confirmationContainer.innerHTML = '';
+                    renderConfirmationSummary(confirmationContainer, null, document);
                     filePicker.innerHTML = '';
                     filePicker.className = '';
                     composer.value = '';
@@ -736,12 +742,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         });
         
-        function updateState(state) {
+        function atBottom(el) {
+            return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        }
+
+        function updateState(state, transcriptUnchanged) {
             var wasRunning = currentState && currentState.activeTurn;
+            // The host omits an unchanged transcript; keep the one already rendered.
+            if (transcriptUnchanged) state.messages = (currentState && currentState.messages) || [];
             currentState = state;
             modeSelector.value = state.mode;
             sendInFlight = !!state.activeTurn;
-            syncTranscript(transcript, state.messages || [], document, vscode.postMessage);
+            var follow = false;
+            if (!transcriptUnchanged) {
+                follow = scrollOnNextChange || pinnedToBottom;
+                var changes = syncTranscript(transcript, state.messages || [], document, vscode.postMessage);
+                if (!(changes.created || changes.updated || changes.removed)) follow = false;
+            }
             renderTerminal(state.activeTerminal);
             renderConfirmationSummary(confirmationContainer, state.pendingConfirmation, document, vscode.postMessage);
             renderActivityTimeline(activities, state.activities || [], document);
@@ -752,7 +769,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             renderConversationBar(conversationBar, state, document, vscode.postMessage);
             renderRecoveryPanel(recoveryContainer, state.recovery, state.conversationTitle, document, vscode.postMessage);
             renderHistory();
-            transcript.scrollTop = transcript.scrollHeight;
+            if (follow) {
+                transcript.scrollTop = transcript.scrollHeight;
+                scrollOnNextChange = false;
+            }
             if (state.activeTurn) {
                 sendBtn.style.display = 'none';
                 cancelBtn.style.display = 'inline-block';
@@ -766,6 +786,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 if (wasRunning) composer.focus();
             }
         }
+
+        transcript.addEventListener('scroll', function () { pinnedToBottom = atBottom(transcript); });
 
         let elapsedTimer = null;
         function renderTerminal(term) {
@@ -874,6 +896,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (!text) return;
             sendInFlight = true;
             sendBtn.disabled = true;
+            scrollOnNextChange = true;
             vscode.postMessage({ type: 'chat.send', text: text, mode: modeSelector.value });
             composer.value = '';
             if (vscode.setState) vscode.setState({ draft: '' });

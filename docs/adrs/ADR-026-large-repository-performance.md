@@ -126,3 +126,22 @@ Bounded Durable Recovery (secondary rebuildable index; authoritative durable sou
 - **Fail-Closed Durability**: Rollback, recovery, and security boundaries remain completely uncompromising with physical fsync durability.
 - **Backpressure & Concurrency Stability**: Workload bursts and file storms are bounded and deduplicated without unhandled promise accumulation.
 - **No Premature Databases**: All optimizations are implemented with inspectable, native TypeScript/Node.js primitives without external database dependencies.
+
+---
+
+## Sprint 7D amendment — IDE responsiveness
+
+Sprint 4D bounded the agent side (discovery, search, reads, journals). Sprint 7D measured the editor side against a baseline (`evals/results/sprint-7d/`) and changed only what the measurements showed:
+
+| Path | Finding | Decision |
+| :--- | :--- | :--- |
+| Editor events → chat | Every cursor move, selection or diagnostics change posted the whole chat state (≈ 204 KB with a full transcript) and rebuilt parts of the page | Identical context posts nothing; editor events coalesce to one snapshot in flight plus one trailing refresh |
+| Agent events → chat | Each event re-sent the transcript | `chat.state` omits an unchanged transcript (ADR-018, Sprint 7D) |
+| Webview page | Unchanged pushes rebuilt the timeline, chips, connection status and approval card, and forced a scroll | Per-section signatures; scroll follows only a reader at the bottom |
+| Autocomplete | Each keystroke copied the whole document twice before the debounce | Copy a bounded window (prefix ceiling + suffix ceiling + 16); the built context is identical |
+| History store | Over the byte cap, one full serialise + hash per dropped message | One-pass cut (ADR-033, Sprint 7D) |
+| Activity timeline | Pending model rows were never resolved and escaped the 50-row bound | Resolve in place; hard bound |
+
+Not changed, because the measurements did not justify it: ASCII history saves (≈ 3 ms of CPU; the rest is off-thread `fsync`), index rebuild (only after damage), terminal streaming (already bounded and incremental since 7B), and a keyed activity list (≈ 60 small elements per changed push).
+
+Observability stays bounded: `ChatController.uiMetrics` is a fixed set of numeric counters in memory, never persisted, logged or used for decisions. Autocomplete latency remains in `ModelPerformanceLedger`; model latency, tokens/s and completion quality remain deferred to HALO.

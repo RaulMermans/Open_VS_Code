@@ -233,3 +233,11 @@ Sprint 3E validates architecture, contracts, routing, IDE lifecycle, cancellatio
 - ADR-018: Chat UX Layer
 - ADR-021: Controlled Terminal Execution
 - Sprint 3E implementation: `packages/agent-core/src/autocomplete/`
+
+## Sprint 7D amendment
+
+- **Bounded editor extraction.** `AutocompleteController` reads only the text that can reach the context builder: the last `PREFIX_CHAR_CEILING` + 16 characters before the cursor and the first `SUFFIX_CHAR_CEILING` + 16 after it, through `offsetAt`/`positionAt` ranges (`editorTextAround`). Previously each keystroke copied the whole document twice before the debounce. The built context is identical (property test over CRLF, surrogate pairs and whitespace-heavy files). When the window holds fewer than 3 non-whitespace characters, the full prefix is read so the empty-prefix decision is unchanged.
+- **Cancellation scoping.** The debounce-phase cancellation listener now acts only on its own request and detaches when the debounce fires. Before, a cancellation of an older token that arrived after a newer request was scheduled cancelled the newer one, and an in-flight cancellation was counted twice. VS Code 1.135 cancels the previous token before starting the next request, so there the visible effect was the double count. An already-cancelled request no longer reaches the provider. The controller disposes its token subscription after each request.
+- Unchanged: native editor acceptance is the only insertion path; no AgentRunner, tools or mutation; no routing change.
+
+Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`.

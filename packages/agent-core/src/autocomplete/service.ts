@@ -258,7 +258,17 @@ export class AutocompleteService {
 
       this.#pendingResolver = resolve
 
+      // VS Code cancels during the debounce. Only this request's own pending
+      // phase may be cancelled here: a late cancel of an older token must not
+      // cancel a newer pending request (Sprint 7D).
+      const onPendingAbort = () => {
+        if (this.#pendingResolver !== resolve) return
+        this.#cancelPending()
+        this.#telemetry.cancelled++
+      }
+
       const handle = this.#scheduler.schedule(async () => {
+        vsCodeAbortSignal?.removeEventListener("abort", onPendingAbort)
         if (this.#pendingResolver === resolve) {
           this.#pendingResolver = null
         }
@@ -445,14 +455,9 @@ export class AutocompleteService {
 
       this.#pendingHandle = handle
 
-      // If VS Code cancels before debounce fires
-      if (vsCodeAbortSignal) {
-        vsCodeAbortSignal.addEventListener("abort", () => {
-          this.#cancelPending()
-          this.#telemetry.cancelled++
-          resolve(null)
-        }, { once: true })
-      }
+      // If VS Code cancels before debounce fires (or already has)
+      if (vsCodeAbortSignal?.aborted) onPendingAbort()
+      else vsCodeAbortSignal?.addEventListener("abort", onPendingAbort, { once: true })
     })
 
     this.#pendingPromise = resultPromise
