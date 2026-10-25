@@ -43,6 +43,8 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Real Inference Safety Gate**| ✅ Complete | Explicit operator authorization (`OPEN_VS_CODE_REAL_INFERENCE=1`) preventing unauthorized inference, weight downloads, or proprietary cloud leaks. |
 | **Desktop Application & Packaging** | ✅ Complete | Branded, installable Open VS Code desktop app (`apps/desktop`) built on pinned VSCodium, bundling `@open-vs-code/vscode-integration` with zero telemetry. |
 | **Private Account Service** | ✅ Complete | Lightweight, separately deployable Node 22+ service (`@open-vs-code/account-service`) for private identity, Scrypt authentication, opaque session tokens, SQLite persistence, and persistent MCP integration registry. |
+| **Visual Integration Hub** | ✅ Complete | Interactive webview hub for managing MCP connections, 5-step connection wizard, tool schema inspection, and portable skills discovery. |
+| **Custom Modes Engine** | ✅ Complete | Extensible configuration profiles (`CustomModeProfile` → `ResolvedExecutionProfile` → `AgentRuntime`) mapping strictly to canonical base modes (`ASK`, `PLAN`, `BUILD`, `DEBUG`, `REVIEW`), fail-closed validation, immutable task execution, 9-step creation wizard, and dual persistence scopes (account & workspace). |
 
 
 ---

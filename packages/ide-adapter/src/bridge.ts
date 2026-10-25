@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget, isSkillApplied } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -49,7 +49,14 @@ export class AgentSessionBridge {
     return this.lastSkillEvidence;
   }
   
-  public async runTask(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly ConversationTurn[]): Promise<AgentResult> {
+  public async runTask(
+    instruction: string,
+    mode: AgentMode,
+    signal: AbortSignal,
+    onEvent?: (ev: AgentEvent) => void,
+    recentTurns?: readonly ConversationTurn[],
+    resolvedProfile?: ResolvedExecutionProfile
+  ): Promise<AgentResult> {
     if (this.activeSession) {
       await this.host.showError("A session is already active.");
       return Promise.reject(new Error("A session is already active."));
@@ -57,13 +64,20 @@ export class AgentSessionBridge {
     
     this.activeSession = true;
     try {
-      return await this._run(instruction, mode, signal, onEvent, recentTurns);
+      return await this._run(instruction, mode, signal, onEvent, recentTurns, resolvedProfile);
     } finally {
       this.activeSession = false;
     }
   }
   
-  private async _run(instruction: string, mode: AgentMode, signal: AbortSignal, onEvent?: (ev: AgentEvent) => void, recentTurns?: readonly ConversationTurn[]): Promise<AgentResult> {
+  private async _run(
+    instruction: string,
+    mode: AgentMode,
+    signal: AbortSignal,
+    onEvent?: (ev: AgentEvent) => void,
+    recentTurns?: readonly ConversationTurn[],
+    resolvedProfile?: ResolvedExecutionProfile
+  ): Promise<AgentResult> {
     const t0 = Date.now();
     await this.host.showOutput(`Starting ${mode} task: ${instruction}`);
     
@@ -72,6 +86,20 @@ export class AgentSessionBridge {
     if (!isTrusted && (mode === "BUILD" || mode === "DEBUG")) {
       await this.host.showError("Cannot run BUILD or DEBUG in an untrusted workspace.");
       return { status: "FAILED", failureReason: "INTERNAL_ERROR", turns: 0, finalState: { status: "FAILED", events: [] }, events: [], contextDiagnostics: [], toolCalls: [] };
+    }
+
+    if (resolvedProfile && !resolvedProfile.isReady) {
+      const msg = `Custom mode "${resolvedProfile.profileName}" is not ready for execution: ${resolvedProfile.diagnostics.join("; ")}`;
+      await this.host.showError(msg);
+      return {
+        status: "FAILED",
+        failureReason: "INTERNAL_ERROR",
+        turns: 0,
+        finalState: { status: "FAILED", events: [] },
+        events: [],
+        contextDiagnostics: resolvedProfile.diagnostics.map((d) => ({ turn: 0, totalEstimatedTokens: 0, omittedItemIds: [], code: "MODE_NOT_READY", message: d })),
+        toolCalls: [],
+      };
     }
     
     // Capture IDE context
@@ -109,6 +137,7 @@ export class AgentSessionBridge {
         isTrusted,
         eventSink: sink,
         providerOverride: this.providerOverride,
+        ...(resolvedProfile ? { resolvedProfile } : {}),
         ...(this.skills ? { skills: this.skills } : {}),
         ...(this.learning?.enabled ? { learning: { enabled: true } } : {}),
         ...(this.progressMonitor?.enabled ? {

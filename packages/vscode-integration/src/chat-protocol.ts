@@ -1,4 +1,8 @@
-import type { IntegrationManagerState, IntegrationTab } from "./integrations/integration-manager-controller.js";
+import type {
+  IntegrationManagerState,
+  IntegrationTab,
+  CustomModeSummaryDto,
+} from "./integrations/integration-manager-controller.js";
 
 export type ChatMode = "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW";
 
@@ -154,6 +158,7 @@ export interface ConversationSummaryDto {
   createdAt: number;
   updatedAt: number;
   mode: ChatMode;
+  customModeId?: string;
   messageCount: number;
   lastStatus: ConversationExecutionStatus;
   archived?: boolean;
@@ -197,6 +202,9 @@ export interface WebviewState {
   history?: { enabled: boolean; notice?: string };
   recovery?: RecoveryStatusDto;
   mode: ChatMode;
+  customModeId?: string;
+  activeCustomProfile?: CustomModeSummaryDto;
+  customModes?: CustomModeSummaryDto[];
   messages: ChatMessage[];
   activities: ChatActivity[];
   context: ChatContextChip[];
@@ -214,9 +222,9 @@ export interface WebviewState {
 // Webview -> Host
 export type WebviewToHostMessage =
   | { type: "chat.ready" }
-  | { type: "chat.send"; text: string; mode: ChatMode }
+  | { type: "chat.send"; text: string; mode: ChatMode; customModeId?: string }
   | { type: "chat.cancel" }
-  | { type: "chat.setMode"; mode: ChatMode }
+  | { type: "chat.setMode"; mode: ChatMode; customModeId?: string }
   | { type: "chat.newConversation" }
   | { type: "chat.checkConnection" }
   | { type: "confirmation.respond"; confirmationId: string; action: "APPROVE" | "REJECT" }
@@ -267,7 +275,17 @@ export type WebviewToHostMessage =
   | { type: "integration.inspectSkill"; skillId?: string }
   | { type: "integration.openSkillFile"; skillId: string }
   | { type: "integration.accountLogin"; username: string; password: string; serverUrl?: string }
-  | { type: "integration.accountLogout" };
+  | { type: "integration.accountLogout" }
+  | { type: "integration.inspectMode"; modeId?: string }
+  | { type: "integration.startModeWizard"; modeId?: string }
+  | { type: "integration.cancelModeWizard" }
+  | { type: "integration.modeWizardDraft"; draft: Record<string, unknown> }
+  | { type: "integration.modeWizardStep"; step: number }
+  | { type: "integration.modeWizardSave"; activateNow?: boolean }
+  | { type: "integration.deleteMode"; modeId: string }
+  | { type: "integration.duplicateMode"; modeId: string; targetScope?: "workspace" | "account" }
+  | { type: "integration.toggleMode"; modeId: string; enabled: boolean }
+  | { type: "integration.setActiveMode"; modeId?: string };
 
 // Host -> Webview
 export type HostToWebviewMessage =
@@ -309,7 +327,8 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
       const text = raw.text.trim();
       if (!text || text.length > 50000) return null;
       if (!validModes.includes(raw.mode)) return null;
-      return { type: "chat.send", text, mode: raw.mode as ChatMode };
+      const customModeId = typeof raw.customModeId === 'string' && raw.customModeId.length <= 100 ? raw.customModeId : undefined;
+      return { type: "chat.send", text, mode: raw.mode as ChatMode, customModeId };
     }
       
     case "chat.cancel":
@@ -317,7 +336,8 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
       
     case "chat.setMode": {
       if (!validModes.includes(raw.mode)) return null;
-      return { type: "chat.setMode", mode: raw.mode as ChatMode };
+      const customModeId = typeof raw.customModeId === 'string' && raw.customModeId.length <= 100 ? raw.customModeId : undefined;
+      return { type: "chat.setMode", mode: raw.mode as ChatMode, customModeId };
     }
       
     case "chat.newConversation":
@@ -545,6 +565,54 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
 
     case "integration.accountLogout":
       return { type: "integration.accountLogout" };
+
+    case "integration.inspectMode": {
+      const modeId = typeof raw.modeId === "string" ? raw.modeId : undefined;
+      return { type: "integration.inspectMode", modeId };
+    }
+
+    case "integration.startModeWizard": {
+      const modeId = typeof raw.modeId === "string" ? raw.modeId : undefined;
+      return { type: "integration.startModeWizard", modeId };
+    }
+
+    case "integration.cancelModeWizard":
+      return { type: "integration.cancelModeWizard" };
+
+    case "integration.modeWizardDraft": {
+      if (!raw.draft || typeof raw.draft !== "object") return null;
+      return { type: "integration.modeWizardDraft", draft: raw.draft };
+    }
+
+    case "integration.modeWizardStep": {
+      if (typeof raw.step !== "number" || raw.step < 1 || raw.step > 9) return null;
+      return { type: "integration.modeWizardStep", step: raw.step };
+    }
+
+    case "integration.modeWizardSave": {
+      return { type: "integration.modeWizardSave", activateNow: Boolean(raw.activateNow) };
+    }
+
+    case "integration.deleteMode": {
+      if (typeof raw.modeId !== "string" || !raw.modeId) return null;
+      return { type: "integration.deleteMode", modeId: raw.modeId };
+    }
+
+    case "integration.duplicateMode": {
+      if (typeof raw.modeId !== "string" || !raw.modeId) return null;
+      const targetScope = raw.targetScope === "workspace" || raw.targetScope === "account" ? raw.targetScope : undefined;
+      return { type: "integration.duplicateMode", modeId: raw.modeId, targetScope };
+    }
+
+    case "integration.toggleMode": {
+      if (typeof raw.modeId !== "string" || typeof raw.enabled !== "boolean") return null;
+      return { type: "integration.toggleMode", modeId: raw.modeId, enabled: raw.enabled };
+    }
+
+    case "integration.setActiveMode": {
+      const modeId = typeof raw.modeId === "string" && raw.modeId ? raw.modeId : undefined;
+      return { type: "integration.setActiveMode", modeId };
+    }
       
     default:
       return null;

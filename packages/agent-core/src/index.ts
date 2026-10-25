@@ -74,3 +74,6 @@ export * from "./model/canonical-endpoint.ts"
 export * from "./model/inference-gate.ts"
 export * from "./model/endpoint-health.ts"
 export * from "./model/performance-ledger.ts"
+
+// Sprint 8D — Custom Modes Engine & Execution Profiles
+export * from "./modes/index.ts"

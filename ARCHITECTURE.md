@@ -735,3 +735,43 @@ Inside `packages/vscode-integration/src/account/`:
 - **Runtime Decoupling**: If the account backend is unavailable, the desktop transitions to `OFFLINE` or displays cached profiles as `STALE`. Local coding, local tool execution, and local model inference are never blocked or degraded by account service availability.
 - **MCP Sync**: Syncs registered integration configurations directly into the existing `McpService`. Restored integrations default to `DISCONNECTED` and remain strictly governed by the local `PermissionGate`.
 
+## Custom Modes Engine & Execution Profiles (Sprint 8D, ADR-037)
+
+The Custom Modes Engine allows developers to specialize agent behavior through declarative configuration profiles without multiplying runtime agent implementations or weakening permission boundaries.
+
+```text
+CustomModeProfile (Manifest / Declaration)
+       │
+       ▼
+ModeResolver (Deterministic Snapshot Evaluation)
+       │
+       ▼
+ResolvedExecutionProfile (Immutable Runtime Contract)
+       │
+       ▼
+AgentSessionBridge (Existing Session Orchestrator)
+       │
+       ▼
+AgentRuntime (Existing Single Authoritative Agent Loop)
+```
+
+### Core Architecture Invariant
+
+**A custom mode is a configuration profile, not an independent agent.**
+
+- The five canonical `AgentMode` enum variants (`ASK`, `PLAN`, `BUILD`, `DEBUG`, `REVIEW`) remain the authoritative execution models.
+- Every custom mode profile maps to exactly one base mode.
+- A profile can only restrict or focus available tools and inject bounded instructions; it can **never** expand permissions beyond the base mode, workspace trust, and `PermissionGate`.
+
+### Module Boundaries
+
+| Component | Package / Path | Responsibility | Security Invariants |
+| :--- | :--- | :--- | :--- |
+| `contracts.ts` | `@open-vs-code/agent-core/modes/` | Declarative manifest schema (`CustomModeProfile`), `ResolvedExecutionProfile`, `ModeValidationResult`. | Versioned schema (`version: 1`). Strict typing of base modes, dependencies, and scopes. |
+| `validation.ts` | `@open-vs-code/agent-core/modes/` | Strict schema validation (`validateModeProfile`). | Rejects unknown fields, prototype pollution (`__proto__`, `constructor`, `prototype`), credentials (`AKIA...`, `BEGIN PRIVATE KEY`, `ghp_...`, bearer tokens), non-canonical base modes, and oversized custom instructions. |
+| `resolver.ts` | `@open-vs-code/agent-core/modes/` | Deterministic resolution (`resolveExecutionProfile`). | Combines profile, base mode, trust, account policy, installed skills, MCP tools, and model router. Fails closed (`isReady: false`) on missing required dependencies. Computes tool allowlist intersection. |
+| `starter-profiles.ts` | `@open-vs-code/agent-core/modes/` | Canonical built-in starter profiles. | Built-in immutable profiles: `architecture-review` (REVIEW), `reverse-engineering-analysis` (PLAN), `design-exploration` (PLAN). |
+| `ModeService` | `@open-vs-code/vscode-integration/modes/` | Profile persistence, account sync, and workspace storage (`.open-vs-code/modes.json`). | Clean teardown on logout/account switch; workspace profile overrides account profile sharing same ID with diagnostic notice. |
+| `ChatController` | `@open-vs-code/vscode-integration/` | Active mode management and execution lifecycle. | Enforces execution immutability: mode switches and profile edits during `activeTurn: true` are blocked. Disallows pending confirmation transfer across mode transitions. |
+| `IntegrationManagerController` & UI | `@open-vs-code/vscode-integration/` | Webview Custom Modes Hub and 9-step wizard. | Replaces Sprint 8C placeholder. Zero auto-execution on render; tracks `lastModesSig` and `lastBadgeSig` for zero DOM node re-creation on unchanged state pushes. |
+

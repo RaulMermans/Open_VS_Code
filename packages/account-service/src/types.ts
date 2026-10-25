@@ -79,8 +79,38 @@ export type AuditAction =
   | "INTEGRATION_UPDATE"
   | "INTEGRATION_DELETE"
   | "WORKSPACE_POLICY_UPDATE"
+  | "MODE_CREATE"
+  | "MODE_UPDATE"
+  | "MODE_DELETE"
   | "VAULT_ACCESS"
   | "ACCESS_DENIED";
+
+export interface AccountModeProfile {
+  readonly id: string;
+  readonly ownerUserId: string;
+  readonly profileId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly icon?: string | null | undefined;
+  readonly version: number;
+  readonly baseMode: "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW";
+  readonly customInstructions?: string | null | undefined;
+  readonly requiredSkills: readonly string[];
+  readonly optionalSkills: readonly string[];
+  readonly requiredMcpServers: readonly string[];
+  readonly optionalMcpServers: readonly string[];
+  readonly toolAllowlist?: readonly string[] | null | undefined;
+  readonly preferredModelId?: string | null | undefined;
+  readonly workflowPreference?: "direct" | "structured" | null | undefined;
+  readonly contextGuidance?: string | null | undefined;
+  readonly verificationPreferences?: Record<string, unknown> | null | undefined;
+  readonly sourceRepoReferences?: readonly string[] | null | undefined;
+  readonly scope: "account";
+  readonly enabledState: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly schemaVersion: number;
+}
 
 export type AuditOutcome = "SUCCESS" | "DENIED" | "FAILED";
 

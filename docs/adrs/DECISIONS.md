@@ -21,4 +21,5 @@
 - [ADR-034: MCP Modern Transports, Secure Connections & Tool Governance](ADR-034-mcp-modern-transports-and-governance.md)
 - [ADR-035: Private Account Backend, Authentication & Persistent Integration Profiles](ADR-035-private-accounts-and-integration-profiles.md)
 - [ADR-036: Visual Integration Manager, Account Profiles & MCP Lifecycle UX](ADR-036-visual-integration-manager-and-mcp-lifecycle-ux.md)
+- [ADR-037: Custom Modes Engine, Mode Profiles & Account-Aware Execution](ADR-037-custom-modes-engine-and-execution-profiles.md)
 

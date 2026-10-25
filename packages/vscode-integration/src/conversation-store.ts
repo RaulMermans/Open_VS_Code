@@ -55,6 +55,7 @@ export interface PersistedConversation {
   createdAt: number;
   updatedAt: number;
   mode: ChatMode;
+  customModeId?: string;
   messages: ChatMessage[];
   attachments: ChatContextChip[];
   reviews: ReviewRecordDto[];
@@ -67,6 +68,7 @@ export type ConversationInput = Omit<PersistedConversation, 'schemaVersion' | 'w
   title?: string;
   titleSource?: 'auto' | 'user';
   archived?: boolean;
+  customModeId?: string;
 };
 
 export type StoreIssueCode = 'CORRUPT' | 'UNSUPPORTED_VERSION' | 'FOREIGN_WORKSPACE' | 'OVERSIZED' | 'UNSAFE_ENTRY' | 'INDEX_REBUILT';
@@ -214,6 +216,7 @@ export function sanitizeConversation(raw: any, workspaceId: string): PersistedCo
   const messages = sanitizeMessages(raw?.messages);
   const titleSource = raw?.titleSource === 'user' ? 'user' : 'auto';
   const title = (titleSource === 'user' ? normalizeTitle(raw?.title) : null) || deriveTitle(messages);
+  const customModeId = typeof raw?.customModeId === 'string' && raw.customModeId.length <= 100 ? raw.customModeId : undefined;
   return {
     schemaVersion: CONVERSATION_SCHEMA_VERSION,
     id: raw.id,
@@ -223,6 +226,7 @@ export function sanitizeConversation(raw: any, workspaceId: string): PersistedCo
     createdAt: finiteNumber(raw?.createdAt),
     updatedAt: finiteNumber(raw?.updatedAt),
     mode: MODES.includes(raw?.mode) ? raw.mode : 'ASK',
+    ...(customModeId ? { customModeId } : {}),
     messages,
     attachments: sanitizeChips(raw?.attachments),
     reviews: Array.isArray(raw?.reviews) ? raw.reviews.slice(-MAX_REVIEWS).map(sanitizeReview).filter((r: ReviewRecordDto | null): r is ReviewRecordDto => r !== null) : [],
@@ -260,6 +264,7 @@ export function summarize(record: PersistedConversation): ConversationSummaryDto
     messageCount: record.messages.length,
     lastStatus: record.lastStatus,
   };
+  if (record.customModeId) summary.customModeId = record.customModeId;
   if (record.archived) summary.archived = true;
   if (firstUser) summary.preview = clip(oneLine(firstUser.content), MAX_PREVIEW_CHARS);
   return summary;
@@ -267,6 +272,7 @@ export function summarize(record: PersistedConversation): ConversationSummaryDto
 
 function sanitizeSummary(raw: any): ConversationSummaryDto | null {
   if (!raw || typeof raw.id !== 'string' || !CONVERSATION_ID_PATTERN.test(raw.id)) return null;
+  const customModeId = typeof raw.customModeId === 'string' && raw.customModeId.length <= 100 ? raw.customModeId : undefined;
   const summary: ConversationSummaryDto = {
     id: raw.id,
     title: normalizeTitle(raw.title) || 'New conversation',
@@ -276,6 +282,7 @@ function sanitizeSummary(raw: any): ConversationSummaryDto | null {
     messageCount: Math.max(0, Math.min(MAX_PERSISTED_MESSAGES, Math.floor(finiteNumber(raw.messageCount)))),
     lastStatus: EXECUTION_STATUSES.includes(raw.lastStatus) ? raw.lastStatus : 'idle',
   };
+  if (customModeId) summary.customModeId = customModeId;
   if (raw.archived === true) summary.archived = true;
   if (typeof raw.preview === 'string') summary.preview = clip(redact(oneLine(raw.preview)), MAX_PREVIEW_CHARS);
   return summary;

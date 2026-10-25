@@ -83,6 +83,44 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    description: "Sprint 8D: mode_profiles table for user-owned custom mode profiles",
+    up: (db: DatabaseConnection) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mode_profiles (
+          id TEXT PRIMARY KEY,
+          owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          profile_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          icon TEXT,
+          version INTEGER NOT NULL DEFAULT 1,
+          base_mode TEXT NOT NULL CHECK (base_mode IN ('ASK', 'PLAN', 'BUILD', 'DEBUG', 'REVIEW')),
+          custom_instructions TEXT,
+          required_skills TEXT NOT NULL,
+          optional_skills TEXT NOT NULL,
+          required_mcp_servers TEXT NOT NULL,
+          optional_mcp_servers TEXT NOT NULL,
+          tool_allowlist TEXT,
+          preferred_model_id TEXT,
+          workflow_preference TEXT,
+          context_guidance TEXT,
+          verification_preferences TEXT,
+          source_repo_references TEXT,
+          scope TEXT NOT NULL DEFAULT 'account',
+          enabled_state INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          schema_version INTEGER NOT NULL DEFAULT 1,
+          UNIQUE(owner_user_id, profile_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mode_profiles_owner ON mode_profiles(owner_user_id);
+        CREATE INDEX IF NOT EXISTS idx_mode_profiles_owner_profile ON mode_profiles(owner_user_id, profile_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: DatabaseConnection): { applied: number[]; currentVersion: number } {
