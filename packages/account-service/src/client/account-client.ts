@@ -1,5 +1,6 @@
 import type {
   AuditEvent,
+  AccountModeProfile,
   IntegrationRegistration,
   IntegrationWorkspacePolicy,
   UserProfile,
@@ -13,6 +14,10 @@ import type {
   RegisterIntegrationInput,
   UpdateIntegrationInput,
 } from "../integration/integration-service.js";
+import type {
+  RegisterModeInput,
+  UpdateModeInput,
+} from "../mode/mode-service.js";
 import {
   AccountServiceError,
   UntrustedEndpointError,
@@ -342,5 +347,40 @@ export class AccountClient {
     const qs = params.toString() ? `?${params.toString()}` : "";
     const res = await this.request<{ events: AuditEvent[] }>("GET", `/api/v1/admin/audit${qs}`);
     return res.events;
+  }
+
+  // Custom Mode Profiles APIs (Sprint 8D)
+  async listModes(): Promise<AccountModeProfile[]> {
+    const res = await this.request<{ modes: AccountModeProfile[] }>("GET", "/api/v1/modes");
+    return res.modes;
+  }
+
+  async getMode(profileId: string): Promise<AccountModeProfile> {
+    const res = await this.request<{ mode: AccountModeProfile }>(
+      "GET",
+      `/api/v1/modes/${encodeURIComponent(profileId)}`
+    );
+    return res.mode;
+  }
+
+  async createMode(input: RegisterModeInput): Promise<AccountModeProfile> {
+    const res = await this.request<{ mode: AccountModeProfile }>("POST", "/api/v1/modes", input);
+    return res.mode;
+  }
+
+  async updateMode(profileId: string, updates: UpdateModeInput): Promise<AccountModeProfile> {
+    const res = await this.request<{ mode: AccountModeProfile }>(
+      "PUT",
+      `/api/v1/modes/${encodeURIComponent(profileId)}`,
+      updates
+    );
+    return res.mode;
+  }
+
+  async deleteMode(profileId: string): Promise<void> {
+    await this.request<{ ok: boolean }>(
+      "DELETE",
+      `/api/v1/modes/${encodeURIComponent(profileId)}`
+    );
   }
 }

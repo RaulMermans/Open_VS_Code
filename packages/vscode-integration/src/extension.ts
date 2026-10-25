@@ -5,9 +5,11 @@ import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
 import { IntegrationManagerController } from './integrations/index.js';
+import { ModeService } from './modes/index.js';
 
 let mcpService: McpService | null = null;
 let accountManager: DesktopAccountManager | null = null;
+let modeService: ModeService | null = null;
 let integrationManager: IntegrationManagerController | null = null;
 
 
@@ -648,13 +650,16 @@ export function activate(context: vscode.ExtensionContext) {
   mcpService = new McpService(workspaceRoot, secretProvider, host.outputChannel);
   context.subscriptions.push(...registerMcpCommands(context, mcpService, host.outputChannel));
 
+  // Initialize Mode Service (Sprint 8D)
+  modeService = new ModeService({ workspaceRoot });
+
   // Initialize and register Account Management (Sprint 8B)
   accountManager = new DesktopAccountManager(context, host.outputChannel);
   context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel));
-  void accountManager.initialize(mcpService);
+  void accountManager.initialize(mcpService, modeService);
 
-  // Initialize and register Visual Integration Manager (Sprint 8C)
-  integrationManager = new IntegrationManagerController(context, accountManager, mcpService, host.outputChannel);
+  // Initialize and register Visual Integration Manager (Sprint 8C/8D)
+  integrationManager = new IntegrationManagerController(context, accountManager, mcpService, host.outputChannel, modeService);
   if (chatController) {
     chatController.attachIntegrationManager(integrationManager);
   }
@@ -663,6 +668,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('open-vs-code.openIntegrationManager', async () => {
       vscode.commands.executeCommand('open-vs-code.chat.focus');
       await chatController?.openIntegrationsHub();
+    }),
+    vscode.commands.registerCommand('open-vs-code.openModesManager', async () => {
+      vscode.commands.executeCommand('open-vs-code.chat.focus');
+      await chatController?.openIntegrationsHub();
+      integrationManager?.setActiveTab('modes');
     })
   );
 }

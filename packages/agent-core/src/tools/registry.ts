@@ -67,6 +67,14 @@ export class ToolRegistry {
     return new ToolRegistry([...this.#registrations.values()].filter((registration) => actions.has(registration.definition.action)))
   }
 
+  /**
+   * A new registry holding only the tools whose name is in `allowedNames`. Narrowing only: it never
+   * adds a tool, and the PermissionGate still decides every call on the restricted registry.
+   */
+  filterByName(allowedNames: ReadonlySet<string>): ToolRegistry {
+    return new ToolRegistry([...this.#registrations.values()].filter((registration) => allowedNames.has(registration.definition.name)))
+  }
+
   listDefinitions(): readonly ToolDefinition[] {
     return [...this.#registrations.values()]
       .map((registration) => registration.definition)

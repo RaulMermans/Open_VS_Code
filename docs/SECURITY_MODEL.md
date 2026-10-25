@@ -39,6 +39,10 @@
 | | Session tokens | Opaque `ovsc_sess_...`; server stores only SHA-256 verifiers |
 | | MCP registrations | Non-secret configs and credential references only |
 | | Vault secrets | Authenticated AES-256-GCM encrypted; key outside database |
+| **J. CUSTOM MODES & PROFILES** | Mode manifests | Validated schema; fail-closed; prototype-pollution guarded |
+| | Instructions & guidance | Bounded string length; credential scanner; non-authoritative |
+| | Tool allowlist | Computes intersection with base mode; cannot expand tools |
+| | Mode switching | Blocked during active turns; pending approvals isolated |
 
 
 ---
@@ -138,6 +142,15 @@ UI / future Runtime Evals:
 - **Input**: attempting to store or sync sensitive provider tokens in MCP configuration or profile objects
 - **Control**: client-executed MCP servers store credentials in the client OS keychain via `vscode.SecretStorage`; the account database persists only non-secret configuration and a `credentialRef`; server-side vault records require explicit master key (`ACCOUNT_VAULT_KEY`) and use AES-256-GCM; unconfigured vault fails closed
 - **Result**: plaintext provider credentials never touch the account database or profile sync payloads
+
+### Custom Mode Authority Escalation & Injection (Sprint 8D, ADR-037)
+- **Input**: malicious or malformed custom mode profile attempting privilege expansion (e.g., claiming mutation tools on a `REVIEW` base, injecting prompt instructions to bypass confirmation gates, embedding credentials, prototype pollution, or switching modes during execution)
+- **Control**:
+  1. `validateModeProfile` enforces schema versioning, bounds instruction size, and strictly blocks prototype pollution (`__proto__`, `constructor`, `prototype`), unknown properties, and credential strings (`AKIA...`, `BEGIN PRIVATE KEY`, `ghp_...`, bearer tokens).
+  2. `resolveExecutionProfile` computes tool allowlists strictly as an intersection with the canonical base mode tools, preventing tool expansion. Missing required dependencies set `isReady: false` and block execution.
+  3. `PermissionGate` remains immutable; profile instructions are injected as non-authoritative `projectInstructions` and can never override workspace policy, workspace trust, or human confirmation gates.
+  4. Execution immutability freezes the execution profile snapshot at task start; `ChatController` and webview reject mode switches and profile edits during `activeTurn: true`.
+- **Result**: custom modes can only restrict or focus capabilities; privilege escalation fails closed.
 
 - **Result**: second use fails closed
 

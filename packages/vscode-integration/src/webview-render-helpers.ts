@@ -2130,41 +2130,849 @@ export function renderSkillsSection(container: any, state: any, doc?: any, postM
   return panel;
 }
 
-export function renderModesSection(container: any, _state: any, doc?: any, _postMessage?: (msg: any) => void): any {
+export function renderModeWizard(container: any, wizard: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
   var d = docOf(doc);
+  var send = postMessage || function () {};
+  var draft = (wizard && wizard.draft) || {};
+  var step = (wizard && wizard.step) || 1;
+
   var panel = d.createElement('div');
-  panel.className = 'hub-modes-placeholder';
+  panel.className = 'hub-wizard-panel';
+  setAttr(panel, 'role', 'region');
+  setAttr(panel, 'aria-label', 'Custom Mode Wizard');
+
+  // Header
+  var header = d.createElement('div');
+  header.className = 'hub-wizard-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, wizard && wizard.modeId ? 'Edit Custom Mode Profile' : 'Create Custom Mode Profile');
+  header.appendChild(title);
+
+  var cancelBtn = appendAction(d, header, 'Cancel', 'Exit mode wizard', function () {
+    send({ type: 'integration.cancelModeWizard' });
+  });
+  cancelBtn.className = 'hub-btn-secondary';
+  panel.appendChild(header);
+
+  // Stepper (9 steps)
+  var stepper = d.createElement('div');
+  stepper.className = 'hub-wizard-stepper';
+  var stepNames = [
+    '1. Identity',
+    '2. Base Mode',
+    '3. Skills',
+    '4. MCP & Tools',
+    '5. Model',
+    '6. Workflow',
+    '7. Instructions',
+    '8. Permissions',
+    '9. Save'
+  ];
+  for (var s = 1; s <= 9; s++) {
+    var dot = d.createElement('button');
+    dot.type = 'button';
+    dot.className = 'hub-step-dot' + (step === s ? ' is-current' : '') + (step > s ? ' is-done' : '');
+    setText(dot, stepNames[s - 1]);
+    onClick(dot, (function (targetStep) {
+      return function () {
+        send({ type: 'integration.modeWizardStep', step: targetStep });
+      };
+    })(s));
+    stepper.appendChild(dot);
+  }
+  panel.appendChild(stepper);
+
+  // Validation feedback
+  if (wizard.validationErrors && wizard.validationErrors.length > 0) {
+    var errBox = d.createElement('div');
+    errBox.className = 'hub-empty-state is-warning';
+    var errTitle = d.createElement('strong');
+    setText(errTitle, 'Validation Diagnostics:');
+    errBox.appendChild(errTitle);
+    var errList = d.createElement('ul');
+    for (var ei = 0; ei < wizard.validationErrors.length; ei++) {
+      var eli = d.createElement('li');
+      setText(eli, wizard.validationErrors[ei]);
+      errList.appendChild(eli);
+    }
+    errBox.appendChild(errList);
+    panel.appendChild(errBox);
+  }
+
+  // Step 1: Identity & Scope
+  if (step === 1) {
+    var form1 = d.createElement('div');
+    form1.className = 'hub-wizard-form';
+
+    var nameRow = d.createElement('div');
+    nameRow.className = 'hub-form-row';
+    var nameLabel = d.createElement('label');
+    setText(nameLabel, 'Profile Name:');
+    nameRow.appendChild(nameLabel);
+    var nameInput = d.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'hub-input';
+    nameInput.value = draft.name || '';
+    nameInput.placeholder = 'e.g. Security Audit Mode';
+    nameRow.appendChild(nameInput);
+    form1.appendChild(nameRow);
+
+    var idRow = d.createElement('div');
+    idRow.className = 'hub-form-row';
+    var idLabel = d.createElement('label');
+    setText(idLabel, 'Identifier (ID):');
+    idRow.appendChild(idLabel);
+    var idInput = d.createElement('input');
+    idInput.type = 'text';
+    idInput.className = 'hub-input';
+    idInput.value = draft.id || '';
+    idInput.placeholder = 'e.g. security-audit';
+    idRow.appendChild(idInput);
+    form1.appendChild(idRow);
+
+    var descRow = d.createElement('div');
+    descRow.className = 'hub-form-row';
+    var descLabel = d.createElement('label');
+    setText(descLabel, 'Description:');
+    descRow.appendChild(descLabel);
+    var descInput = d.createElement('input');
+    descInput.type = 'text';
+    descInput.className = 'hub-input';
+    descInput.value = draft.description || '';
+    descInput.placeholder = 'Brief summary of specialized agent behavior';
+    descRow.appendChild(descInput);
+    form1.appendChild(descRow);
+
+    var scopeRow = d.createElement('div');
+    scopeRow.className = 'hub-form-row';
+    var scopeLabel = d.createElement('label');
+    setText(scopeLabel, 'Persistence Scope:');
+    scopeRow.appendChild(scopeLabel);
+    var scopeSelect = d.createElement('select');
+    scopeSelect.className = 'hub-input';
+    var optWork = d.createElement('option');
+    optWork.value = 'workspace';
+    setText(optWork, 'Workspace (.open-vs-code/modes.json) — Local first');
+    scopeSelect.appendChild(optWork);
+    var optAcc = d.createElement('option');
+    optAcc.value = 'account';
+    setText(optAcc, 'Account (Private Account Service) — Synchronized across devices');
+    scopeSelect.appendChild(optAcc);
+    scopeSelect.value = draft.scope || 'workspace';
+    scopeRow.appendChild(scopeSelect);
+    form1.appendChild(scopeRow);
+
+    panel.appendChild(form1);
+
+    var syncDraft1 = function () {
+      send({
+        type: 'integration.modeWizardDraft',
+        draft: {
+          name: nameInput.value,
+          id: idInput.value,
+          description: descInput.value,
+          scope: scopeSelect.value,
+        },
+      });
+    };
+    nameInput.addEventListener('change', syncDraft1);
+    idInput.addEventListener('change', syncDraft1);
+    descInput.addEventListener('change', syncDraft1);
+    scopeSelect.addEventListener('change', syncDraft1);
+  }
+
+  // Step 2: Base Agent Mode
+  else if (step === 2) {
+    var modePanel = d.createElement('div');
+    modePanel.className = 'hub-wizard-form';
+    var modeHelp = d.createElement('p');
+    modeHelp.className = 'hub-empty-state';
+    setText(modeHelp, 'Every custom mode maps to exactly one of the 5 canonical base modes. A profile cannot elevate base permissions.');
+    modePanel.appendChild(modeHelp);
+
+    var baseModes = [
+      { id: 'ASK', label: 'ASK — Pure read-only Q&A (no mutations, no execution)' },
+      { id: 'PLAN', label: 'PLAN — Architecture & design planning (read-only research)' },
+      { id: 'BUILD', label: 'BUILD — Implementation (can request mutations, subject to approval)' },
+      { id: 'DEBUG', label: 'DEBUG — Diagnostic investigation (repro, test, inspection)' },
+      { id: 'REVIEW', label: 'REVIEW — Code audit & verification (read-only critique)' }
+    ];
+
+    for (var bi = 0; bi < baseModes.length; bi++) {
+      var bm = baseModes[bi];
+      var bmBtn = d.createElement('button');
+      bmBtn.type = 'button';
+      bmBtn.className = 'hub-transport-card' + (draft.baseMode === bm.id ? ' is-selected' : '');
+      setText(bmBtn, bm.label);
+      onClick(bmBtn, (function (selectedMode) {
+        return function () {
+          send({
+            type: 'integration.modeWizardDraft',
+            draft: { baseMode: selectedMode },
+          });
+        };
+      })(bm.id));
+      modePanel.appendChild(bmBtn);
+    }
+    panel.appendChild(modePanel);
+  }
+
+  // Step 3: Skills Integration
+  else if (step === 3) {
+    var skillPanel = d.createElement('div');
+    skillPanel.className = 'hub-wizard-form';
+    var sHelp = d.createElement('p');
+    sHelp.className = 'hub-empty-state';
+    setText(sHelp, 'Configure required and optional skills. Missing required skills block mode execution.');
+    skillPanel.appendChild(sHelp);
+
+    var skills = (state && state.skills) || [];
+    if (skills.length === 0) {
+      var noSkills = d.createElement('p');
+      noSkills.className = 'hub-empty-state';
+      setText(noSkills, 'No installed skills found in this workspace.');
+      skillPanel.appendChild(noSkills);
+    } else {
+      var reqList = draft.requiredSkills || [];
+      var optList = draft.optionalSkills || [];
+
+      for (var si = 0; si < skills.length; si++) {
+        var sk = skills[si];
+        var sRow = d.createElement('div');
+        sRow.className = 'hub-form-row';
+        var sHeader = d.createElement('div');
+        sHeader.style.display = 'flex';
+        sHeader.style.justifyContent = 'space-between';
+        var sTitle = d.createElement('strong');
+        setText(sTitle, sk.name + ' (' + sk.id + ')');
+        sHeader.appendChild(sTitle);
+        sRow.appendChild(sHeader);
+
+        var sControls = d.createElement('div');
+        sControls.style.display = 'flex';
+        sControls.style.gap = '12px';
+
+        var reqLabel = d.createElement('label');
+        reqLabel.className = 'hub-form-row is-checkbox';
+        var reqBox = d.createElement('input');
+        reqBox.type = 'checkbox';
+        reqBox.checked = reqList.includes(sk.id);
+        reqLabel.appendChild(reqBox);
+        var reqText = d.createElement('span');
+        setText(reqText, 'Required');
+        reqLabel.appendChild(reqText);
+        sControls.appendChild(reqLabel);
+
+        var optLabel = d.createElement('label');
+        optLabel.className = 'hub-form-row is-checkbox';
+        var optBox = d.createElement('input');
+        optBox.type = 'checkbox';
+        optBox.checked = optList.includes(sk.id);
+        optLabel.appendChild(optBox);
+        var optText = d.createElement('span');
+        setText(optText, 'Optional');
+        optLabel.appendChild(optText);
+        sControls.appendChild(optLabel);
+
+        sRow.appendChild(sControls);
+        skillPanel.appendChild(sRow);
+
+        (function (skId, rBox, oBox) {
+          rBox.addEventListener('change', function () {
+            var curReq = (draft.requiredSkills || []).slice();
+            var curOpt = (draft.optionalSkills || []).slice();
+            if (rBox.checked) {
+              if (!curReq.includes(skId)) curReq.push(skId);
+              curOpt = curOpt.filter(function (x: any) { return x !== skId; });
+              oBox.checked = false;
+            } else {
+              curReq = curReq.filter(function (x: any) { return x !== skId; });
+            }
+            send({
+              type: 'integration.modeWizardDraft',
+              draft: { requiredSkills: curReq, optionalSkills: curOpt },
+            });
+          });
+
+          oBox.addEventListener('change', function () {
+            var curReq = (draft.requiredSkills || []).slice();
+            var curOpt = (draft.optionalSkills || []).slice();
+            if (oBox.checked) {
+              if (!curOpt.includes(skId)) curOpt.push(skId);
+              curReq = curReq.filter(function (x: any) { return x !== skId; });
+              rBox.checked = false;
+            } else {
+              curOpt = curOpt.filter(function (x: any) { return x !== skId; });
+            }
+            send({
+              type: 'integration.modeWizardDraft',
+              draft: { requiredSkills: curReq, optionalSkills: curOpt },
+            });
+          });
+        })(sk.id, reqBox, optBox);
+      }
+    }
+    panel.appendChild(skillPanel);
+  }
+
+  // Step 4: MCP Servers & Tool Allowlist
+  else if (step === 4) {
+    var mcpPanel = d.createElement('div');
+    mcpPanel.className = 'hub-wizard-form';
+
+    var servers = (state && state.servers) || [];
+    var reqMcp = draft.requiredMcpServers || [];
+    var optMcp = draft.optionalMcpServers || [];
+
+    var mcpHeader = d.createElement('h4');
+    setText(mcpHeader, 'Registered MCP Servers:');
+    mcpPanel.appendChild(mcpHeader);
+
+    if (servers.length === 0) {
+      var noMcp = d.createElement('p');
+      noMcp.className = 'hub-empty-state';
+      setText(noMcp, 'No MCP servers currently registered.');
+      mcpPanel.appendChild(noMcp);
+    } else {
+      for (var mi = 0; mi < servers.length; mi++) {
+        var srv = servers[mi];
+        var mRow = d.createElement('div');
+        mRow.className = 'hub-form-row';
+        var mTitle = d.createElement('strong');
+        setText(mTitle, srv.displayName + ' (' + srv.id + ')');
+        mRow.appendChild(mTitle);
+
+        var mControls = d.createElement('div');
+        mControls.style.display = 'flex';
+        mControls.style.gap = '12px';
+
+        var mReqLabel = d.createElement('label');
+        mReqLabel.className = 'hub-form-row is-checkbox';
+        var mReqBox = d.createElement('input');
+        mReqBox.type = 'checkbox';
+        mReqBox.checked = reqMcp.includes(srv.id);
+        mReqLabel.appendChild(mReqBox);
+        var mReqText = d.createElement('span');
+        setText(mReqText, 'Required');
+        mReqLabel.appendChild(mReqText);
+        mControls.appendChild(mReqLabel);
+
+        var mOptLabel = d.createElement('label');
+        mOptLabel.className = 'hub-form-row is-checkbox';
+        var mOptBox = d.createElement('input');
+        mOptBox.type = 'checkbox';
+        mOptBox.checked = optMcp.includes(srv.id);
+        mOptLabel.appendChild(mOptBox);
+        var mOptText = d.createElement('span');
+        setText(mOptText, 'Optional');
+        mOptLabel.appendChild(mOptText);
+        mControls.appendChild(mOptLabel);
+
+        mRow.appendChild(mControls);
+        mcpPanel.appendChild(mRow);
+
+        (function (srvId, rBox, oBox) {
+          rBox.addEventListener('change', function () {
+            var curReq = (draft.requiredMcpServers || []).slice();
+            var curOpt = (draft.optionalMcpServers || []).slice();
+            if (rBox.checked) {
+              if (!curReq.includes(srvId)) curReq.push(srvId);
+              curOpt = curOpt.filter(function (x: any) { return x !== srvId; });
+              oBox.checked = false;
+            } else {
+              curReq = curReq.filter(function (x: any) { return x !== srvId; });
+            }
+            send({
+              type: 'integration.modeWizardDraft',
+              draft: { requiredMcpServers: curReq, optionalMcpServers: curOpt },
+            });
+          });
+
+          oBox.addEventListener('change', function () {
+            var curReq = (draft.requiredMcpServers || []).slice();
+            var curOpt = (draft.optionalMcpServers || []).slice();
+            if (oBox.checked) {
+              if (!curOpt.includes(srvId)) curOpt.push(srvId);
+              curReq = curReq.filter(function (x: any) { return x !== srvId; });
+              rBox.checked = false;
+            } else {
+              curOpt = curOpt.filter(function (x: any) { return x !== srvId; });
+            }
+            send({
+              type: 'integration.modeWizardDraft',
+              draft: { requiredMcpServers: curReq, optionalMcpServers: curOpt },
+            });
+          });
+        })(srv.id, mReqBox, mOptBox);
+      }
+    }
+
+    var allowRow = d.createElement('div');
+    allowRow.className = 'hub-form-row';
+    var allowLabel = d.createElement('label');
+    setText(allowLabel, 'Tool Allowlist (Comma-separated tool names, or empty for unrestricted):');
+    allowRow.appendChild(allowLabel);
+    var allowInput = d.createElement('input');
+    allowInput.type = 'text';
+    allowInput.className = 'hub-input';
+    allowInput.value = (draft.toolAllowlist || []).join(', ');
+    allowInput.placeholder = 'e.g. read_file, search_files, mcp_postgres_query';
+    allowRow.appendChild(allowInput);
+    mcpPanel.appendChild(allowRow);
+
+    allowInput.addEventListener('change', function () {
+      var raw = allowInput.value.trim();
+      var list = raw ? raw.split(',').map(function (s: any) { return s.trim(); }).filter(Boolean) : undefined;
+      send({
+        type: 'integration.modeWizardDraft',
+        draft: { toolAllowlist: list },
+      });
+    });
+
+    panel.appendChild(mcpPanel);
+  }
+
+  // Step 5: Preferred Model
+  else if (step === 5) {
+    var modelPanel = d.createElement('div');
+    modelPanel.className = 'hub-wizard-form';
+
+    var modRow = d.createElement('div');
+    modRow.className = 'hub-form-row';
+    var modLabel = d.createElement('label');
+    setText(modLabel, 'Preferred Model Deployment ID:');
+    modRow.appendChild(modLabel);
+    var modInput = d.createElement('input');
+    modInput.type = 'text';
+    modInput.className = 'hub-input';
+    modInput.value = draft.preferredModelId || '';
+    modInput.placeholder = 'e.g. local-chat or qwen2.5-coder-7b';
+    modRow.appendChild(modInput);
+    modelPanel.appendChild(modRow);
+
+    var modHelp = d.createElement('p');
+    modHelp.className = 'hub-empty-state';
+    setText(modHelp, 'Model preferences map to existing ModelRouter deployments. A mode preference cannot silently download weights or bypass configured fallback policies.');
+    modelPanel.appendChild(modHelp);
+
+    modInput.addEventListener('change', function () {
+      send({
+        type: 'integration.modeWizardDraft',
+        draft: { preferredModelId: modInput.value.trim() || undefined },
+      });
+    });
+
+    panel.appendChild(modelPanel);
+  }
+
+  // Step 6: Workflow Preferences
+  else if (step === 6) {
+    var wfPanel = d.createElement('div');
+    wfPanel.className = 'hub-wizard-form';
+
+    var wfRow = d.createElement('div');
+    wfRow.className = 'hub-form-row';
+    var wfLabel = d.createElement('label');
+    setText(wfLabel, 'Workflow Execution Mode:');
+    wfRow.appendChild(wfLabel);
+    var wfSelect = d.createElement('select');
+    wfSelect.className = 'hub-input';
+
+    var wfOpt1 = d.createElement('option');
+    wfOpt1.value = 'standard';
+    setText(wfOpt1, 'Standard Loop (Single-turn verified engineering)');
+    wfSelect.appendChild(wfOpt1);
+
+    var wfOpt2 = d.createElement('option');
+    wfOpt2.value = 'structured_engineering';
+    setText(wfOpt2, 'Structured Engineering Loop (Multi-phase ADR-030)');
+    wfSelect.appendChild(wfOpt2);
+
+    var wfOpt3 = d.createElement('option');
+    wfOpt3.value = 'direct';
+    setText(wfOpt3, 'Direct Conversation (No workflow wrapper)');
+    wfSelect.appendChild(wfOpt3);
+
+    wfSelect.value = draft.workflowPreference || 'standard';
+    wfRow.appendChild(wfSelect);
+    wfPanel.appendChild(wfRow);
+
+    wfSelect.addEventListener('change', function () {
+      send({
+        type: 'integration.modeWizardDraft',
+        draft: { workflowPreference: wfSelect.value },
+      });
+    });
+
+    panel.appendChild(wfPanel);
+  }
+
+  // Step 7: Custom Instructions & Context
+  else if (step === 7) {
+    var insPanel = d.createElement('div');
+    insPanel.className = 'hub-wizard-form';
+
+    var insRow = d.createElement('div');
+    insRow.className = 'hub-form-row';
+    var insLabel = d.createElement('label');
+    setText(insLabel, 'Bounded Custom Instructions (max 4,000 characters):');
+    insRow.appendChild(insLabel);
+
+    var insArea = d.createElement('textarea');
+    insArea.className = 'hub-input';
+    insArea.rows = 8;
+    insArea.value = draft.customInstructions || '';
+    insArea.placeholder = 'Provide specialized behavioral guidance, domain constraints, or review criteria. These instructions cannot bypass system permission checks or workspace trust.';
+    insRow.appendChild(insArea);
+    insPanel.appendChild(insRow);
+
+    var charCount = d.createElement('div');
+    charCount.style.fontSize = '0.8em';
+    charCount.style.opacity = '0.7';
+    setText(charCount, (draft.customInstructions || '').length + ' / 4000 characters');
+    insPanel.appendChild(charCount);
+
+    insArea.addEventListener('input', function () {
+      setText(charCount, insArea.value.length + ' / 4000 characters');
+    });
+
+    insArea.addEventListener('change', function () {
+      send({
+        type: 'integration.modeWizardDraft',
+        draft: { customInstructions: insArea.value.trim() || undefined },
+      });
+    });
+
+    panel.appendChild(insPanel);
+  }
+
+  // Step 8: Permission & Dependency Review
+  else if (step === 8) {
+    var revPanel = d.createElement('div');
+    revPanel.className = 'hub-wizard-form';
+
+    var permCard = d.createElement('div');
+    permCard.className = 'terminal-meta';
+
+    appendMetaRow(d, permCard, 'Base Mode', draft.baseMode || 'ASK');
+    appendMetaRow(d, permCard, 'Mutation Authority', draft.baseMode === 'BUILD' ? 'MUTATION CAPABLE (Confirmation Required)' : 'READ-ONLY (Mutations Blocked)');
+    appendMetaRow(d, permCard, 'Workspace Trust', 'Enforced by PermissionGate');
+    appendMetaRow(d, permCard, 'Tool Allowlist', draft.toolAllowlist && draft.toolAllowlist.length ? draft.toolAllowlist.join(', ') : 'All enabled tools');
+    appendMetaRow(d, permCard, 'Required Skills', (draft.requiredSkills || []).join(', ') || 'None');
+    appendMetaRow(d, permCard, 'Required MCP', (draft.requiredMcpServers || []).join(', ') || 'None');
+    revPanel.appendChild(permCard);
+
+    if (wizard.resolvedPreview) {
+      var prevTitle = d.createElement('h4');
+      setText(prevTitle, 'Live Execution Resolution:');
+      revPanel.appendChild(prevTitle);
+
+      var pBox = d.createElement('div');
+      pBox.className = 'hub-empty-state ' + (wizard.resolvedPreview.isReady ? 'is-clean' : 'is-warning');
+      setText(pBox, wizard.resolvedPreview.isReady ? '✓ Mode is READY for execution in current workspace.' : '⚠️ Mode is NOT READY: missing required dependencies.');
+      revPanel.appendChild(pBox);
+    }
+
+    panel.appendChild(revPanel);
+  }
+
+  // Step 9: Save & Activate
+  else if (step === 9) {
+    var savePanel = d.createElement('div');
+    savePanel.className = 'hub-wizard-form';
+
+    var summary = d.createElement('div');
+    summary.className = 'terminal-meta';
+    appendMetaRow(d, summary, 'Name', draft.name || 'Unnamed');
+    appendMetaRow(d, summary, 'ID', draft.id || 'auto-generated');
+    appendMetaRow(d, summary, 'Base Mode', draft.baseMode || 'ASK');
+    appendMetaRow(d, summary, 'Scope', draft.scope || 'workspace');
+    savePanel.appendChild(summary);
+
+    var saveActions = d.createElement('div');
+    saveActions.className = 'hub-card-actions';
+
+    var saveBtn = appendAction(d, saveActions, 'Save Mode Profile', 'Persist configuration profile', function () {
+      send({ type: 'integration.modeWizardSave', activateNow: false });
+    });
+    saveBtn.className = 'btn-approve';
+
+    var actBtn = appendAction(d, saveActions, 'Save & Set Active', 'Persist and immediately switch to this mode', function () {
+      send({ type: 'integration.modeWizardSave', activateNow: true });
+    });
+    actBtn.className = 'btn-approve';
+
+    savePanel.appendChild(saveActions);
+    panel.appendChild(savePanel);
+  }
+
+  // Navigation Bar (Back & Next)
+  var navRow = d.createElement('div');
+  navRow.className = 'hub-wizard-actions';
+  navRow.style.display = 'flex';
+  navRow.style.justifyContent = 'space-between';
+  navRow.style.marginTop = '16px';
+
+  if (step > 1) {
+    var backBtn = appendAction(d, navRow, '← Back', 'Previous step', function () {
+      send({ type: 'integration.modeWizardStep', step: step - 1 });
+    });
+    backBtn.className = 'hub-btn-secondary';
+  } else {
+    var spacer = d.createElement('div');
+    navRow.appendChild(spacer);
+  }
+
+  if (step < 9) {
+    var nextBtn = appendAction(d, navRow, 'Next →', 'Next step', function () {
+      send({ type: 'integration.modeWizardStep', step: step + 1 });
+    });
+    nextBtn.className = 'btn-approve';
+  }
+
+  panel.appendChild(navRow);
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderModeInspector(container: any, detail: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-inspector-panel';
+  setAttr(panel, 'role', 'region');
+  setAttr(panel, 'aria-label', 'Mode Detail Inspector');
+
+  var header = d.createElement('div');
+  header.className = 'hub-inspector-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, detail.name + ' (v' + detail.version + ')');
+  header.appendChild(title);
+
+  var closeBtn = appendAction(d, header, 'Close', 'Close mode inspection', function () {
+    send({ type: 'integration.inspectMode', modeId: undefined });
+  });
+  closeBtn.className = 'hub-btn-secondary';
+  panel.appendChild(header);
+
+  var meta = d.createElement('div');
+  meta.className = 'terminal-meta';
+  appendMetaRow(d, meta, 'Profile ID', detail.id);
+  appendMetaRow(d, meta, 'Base Agent Mode', detail.baseMode);
+  appendMetaRow(d, meta, 'Scope', detail.scope);
+  appendMetaRow(d, meta, 'Execution Readiness', detail.isReady ? 'READY' : 'UNREADY');
+  if (detail.preferredModelId) appendMetaRow(d, meta, 'Preferred Model', detail.preferredModelId);
+  if (detail.workflowPreference) appendMetaRow(d, meta, 'Workflow', detail.workflowPreference);
+  appendMetaRow(d, meta, 'Tool Allowlist', (detail.toolAllowlist && detail.toolAllowlist.length) ? detail.toolAllowlist.join(', ') : 'Unrestricted (all enabled tools)');
+  panel.appendChild(meta);
+
+  if (detail.description) {
+    var descP = d.createElement('p');
+    descP.style.margin = '8px 0';
+    setText(descP, detail.description);
+    panel.appendChild(descP);
+  }
+
+  if (detail.customInstructions) {
+    var insBox = d.createElement('div');
+    insBox.className = 'terminal-command-box';
+    insBox.style.whiteSpace = 'pre-wrap';
+    setText(insBox, detail.customInstructions);
+    panel.appendChild(insBox);
+  }
+
+  // Dependencies
+  var depTitle = d.createElement('h4');
+  setText(depTitle, 'Configured Dependencies:');
+  panel.appendChild(depTitle);
+
+  var depList = d.createElement('ul');
+  depList.className = 'hub-skills-list';
+
+  (detail.requiredSkills || []).forEach(function (s: string) {
+    var li = d.createElement('li');
+    setText(li, 'Skill (Required): ' + s);
+    depList.appendChild(li);
+  });
+  (detail.optionalSkills || []).forEach(function (s: string) {
+    var li = d.createElement('li');
+    setText(li, 'Skill (Optional): ' + s);
+    depList.appendChild(li);
+  });
+  (detail.requiredMcpServers || []).forEach(function (s: string) {
+    var li = d.createElement('li');
+    setText(li, 'MCP Server (Required): ' + s);
+    depList.appendChild(li);
+  });
+  (detail.optionalMcpServers || []).forEach(function (s: string) {
+    var li = d.createElement('li');
+    setText(li, 'MCP Server (Optional): ' + s);
+    depList.appendChild(li);
+  });
+  panel.appendChild(depList);
+
+  if (detail.diagnostics && detail.diagnostics.length > 0) {
+    var dTitle = d.createElement('h4');
+    setText(dTitle, 'Active Diagnostics:');
+    panel.appendChild(dTitle);
+    var dList = d.createElement('ul');
+    for (var i = 0; i < detail.diagnostics.length; i++) {
+      var dItem = d.createElement('li');
+      setText(dItem, detail.diagnostics[i]);
+      dList.appendChild(dItem);
+    }
+    panel.appendChild(dList);
+  }
+
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderModesSection(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+
+  // If wizard is active, render it
+  if (state && state.modeWizard) {
+    return renderModeWizard(container, state.modeWizard, state, d, send);
+  }
+
+  // If inspecting a mode, render detail inspector
+  if (state && state.inspectingModeDetail) {
+    return renderModeInspector(container, state.inspectingModeDetail, d, send);
+  }
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-modes-panel';
 
   var header = d.createElement('div');
   header.className = 'hub-card-header';
   var title = d.createElement('h3');
   title.className = 'hub-card-title';
-  setText(title, 'Capability Packs & Custom Modes');
+  setText(title, 'Execution Modes & Custom Profiles');
   header.appendChild(title);
 
-  var badge = d.createElement('span');
-  badge.className = 'status-badge is-disabled';
-  setText(badge, 'Planned Future Release');
-  header.appendChild(badge);
+  var addBtn = appendAction(d, header, '+ Create Mode', 'Create a new custom mode profile', function () {
+    send({ type: 'integration.startModeWizard' });
+  });
+  addBtn.className = 'btn-approve';
   panel.appendChild(header);
 
   var desc = d.createElement('p');
   desc.className = 'hub-placeholder-desc';
-  setText(desc, 'Custom Modes (Design Mode, Reverse Engineering Mode) and Capability Packs are scheduled for future milestones. In Sprint 8C, this surface is intentionally non-interactive to prevent dead controls.');
+  setText(desc, 'Custom modes configure specialized agent behavior by combining a base execution mode (ASK, PLAN, BUILD, DEBUG, REVIEW), installed skills, MCP tools, and model preferences. Profiles cannot bypass the PermissionGate.');
   panel.appendChild(desc);
 
-  var bulletList = d.createElement('ul');
-  bulletList.className = 'hub-placeholder-bullets';
-  var b1 = d.createElement('li');
-  setText(b1, 'Design Mode: visual canvas integration, component extraction, and layout preview.');
-  bulletList.appendChild(b1);
-  var b2 = d.createElement('li');
-  setText(b2, 'Reverse Engineering Mode: binary disassembly, protocol dissection, and symbol map recovery.');
-  bulletList.appendChild(b2);
-  var b3 = d.createElement('li');
-  setText(b3, 'Capability Packs: bundles combining MCP servers, skills, and model route profiles.');
-  bulletList.appendChild(b3);
-  panel.appendChild(bulletList);
+  var modes = (state && state.modes) || [];
+  if (modes.length === 0) {
+    var empty = d.createElement('div');
+    empty.className = 'hub-empty-state';
+    setText(empty, 'No custom mode profiles loaded. Create one to specialize agent execution.');
+    panel.appendChild(empty);
+  } else {
+    var list = d.createElement('div');
+    list.className = 'hub-server-list';
+    list.setAttribute('role', 'list');
+
+    for (var i = 0; i < modes.length; i++) {
+      var mode = modes[i];
+      var card = d.createElement('div');
+      card.className = 'hub-server-card' + (mode.enabled ? '' : ' is-disabled');
+      card.setAttribute('role', 'listitem');
+
+      var mHeader = d.createElement('div');
+      mHeader.className = 'hub-server-header';
+
+      var titleGroup = d.createElement('div');
+      var nameEl = d.createElement('span');
+      nameEl.className = 'hub-server-name';
+      setText(nameEl, mode.name);
+      titleGroup.appendChild(nameEl);
+
+      var badgeGroup = d.createElement('div');
+      badgeGroup.className = 'hub-badge-group';
+
+      var baseBadge = d.createElement('span');
+      baseBadge.className = 'status-badge';
+      setText(baseBadge, 'Base: ' + mode.baseMode);
+      badgeGroup.appendChild(baseBadge);
+
+      var scopeBadge = d.createElement('span');
+      scopeBadge.className = 'hub-provenance-badge is-' + (mode.scope || 'local');
+      setText(scopeBadge, mode.scope);
+      badgeGroup.appendChild(scopeBadge);
+
+      var readyBadge = d.createElement('span');
+      readyBadge.className = 'status-badge ' + (mode.isReady ? 'is-running' : 'is-disabled');
+      setText(readyBadge, mode.isReady ? 'Ready' : 'Dependencies Missing');
+      badgeGroup.appendChild(readyBadge);
+
+      if (state.activeModeId === mode.id) {
+        var activeBadge = d.createElement('span');
+        activeBadge.className = 'status-badge is-running';
+        setText(activeBadge, '✓ Active');
+        badgeGroup.appendChild(activeBadge);
+      }
+
+      mHeader.appendChild(titleGroup);
+      mHeader.appendChild(badgeGroup);
+      card.appendChild(mHeader);
+
+      var descP = d.createElement('p');
+      descP.style.fontSize = '0.85em';
+      descP.style.margin = '4px 0 8px 0';
+      setText(descP, mode.description || '');
+      card.appendChild(descP);
+
+      var actions = d.createElement('div');
+      actions.className = 'hub-card-actions';
+
+      (function (m) {
+        if (state.activeModeId !== m.id && m.enabled) {
+          var actBtn = appendAction(d, actions, 'Set Active', 'Make this profile active in chat', function () {
+            send({ type: 'integration.setActiveMode', modeId: m.id });
+          });
+          actBtn.className = 'hub-btn-sm btn-approve';
+        }
+
+        var inspBtn = appendAction(d, actions, 'Inspect', 'Inspect mode details & effective permissions', function () {
+          send({ type: 'integration.inspectMode', modeId: m.id });
+        });
+        inspBtn.className = 'hub-btn-sm hub-btn-secondary';
+
+        if (m.scope !== 'builtin') {
+          var editBtn = appendAction(d, actions, 'Edit', 'Edit this profile configuration', function () {
+            send({ type: 'integration.startModeWizard', modeId: m.id });
+          });
+          editBtn.className = 'hub-btn-sm hub-btn-secondary';
+        }
+
+        var dupBtn = appendAction(d, actions, 'Duplicate', 'Clone into workspace profile', function () {
+          send({ type: 'integration.duplicateMode', modeId: m.id, targetScope: 'workspace' });
+        });
+        dupBtn.className = 'hub-btn-sm hub-btn-secondary';
+
+        var togBtn = appendAction(d, actions, m.enabled ? 'Disable' : 'Enable', 'Toggle profile active state', function () {
+          send({ type: 'integration.toggleMode', modeId: m.id, enabled: !m.enabled });
+        });
+        togBtn.className = 'hub-btn-sm hub-btn-secondary';
+
+        if (m.scope !== 'builtin') {
+          var delBtn = appendAction(d, actions, 'Delete', 'Remove this custom mode profile', function () {
+            send({ type: 'integration.deleteMode', modeId: m.id });
+          });
+          delBtn.className = 'hub-btn-sm btn-reject';
+        }
+      })(mode);
+
+      card.appendChild(actions);
+      list.appendChild(card);
+    }
+    panel.appendChild(list);
+  }
 
   container.appendChild(panel);
   return panel;
@@ -2253,7 +3061,7 @@ export function renderIntegrationsHub(container: any, state: any, doc?: any, pos
     { id: 'profile', label: 'Profile' },
     { id: 'mcp', label: 'MCP Servers' },
     { id: 'skills', label: 'Skills' },
-    { id: 'modes', label: 'Modes (Planned)' },
+    { id: 'modes', label: 'Modes' },
     { id: 'diagnostics', label: 'Diagnostics' },
   ];
 
@@ -2263,14 +3071,11 @@ export function renderIntegrationsHub(container: any, state: any, doc?: any, pos
     var t = tabs[i];
     var tabBtn = d.createElement('button');
     tabBtn.type = 'button';
-    tabBtn.className = 'hub-tab-btn' + (activeTab === t.id ? ' is-active' : '') + (t.id === 'modes' ? ' is-placeholder' : '');
+    tabBtn.className = 'hub-tab-btn' + (activeTab === t.id ? ' is-active' : '');
     setAttr(tabBtn, 'role', 'tab');
     setAttr(tabBtn, 'aria-selected', activeTab === t.id ? 'true' : 'false');
     setAttr(tabBtn, 'id', 'tab-' + t.id);
     setText(tabBtn, t.label);
-    if (t.id === 'modes') {
-      setAttr(tabBtn, 'title', 'Capability Packs & Custom Modes (Planned for future release)');
-    }
     onClick(tabBtn, (function (tid) {
       return function () { send({ type: 'integration.setTab', tab: tid }); };
     })(t.id));
@@ -2384,6 +3189,8 @@ export function webviewRenderRuntime(): string {
     renderAddMcpWizard.toString(),
     renderToolInspector.toString(),
     renderSkillsSection.toString(),
+    renderModeWizard.toString(),
+    renderModeInspector.toString(),
     renderModesSection.toString(),
     renderDiagnosticsSection.toString(),
     renderIntegrationsHub.toString(),

@@ -776,15 +776,16 @@ describe("Visual Integration Manager (Sprint 8C)", () => {
     assert.strictEqual(toolName?.textContent, "drop_database");
   });
 
-  test("27. renderModesSection renders disabled future placeholder notice", () => {
+  test("27. renderModesSection renders custom modes management panel", () => {
     const doc = new MockDocument();
     const container = doc.createElement("div");
 
     renderModesSection(container as any, {} as any, doc as any, () => {});
 
+    const title = container.querySelector(".hub-card-title");
+    assert.strictEqual(title?.textContent, "Execution Modes & Custom Profiles");
     const desc = container.querySelector(".hub-placeholder-desc");
-    assert.ok(desc?.textContent?.includes("scheduled for future milestones"));
-    assert.ok(desc?.textContent?.includes("intentionally non-interactive"));
+    assert.ok(desc?.textContent?.includes("Custom modes configure specialized agent behavior"));
   });
 
   test("28. renderProfileSection renders unauthenticated state with login button", () => {

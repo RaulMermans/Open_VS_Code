@@ -11,12 +11,15 @@ import {
   type McpConfig,
   type McpConnectionState,
   type McpPolicyConfig,
+  type ResolvedExecutionProfile,
   classifyMcpAction,
+  resolveExecutionProfile,
   SkillRegistry,
   defaultBuiltinSkillsRoot,
 } from "@open-vs-code/agent-core";
 import { VsCodeSecretProvider } from "../mcp/mcp-vscode-secrets.js";
 import { isLoopbackHost } from "@open-vs-code/account-service";
+import { ModeService } from "../modes/mode-service.js";
 
 export type IntegrationTab = "profile" | "mcp" | "skills" | "modes" | "diagnostics";
 
@@ -84,49 +87,122 @@ export interface AddMcpWizardState {
   error?: string;
 }
 
+export interface CustomModeSummaryDto {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly icon?: string | undefined;
+  readonly baseMode: "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW";
+  readonly source: "builtin" | "workspace" | "account";
+  readonly scope: "builtin" | "workspace" | "account";
+  readonly enabled: boolean;
+  readonly isReady: boolean;
+  readonly isActive: boolean;
+  readonly version: number;
+  readonly requiredSkillCount: number;
+  readonly requiredMcpCount: number;
+  readonly missingRequiredCount: number;
+  readonly diagnostics: readonly string[];
+}
+
+export interface CustomModeDetailDto extends CustomModeSummaryDto {
+  readonly customInstructions?: string | undefined;
+  readonly requiredSkills: readonly string[];
+  readonly optionalSkills: readonly string[];
+  readonly requiredMcpServers: readonly string[];
+  readonly optionalMcpServers: readonly string[];
+  readonly toolAllowlist?: readonly string[] | undefined;
+  readonly preferredModelId?: string | undefined;
+  readonly workflowPreference?: "direct" | "structured" | undefined;
+  readonly effectiveTools: readonly string[];
+  readonly permissionRestrictions: readonly string[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ModeWizardDraft {
+  id?: string | undefined;
+  name: string;
+  description: string;
+  baseMode: "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW";
+  icon?: string | undefined;
+  customInstructions?: string | undefined;
+  requiredSkills: string[];
+  optionalSkills: string[];
+  requiredMcpServers: string[];
+  optionalMcpServers: string[];
+  toolAllowlist?: string[] | undefined;
+  preferredModelId?: string | undefined;
+  workflowPreference?: "direct" | "structured" | undefined;
+  scope: "workspace" | "account";
+}
+
+export interface ModeWizardState {
+  step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  draft: ModeWizardDraft;
+  isEditing?: boolean | undefined;
+  originalId?: string | undefined;
+  validationErrors?: readonly string[] | undefined;
+  validationWarnings?: readonly string[] | undefined;
+  resolvedPreview?: ResolvedExecutionProfile | undefined;
+}
+
 export interface IntegrationManagerState {
   readonly activeTab: IntegrationTab;
   readonly account: AccountState;
   readonly servers: McpServerDetail[];
   readonly skills: SkillDetail[];
   readonly skillsRuntimeEnabled: boolean;
+  readonly modes: CustomModeSummaryDto[];
+  readonly activeModeId?: string | undefined;
+  readonly inspectingModeId?: string | undefined;
+  readonly inspectingModeDetail?: CustomModeDetailDto | undefined;
+  readonly modeWizard?: ModeWizardState | undefined;
   readonly diagnostics: string[];
-  readonly inspectingServerId?: string;
-  readonly inspectingSkillId?: string;
-  readonly wizard?: AddMcpWizardState;
+  readonly inspectingServerId?: string | undefined;
+  readonly inspectingSkillId?: string | undefined;
+  readonly wizard?: AddMcpWizardState | undefined;
   readonly pendingConfirmation?: {
     action: "remove_server";
     serverId: string;
     serverName: string;
-  };
+  } | undefined;
   readonly isLoading: boolean;
-  readonly statusMessage?: string;
+  readonly statusMessage?: string | undefined;
 }
 
 export class IntegrationManagerController {
   private activeTab: IntegrationTab = "profile";
-  private inspectingServerId?: string;
-  private inspectingSkillId?: string;
-  private wizard?: AddMcpWizardState;
+  private inspectingServerId?: string | undefined;
+  private inspectingSkillId?: string | undefined;
+  private inspectingModeId?: string | undefined;
+  private wizard?: AddMcpWizardState | undefined;
+  private modeWizard?: ModeWizardState | undefined;
   private pendingConfirmation?: {
     action: "remove_server";
     serverId: string;
     serverName: string;
-  };
+  } | undefined;
   private isLoading = false;
-  private statusMessage?: string;
+  private statusMessage?: string | undefined;
   private readonly listeners = new Set<(state: IntegrationManagerState) => void>();
   private secretProvider: VsCodeSecretProvider;
   private skillRegistry?: SkillRegistry;
+  private readonly modeService: ModeService;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly accountManager: DesktopAccountManager,
     private readonly mcpService: McpService,
-    private readonly outputChannel?: vscode.OutputChannel
+    private readonly outputChannel?: vscode.OutputChannel,
+    modeService?: ModeService
   ) {
+    this.modeService = modeService || new ModeService({ workspaceRoot: mcpService.getRoot() });
     this.secretProvider = new VsCodeSecretProvider(context.secrets);
     this.accountManager.onStateChange(() => {
+      void this.notify();
+    });
+    this.modeService.onStateChange(() => {
       void this.notify();
     });
   }
@@ -158,6 +234,10 @@ export class IntegrationManagerController {
     this.inspectingServerId = undefined;
     this.inspectingSkillId = undefined;
     void this.notify();
+  }
+
+  public setActiveTab(tab: IntegrationTab): void {
+    this.setTab(tab);
   }
 
   public getActiveTab(): IntegrationTab {
@@ -211,12 +291,177 @@ export class IntegrationManagerController {
       vscode.workspace.getConfiguration("open-vs-code").get<boolean>("skills.enabled", false) === true;
     const diagnostics = await this.collectDiagnostics();
 
+    const isTrusted = vscode.workspace.isTrusted ?? true;
+    const availableToolNames = [
+      "read_repository",
+      "search_repository",
+      "read_markdown",
+      "write_file",
+      "delete_file",
+      "run_known_test",
+      "terminal_command",
+      "git_commit",
+      "git_push",
+      "deploy",
+      "mcp_external_read",
+      "mcp_external_side_effect",
+      "mcp_external_unknown",
+      "mcp_sensitive_data_transmission",
+      "mcp_external_destructive",
+    ];
+    for (const s of serverDetails) {
+      if (s.tools) {
+        for (const t of s.tools) {
+          availableToolNames.push(t.canonicalName || t.toolName);
+        }
+      }
+    }
+
+    const globalWorkflowEnabled =
+      vscode.workspace.getConfiguration("open-vs-code").get<boolean>("workflow.enabled", false) === true;
+
+    const resolverContext = {
+      workspaceTrusted: isTrusted,
+      availableSkills: skills.map((s) => ({ id: s.id, name: s.name })),
+      availableMcpServers: serverDetails.map((s) => ({
+        id: s.id,
+        connected: s.state === "CONNECTED",
+        enabled: s.effectiveEnabled,
+      })),
+      availableTools: availableToolNames,
+      globalWorkflowEnabled,
+    };
+
+    const rawModes = this.modeService.listModes();
+    const modeSummaries: CustomModeSummaryDto[] = [];
+
+    for (const m of rawModes) {
+      let resolved: ResolvedExecutionProfile;
+      try {
+        resolved = this.modeService.resolveMode(m.id, resolverContext);
+      } catch (err: any) {
+        resolved = {
+          profileId: m.id,
+          profileVersion: m.version,
+          profileName: m.name,
+          source: m.source,
+          baseMode: m.baseMode,
+          effectiveTools: [],
+          appliedSkills: [],
+          missingRequiredSkills: [],
+          missingOptionalSkills: [],
+          activeMcpServers: [],
+          missingRequiredMcpServers: [],
+          missingOptionalMcpServers: [],
+          effectiveWorkflow: "direct",
+          isReady: false,
+          diagnostics: [err?.message || "Failed to resolve mode profile"],
+          permissionRestrictions: [],
+          timestamp: Date.now(),
+        };
+      }
+
+      modeSummaries.push({
+        id: m.id,
+        name: m.name,
+        description: m.description,
+        icon: m.icon,
+        baseMode: m.baseMode,
+        source: m.source,
+        scope: m.scope,
+        enabled: m.enabled,
+        isReady: resolved.isReady,
+        isActive: this.modeService.getActiveModeId() === m.id,
+        version: m.version,
+        requiredSkillCount: m.requiredSkills.length,
+        requiredMcpCount: m.requiredMcpServers.length,
+        missingRequiredCount: resolved.missingRequiredSkills.length + resolved.missingRequiredMcpServers.length,
+        diagnostics: resolved.diagnostics,
+      });
+    }
+
+    let inspectingModeDetail: CustomModeDetailDto | undefined;
+    if (this.inspectingModeId) {
+      const mode = this.modeService.getMode(this.inspectingModeId);
+      if (mode) {
+        const resolved = this.modeService.resolveMode(mode.id, resolverContext);
+        inspectingModeDetail = {
+          id: mode.id,
+          name: mode.name,
+          description: mode.description,
+          icon: mode.icon,
+          baseMode: mode.baseMode,
+          source: mode.source,
+          scope: mode.scope,
+          enabled: mode.enabled,
+          isReady: resolved.isReady,
+          isActive: this.modeService.getActiveModeId() === mode.id,
+          version: mode.version,
+          requiredSkillCount: mode.requiredSkills.length,
+          requiredMcpCount: mode.requiredMcpServers.length,
+          missingRequiredCount: resolved.missingRequiredSkills.length + resolved.missingRequiredMcpServers.length,
+          diagnostics: resolved.diagnostics,
+          customInstructions: mode.customInstructions,
+          requiredSkills: mode.requiredSkills,
+          optionalSkills: mode.optionalSkills,
+          requiredMcpServers: mode.requiredMcpServers,
+          optionalMcpServers: mode.optionalMcpServers,
+          toolAllowlist: mode.toolAllowlist,
+          preferredModelId: mode.preferredModelId,
+          workflowPreference: mode.workflowPreference,
+          effectiveTools: resolved.effectiveTools,
+          permissionRestrictions: resolved.permissionRestrictions,
+          createdAt: mode.createdAt,
+          updatedAt: mode.updatedAt,
+        };
+      }
+    }
+
+    if (this.modeWizard) {
+      const draft = this.modeWizard.draft;
+      const previewProfile: any = {
+        id: draft.id || "preview-mode",
+        name: draft.name || "Preview Mode",
+        description: draft.description || "",
+        icon: draft.icon,
+        version: 1,
+        schemaVersion: 1,
+        source: draft.scope,
+        baseMode: draft.baseMode,
+        customInstructions: draft.customInstructions,
+        requiredSkills: draft.requiredSkills,
+        optionalSkills: draft.optionalSkills,
+        requiredMcpServers: draft.requiredMcpServers,
+        optionalMcpServers: draft.optionalMcpServers,
+        toolAllowlist: draft.toolAllowlist,
+        preferredModelId: draft.preferredModelId,
+        workflowPreference: draft.workflowPreference,
+        scope: draft.scope,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      this.modeWizard.resolvedPreview = resolveExecutionProfile({
+        profile: previewProfile,
+        workspaceTrusted: isTrusted,
+        availableSkills: resolverContext.availableSkills,
+        availableMcpServers: resolverContext.availableMcpServers,
+        availableTools: resolverContext.availableTools,
+        globalWorkflowEnabled,
+      });
+    }
+
     return {
       activeTab: this.activeTab,
       account: accountState,
       servers: serverDetails,
       skills,
       skillsRuntimeEnabled: skillsEnabled,
+      modes: modeSummaries,
+      activeModeId: this.modeService.getActiveModeId(),
+      inspectingModeId: this.inspectingModeId,
+      inspectingModeDetail,
+      modeWizard: this.modeWizard,
       diagnostics,
       inspectingServerId: this.inspectingServerId,
       inspectingSkillId: this.inspectingSkillId,
@@ -641,6 +886,183 @@ export class IntegrationManagerController {
     }
 
     return list;
+  }
+
+  // --- Custom Modes Management (Sprint 8D) ---
+
+  public inspectMode(modeId?: string): void {
+    this.inspectingModeId = modeId;
+    this.inspectingServerId = undefined;
+    this.inspectingSkillId = undefined;
+    void this.notify();
+  }
+
+  public startModeWizard(modeId?: string): void {
+    if (modeId) {
+      const mode = this.modeService.getMode(modeId);
+      if (mode) {
+        this.modeWizard = {
+          step: 1,
+          draft: {
+            id: mode.id,
+            name: mode.name,
+            description: mode.description,
+            baseMode: mode.baseMode,
+            icon: mode.icon,
+            customInstructions: mode.customInstructions,
+            requiredSkills: [...mode.requiredSkills],
+            optionalSkills: [...mode.optionalSkills],
+            requiredMcpServers: [...mode.requiredMcpServers],
+            optionalMcpServers: [...mode.optionalMcpServers],
+            toolAllowlist: mode.toolAllowlist ? [...mode.toolAllowlist] : undefined,
+            preferredModelId: mode.preferredModelId,
+            workflowPreference: mode.workflowPreference,
+            scope: mode.scope === "account" ? "account" : "workspace",
+          },
+          isEditing: true,
+          originalId: mode.id,
+        };
+        void this.notify();
+        return;
+      }
+    }
+
+    this.modeWizard = {
+      step: 1,
+      draft: {
+        name: "",
+        description: "",
+        baseMode: "PLAN",
+        requiredSkills: [],
+        optionalSkills: [],
+        requiredMcpServers: [],
+        optionalMcpServers: [],
+        scope: "workspace",
+      },
+      isEditing: false,
+    };
+    void this.notify();
+  }
+
+  public cancelModeWizard(): void {
+    this.modeWizard = undefined;
+    void this.notify();
+  }
+
+  public updateModeWizardDraft(draftUpdates: Partial<ModeWizardDraft>): void {
+    if (!this.modeWizard) return;
+    this.modeWizard.draft = {
+      ...this.modeWizard.draft,
+      ...draftUpdates,
+    };
+    void this.notify();
+  }
+
+  public setModeWizardStep(step: number): void {
+    if (!this.modeWizard) return;
+    if (step >= 1 && step <= 9) {
+      this.modeWizard.step = step as ModeWizardState["step"];
+      void this.notify();
+    }
+  }
+
+  public async saveModeWizard(activateNow = false): Promise<void> {
+    if (!this.modeWizard) return;
+    const draft = this.modeWizard.draft;
+    const slugId = draft.id || draft.name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "");
+
+    const profileData: any = {
+      id: slugId,
+      name: draft.name,
+      description: draft.description,
+      icon: draft.icon || "code",
+      version: 1,
+      schemaVersion: 1,
+      source: draft.scope,
+      baseMode: draft.baseMode,
+      customInstructions: draft.customInstructions,
+      requiredSkills: draft.requiredSkills || [],
+      optionalSkills: draft.optionalSkills || [],
+      requiredMcpServers: draft.requiredMcpServers || [],
+      optionalMcpServers: draft.optionalMcpServers || [],
+      toolAllowlist: draft.toolAllowlist,
+      preferredModelId: draft.preferredModelId,
+      workflowPreference: draft.workflowPreference,
+      scope: draft.scope,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (draft.scope === "account") {
+      const client = this.accountManager.getClient();
+      if (!client.getToken()) {
+        throw new Error("Must be logged in to save an account custom mode profile.");
+      }
+      if (this.modeWizard.isEditing && this.modeWizard.originalId) {
+        await client.updateMode(this.modeWizard.originalId, profileData);
+      } else {
+        await client.createMode({
+          profileId: slugId,
+          ...profileData,
+        });
+      }
+      await this.modeService.syncAccountModes(client);
+    } else {
+      if (this.modeWizard.isEditing && this.modeWizard.originalId) {
+        this.modeService.updateWorkspaceMode(this.modeWizard.originalId, profileData);
+      } else {
+        this.modeService.createWorkspaceMode(profileData);
+      }
+    }
+
+    if (activateNow) {
+      this.modeService.setActiveModeId(slugId);
+    }
+
+    this.modeWizard = undefined;
+    void this.notify();
+  }
+
+  public async deleteMode(modeId: string): Promise<void> {
+    const mode = this.modeService.getMode(modeId);
+    if (!mode) return;
+    if (mode.scope === "account") {
+      const client = this.accountManager.getClient();
+      if (client.getToken()) {
+        await client.deleteMode(modeId);
+        await this.modeService.syncAccountModes(client);
+      }
+    } else {
+      this.modeService.deleteWorkspaceMode(modeId);
+    }
+    if (this.inspectingModeId === modeId) {
+      this.inspectingModeId = undefined;
+    }
+    void this.notify();
+  }
+
+  public duplicateMode(modeId: string, targetScope: "workspace" | "account" = "workspace"): void {
+    this.modeService.duplicateMode(modeId, targetScope);
+    void this.notify();
+  }
+
+  public toggleModeEnabled(modeId: string, enabled: boolean): void {
+    this.modeService.toggleModeEnabled(modeId, enabled);
+    void this.notify();
+  }
+
+  public setActiveMode(modeId?: string): void {
+    this.modeService.setActiveModeId(modeId);
+    void this.notify();
+  }
+
+  public getActiveModeId(): string | undefined {
+    return this.modeService.getActiveModeId();
+  }
+
+  public getModeService(): ModeService {
+    return this.modeService;
   }
 
   // --- Tool Permission Helper ---

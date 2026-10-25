@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { AgentEvent, ConversationTurn, inspectRunRecovery, type RunRecoveryInspection } from '@open-vs-code/agent-core';
+import { AgentEvent, ConversationTurn, inspectRunRecovery, type RunRecoveryInspection, type ResolvedExecutionProfile } from '@open-vs-code/agent-core';
 import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto } from './chat-protocol.js';
 import { IntegrationManagerController } from './integrations/integration-manager-controller.js';
+import { ModeService } from './modes/mode-service.js';
 import {
   ConversationStore,
   MAX_RUN_IDS,
@@ -146,19 +147,70 @@ export class ChatController {
   }
 
   private _integrationManager?: IntegrationManagerController;
+  private _modeService?: ModeService;
   private _integrationsOpen = false;
+
+  public attachModeService(service: ModeService): void {
+    this._modeService = service;
+    this.syncActiveModeFromManager();
+  }
 
   public attachIntegrationManager(manager: IntegrationManagerController): void {
     this._integrationManager = manager;
+    if (!this._modeService) {
+      this._modeService = manager.getModeService();
+    }
     manager.onStateChange((state) => {
       this.state.integrations = state;
       this.state.integrationsOpen = this._integrationsOpen;
+      this.state.customModes = state.modes;
+      this.syncActiveModeFromManager();
       this.sendMessage({
         type: "integration.state",
         state,
         open: this._integrationsOpen,
       });
     });
+  }
+
+  public syncActiveModeFromManager(): void {
+    const service = this._modeService || this._integrationManager?.getModeService();
+    const modeId = this.state.customModeId || this._integrationManager?.getActiveModeId();
+    if (service && modeId) {
+      const existing = (this.state.customModes || []).find((m) => m.id === modeId);
+      if (existing) {
+        this.state.customModeId = existing.id;
+        this.state.mode = existing.baseMode;
+        this.state.activeCustomProfile = { ...existing, isActive: true };
+        return;
+      }
+      const profile = service.getMode(modeId);
+      if (profile && profile.enabled) {
+        this.state.customModeId = profile.id;
+        this.state.mode = profile.baseMode;
+        this.state.activeCustomProfile = {
+          id: profile.id,
+          name: profile.name,
+          description: profile.description,
+          icon: profile.icon,
+          version: profile.version,
+          source: profile.source,
+          baseMode: profile.baseMode,
+          scope: profile.scope,
+          enabled: profile.enabled,
+          isReady: true,
+          isActive: true,
+          requiredSkillCount: profile.requiredSkills?.length || 0,
+          requiredMcpCount: profile.requiredMcpServers?.length || 0,
+          missingRequiredCount: 0,
+          diagnostics: [],
+        };
+        return;
+      }
+    }
+    if (!this.state.customModeId) {
+      this.state.activeCustomProfile = undefined;
+    }
   }
 
   public getIntegrationManager(): IntegrationManagerController | undefined {
@@ -443,13 +495,23 @@ export class ChatController {
         break;
       case 'chat.send':
         if (this.state.activeTurn) return;
-        await this.startTurn(message.text, message.mode);
+        if (message.customModeId !== undefined) {
+          this.state.customModeId = message.customModeId;
+          this.syncActiveModeFromManager();
+        }
+        await this.startTurn(message.text, message.mode || this.state.mode);
         break;
       case 'chat.cancel':
         this.cancelTurn();
         break;
       case 'chat.setMode':
+        if (this.state.activeTurn) {
+          vscode.window?.showWarningMessage?.("Cannot change execution mode while a task is running.");
+          break;
+        }
         this.state.mode = message.mode;
+        this.state.customModeId = message.customModeId;
+        this.syncActiveModeFromManager();
         this.persistConversation();
         this.sendState();
         break;
@@ -708,6 +770,39 @@ export class ChatController {
           await vscode.commands.executeCommand('open-vs-code.accountLogout');
         }
         break;
+      case 'integration.inspectMode':
+        await this._integrationManager?.inspectMode(message.modeId);
+        break;
+      case 'integration.startModeWizard':
+        await this._integrationManager?.startModeWizard(message.modeId);
+        break;
+      case 'integration.cancelModeWizard':
+        this._integrationManager?.cancelModeWizard();
+        break;
+      case 'integration.modeWizardDraft':
+        this._integrationManager?.updateModeWizardDraft(message.draft as any);
+        break;
+      case 'integration.modeWizardStep':
+        this._integrationManager?.setModeWizardStep(message.step as any);
+        break;
+      case 'integration.modeWizardSave':
+        await this._integrationManager?.saveModeWizard(message.activateNow);
+        break;
+      case 'integration.deleteMode':
+        await this._integrationManager?.deleteMode(message.modeId);
+        break;
+      case 'integration.duplicateMode':
+        this._integrationManager?.duplicateMode(message.modeId, message.targetScope);
+        break;
+      case 'integration.toggleMode':
+        this._integrationManager?.toggleModeEnabled(message.modeId, message.enabled);
+        break;
+      case 'integration.setActiveMode':
+        this._integrationManager?.setActiveMode(message.modeId);
+        this.syncActiveModeFromManager();
+        this.persistConversation();
+        this.sendState();
+        break;
     }
   }
 
@@ -887,6 +982,38 @@ export class ChatController {
       this.sendState();
       return;
     }
+
+    let resolvedProfile: ResolvedExecutionProfile | undefined;
+    const modeService = this._modeService || this._integrationManager?.getModeService();
+    if (modeService && this.state.customModeId) {
+      const profile = modeService.getMode(this.state.customModeId);
+      if (profile) {
+        resolvedProfile = modeService.resolveMode(profile.id, {
+          workspaceTrusted: true,
+          availableSkills: [],
+          availableMcpServers: [],
+          availableTools: [],
+        });
+        if (!resolvedProfile.isReady) {
+          this.state.activeTurn = false;
+          this.state.activities = [];
+          this.state.connection = deriveConnectionStatus(this._connectionInput);
+          const diagLines = resolvedProfile.diagnostics.map((d) => `- ${d}`).join('\n');
+          const errorMsg: ChatMessage = {
+            id: this.generateId(),
+            role: 'system',
+            content: `Mode "${resolvedProfile.profileName}" cannot execute: required dependencies are missing or unready.\n${diagLines}`,
+            timestamp: Date.now(),
+            status: 'failed',
+          };
+          this.state.messages.push(errorMsg);
+          this.state.lastStatus = 'failed';
+          this.persistConversation();
+          this.sendState();
+          return;
+        }
+      }
+    }
     
     this._activeAbortController = new AbortController();
     this._activeSessionBridge = this.bridgeFactory({ host: this.host, workspaceRoot: resolvedRoot, mode });
@@ -902,7 +1029,7 @@ export class ChatController {
         if (this.state.conversationId === currentConversationId && this.state.activeTurn) {
           this.handleAgentEvent(ev);
         }
-      }, recentTurns);
+      }, recentTurns, resolvedProfile);
       
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
       
@@ -1435,6 +1562,7 @@ export class ChatController {
       createdAt: this._meta.createdAt,
       updatedAt: this._lastStamp = Math.max(Date.now(), this._lastStamp + 1),
       mode: this.state.mode,
+      customModeId: this.state.customModeId,
       messages: this.state.messages.map((m) => ({ ...m })),
       attachments: this.state.attachments.slice(),
       reviews: (this.state.reviews || []).map((r) => ({ ...r })),
@@ -1486,6 +1614,7 @@ export class ChatController {
       conversations: this._store ? this._store.list() : [],
       history: this.state.history,
       mode: this.state.mode,
+      customModeId: this.state.customModeId,
       messages: seed,
       activities: [],
       context: this.state.context,
@@ -1494,6 +1623,7 @@ export class ChatController {
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: [],
     };
+    this.syncActiveModeFromManager();
     this.forgetSentTranscript();
     this.sendMessage({ type: "conversation.reset" });
     this.sendState();
@@ -1515,6 +1645,7 @@ export class ChatController {
       conversations: this._store ? this._store.list() : [],
       history: this.state.history,
       mode: record.mode,
+      customModeId: record.customModeId,
       messages: record.messages,
       activities: [],
       context: this.state.context,
@@ -1523,6 +1654,7 @@ export class ChatController {
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: record.reviews,
     };
+    this.syncActiveModeFromManager();
     this.forgetSentTranscript();
     this.sendMessage({ type: "conversation.reset" });
     this.sendState();

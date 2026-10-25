@@ -5,6 +5,7 @@ import type { AccountDatabase } from "../db/connection.js";
 import { AuthService } from "../auth/auth-service.js";
 import { AdminService } from "../admin/admin-service.js";
 import { IntegrationService } from "../integration/integration-service.js";
+import { ModeService } from "../mode/mode-service.js";
 import {
   AccountServiceError,
   ForbiddenError,
@@ -32,6 +33,7 @@ export class AccountServer {
   public readonly authService: AuthService;
   public readonly adminService: AdminService;
   public readonly integrationService: IntegrationService;
+  public readonly modeService: ModeService;
   private server?: http.Server | https.Server | undefined;
   private readonly port: number;
   private readonly host: string;
@@ -48,6 +50,7 @@ export class AccountServer {
     this.authService = new AuthService(db);
     this.adminService = new AdminService(db);
     this.integrationService = new IntegrationService(db);
+    this.modeService = new ModeService(db);
   }
 
   private isLoopbackHost(host: string): boolean {
@@ -357,6 +360,50 @@ export class AccountServer {
         );
         this.sendJson(res, 200, { policy });
         return;
+      }
+
+      // 8. Custom Mode Profiles Endpoints (Sprint 8D)
+      // GET /api/v1/modes
+      if (method === "GET" && pathname === "/api/v1/modes") {
+        const modes = await this.modeService.list(user.id);
+        this.sendJson(res, 200, { modes });
+        return;
+      }
+
+      // POST /api/v1/modes
+      if (method === "POST" && pathname === "/api/v1/modes") {
+        const body = await this.parseJsonBody(req);
+        const mode = await this.modeService.register(user.id, body);
+        this.sendJson(res, 201, { mode });
+        return;
+      }
+
+      // Single Mode Routes: /api/v1/modes/:id
+      const modeIdMatch = pathname.match(/^\/api\/v1\/modes\/([^/]+)$/);
+      if (modeIdMatch && modeIdMatch[1]) {
+        const profileId = modeIdMatch[1];
+
+        // GET /api/v1/modes/:id
+        if (method === "GET") {
+          const mode = await this.modeService.get(user.id, profileId);
+          this.sendJson(res, 200, { mode });
+          return;
+        }
+
+        // PUT /api/v1/modes/:id
+        if (method === "PUT") {
+          const body = await this.parseJsonBody(req);
+          const updated = await this.modeService.update(user.id, profileId, body);
+          this.sendJson(res, 200, { mode: updated });
+          return;
+        }
+
+        // DELETE /api/v1/modes/:id
+        if (method === "DELETE") {
+          await this.modeService.delete(user.id, profileId);
+          this.sendJson(res, 200, { ok: true });
+          return;
+        }
       }
 
       // 404 Route Not Found

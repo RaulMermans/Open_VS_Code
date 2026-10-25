@@ -23,7 +23,7 @@ import { discoverSkills, loadSkill } from "../context/skills.ts";
 import { selectSkills } from "../context/skill-selector.ts";
 import { SkillRegistry, defaultBuiltinSkillsRoot } from "../skills/registry.ts";
 import { prepareSkillGuidance, disabledSkillEvidence, SkillInjectionTracker } from "../skills/runtime.ts";
-import { compileContext, type ContextCompilerInput } from "../context/compiler.ts";
+import { compileContext, type ContextCompilerInput, type ProjectInstruction } from "../context/compiler.ts";
 import type { SkillEvidence, SkillGuidance } from "../skills/contracts.ts";
 import type { LoadedSkill } from "../context/skills.ts";
 import type { SkillSelectionResult } from "../context/skill-selector.ts";
@@ -38,6 +38,7 @@ import { runLearningStep, type LearningStepResult, type LearningTaskInput } from
 import type { LearningRetrieval } from "../learning/contracts.ts";
 import type { LearningService } from "../learning/service.ts";
 import { resolveRepositoryPath } from "../tools/path-safety.ts";
+import type { ResolvedExecutionProfile } from "../modes/contracts.ts";
 
 import type { AgentMode, AgentEvent } from "../contracts/agent.ts";
 import type { ModelProvider } from "../contracts/model.ts";
@@ -95,9 +96,20 @@ export interface CreateAgentRuntimeOptions {
   learning?: {
     enabled?: boolean;
   };
+  /**
+   * Resolved execution profile for a custom mode (Sprint 8D).
+   * When provided, enforces the frozen tool allowlist, injects bounded mode instructions,
+   * and respects the resolved model and workflow configuration.
+   */
+  resolvedProfile?: ResolvedExecutionProfile;
 }
 
 export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
+  if (options.resolvedProfile && !options.resolvedProfile.isReady) {
+    throw new Error(
+      `Cannot execute custom mode "${options.resolvedProfile.profileName}": execution profile is not ready. ${options.resolvedProfile.diagnostics.join("; ")}`
+    );
+  }
   let provider = options.providerOverride;
   let routedGateway: RoutedModelGateway | undefined;
   let healthChecker: HealthChecker | undefined;
@@ -174,7 +186,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     mutationEngine,
   });
   
-  const registry = createReadOnlyToolRegistry();
+  let registry = createReadOnlyToolRegistry();
   
   if (options.isTrusted) {
     for (const r of createMutationToolRegistrations({ engine: mutationEngine })) {
@@ -200,10 +212,17 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   const mcpStats = { callsStarted: 0, callsCompleted: 0, callsRejected: 0, callsCancelled: 0, callsTimedOut: 0, callsFailed: 0, resultBytesRetained: 0, resultsTruncated: 0 };
   
   for (const mcpTool of selectedMcpTools) {
+    if (options.resolvedProfile && !options.resolvedProfile.activeMcpServers.includes(mcpTool.serverId)) {
+      continue;
+    }
     const transport = mcpCatalog.getTransport(mcpTool.serverId);
     if (transport) {
       registry.register(createMcpToolRegistration(mcpTool, transport, mcpConfig, mcpStats));
     }
+  }
+
+  if (options.resolvedProfile?.effectiveTools) {
+    registry = registry.filterByName(new Set(options.resolvedProfile.effectiveTools));
   }
 
   const mcpSnapshot = () => ({
@@ -318,12 +337,21 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     return compiled;
   };
 
+  const modeProjectInstructions: ProjectInstruction[] = [];
+  if (options.resolvedProfile?.customInstructions) {
+    modeProjectInstructions.push({
+      id: `mode-instructions:${options.resolvedProfile.profileId}`,
+      path: `.open-vs-code/modes/${options.resolvedProfile.profileId}.json`,
+      content: `[Mode Instructions: ${options.resolvedProfile.profileName}]\n${options.resolvedProfile.customInstructions}`,
+    });
+  }
+
   const runnerInput = {
     task: { id: `session-${Date.now()}`, mode: options.mode, instruction: options.instruction },
     workspaceRoot: options.workspaceRoot,
     maxTurns: 15,
     contextBudget,
-    projectInstructions: [],
+    projectInstructions: modeProjectInstructions,
     ...(options.recentTurns ? { recentTurns: options.recentTurns } : {}),
     memory,
     selectedSkills,

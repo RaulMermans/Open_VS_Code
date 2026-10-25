@@ -454,6 +454,18 @@ Sprint 8C — Visual Integration Manager, Account Profiles & MCP Lifecycle UX �
     - Deterministic verification: 66/66 account-service tests green, 165/165 vscode-integration tests green (including 28 new visual manager tests), 13/13 desktop smoke tests green, 5/5 real packaged desktop runtime acceptance tests green. 0 lint errors, 0 TypeScript errors.
   - Record: `docs/sprints/SPRINT_8C_VISUAL_INTEGRATION_MANAGER.md`.
 
+Sprint 8D — Custom Modes Engine, Mode Profiles & Account-Aware Execution — SPRINT_8D_ACCEPTED
+  - ADR-037. Implemented a deterministic, extensible Custom Modes system without multiplying agent runtimes:
+    - Core Invariant: "A custom mode is a configuration profile, not an independent agent." Preserved the 5 canonical base modes (`ASK`, `PLAN`, `BUILD`, `DEBUG`, `REVIEW`) and mapped every profile strictly to one base mode (`CustomModeProfile` → `ResolvedExecutionProfile` → `AgentSessionBridge` → `AgentRuntime`).
+    - Declarative Manifest & Validation: Version 1 schema with fail-closed validation rejecting prototype pollution, unknown fields, credentials (`AKIA...`, `BEGIN PRIVATE KEY`, `ghp_...`, bearer tokens), non-canonical base modes, and oversized instructions.
+    - Deterministic Resolution: Synthesized profile, base mode, workspace trust, account policies, installed skills, MCP tools, model router deployments, and global feature flags. Missing required dependencies block execution (`isReady: false`); optional missing dependencies emit diagnostics; tool allowlists compute intersection without expansion; model preferences resolve to available deployments or fall back.
+    - Permission Authority & Immutability: Custom profiles cannot expand authority beyond base mode, workspace trust, or `PermissionGate`. Active tasks freeze the resolved profile snapshot; mid-turn mode switches and pending confirmation inheritance across mode boundaries are strictly blocked.
+    - Persistence Scopes & Reconciliation: Account profiles stored via `@open-vs-code/account-service` Migration 2 (`mode_profiles` table) with user isolation and audit logging (`mode.created`, `mode.updated`, `mode.deleted`). Workspace profiles stored in `.open-vs-code/modes.json`. Workspace profiles override account profiles sharing an ID with diagnostic notice.
+    - Visual Modes Management UI: Replaced inactive Sprint 8C placeholder with a complete Webview interface (overview cards, 9-step wizard, deep mode inspector, duplicate, toggle, delete). Extended chat dropdown with `<optgroup label="Custom Profiles">` and live readiness status badge chips. Fully backward compatible conversation persistence.
+    - Starter Profiles: Built-in `architecture-review` (REVIEW), `reverse-engineering-analysis` (PLAN), and `design-exploration` (PLAN).
+    - Deterministic Verification: 679/679 agent-core tests green (27 new), 73/73 account-service tests green (7 new), 183/183 vscode-integration tests green (18 new), 14/14 runtime evals green, 40/40 skills evals green, 19/19 workflow evals green, 13/13 desktop smoke green, 5/5 packaged desktop acceptance green. 0 lint errors, 0 TypeScript errors.
+  - Record: `docs/sprints/SPRINT_8D_CUSTOM_MODES.md`.
+
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.

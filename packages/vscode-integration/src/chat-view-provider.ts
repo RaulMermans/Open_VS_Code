@@ -929,6 +929,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 <option value="DEBUG">DEBUG</option>
                 <option value="REVIEW">REVIEW</option>
             </select>
+            <span id="mode-badge" class="status-badge" style="display:none;"></span>
             <div id="connection-status"></div>
         </div>
         <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Integrations</button>
@@ -979,6 +980,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const vscode = acquireVsCodeApi();
         
         const modeSelector = document.getElementById('mode-selector');
+        const modeBadge = document.getElementById('mode-badge');
         const newChatBtn = document.getElementById('new-chat-btn');
         const transcript = document.getElementById('transcript');
         const activities = document.getElementById('activities');
@@ -1066,12 +1068,68 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
         }
 
+        var lastModesSig = '__initial__';
+        function syncModeSelector(state) {
+            var currentVal = state.customModeId ? 'custom:' + state.customModeId : state.mode;
+            var customModes = state.customModes || [];
+            var modesSig = customModes.map(function(m) { return m.id + ':' + m.name + ':' + m.isReady; }).join('|');
+            if (modesSig !== lastModesSig) {
+                lastModesSig = modesSig;
+                modeSelector.innerHTML = '';
+                var stdGroup = document.createElement('optgroup');
+                stdGroup.label = 'Standard Modes';
+                ['ASK', 'PLAN', 'BUILD', 'DEBUG', 'REVIEW'].forEach(function(m) {
+                    var opt = document.createElement('option');
+                    opt.value = m;
+                    opt.textContent = m;
+                    stdGroup.appendChild(opt);
+                });
+                modeSelector.appendChild(stdGroup);
+
+                if (customModes.length) {
+                    var cGroup = document.createElement('optgroup');
+                    cGroup.label = 'Custom Profiles';
+                    customModes.forEach(function(cm) {
+                        var opt = document.createElement('option');
+                        opt.value = 'custom:' + cm.id;
+                        opt.textContent = cm.name + ' (' + cm.baseMode + ')' + (cm.isReady ? '' : ' ⚠️');
+                        cGroup.appendChild(opt);
+                    });
+                    modeSelector.appendChild(cGroup);
+                }
+            }
+            if (modeSelector.value !== currentVal) {
+                modeSelector.value = currentVal;
+                if (modeSelector.value !== currentVal && state.mode) {
+                    modeSelector.value = state.mode;
+                }
+            }
+        }
+
+        var lastBadgeSig = '__initial__';
+        function syncModeBadge(state) {
+            if (!modeBadge) return;
+            var p = state.activeCustomProfile;
+            var badgeSig = p ? (p.id + ':' + p.isReady) : '';
+            if (badgeSig === lastBadgeSig) return;
+            lastBadgeSig = badgeSig;
+            if (p) {
+                modeBadge.style.display = 'inline-block';
+                modeBadge.textContent = (p.isReady ? '✓ ' : '⚠️ ') + p.name + ' [' + p.baseMode + ']';
+                modeBadge.title = p.description + (p.isReady ? ' (Ready)' : ' (Missing dependencies)');
+                modeBadge.className = 'status-badge ' + (p.isReady ? 'is-running' : 'is-disabled');
+            } else {
+                modeBadge.style.display = 'none';
+            }
+        }
+
         function updateState(state, transcriptUnchanged) {
             var wasRunning = currentState && currentState.activeTurn;
             // The host omits an unchanged transcript; keep the one already rendered.
             if (transcriptUnchanged) state.messages = (currentState && currentState.messages) || [];
             currentState = state;
-            modeSelector.value = state.mode;
+            syncModeSelector(state);
+            syncModeBadge(state);
             sendInFlight = !!state.activeTurn;
             var follow = false;
             if (!transcriptUnchanged) {
@@ -1237,7 +1295,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             sendInFlight = true;
             sendBtn.disabled = true;
             scrollOnNextChange = true;
-            vscode.postMessage({ type: 'chat.send', text: text, mode: modeSelector.value });
+            var val = modeSelector.value;
+            var sendMode = val;
+            var sendCustomId = undefined;
+            if (val.startsWith('custom:')) {
+                sendCustomId = val.slice(7);
+                var cMode = (currentState && currentState.customModes || []).find(m => m.id === sendCustomId);
+                sendMode = cMode ? cMode.baseMode : (currentState && currentState.mode) || 'ASK';
+            }
+            vscode.postMessage({ type: 'chat.send', text: text, mode: sendMode, customModeId: sendCustomId });
             composer.value = '';
             if (vscode.setState) vscode.setState({ draft: '' });
         }
@@ -1253,7 +1319,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
         
         modeSelector.addEventListener('change', () => {
-            vscode.postMessage({ type: 'chat.setMode', mode: modeSelector.value });
+            var val = modeSelector.value;
+            if (val.startsWith('custom:')) {
+                var cId = val.slice(7);
+                var cMode = (currentState && currentState.customModes || []).find(m => m.id === cId);
+                vscode.postMessage({ type: 'chat.setMode', mode: cMode ? cMode.baseMode : 'ASK', customModeId: cId });
+            } else {
+                vscode.postMessage({ type: 'chat.setMode', mode: val });
+            }
         });
 
         attachFileBtn.addEventListener('click', () => {
