@@ -23,6 +23,8 @@ const BASELINE: Readonly<Record<ActionCategory, ToolPermission>> = {
   mcp_external_read: "ALLOW",
   mcp_external_side_effect: "CONFIRM",
   mcp_external_unknown: "CONFIRM",
+  mcp_sensitive_data_transmission: "CONFIRM",
+  mcp_external_destructive: "CONFIRM",
 }
 
 const PLAN_DENIES: readonly ActionCategory[] = [
@@ -34,6 +36,8 @@ const PLAN_DENIES: readonly ActionCategory[] = [
   "deploy",
   "mcp_external_side_effect",
   "mcp_external_unknown",
+  "mcp_sensitive_data_transmission",
+  "mcp_external_destructive",
 ]
 
 const READ_ONLY_MODES: readonly AgentMode[] = ["PLAN", "ASK", "REVIEW"]

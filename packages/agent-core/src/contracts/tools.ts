@@ -18,6 +18,8 @@ export type ToolAction =
   | "mcp_external_read"
   | "mcp_external_side_effect"
   | "mcp_external_unknown"
+  | "mcp_sensitive_data_transmission"
+  | "mcp_external_destructive"
 export interface ToolDefinition {
   readonly name: string
   readonly description: string

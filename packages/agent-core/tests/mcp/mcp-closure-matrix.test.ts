@@ -316,7 +316,7 @@ async function runMatrix() {
     let coreTask42Survived = false;
     let out42 = "";
     try {
-      out42 = execSync(`npx tsx src/cli.ts ask "say hi"`, { cwd: path.join(dirName, "../../../cli"), env: { ...process.env, OPEN_VS_CODE_MOCK_MODEL: "1", OPEN_VS_CODE_WORKSPACE: tmpDir42 }, encoding: "utf8" });
+      out42 = execSync(`"${process.execPath}" --import tsx/esm src/cli.ts ask "say hi"`, { cwd: path.join(dirName, "../../../cli"), env: { ...process.env, OPEN_VS_CODE_MOCK_MODEL: "1", OPEN_VS_CODE_WORKSPACE: tmpDir42 }, encoding: "utf8" });
       coreTask42Survived = true;
     } catch (e: any) {
       console.log(e.stdout, e.stderr);
@@ -331,7 +331,7 @@ async function runMatrix() {
     let coreTask43Survived = false;
     let out43 = "";
     try {
-      out43 = execSync(`npx tsx src/cli.ts ask "say hi"`, { cwd: path.join(dirName, "../../../cli"), env: { ...process.env, OPEN_VS_CODE_MOCK_MODEL: "1", OPEN_VS_CODE_WORKSPACE: tmpDir43 }, encoding: "utf8" });
+      out43 = execSync(`"${process.execPath}" --import tsx/esm src/cli.ts ask "say hi"`, { cwd: path.join(dirName, "../../../cli"), env: { ...process.env, OPEN_VS_CODE_MOCK_MODEL: "1", OPEN_VS_CODE_WORKSPACE: tmpDir43 }, encoding: "utf8" });
       coreTask43Survived = true;
     } catch (e: any) {
       console.log(e.stdout, e.stderr);

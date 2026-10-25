@@ -30,6 +30,16 @@
 
 ## Current sprint
 
+Sprint 8A — MCP Integration 2.0: Modern Transports, Secure Connections & Tool Governance (`docs/sprints/SPRINT_8A_MCP_INTEGRATION_2.md`; ADR-034).
+Evolves existing MCP infrastructure into an enterprise-grade integration foundation:
+- Modern Stateless Streamable HTTP transport (MCP spec 2026-07-28 POST per-request `_meta`) with seamless negotiation and backwards compatibility with 2025-11-25 (`Mcp-Session-Id`) and 2024-11-05 (handshake).
+- Zero new external runtime dependencies: native WHATWG fetch/SSE streaming client without `@modelcontextprotocol/sdk` bloat.
+- Network security & SSRF guard: HTTPS required by default, controlled loopback allowed, private IP/cloud metadata strictly blocked, safe redirect verification (blocks downgrades and cross-origin auth header leakage).
+- Secret management boundary: `SecretProvider` abstraction wired to `vscode.SecretStorage`; zero credentials written to configuration files, chat history, traces, or model prompts.
+- Tool governance: expanded tool actions distinguishing local reads (`mcp_external_read`: ALLOW), state changes (`mcp_external_side_effect`: CONFIRM), workspace content transmission (`mcp_sensitive_data_transmission`: CONFIRM), destructive actions (`mcp_external_destructive`: CONFIRM), and unclassified operations (`mcp_external_unknown`: CONFIRM). Server annotations cannot lower risk.
+- Minimal native VS Code commands & QuickPick management: 8 focused native commands (`open-vs-code.listMcpServers`, `inspectMcpServer`, `inspectMcpTools`, `openMcpConfig`, `connectMcpServer`, `disconnectMcpServer`, `refreshMcpDiscovery`, `viewMcpDiagnostics`). Completely functional without HALO or live LLM.
+- Deterministic test matrix: 37 new tests in `packages/agent-core/tests/mcp/mcp-modern-matrix.test.ts` (covering all 36 required deterministic scenarios with a real local HTTP fixture server), 8 new VS Code command tests in `packages/vscode-integration/tests/mcp-commands.test.ts`, 13/13 desktop smoke, and 5/5 real packaged desktop runtime acceptance. Zero regressions.
+
 Sprint 7D — IDE Responsiveness, Performance & UX Hardening (`docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`; ADR-026, ADR-018, ADR-022 and ADR-033 amendments). Measured before/after on the same machine (`npm run eval:ide-performance`, `desktop:accept` test 5). Results:
 - Editor cursor and selection activity no longer posts chat state: 300 real cursor moves went from 300 posts to 0, and extension-host CPU from 960 to 273 ms.
 - An unchanged transcript is not re-sent: 80 agent events went from 17.6 MB to 0.66 MB.
