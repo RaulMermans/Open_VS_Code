@@ -1,3 +1,5 @@
+import type { IntegrationManagerState, IntegrationTab } from "./integrations/integration-manager-controller.js";
+
 export type ChatMode = "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW";
 
 export type InferenceBackend = "standalone-local" | "halo" | "unknown";
@@ -205,6 +207,8 @@ export interface WebviewState {
   reviews?: ReviewRecordDto[];
   error?: string;
   connection?: ConnectionStatus;
+  integrations?: IntegrationManagerState;
+  integrationsOpen?: boolean;
 }
 
 // Webview -> Host
@@ -239,13 +243,38 @@ export type WebviewToHostMessage =
   | { type: "conversation.archive"; conversationId: string; archived: boolean }
   | { type: "conversation.continueFrom"; conversationId: string }
   | { type: "conversation.inspectRecovery"; conversationId: string }
-  | { type: "conversation.closeRecovery" };
+  | { type: "conversation.closeRecovery" }
+  | { type: "integration.openHub" }
+  | { type: "integration.closeHub" }
+  | { type: "integration.setTab"; tab: IntegrationTab }
+  | { type: "integration.connectMcp"; serverId: string }
+  | { type: "integration.disconnectMcp"; serverId: string }
+  | { type: "integration.toggleMcp"; serverId: string; enabled: boolean }
+  | { type: "integration.toggleWorkspacePolicy"; serverId: string; enabled: boolean }
+  | { type: "integration.inspectTools"; serverId?: string }
+  | { type: "integration.promptRemoveServer"; serverId: string; serverName: string }
+  | { type: "integration.executeRemoveServer"; serverId: string }
+  | { type: "integration.cancelConfirmation" }
+  | { type: "integration.refreshDiscovery" }
+  | { type: "integration.syncAccount" }
+  | { type: "integration.startWizard" }
+  | { type: "integration.cancelWizard" }
+  | { type: "integration.wizardTransport"; transport: "stdio" | "streamable_http" | "sse" }
+  | { type: "integration.wizardDraft"; draft: Record<string, unknown> }
+  | { type: "integration.wizardValidate" }
+  | { type: "integration.wizardStep"; step: number }
+  | { type: "integration.wizardSave"; connectNow: boolean }
+  | { type: "integration.inspectSkill"; skillId?: string }
+  | { type: "integration.openSkillFile"; skillId: string }
+  | { type: "integration.accountLogin"; username: string; password: string; serverUrl?: string }
+  | { type: "integration.accountLogout" };
 
 // Host -> Webview
 export type HostToWebviewMessage =
   | { type: "chat.state"; state: WebviewState }
   /** Sprint 7D: the transcript is unchanged since the last post, so it is omitted; the webview keeps its own. */
   | { type: "chat.state"; state: Omit<WebviewState, "messages">; transcript: "unchanged" }
+  | { type: "integration.state"; state: IntegrationManagerState; open: boolean }
   | { type: "turn.started" }
   | { type: "turn.status"; activity: ChatActivity }
   | { type: "turn.completed"; message: ChatMessage }
@@ -407,6 +436,115 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
 
     case "context.pickFile":
       return { type: "context.pickFile" };
+
+    case "integration.openHub":
+      return { type: "integration.openHub" };
+
+    case "integration.closeHub":
+      return { type: "integration.closeHub" };
+
+    case "integration.setTab": {
+      const validTabs = ["profile", "mcp", "skills", "modes", "diagnostics"];
+      if (typeof raw.tab !== "string" || !validTabs.includes(raw.tab)) return null;
+      return { type: "integration.setTab", tab: raw.tab as IntegrationTab };
+    }
+
+    case "integration.connectMcp": {
+      if (typeof raw.serverId !== "string" || !raw.serverId || raw.serverId.length > 200) return null;
+      return { type: "integration.connectMcp", serverId: raw.serverId };
+    }
+
+    case "integration.disconnectMcp": {
+      if (typeof raw.serverId !== "string" || !raw.serverId || raw.serverId.length > 200) return null;
+      return { type: "integration.disconnectMcp", serverId: raw.serverId };
+    }
+
+    case "integration.toggleMcp": {
+      if (typeof raw.serverId !== "string" || typeof raw.enabled !== "boolean") return null;
+      return { type: "integration.toggleMcp", serverId: raw.serverId, enabled: raw.enabled };
+    }
+
+    case "integration.toggleWorkspacePolicy": {
+      if (typeof raw.serverId !== "string" || typeof raw.enabled !== "boolean") return null;
+      return { type: "integration.toggleWorkspacePolicy", serverId: raw.serverId, enabled: raw.enabled };
+    }
+
+    case "integration.inspectTools": {
+      const serverId = typeof raw.serverId === "string" ? raw.serverId : undefined;
+      return { type: "integration.inspectTools", serverId };
+    }
+
+    case "integration.promptRemoveServer": {
+      if (typeof raw.serverId !== "string" || typeof raw.serverName !== "string") return null;
+      return { type: "integration.promptRemoveServer", serverId: raw.serverId, serverName: raw.serverName };
+    }
+
+    case "integration.executeRemoveServer": {
+      if (typeof raw.serverId !== "string") return null;
+      return { type: "integration.executeRemoveServer", serverId: raw.serverId };
+    }
+
+    case "integration.cancelConfirmation":
+      return { type: "integration.cancelConfirmation" };
+
+    case "integration.refreshDiscovery":
+      return { type: "integration.refreshDiscovery" };
+
+    case "integration.syncAccount":
+      return { type: "integration.syncAccount" };
+
+    case "integration.startWizard":
+      return { type: "integration.startWizard" };
+
+    case "integration.cancelWizard":
+      return { type: "integration.cancelWizard" };
+
+    case "integration.wizardTransport": {
+      const validTransports = ["stdio", "streamable_http", "sse"];
+      if (typeof raw.transport !== "string" || !validTransports.includes(raw.transport)) return null;
+      return { type: "integration.wizardTransport", transport: raw.transport as any };
+    }
+
+    case "integration.wizardDraft": {
+      if (!raw.draft || typeof raw.draft !== "object") return null;
+      return { type: "integration.wizardDraft", draft: raw.draft };
+    }
+
+    case "integration.wizardValidate":
+      return { type: "integration.wizardValidate" };
+
+    case "integration.wizardStep": {
+      if (typeof raw.step !== "number" || raw.step < 1 || raw.step > 5) return null;
+      return { type: "integration.wizardStep", step: raw.step };
+    }
+
+    case "integration.wizardSave": {
+      return { type: "integration.wizardSave", connectNow: Boolean(raw.connectNow) };
+    }
+
+    case "integration.inspectSkill": {
+      const skillId = typeof raw.skillId === "string" ? raw.skillId : undefined;
+      return { type: "integration.inspectSkill", skillId };
+    }
+
+    case "integration.openSkillFile": {
+      if (typeof raw.skillId !== "string" || !raw.skillId) return null;
+      return { type: "integration.openSkillFile", skillId: raw.skillId };
+    }
+
+    case "integration.accountLogin": {
+      if (typeof raw.username !== "string" || typeof raw.password !== "string") return null;
+      const serverUrl = typeof raw.serverUrl === "string" ? raw.serverUrl : undefined;
+      return {
+        type: "integration.accountLogin",
+        username: raw.username,
+        password: raw.password,
+        serverUrl,
+      };
+    }
+
+    case "integration.accountLogout":
+      return { type: "integration.accountLogout" };
       
     default:
       return null;

@@ -30,6 +30,15 @@
 
 ## Current sprint
 
+Sprint 8C — Visual Integration Manager, Account Profiles & MCP Lifecycle UX (`docs/sprints/SPRINT_8C_VISUAL_INTEGRATION_MANAGER.md`; ADR-036).
+Delivers an account-aware visual integration manager and lifecycle UX for MCP servers, portable skills, and account profiles:
+- Mandatory P0 Security Closure: deterministic account-switch isolation and reconciliation; remote plaintext HTTP rejection; URL embedded-credential rejection; token wiping on backend origin switch, 401, or account disablement; cross-origin and protocol downgrade redirect blocking; workspace-level policy enforcement; and SQLite runtime fail-closed guard (`UnsupportedDatabaseRuntimeError`).
+- Visual Integration Hub: Native VS Code webview UI (`ChatViewProvider`) with 5 primary sections: Profile, MCP Servers, Skills, Modes (non-interactive placeholder), and Diagnostics.
+- MCP Dashboard & 5-Step Add MCP Wizard: Real status monitoring, server management actions, and safe guided connection workflow without automated command execution.
+- Tool Inspection & Governance: Discovered tool inspector with JSON schema display, trusted local permission classification (`classifyMcpAction`), destructive and sensitive data warnings, and strict `PermissionGate` non-bypass invariants.
+- Portable Skills & Account Integration: Discovers built-in and workspace skills via `SkillRegistry`, surfaces diagnostics, and synchronizes account registrations without destroying local configurations.
+- Comprehensive Verification: 66/66 account-service tests green, 165/165 vscode-integration tests green (including 28 new visual manager tests), 13/13 desktop smoke tests green, 5/5 real packaged desktop acceptance tests green. 0 lint errors, 0 TypeScript errors.
+
 Sprint 8B — Private Account Backend, Authentication & Persistent Integration Profiles (`docs/sprints/SPRINT_8B_PRIVATE_ACCOUNTS.md`; ADR-035).
 Establishes a private, administrator-controlled account service and desktop integration profile management without transforming Open VS Code into a public SaaS or compromising local-first runtime independence:
 - Separately deployable `@open-vs-code/account-service` package with strict separation between account management and the local Agent Runtime (`PermissionGate`, local tool execution, model inference).

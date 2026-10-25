@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { AgentEvent, ConversationTurn, inspectRunRecovery, type RunRecoveryInspection } from '@open-vs-code/agent-core';
 import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto } from './chat-protocol.js';
+import { IntegrationManagerController } from './integrations/integration-manager-controller.js';
 import {
   ConversationStore,
   MAX_RUN_IDS,
@@ -142,6 +143,56 @@ export class ChatController {
 
   public getState(): Readonly<WebviewState> {
     return this.state;
+  }
+
+  private _integrationManager?: IntegrationManagerController;
+  private _integrationsOpen = false;
+
+  public attachIntegrationManager(manager: IntegrationManagerController): void {
+    this._integrationManager = manager;
+    manager.onStateChange((state) => {
+      this.state.integrations = state;
+      this.state.integrationsOpen = this._integrationsOpen;
+      this.sendMessage({
+        type: "integration.state",
+        state,
+        open: this._integrationsOpen,
+      });
+    });
+  }
+
+  public getIntegrationManager(): IntegrationManagerController | undefined {
+    return this._integrationManager;
+  }
+
+  public async openIntegrationsHub(): Promise<void> {
+    this._integrationsOpen = true;
+    this.state.integrationsOpen = true;
+    if (this._integrationManager) {
+      this.state.integrations = await this._integrationManager.getState();
+      this.sendMessage({
+        type: "integration.state",
+        state: this.state.integrations,
+        open: true,
+      });
+    } else {
+      this.sendState();
+    }
+  }
+
+  public async closeIntegrationsHub(): Promise<void> {
+    this._integrationsOpen = false;
+    this.state.integrationsOpen = false;
+    if (this._integrationManager) {
+      this.state.integrations = await this._integrationManager.getState();
+      this.sendMessage({
+        type: "integration.state",
+        state: this.state.integrations,
+        open: false,
+      });
+    } else {
+      this.sendState();
+    }
   }
 
   public listConversations(): ConversationSummaryDto[] {
@@ -576,6 +627,85 @@ export class ChatController {
           await this.host.openModelConfig();
         } else if (vscode.commands?.executeCommand) {
           await vscode.commands.executeCommand('open-vs-code.openModelConfig');
+        }
+        break;
+      case 'integration.openHub':
+        await this.openIntegrationsHub();
+        break;
+      case 'integration.closeHub':
+        await this.closeIntegrationsHub();
+        break;
+      case 'integration.setTab':
+        this._integrationManager?.setTab(message.tab);
+        break;
+      case 'integration.connectMcp':
+        await this._integrationManager?.connectServer(message.serverId);
+        break;
+      case 'integration.disconnectMcp':
+        await this._integrationManager?.disconnectServer(message.serverId);
+        break;
+      case 'integration.toggleMcp':
+        await this._integrationManager?.toggleServerEnabled(message.serverId, message.enabled);
+        break;
+      case 'integration.toggleWorkspacePolicy':
+        await this._integrationManager?.toggleWorkspacePolicy(message.serverId, message.enabled);
+        break;
+      case 'integration.inspectTools':
+        this._integrationManager?.inspectTools(message.serverId);
+        break;
+      case 'integration.promptRemoveServer':
+        this._integrationManager?.promptRemoveServer(message.serverId, message.serverName);
+        break;
+      case 'integration.executeRemoveServer':
+        await this._integrationManager?.executeRemoveServer(message.serverId);
+        break;
+      case 'integration.cancelConfirmation':
+        this._integrationManager?.cancelConfirmation();
+        break;
+      case 'integration.refreshDiscovery':
+        await this._integrationManager?.refreshDiscovery();
+        break;
+      case 'integration.syncAccount':
+        if (vscode.commands?.executeCommand) {
+          await vscode.commands.executeCommand('open-vs-code.syncAccountIntegrations');
+        }
+        await this._integrationManager?.refreshDiscovery();
+        break;
+      case 'integration.startWizard':
+        this._integrationManager?.startAddWizard();
+        break;
+      case 'integration.cancelWizard':
+        this._integrationManager?.cancelWizard();
+        break;
+      case 'integration.wizardTransport':
+        this._integrationManager?.wizardSetStep1Transport(message.transport);
+        break;
+      case 'integration.wizardDraft':
+        this._integrationManager?.wizardUpdateDraft(message.draft as any);
+        break;
+      case 'integration.wizardValidate':
+        await this._integrationManager?.wizardValidateAndAdvance();
+        break;
+      case 'integration.wizardStep':
+        this._integrationManager?.wizardGoToStep(message.step as any);
+        break;
+      case 'integration.wizardSave':
+        await this._integrationManager?.wizardSave(message.connectNow);
+        break;
+      case 'integration.inspectSkill':
+        this._integrationManager?.inspectSkill(message.skillId);
+        break;
+      case 'integration.openSkillFile':
+        await this._integrationManager?.openSkillFile(message.skillId);
+        break;
+      case 'integration.accountLogin':
+        if (vscode.commands?.executeCommand) {
+          await vscode.commands.executeCommand('open-vs-code.accountLogin');
+        }
+        break;
+      case 'integration.accountLogout':
+        if (vscode.commands?.executeCommand) {
+          await vscode.commands.executeCommand('open-vs-code.accountLogout');
         }
         break;
     }

@@ -16,6 +16,14 @@ import {
   renderHistoryPanel,
   renderRecoveryPanel,
   filterConversations,
+  renderProfileSection,
+  renderMcpDashboard,
+  renderAddMcpWizard,
+  renderToolInspector,
+  renderSkillsSection,
+  renderModesSection,
+  renderDiagnosticsSection,
+  renderIntegrationsHub,
   webviewRenderRuntime,
 } from './webview-render-helpers.js';
 
@@ -35,6 +43,14 @@ export {
   renderHistoryPanel,
   renderRecoveryPanel,
   filterConversations,
+  renderProfileSection,
+  renderMcpDashboard,
+  renderAddMcpWizard,
+  renderToolInspector,
+  renderSkillsSection,
+  renderModesSection,
+  renderDiagnosticsSection,
+  renderIntegrationsHub,
   webviewRenderRuntime,
 };
 
@@ -606,6 +622,300 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             overflow: hidden;
             clip: rect(0,0,0,0);
         }
+
+        /* Integration Manager UI Styles */
+        body.integrations-mode #transcript,
+        body.integrations-mode #activities,
+        body.integrations-mode #reviews,
+        body.integrations-mode #terminal-container,
+        body.integrations-mode #confirmation-container,
+        body.integrations-mode #composer-container,
+        body.integrations-mode #conversation-bar,
+        body.integrations-mode #history-panel,
+        body.integrations-mode #recovery-container {
+            display: none !important;
+        }
+        #integrations-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow-y: auto;
+            background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+        }
+        #integrations-panel[hidden] {
+            display: none !important;
+        }
+        .integrations-hub {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            padding: 10px;
+            gap: 10px;
+            min-height: 0;
+        }
+        .hub-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--vscode-sideBar-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.3)));
+        }
+        .hub-title {
+            font-size: 1.05em;
+            font-weight: 600;
+            margin: 0;
+        }
+        .hub-close-btn {
+            padding: 2px 8px;
+            font-size: 0.8em;
+        }
+        .hub-nav {
+            display: flex;
+            gap: 4px;
+            border-bottom: 1px solid var(--vscode-sideBar-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.3)));
+            padding-bottom: 2px;
+            overflow-x: auto;
+        }
+        .hub-tab-btn {
+            background: transparent;
+            color: var(--vscode-foreground);
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 4px 8px;
+            font-size: 0.85em;
+            cursor: pointer;
+            border-radius: 0;
+            white-space: nowrap;
+        }
+        .hub-tab-btn.is-active {
+            color: var(--vscode-textLink-foreground);
+            border-bottom-color: var(--vscode-focusBorder);
+            font-weight: 600;
+        }
+        .hub-tab-btn.is-placeholder {
+            opacity: 0.6;
+            font-style: italic;
+        }
+        .hub-status-bar {
+            font-size: 0.8em;
+            color: var(--vscode-descriptionForeground);
+            padding: 4px 6px;
+            background: var(--vscode-editorWidget-background);
+            border-radius: 3px;
+        }
+        .hub-confirmation-card {
+            background: var(--vscode-inputValidation-warningBackground, var(--vscode-editorWidget-background));
+            border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-foreground, #cca700));
+            padding: 8px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+        .hub-tab-content {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+        .hub-card, .hub-wizard-panel, .hub-inspector-panel, .hub-skills-panel, .hub-diagnostics-panel, .hub-modes-placeholder {
+            background: var(--vscode-editorWidget-background);
+            border: 1px solid var(--vscode-editorWidget-border);
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .hub-card-header, .hub-wizard-header, .hub-inspector-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .hub-card-title {
+            font-size: 0.95em;
+            font-weight: 600;
+            margin: 0;
+        }
+        .hub-toolbar {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .hub-btn-secondary {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border: none;
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 2px;
+            font-size: 0.85em;
+        }
+        .hub-btn-secondary:hover {
+            background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+        }
+        .hub-btn-sm {
+            padding: 2px 6px;
+            font-size: 0.8em;
+        }
+        .hub-server-list, .hub-skills-list, .hub-tool-inspector-list, .hub-diagnostic-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .hub-server-card, .hub-skill-card, .hub-tool-card {
+            border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+            border-radius: 4px;
+            padding: 8px;
+            background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+        }
+        .hub-server-header, .hub-skill-header, .hub-tool-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .hub-server-name, .hub-tool-name {
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+        .hub-server-id {
+            font-size: 0.75em;
+            color: var(--vscode-descriptionForeground);
+            font-family: var(--vscode-editor-font-family, monospace);
+        }
+        .hub-badge-group {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .hub-transport-badge {
+            font-size: 0.75em;
+            padding: 1px 6px;
+            border-radius: 8px;
+        }
+        .hub-provenance-badge.is-account {
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+        }
+        .hub-provenance-badge.is-workspace {
+            background: var(--vscode-charts-orange, #e5a50a);
+            color: #000;
+        }
+        .hub-provenance-badge.is-local {
+            background: var(--vscode-charts-green, #89d185);
+            color: #000;
+        }
+        .hub-card-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .hub-form-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        .hub-form-row.is-checkbox {
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+        }
+        .hub-input {
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border, transparent);
+            padding: 4px 6px;
+            font-family: inherit;
+            font-size: inherit;
+            border-radius: 2px;
+        }
+        .hub-input:focus-visible {
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+        .hub-transport-picker {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin: 8px 0;
+        }
+        .hub-transport-card {
+            border: 1px solid var(--vscode-widget-border, #444);
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .hub-transport-card.is-selected {
+            border-color: var(--vscode-focusBorder);
+            background: var(--vscode-list-activeSelectionBackground, rgba(128, 128, 128, 0.2));
+        }
+        .hub-wizard-stepper {
+            display: flex;
+            gap: 6px;
+            margin: 8px 0;
+        }
+        .hub-step-dot {
+            font-size: 0.75em;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            opacity: 0.6;
+        }
+        .hub-step-dot.is-current {
+            opacity: 1;
+            font-weight: 600;
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+        .hub-step-dot.is-done {
+            opacity: 0.9;
+            background: var(--vscode-testing-iconPassed, #89d185);
+            color: #000;
+        }
+        .hub-empty-state {
+            font-size: 0.85em;
+            color: var(--vscode-descriptionForeground);
+            padding: 12px 6px;
+            text-align: center;
+            font-style: italic;
+        }
+        .hub-warning-banner {
+            font-size: 0.8em;
+            padding: 4px 6px;
+            border-radius: 3px;
+            margin-top: 4px;
+        }
+        .hub-warning-banner.is-destructive {
+            background: var(--vscode-errorForeground);
+            color: #fff;
+        }
+        .hub-warning-banner.is-sensitive {
+            background: var(--vscode-editorWarning-foreground, #cca700);
+            color: #000;
+        }
+        .hub-schema-pre {
+            font-family: var(--vscode-editor-font-family, monospace);
+            font-size: 0.75em;
+            background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+            padding: 6px;
+            border-radius: 3px;
+            overflow-x: auto;
+            max-height: 120px;
+        }
+        .hub-error-row {
+            color: var(--vscode-errorForeground);
+            font-size: 0.8em;
+            margin-top: 4px;
+        }
+        .hub-error-banner {
+            background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+            border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+            color: var(--vscode-errorForeground);
+            padding: 6px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            margin-bottom: 8px;
+        }
     </style>
 </head>
 <body>
@@ -621,9 +931,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             </select>
             <div id="connection-status"></div>
         </div>
+        <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Integrations</button>
         <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
         <button id="new-chat-btn" class="secondary" aria-label="Start a new conversation">New</button>
     </div>
+    <div id="integrations-panel" role="region" aria-label="Visual integration manager" hidden></div>
     <div id="conversation-bar"></div>
     <div id="history-panel" role="region" aria-label="Conversation history" hidden>
         <div class="history-controls">
@@ -684,6 +996,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const pickFileBtn = document.getElementById('pick-file-btn');
         const filePicker = document.getElementById('file-picker');
         
+        const integrationsBtn = document.getElementById('integrations-btn');
+        const integrationsPanel = document.getElementById('integrations-panel');
+        let integrationsOpen = false;
+        let lastIntegrationsState = null;
+
         const historyBtn = document.getElementById('history-btn');
         const historyPanel = document.getElementById('history-panel');
         const historyList = document.getElementById('history-list');
@@ -721,6 +1038,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'context.searchResults':
                     renderFileHits(message.files || []);
+                    break;
+                case 'integration.state':
+                    handleIntegrationState(message.state, message.open);
                     break;
                 case 'conversation.reset':
                     renamingId = null;
@@ -855,6 +1175,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         historyArchived.addEventListener('change', function () { showArchived = !!historyArchived.checked; renderHistory(); });
         historyPanel.addEventListener('keydown', function (e) {
             if (e.key === 'Escape' && !renamingId) { e.preventDefault(); setHistoryOpen(false, true); }
+        });
+
+        function handleIntegrationState(state, open) {
+            integrationsOpen = !!open;
+            integrationsPanel.hidden = !open;
+            integrationsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            document.body.classList.toggle('integrations-mode', open);
+            if (open) setHistoryOpen(false, false);
+            if (state) lastIntegrationsState = state;
+            if (open && lastIntegrationsState) {
+                renderIntegrationsHub(integrationsPanel, lastIntegrationsState, document, vscode.postMessage);
+            }
+        }
+
+        integrationsBtn.addEventListener('click', function () {
+            if (integrationsOpen) {
+                vscode.postMessage({ type: 'integration.closeHub' });
+            } else {
+                vscode.postMessage({ type: 'integration.openHub' });
+            }
         });
 
         // Drafts a follow-up for the user to edit and send; nothing runs until a new turn is approved.

@@ -101,3 +101,23 @@ export class VaultNotConfiguredError extends AccountServiceError {
     super("VAULT_NOT_CONFIGURED", message, 500);
   }
 }
+
+export class UnsupportedDatabaseRuntimeError extends AccountServiceError {
+  constructor(
+    message = "Node.js >= 22.0.0 with native 'node:sqlite' DatabaseSync is required for secure account persistence. Fallback CLI execution cannot guarantee transactional integrity, row counts, or foreign key constraints."
+  ) {
+    super("UNSUPPORTED_DATABASE_RUNTIME", message, 500);
+  }
+}
+
+export class UntrustedEndpointError extends AccountServiceError {
+  constructor(message: string) {
+    super("UNTRUSTED_ENDPOINT", message, 400);
+  }
+}
+
+export class UntrustedRedirectError extends AccountServiceError {
+  constructor(message: string) {
+    super("UNTRUSTED_REDIRECT", message, 400);
+  }
+}

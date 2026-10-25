@@ -13,7 +13,48 @@ import type {
   RegisterIntegrationInput,
   UpdateIntegrationInput,
 } from "../integration/integration-service.js";
-import { AccountServiceError } from "../errors.js";
+import {
+  AccountServiceError,
+  UntrustedEndpointError,
+  UntrustedRedirectError,
+} from "../errors.js";
+
+export function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized.startsWith("127.")
+  );
+}
+
+export function validateAccountServerUrl(url: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new UntrustedEndpointError(`Invalid account server URL: "${url}". Must be a valid absolute URL.`);
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new UntrustedEndpointError("Account server URL must not contain embedded user credentials.");
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new UntrustedEndpointError(
+      `Unsupported protocol "${parsed.protocol}". Only HTTPS or loopback HTTP endpoints are permitted.`
+    );
+  }
+
+  if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
+    throw new UntrustedEndpointError(
+      `Remote plaintext HTTP is forbidden for account service endpoints: "${url}". Must use TLS (https://) or local loopback development address.`
+    );
+  }
+
+  return parsed;
+}
 
 export interface AccountClientOptions {
   readonly baseUrl: string;
@@ -27,13 +68,20 @@ export class AccountClient {
   private readonly timeoutMs: number;
 
   constructor(options: AccountClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    const validated = validateAccountServerUrl(options.baseUrl);
+    this.baseUrl = `${validated.origin}${validated.pathname === "/" ? "" : validated.pathname.replace(/\/+$/, "")}`;
     this.token = options.token;
     this.timeoutMs = options.timeoutMs ?? 5000;
   }
 
   setBaseUrl(url: string): void {
-    this.baseUrl = url.replace(/\/+$/, "");
+    const validated = validateAccountServerUrl(url);
+    const newBaseUrl = `${validated.origin}${validated.pathname === "/" ? "" : validated.pathname.replace(/\/+$/, "")}`;
+    if (this.baseUrl && this.baseUrl !== newBaseUrl) {
+      // Switching backend server URL: clear token to avoid accidental credential forwarding across distinct origins!
+      this.token = undefined;
+    }
+    this.baseUrl = newBaseUrl;
   }
 
   getBaseUrl(): string {
@@ -54,62 +102,120 @@ export class AccountClient {
     body?: unknown,
     requiresAuth = true
   ): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-    };
+    let currentUrl = `${this.baseUrl}${path}`;
+    const initialOrigin = new URL(currentUrl).origin;
+    let maxRedirects = 3;
 
-    if (body !== undefined) {
-      headers["Content-Type"] = "application/json";
-    }
-
-    if (requiresAuth && this.token) {
-      headers["Authorization"] = `Bearer ${this.token}`;
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-
-    try {
-      const init: RequestInit = {
-        method,
-        headers,
-        signal: controller.signal,
+    while (true) {
+      const headers: Record<string, string> = {
+        Accept: "application/json",
       };
+
       if (body !== undefined) {
-        init.body = JSON.stringify(body);
+        headers["Content-Type"] = "application/json";
       }
 
-      const response = await fetch(url, init);
+      if (requiresAuth && this.token) {
+        headers["Authorization"] = `Bearer ${this.token}`;
+      }
 
-      const text = await response.text();
-      let data: any = {};
-      if (text) {
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = { message: text };
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
+      try {
+        const init: RequestInit = {
+          method,
+          headers,
+          signal: controller.signal,
+          redirect: "manual",
+        };
+        if (body !== undefined) {
+          init.body = JSON.stringify(body);
         }
-      }
 
-      if (!response.ok) {
-        const errObj = data?.error;
-        const code = errObj?.code || `HTTP_${response.status}`;
-        const message = errObj?.message || response.statusText || "Request failed";
-        throw new AccountServiceError(code, message, response.status, errObj?.details);
-      }
+        const response = await fetch(currentUrl, init);
 
-      return data as T;
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        throw new AccountServiceError("NETWORK_TIMEOUT", `Request to account service timed out after ${this.timeoutMs}ms.`, 504);
+        // Handle redirects securely
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          if (maxRedirects <= 0) {
+            throw new UntrustedRedirectError("Too many redirects from account service.");
+          }
+          maxRedirects--;
+
+          const location = response.headers.get("location");
+          if (!location) {
+            throw new UntrustedRedirectError("Redirect response missing Location header.");
+          }
+
+          let redirectUrl: URL;
+          try {
+            redirectUrl = new URL(location, currentUrl);
+          } catch {
+            throw new UntrustedRedirectError(`Invalid redirect target: "${location}".`);
+          }
+
+          if (redirectUrl.username || redirectUrl.password) {
+            throw new UntrustedRedirectError("Redirect target must not contain embedded credentials.");
+          }
+
+          const currentParsed = new URL(currentUrl);
+          if (currentParsed.protocol === "https:" && redirectUrl.protocol === "http:") {
+            throw new UntrustedRedirectError("Insecure protocol downgrade from HTTPS to HTTP is forbidden.");
+          }
+
+          if (redirectUrl.protocol === "http:" && !isLoopbackHost(redirectUrl.hostname)) {
+            throw new UntrustedRedirectError(
+              `Redirect to remote plaintext HTTP endpoint is forbidden: "${redirectUrl.toString()}".`
+            );
+          }
+
+          if (requiresAuth && redirectUrl.origin !== initialOrigin) {
+            throw new UntrustedRedirectError(
+              `Cross-origin redirect to "${redirectUrl.origin}" rejected to protect authentication credentials.`
+            );
+          }
+
+          currentUrl = redirectUrl.toString();
+          continue;
+        }
+
+        const text = await response.text();
+        let data: any = {};
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch {
+            data = { message: text };
+          }
+        }
+
+        if (!response.ok) {
+          const errObj = data?.error;
+          const code = errObj?.code || `HTTP_${response.status}`;
+          const message = errObj?.message || response.statusText || "Request failed";
+
+          if (requiresAuth && (response.status === 401 || code === "ACCOUNT_DISABLED")) {
+            this.token = undefined;
+          }
+          throw new AccountServiceError(code, message, response.status, errObj?.details);
+        }
+
+        return data as T;
+      } catch (err: any) {
+        if (err.name === "AbortError") {
+          throw new AccountServiceError(
+            "NETWORK_TIMEOUT",
+            `Request to account service timed out after ${this.timeoutMs}ms.`,
+            504
+          );
+        }
+        if (err instanceof AccountServiceError) {
+          throw err;
+        }
+        throw new AccountServiceError("NETWORK_ERROR", `Failed to reach account service: ${err.message}`, 503);
+      } finally {
+        clearTimeout(timeoutId);
       }
-      if (err instanceof AccountServiceError) {
-        throw err;
-      }
-      throw new AccountServiceError("NETWORK_ERROR", `Failed to reach account service: ${err.message}`, 503);
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 

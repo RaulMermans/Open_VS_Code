@@ -444,8 +444,17 @@ Sprint 8B — Private Account Backend, Authentication & Persistent Integration P
     - Deterministic verification: 56/56 account-service tests green, 137/137 vscode-integration tests green, 13/13 desktop smoke tests green, 5/5 real packaged desktop runtime acceptance tests green, 0 linter errors, 0 TypeScript errors.
   - Record: `docs/sprints/SPRINT_8B_PRIVATE_ACCOUNTS.md`.
 
+Sprint 8C — Visual Integration Manager, Account Profiles & MCP Lifecycle UX — SPRINT_8C_ACCEPTED
+  - ADR-036. Implemented visual integration manager and lifecycle UX for MCP servers, portable skills, and account profiles:
+    - Mandatory P0 Security Closure: deterministic account-switch isolation and reconciliation; remote plaintext HTTP rejection; URL embedded-credential rejection; token wiping on backend origin switch, 401, or account disablement; cross-origin and protocol downgrade redirect blocking; workspace-level policy enforcement; and SQLite runtime fail-closed guard (`UnsupportedDatabaseRuntimeError`).
+    - Visual Integration Hub: Native VS Code webview UI (`ChatViewProvider`) with 5 primary sections: Profile, MCP Servers, Skills, Modes (non-interactive placeholder), and Diagnostics.
+    - MCP Dashboard & 5-Step Add MCP Wizard: Real status monitoring, server management actions, and safe guided connection workflow without automated command execution.
+    - Tool Inspection & Governance: Discovered tool inspector with JSON schema display, trusted local permission classification (`classifyMcpAction`), destructive and sensitive data warnings, and strict `PermissionGate` non-bypass invariants.
+    - Portable Skills & Account Integration: Discovers built-in and workspace skills via `SkillRegistry`, surfaces diagnostics, and synchronizes account registrations without destroying local configurations.
+    - Deterministic verification: 66/66 account-service tests green, 165/165 vscode-integration tests green (including 28 new visual manager tests), 13/13 desktop smoke tests green, 5/5 real packaged desktop runtime acceptance tests green. 0 lint errors, 0 TypeScript errors.
+  - Record: `docs/sprints/SPRINT_8C_VISUAL_INTEGRATION_MANAGER.md`.
+
 Next:
-1. Sprint 8C — Visual MCP Management Surface & Configuration Hub.
-2. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
+1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
 3. Optional UX follow-up: packaged GUI checklist (7A–7D); provider-contract streaming; executable resume from the editor behind a UI re-authorization contract (ADR-033 §5).

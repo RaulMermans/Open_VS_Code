@@ -400,6 +400,24 @@ export class McpCatalog {
   }
 
   /**
+   * Unregister an MCP server from the catalog completely.
+   * Disconnects active transport, flushes discovered tools, and removes configuration.
+   */
+  async unregisterServer(serverId: string): Promise<void> {
+    await this.disconnectServer(serverId);
+    delete this.config.servers[serverId];
+    this.serverStates.delete(serverId);
+    this.serverErrors.delete(serverId);
+    this.lastConnectedTimes.delete(serverId);
+    this.reconnectCounts.delete(serverId);
+    for (const [canonicalName, meta] of Array.from(this.tools.entries())) {
+      if (meta.serverId === serverId) {
+        this.tools.delete(canonicalName);
+      }
+    }
+  }
+
+  /**
    * Reconnect a server with bounded retry logic (max attempts).
    */
   async reconnectServer(serverId: string, signal?: AbortSignal): Promise<boolean> {

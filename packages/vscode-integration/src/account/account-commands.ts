@@ -21,7 +21,7 @@ export function registerAccountCommands(
           "Cancel"
         );
         if (choice !== "Switch Account") return;
-        await accountManager.logout();
+        await accountManager.logout(mcpService);
       }
 
       const defaultUrl = state.serverUrl || "http://127.0.0.1:4040";
@@ -91,7 +91,7 @@ export function registerAccountCommands(
       );
       if (confirmed !== "Log Out") return;
 
-      await accountManager.logout();
+      await accountManager.logout(mcpService);
       vscode.window.showInformationMessage("Logged out of Open VS Code account.");
     })
   );
@@ -182,7 +182,7 @@ export function registerAccountCommands(
             title: "Synchronizing MCP integrations from account backend...",
             cancellable: false,
           },
-          async () => accountManager.syncIntegrations(mcpService)
+          async () => accountManager.syncIntegrations(mcpService, mcpService.getRoot())
         );
 
         if (result.isOffline) {
