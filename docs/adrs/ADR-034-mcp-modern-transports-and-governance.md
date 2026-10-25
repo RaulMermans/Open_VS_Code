@@ -63,3 +63,17 @@ All commands function independently of HALO or live LLM availability.
 - **Reliability**: Deterministic states (`DISABLED`, `DISCONNECTED`, `CONNECTING`, `AUTH_REQUIRED`, `CONNECTED`, `DEGRADED`, `FAILED`) and bounded reconnect (maximum 3 retries) prevent agent stalls when remote servers fail.
 - **Portability**: Native implementation preserves the lightweight, zero-dependency nature of `agent-core`.
 - **Evolvability**: Solid base for Sprint 8B (Visual MCP Manager) and future Capability Packs.
+
+---
+
+## Sprint 8A.1 Amendment: Protocol Conformance, DNS Pinning & Memory Ceilings
+
+Independent review of Sprint 8A identified seven subtle conformance and security gaps:
+1. **Wire Metadata Placement**: Modern MCP 2026-07-28 requires metadata in `params._meta` rather than root-level `_meta`. Fixed across all JSON-RPC requests (`io.modelcontextprotocol/protocolVersion`, `io.modelcontextprotocol/clientCapabilities`, and `io.modelcontextprotocol/clientInfo`).
+2. **HTTP Routing Headers**: Streamable HTTP 2026-07-28 mandates `Mcp-Method` on all requests and `Mcp-Name` for `tools/call` to support transparent gateway routing. Stateless requests must never send `Mcp-Session-Id`.
+3. **DNS Rebinding & Connection-Time Enforcement**: Ordinary URL validation before an unpinned `fetch` is vulnerable to TOCTOU DNS rebinding attacks. We implemented `createSafeLookupFunction` on `http.Agent` and `https.Agent`, enforcing verified destination checks at the exact socket creation instant.
+4. **IP Encoding & Normalization**: Extended parser to handle alternate IP representations (octal, hex, dword, and IPv4-mapped IPv6 like `::ffff:127.0.0.1` and `::ffff:192.168.1.1`).
+5. **Private Deployment Compatibility**: Added explicit `TrustedNetworkPolicy` allowing controlled private LAN/VPN access for approved hosts without opening unrestricted internal access.
+6. **Streaming Memory Ceilings**: Eliminated whole-response buffering (`res.arrayBuffer()`). Enforced chunk-by-chunk streaming limits with upfront `Content-Length` checks and immediate socket destruction upon exceeding `maxResponseBytes`.
+7. **Robust SSE Boundary Parsing**: Refactored SSE stream consumer to maintain state across chunk boundaries, join multiline `data:` events with newlines per the HTML/W3C standard, handle split CRLF, and preserve multibyte UTF-8 sequences.
+8. **Authentication Truthfulness**: Clarified that while Bearer tokens, SecretStorage resolution, and RFC 9728/8414 discovery/PKCE primitives are implemented, full interactive OAuth flows (browser callback, code exchange, refresh) remain unsupported and truthfully reported in diagnostics.

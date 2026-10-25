@@ -419,6 +419,19 @@ Sprint 8A — MCP Integration 2.0: Modern Transports, Secure Connections & Tool 
   - Verification evidence: 37/37 deterministic modern matrix tests (including real local HTTP fixture server), 8/8 VS Code command tests, 13/13 desktop smoke, 5/5 real packaged desktop runtime acceptance, 0 linter errors, 0 TypeScript errors.
   - Record: `docs/sprints/SPRINT_8A_MCP_INTEGRATION_2.md`.
 
+Sprint 8A.1 — MCP Protocol Conformance & Security Closure — SPRINT_8A1_ACCEPTED
+  - ADR-034 Amendment. Closes all 7 protocol conformance and security gaps identified during independent audit of Sprint 8A:
+    - Wire conformance: requests use `params._meta` (root-level `_meta` eliminated), required `io.modelcontextprotocol/protocolVersion` ("2026-07-28"), `io.modelcontextprotocol/clientCapabilities`, and `io.modelcontextprotocol/clientInfo`.
+    - Routing headers: added mandatory `Mcp-Method` on all requests and `Mcp-Name` on `tools/call`. Suppressed `Mcp-Session-Id` header for stateless requests.
+    - Connection-time DNS enforcement: built `createSafeLookupFunction` on `http.Agent`/`https.Agent` intercepting DNS lookups at socket creation time, preventing DNS rebinding attacks.
+    - IP normalization: parses and validates alternate IP representations (octal, hex, dword, IPv4-mapped IPv6 `::ffff:...`, link-local, carrier-grade NAT, multicast, reserved).
+    - Private deployment compatibility: explicit `TrustedNetworkPolicy` with default restrictive blocking and approved private host allowlisting.
+    - Streaming response bounding: replaced `res.arrayBuffer()` with streaming chunk consumption, upfront `Content-Length` enforcement, and early socket destruction on `maxResponseBytes` breach.
+    - Robust SSE parser: persists state across arbitrary network chunk boundaries, joins multiline `data:` events with newlines, safely strips trailing CRLF, and preserves multibyte UTF-8 code points.
+    - Truthful authentication diagnostics: accurately distinguishes supported Bearer/SecretStorage/RFC 9728/RFC 8414/PKCE primitives from unsupported interactive OAuth browser flows.
+    - Deterministic verification: 9/9 new tests in `mcp-conformance-security.test.ts` against `StrictMcpReferenceServer`, 52/52 agent-core MCP tests green, 8/8 vscode-integration MCP command tests green, 13/13 desktop smoke tests green, 5/5 real packaged desktop runtime acceptance tests green, 0 linter errors, 0 TypeScript errors.
+  - Record: `docs/sprints/SPRINT_8A1_MCP_CONFORMANCE_SECURITY.md`.
+
 Next:
 1. Sprint 8B — Visual MCP Management Surface & Configuration Hub.
 2. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
