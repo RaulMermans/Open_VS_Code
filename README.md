@@ -42,6 +42,8 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Local Model Runtime & FIM** | ✅ Complete | Canonical OpenAI-compatible endpoint contracts (`/v1`), explicit FIM prompt templating, local endpoint health probing, and privacy-preserving adaptive performance ledger. |
 | **Real Inference Safety Gate**| ✅ Complete | Explicit operator authorization (`OPEN_VS_CODE_REAL_INFERENCE=1`) preventing unauthorized inference, weight downloads, or proprietary cloud leaks. |
 | **Desktop Application & Packaging** | ✅ Complete | Branded, installable Open VS Code desktop app (`apps/desktop`) built on pinned VSCodium, bundling `@open-vs-code/vscode-integration` with zero telemetry. |
+| **Private Account Service** | ✅ Complete | Lightweight, separately deployable Node 22+ service (`@open-vs-code/account-service`) for private identity, Scrypt authentication, opaque session tokens, SQLite persistence, and persistent MCP integration registry. |
+
 
 ---
 
@@ -295,9 +297,28 @@ export OPEN_VS_CODE_REAL_INFERENCE=1
 npm run eval:models
 ```
 
+### Private Account Backend & Admin CLI (`packages/account-service`)
+
+The repository includes a private, administrator-controlled account service for maintaining personal identities and persistent MCP integration configurations:
+
+```bash
+# 1. Start account service on loopback (default: http://127.0.0.1:4040)
+export ACCOUNT_DB_PATH="$HOME/.open-vs-code/accounts.db"
+npx tsx packages/account-service/src/admin/admin-cli.ts serve --port 4040
+
+# 2. Bootstrap initial administrator (safe, one-time bootstrap; prompt for password)
+npx tsx packages/account-service/src/admin/admin-cli.ts bootstrap --username admin --role ADMIN
+
+# 3. Create regular user accounts as administrator
+npx tsx packages/account-service/src/admin/admin-cli.ts create-user --username developer --role USER
+```
+
+In Open VS Code Desktop, configure `open-vs-code.account.serverUrl` to `http://127.0.0.1:4040` and execute `Open VS Code: Log In to Account` from the Command Palette.
+
 ---
 
 ## 6. Philosophy
+
 
 1. **Local-First & Private**: The developer's code and reasoning never leave their machine. Zero required cloud services or accounts.
 2. **Open-Weight First**: Built to maximize the effectiveness of accessible open models (Qwen, DeepSeek, Llama) rather than relying on massive closed APIs.

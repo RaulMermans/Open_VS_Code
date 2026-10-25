@@ -432,8 +432,20 @@ Sprint 8A.1 — MCP Protocol Conformance & Security Closure — SPRINT_8A1_ACCEP
     - Deterministic verification: 9/9 new tests in `mcp-conformance-security.test.ts` against `StrictMcpReferenceServer`, 52/52 agent-core MCP tests green, 8/8 vscode-integration MCP command tests green, 13/13 desktop smoke tests green, 5/5 real packaged desktop runtime acceptance tests green, 0 linter errors, 0 TypeScript errors.
   - Record: `docs/sprints/SPRINT_8A1_MCP_CONFORMANCE_SECURITY.md`.
 
+Sprint 8B — Private Account Backend, Authentication & Persistent Integration Profiles — SPRINT_8B_ACCEPTED
+  - ADR-035. Implemented private, administrator-controlled account backend and integration profile management:
+    - Separately deployable `@open-vs-code/account-service` package with zero runtime dependencies beyond Node 22+ built-ins.
+    - Private provisioning model: no public registration, one-time bootstrap CLI (`open-vs-code-admin bootstrap`), explicit roles (`ADMIN`, `USER`), account activation/disabling, administrative password resets, and structured audit logs.
+    - Cryptographic security: Scrypt hashing (RFC 7914, $N=16384, r=8, p=1$), constant-time comparison, timing-equalized dummy verification preventing username enumeration, 32-byte opaque session tokens (`ovsc_sess_...`), verifier-only database persistence (SHA-256), and sliding-window rate limiting.
+    - Persistence & migrations: embedded SQLite (`node:sqlite` on Node 22+ with robust CLI fallback), versioned schema migrations, foreign keys with `ON DELETE CASCADE`, and server-side ownership enforcement (`owner_user_id`).
+    - Persistent integration registry: per-user MCP configuration registry with workspace policy enforcement (`integration_workspace_policies`); client secrets stay in VS Code `SecretStorage`, while future server-side secrets use an AES-256-GCM vault with external master keys.
+    - Desktop integration surface: `DesktopAccountManager` in `@open-vs-code/vscode-integration` providing native QuickPick login/logout, profile inspection, and MCP configuration synchronization.
+    - Offline & failure resilience: graceful fallback to `OFFLINE` and `STALE` without impeding local editing or local model inference; server-side writes fail closed.
+    - Deterministic verification: 56/56 account-service tests green, 137/137 vscode-integration tests green, 13/13 desktop smoke tests green, 5/5 real packaged desktop runtime acceptance tests green, 0 linter errors, 0 TypeScript errors.
+  - Record: `docs/sprints/SPRINT_8B_PRIVATE_ACCOUNTS.md`.
+
 Next:
-1. Sprint 8B — Visual MCP Management Surface & Configuration Hub.
+1. Sprint 8C — Visual MCP Management Surface & Configuration Hub.
 2. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
 3. Optional UX follow-up: packaged GUI checklist (7A–7D); provider-contract streaming; executable resume from the editor behind a UI re-authorization contract (ADR-033 §5).

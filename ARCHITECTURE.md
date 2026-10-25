@@ -700,3 +700,38 @@ Surfaces:
 - the VS Code setting `open-vs-code.learning.enabled` and the command *Open VS Code: Review Learning Candidates*.
 
 Guide: `docs/learning/LEARNING_SYSTEM.md`. V1.1 benchmark: `docs/evals/V1_1_BENCHMARK.md`.
+
+## Account Service & Integration Profile Architecture (Sprint 8B, ADR-035)
+
+Open VS Code maintains a strict boundary between user account/profile persistence and the local Agent Runtime. The account service (`packages/account-service`) is an independent, lightweight Node 22+ service:
+
+```text
+packages/account-service/
+├── auth/          # PasswordService (Scrypt), TokenService (opaque tokens/SHA-256 verifiers), RateLimiter, AuthService
+├── admin/         # AdminService (one-time bootstrap, account lifecycle, audit logs), AdminCli (open-vs-code-admin)
+├── db/            # AccountDatabase (node:sqlite DatabaseSync with CLI fallback), versioned migrations, repositories
+├── integration/   # IntegrationService (MCP registry, workspace policies, credential references)
+├── vault/         # VaultService interface, AesGcmVaultService (AES-256-GCM + HKDF), DisabledVaultService
+├── server/        # Native HttpServer (loopback enforcement, TLS requirement, 64 KB request ceiling)
+└── client/        # AccountClient (typed client for desktop extension and testing)
+```
+
+### Module Responsibilities
+
+| Module | Role | Security Guarantees |
+| :--- | :--- | :--- |
+| `auth` | Password hashing & session lifecycle | Scrypt ($N=16384, r=8, p=1$), constant-time comparison, timing-equalized dummy verification against username enumeration, 32-byte opaque tokens (`ovsc_sess_...`), verifier-only database storage (SHA-256), sliding window rate limiting (5 attempts/15 min). |
+| `admin` | User provisioning & audit | Private invite-free model. No public registration. One-time bootstrap mechanism. Role enforcement (`ADMIN`, `USER`). Immutable audit logging for all administrative events. |
+| `db` | Persistence & integrity | Embedded SQLite with foreign key enforcement (`PRAGMA foreign_keys = ON;`) and `ON DELETE CASCADE`. Strict server-side ownership constraints (`owner_user_id`). Versioned migrations (`schema_migrations`). |
+| `integration` | Persistent MCP registry | Stores per-user MCP server configurations, display names, transport types, non-secret parameters, and credential references. Enforces per-workspace policies (`integration_workspace_policies`). |
+| `vault` | Server-side secret vault | `VaultService` abstraction. `AesGcmVaultService` provides AES-256-GCM authenticated encryption using keys derived via HKDF from an external master secret (`ACCOUNT_VAULT_KEY`). Defaults to `DisabledVaultService` (fails closed) if unconfigured. |
+| `server` | Transport & API boundary | Loopback-only enforcement for plain HTTP (`127.0.0.1`, `localhost`). Non-loopback addresses mandate TLS/HTTPS. 64 KB body ceiling with stream draining on breach (`HTTP 413`). |
+
+### Desktop Extension Boundary (`DesktopAccountManager`)
+
+Inside `packages/vscode-integration/src/account/`:
+- **Session Persistence**: Session tokens are stored securely in `vscode.SecretStorage` (`open-vs-code.accountSession`).
+- **State Machine**: Coordinates transitions across `DISCONNECTED`, `CONNECTING`, `AUTHENTICATED`, `OFFLINE`, `STALE`.
+- **Runtime Decoupling**: If the account backend is unavailable, the desktop transitions to `OFFLINE` or displays cached profiles as `STALE`. Local coding, local tool execution, and local model inference are never blocked or degraded by account service availability.
+- **MCP Sync**: Syncs registered integration configurations directly into the existing `McpService`. Restored integrations default to `DISCONNECTED` and remain strictly governed by the local `PermissionGate`.
+

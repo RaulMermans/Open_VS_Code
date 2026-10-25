@@ -35,6 +35,11 @@
 | **H. SECRETS** | Environment variables | Subprocesses get only `{ PATH, NODE_ENV, npm_config_* }` |
 | | Config credentials | Never logged; never in route diagnostics |
 | | Terminal output | Existing redaction policy applies to known configured secrets |
+| **I. ACCOUNTS & PROFILES** | User identities | Administrator-created only; Scrypt hashed passwords |
+| | Session tokens | Opaque `ovsc_sess_...`; server stores only SHA-256 verifiers |
+| | MCP registrations | Non-secret configs and credential references only |
+| | Vault secrets | Authenticated AES-256-GCM encrypted; key outside database |
+
 
 ---
 
@@ -113,6 +118,27 @@ UI / future Runtime Evals:
 ### Confirmation Replay
 - **Input**: reused `confirmationId`, `mutationId`, or `verificationId`
 - **Control**: `#consumed` sets in `MutationEngine` and `VerificationEngine`; `rejectMutation` adds to consumed set
+
+### Account Takeover, Brute-Force & Credential Stuffing (Sprint 8B, ADR-035)
+- **Input**: automated login attempts with password dictionaries or stolen credentials
+- **Control**: password verification utilizes Scrypt ($N=16384, r=8, p=1$); sliding window rate limiter strictly enforces a maximum of 5 failed attempts per 15-minute window per IP or username, returning HTTP 429
+- **Result**: brute-force and credential stuffing attacks are computationally throttled and network blocked
+
+### Username Enumeration (Sprint 8B, ADR-035)
+- **Input**: login requests probing for valid vs invalid usernames via response timing
+- **Control**: authentication requests targeting nonexistent users trigger a timing-equalized dummy Scrypt verification using identical work factors ($N=16384, r=8, p=1$) and constant-time comparison
+- **Result**: timing differential between existing and nonexistent users is neutralized; identical error code `INVALID_CREDENTIALS` is returned
+
+### Cross-User Data Tampering & IDOR (Sprint 8B, ADR-035)
+- **Input**: crafted requests with foreign `user_id` or `id` targeting integrations, policies, or profiles
+- **Control**: the backend derives user identity strictly from the authenticated session verifier; all SQL queries enforce `owner_user_id = ?` or `user_id = ?`; client-supplied IDs are never trusted; database foreign keys use `ON DELETE CASCADE`
+- **Result**: foreign access attempts fail closed (`NOT_FOUND` or `FORBIDDEN`); zero cross-tenant leakage
+
+### Account Credential Boundary Crossing (Sprint 8B, ADR-035)
+- **Input**: attempting to store or sync sensitive provider tokens in MCP configuration or profile objects
+- **Control**: client-executed MCP servers store credentials in the client OS keychain via `vscode.SecretStorage`; the account database persists only non-secret configuration and a `credentialRef`; server-side vault records require explicit master key (`ACCOUNT_VAULT_KEY`) and use AES-256-GCM; unconfigured vault fails closed
+- **Result**: plaintext provider credentials never touch the account database or profile sync payloads
+
 - **Result**: second use fails closed
 
 ### Shell/Process Injection
@@ -235,6 +261,10 @@ UI / future Runtime Evals:
 14. **Skills are guidance, not authority**: a `SKILL.md` (built-in or workspace) can never register tools, change permission classifications, approve actions, disable verification, enable cloud fallback, or replace the task. Workspace skills are untrusted repository content and are ignored in untrusted workspaces.
 15. **Workflow stages only narrow authority**: a structured-workflow stage envelope can hide tools or deny actions but never upgrade a PermissionGate decision; review findings and stage membership are never approvals; COMPLETE requires a VERIFY `READY` verdict.
 16. **Learning never grants authority**: learning records and candidates are data; only explicitly approved memory or learned skills can influence a later prompt. Learned skills can only narrow or equal the 5A capability vocabulary (never `terminal`), and the PermissionGate stays final.
+17. **Account ADMIN does not grant Agent Core authority**: account administrator rights are strictly scoped to account/session/integration administration; they never bypass `PermissionGate`, escalate file system authority, or permit unconfirmed destructive tool actions.
+18. **Raw session tokens are never persisted by the server**: the account backend stores only cryptographically secure SHA-256 hashes of session tokens.
+19. **Client credentials never enter the account database**: client-executed MCP servers store credentials exclusively in client-side secure storage (`vscode.SecretStorage`); the server persists only `credentialRef` tokens.
+
 
 ---
 
