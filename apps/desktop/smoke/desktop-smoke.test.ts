@@ -686,4 +686,163 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
       delete process.env.OPEN_VS_CODE_REAL_INFERENCE;
     }
   });
+
+  test('14. [Category D — Packaged Integration] selecting custom profile results in correct execution contract, not merely updated UI label', async () => {
+    const tempWorkspace = mkdtempSync(join(tmpdir(), 'ovsc-packaged-custom-modes-'));
+    const ovscDir = join(tempWorkspace, '.open-vs-code');
+    mkdirSync(ovscDir, { recursive: true });
+
+    const customProfile = {
+      id: 'packaged-custom-plan',
+      name: 'Packaged Custom Plan',
+      description: 'Custom mode inside packaged desktop',
+      icon: 'code',
+      version: 1,
+      schemaVersion: 1,
+      source: 'workspace',
+      baseMode: 'PLAN',
+      scope: 'workspace',
+      enabled: true,
+      requiredSkills: [],
+      optionalSkills: [],
+      requiredMcpServers: [],
+      optionalMcpServers: [],
+      customInstructions: 'Packaged desktop custom plan instruction.',
+      toolAllowlist: ['read_file', 'search_text'],
+      createdAt: '2026-10-25T00:00:00.000Z',
+      updatedAt: '2026-10-25T00:00:00.000Z',
+    };
+    const modesConfig = {
+      $schema: 'https://raw.githubusercontent.com/RaulMermans/Open_VS_Code/main/config/schemas/modes.schema.json',
+      version: 1,
+      modes: [customProfile],
+    };
+    writeFileSync(join(ovscDir, 'modes.json'), JSON.stringify(modesConfig, null, 2), 'utf8');
+
+    const modelsConfig = {
+      $schema: 'https://raw.githubusercontent.com/RaulMermans/Open_VS_Code/main/config/schemas/models.schema.json',
+      providers: [
+        {
+          id: 'fixture-chat-provider',
+          kind: 'openai_compatible_local',
+          baseUrl: fixtureUrl,
+        },
+      ],
+      models: [
+        {
+          id: 'qwen-coder',
+          displayName: 'Qwen Coder',
+          family: 'qwen',
+          contextWindow: 8192,
+          capabilities: ['coding', 'toolUse'],
+          specialization: 'coding',
+        },
+      ],
+      deployments: [
+        {
+          id: 'fixture-chat',
+          providerId: 'fixture-chat-provider',
+          modelId: 'qwen-coder',
+          modelName: 'qwen2.5-coder:7b',
+          enabled: true,
+          priority: 10,
+        },
+      ],
+      routes: {
+        coding: ['fixture-chat'],
+        default: ['fixture-chat'],
+      },
+    };
+    writeFileSync(join(ovscDir, 'models.json'), JSON.stringify(modelsConfig, null, 2), 'utf8');
+
+    process.env.OPEN_VS_CODE_REAL_INFERENCE = '1';
+
+    try {
+      const bundledExtDir = join(
+        APP_PATH,
+        'Contents',
+        'Resources',
+        'app',
+        'extensions',
+        'open-vs-code.vscode-integration'
+      );
+      const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
+
+      mockVscode.workspace.workspaceFolders = [
+        {
+          uri: { fsPath: tempWorkspace, toString: () => `file://${tempWorkspace}` },
+          name: 'test-workspace',
+        },
+      ];
+
+      const mockContext = {
+        subscriptions: [],
+        extensionUri: { toString: () => 'file:///mock/extension' },
+        secrets: {
+          get: async () => undefined,
+          store: async () => {},
+        },
+      };
+
+      await extensionModule.activate(mockContext as any);
+      const chatCtrl = extensionModule._testSeam.chatController;
+      assert.ok(chatCtrl, 'ChatController must be initialized by packaged extension');
+
+      // 1. Select the custom profile via Webview message
+      await chatCtrl.handleWebviewMessage({
+        type: 'chat.setMode',
+        mode: 'PLAN',
+        customModeId: 'packaged-custom-plan',
+      });
+
+      // Assert UI / state was updated
+      assert.strictEqual(chatCtrl.state.mode, 'PLAN');
+      assert.strictEqual(chatCtrl.state.customModeId, 'packaged-custom-plan');
+      assert.strictEqual(chatCtrl.state.activeCustomProfile?.id, 'packaged-custom-plan');
+
+      // 2. Trigger execution turn with the selected custom mode
+      await chatCtrl.handleWebviewMessage({
+        type: 'chat.send',
+        text: 'Perform packaged custom plan audit',
+        mode: 'PLAN',
+        customModeId: 'packaged-custom-plan',
+      });
+
+      // Await turn completion
+      let turnCompleted = false;
+      for (let i = 0; i < 50; i++) {
+        if (!chatCtrl.state.activeTurn && chatCtrl.state.messages.some((m: any) => m.role === 'assistant')) {
+          turnCompleted = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(turnCompleted, true, 'Custom mode task must complete in packaged desktop');
+
+      // 3. Verify execution contract: custom instructions reached the model request
+      const recorded = smokeFixture.recordedRequests.filter(
+        (r) => r.method === 'POST' && r.url?.includes('/chat/completions')
+      );
+      assert.ok(recorded.length > 0, 'Model request must have been dispatched');
+      const latestReq = recorded[recorded.length - 1];
+      const allPromptText = JSON.stringify(latestReq.body);
+      assert.ok(
+        allPromptText.includes('Packaged desktop custom plan instruction'),
+        'Custom mode instructions must reach actual model prompt in packaged app'
+      );
+
+      // Verify that tool allowlist constrained the tools sent to the model (only read_file, search_text)
+      if (latestReq.body.tools) {
+        const toolNames = latestReq.body.tools.map((t: any) => t.function?.name || t.name);
+        assert.ok(!toolNames.includes('create_file'), 'Mutating tools must not exist in PLAN execution contract');
+      }
+
+      await extensionModule.deactivate();
+    } finally {
+      delete process.env.OPEN_VS_CODE_REAL_INFERENCE;
+      rmSync(tempWorkspace, { recursive: true, force: true });
+    }
+  });
+
+
 });

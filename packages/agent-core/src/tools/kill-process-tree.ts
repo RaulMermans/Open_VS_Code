@@ -7,15 +7,15 @@ export function killProcessTree(child: ChildProcess): void {
     spawn("taskkill", ["/pid", child.pid.toString(), "/T", "/F"], { stdio: "ignore" })
   } else {
     try {
-      // If the process was spawned with detached: true, we can kill its process group
-      process.kill(-child.pid, "SIGKILL")
+      child.kill("SIGKILL");
     } catch {
-      // Fallback in case process is already dead or group doesn't exist
-      try {
-        child.kill("SIGKILL")
-      } catch {
-        // Ignore
-      }
+      // Ignore
+    }
+    try {
+      // If the process was spawned with detached: true, we can kill its process group
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // Ignore
     }
   }
 }

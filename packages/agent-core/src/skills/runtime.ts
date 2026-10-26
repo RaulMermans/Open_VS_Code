@@ -84,6 +84,7 @@ export interface PrepareSkillGuidanceInput {
   readonly reservedTokens?: number
   readonly budgetFraction?: number
   readonly maxSkills?: number
+  readonly explicitSkillIds?: readonly string[] | undefined
 }
 
 export interface PreparedSkillGuidance {
@@ -131,6 +132,7 @@ export async function prepareSkillGuidance(input: PrepareSkillGuidanceInput): Pr
     availableTools: input.availableTools,
     ...(input.permissionEvaluator ? { permissionEvaluator: input.permissionEvaluator } : {}),
     ...(input.maxSkills !== undefined ? { maxSkills: input.maxSkills } : {}),
+    ...(input.explicitSkillIds ? { explicitSkillIds: input.explicitSkillIds } : {}),
   })
 
   const fraction = input.budgetFraction ?? DEFAULT_SKILL_BUDGET_FRACTION

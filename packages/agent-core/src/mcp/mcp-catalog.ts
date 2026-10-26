@@ -118,6 +118,10 @@ export class McpCatalog {
     return this.metrics;
   }
 
+  getConfig(): McpConfig {
+    return this.config;
+  }
+
   /**
    * Register or update an MCP server configuration in the catalog.
    * State defaults to DISCONNECTED (if enabled) or DISABLED (if disabled).
@@ -287,6 +291,13 @@ export class McpCatalog {
       const serverTools = await transport.listTools(signal);
       const discovered: McpToolMetadata[] = [];
       const seenInServer = new Set<string>();
+
+      // Clear any prior tools registered for this server to prevent duplicate collisions
+      for (const [canonicalName, meta] of Array.from(this.tools.entries())) {
+        if (meta.serverId === serverId) {
+          this.tools.delete(canonicalName);
+        }
+      }
 
       for (const tool of serverTools) {
         if (seenInServer.has(tool.name)) {

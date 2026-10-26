@@ -466,6 +466,17 @@ Sprint 8D — Custom Modes Engine, Mode Profiles & Account-Aware Execution — S
     - Deterministic Verification: 679/679 agent-core tests green (27 new), 73/73 account-service tests green (7 new), 183/183 vscode-integration tests green (18 new), 14/14 runtime evals green, 40/40 skills evals green, 19/19 workflow evals green, 13/13 desktop smoke green, 5/5 packaged desktop acceptance green. 0 lint errors, 0 TypeScript errors.
   - Record: `docs/sprints/SPRINT_8D_CUSTOM_MODES.md`.
 
+Sprint 8D.1 — Custom Modes End-to-End Execution & Integration Closure — SPRINT_8D1_ACCEPTED
+  - ADR-037 amended. Closed the end-to-end execution boundary between Custom Modes and runtime components (`AgentSessionBridge`, `AgentRuntime`, `PermissionGate`, tools):
+    - Authoritative Production Capability Snapshot: Replaced empty mock capability arrays with a single runtime-grounded snapshot (`IntegrationManagerController.getProductionCapabilitySnapshot()`) deriving live workspace trust, authenticated account session state, active account/workspace policies, registered tools, enabled skills, connected MCP servers, and available local model deployments.
+    - Unified MCP Catalog Ownership: Reused long-lived `McpCatalog` from `McpService` directly in `AgentRuntime`, eliminating redundant subprocesses while enforcing mode and user authorization boundaries.
+    - Concrete Tool Allowlists: Mapped tool names to real action categories (`KNOWN_REPOSITORY_TOOL_ACTIONS`), computing effective tools via intersection with base mode permissions.
+    - Strict Base-Mode Enforcement: Guaranteed `resolvedProfile.baseMode === executionMode` at runtime boundary; failed closed on unready, disabled, or unauthenticated profiles.
+    - Profile Execution Effects: Bound `effectiveModelId` to `RoutedModelGateway`, respected `effectiveWorkflow` in workflow gate, injected required skills into model context compilation, and injected custom instructions into project instructions.
+    - Real-Time Account Invalidation: Attached account state listener in `ChatController` to cancel active turns on account logout/switch; purged account-owned MCP servers immediately.
+    - Comprehensive Verification: 20/20 end-to-end integration scenarios passing (`custom-modes-e2e.test.ts`), 203/203 vscode-integration tests, 706/706 agent-core tests, 73/73 account-service tests, 14/14 desktop smoke tests (including packaged desktop custom mode execution contract test), and 5/5 real desktop acceptance tests. 0 lint errors, 0 TypeScript errors.
+  - Record: `docs/sprints/SPRINT_8D1_CUSTOM_MODES_RUNTIME_CLOSURE.md`.
+
 Next:
 1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
 2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.

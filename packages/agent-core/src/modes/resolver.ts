@@ -8,6 +8,23 @@ import type {
 
 const MUTATING_MODES: ReadonlySet<AgentMode> = new Set(["BUILD", "DEBUG"]);
 
+export const KNOWN_REPOSITORY_TOOL_ACTIONS: Readonly<Record<string, ToolAction>> = Object.freeze({
+  read_file: "read_repository",
+  list_directory: "read_repository",
+  search_text: "search_repository",
+  find_files: "search_repository",
+  apply_patch: "write_file",
+  create_file: "write_file",
+  write_file: "write_file",
+  delete_file: "delete_file",
+  run_verification: "run_known_test",
+  run_known_test: "run_known_test",
+  terminal_command: "terminal_command",
+  git_commit: "git_commit",
+  git_push: "git_push",
+  deploy: "deploy",
+});
+
 export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecutionProfile {
   const {
     profile,
@@ -17,6 +34,7 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
     availableTools,
     availableDeployments,
     globalWorkflowEnabled = false,
+    globalSkillsEnabled,
     accountPolicy,
   } = input;
 
@@ -50,7 +68,13 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
       isReady = false;
       diagnostics.push(`Required skill "${skillId}" is blocked by account policy.`);
     } else if (availableSkillIds.has(skillId)) {
-      appliedSkills.push(skillId);
+      if (globalSkillsEnabled === false) {
+        missingRequiredSkills.push(skillId);
+        isReady = false;
+        diagnostics.push(`Global skills feature flag is disabled; required skill "${skillId}" cannot be applied.`);
+      } else {
+        appliedSkills.push(skillId);
+      }
     } else {
       missingRequiredSkills.push(skillId);
       isReady = false;
@@ -63,7 +87,12 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
       diagnostics.push(`Optional skill "${skillId}" is blocked by account policy.`);
       missingOptionalSkills.push(skillId);
     } else if (availableSkillIds.has(skillId)) {
-      appliedSkills.push(skillId);
+      if (globalSkillsEnabled === false) {
+        missingOptionalSkills.push(skillId);
+        diagnostics.push(`Global skills feature flag is disabled; optional skill "${skillId}" omitted.`);
+      } else {
+        appliedSkills.push(skillId);
+      }
     } else {
       missingOptionalSkills.push(skillId);
       diagnostics.push(`Optional skill "${skillId}" is not installed; omitted.`);
@@ -114,40 +143,57 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
 
   // 5. Tool allowlist and permission restrictions
   // Invariant: profile cannot expand tools beyond baseMode permissions or availableTools
-  const availableToolSet = new Set(availableTools);
+  interface NormalizedTool {
+    name: string;
+    action: ToolAction;
+  }
+  const normalizedTools: NormalizedTool[] = [];
+  for (const raw of availableTools) {
+    const name = typeof raw === "string" ? raw : raw.name;
+    let action: ToolAction;
+    if (typeof raw === "object" && raw.action) {
+      action = raw.action as ToolAction;
+    } else if (KNOWN_REPOSITORY_TOOL_ACTIONS[name]) {
+      action = KNOWN_REPOSITORY_TOOL_ACTIONS[name];
+    } else if (name.startsWith("mcp__") || name.startsWith("mcp_")) {
+      action = "mcp_external_unknown";
+    } else {
+      action = name as ToolAction;
+    }
+    normalizedTools.push({ name, action });
+  }
+
   const effectiveTools: string[] = [];
 
-  // Determine tools allowed under canonical PermissionGate for baseMode
-  for (const toolName of availableTools) {
-    // Map tool name to action category
-    const action = toolName as ToolAction;
-    const permission = classifyPermission({ action, mode: baseMode });
-
+  for (const tool of normalizedTools) {
+    const permission = classifyPermission({ action: tool.action, mode: baseMode });
     if (permission === "DENY") {
       // Forbidden under baseMode
       continue;
     }
 
     if (profile.toolAllowlist !== undefined) {
-      if (profile.toolAllowlist.includes(toolName)) {
-        effectiveTools.push(toolName);
+      if (profile.toolAllowlist.includes(tool.name) || profile.toolAllowlist.includes(tool.action)) {
+        effectiveTools.push(tool.name);
       }
     } else {
-      effectiveTools.push(toolName);
+      effectiveTools.push(tool.name);
     }
   }
 
   if (profile.toolAllowlist !== undefined) {
-    for (const toolName of profile.toolAllowlist) {
-      if (!availableToolSet.has(toolName)) {
-        diagnostics.push(`Allowlisted tool "${toolName}" is not registered in the tool runtime.`);
+    for (const requested of profile.toolAllowlist) {
+      const match = normalizedTools.filter((t) => t.name === requested || t.action === requested);
+      if (match.length === 0) {
+        diagnostics.push(`Allowlisted tool "${requested}" is not registered in the tool runtime.`);
       } else {
-        const action = toolName as ToolAction;
-        const perm = classifyPermission({ action, mode: baseMode });
-        if (perm === "DENY") {
-          permissionRestrictions.push(
-            `Tool "${toolName}" rejected: forbidden by base mode ${baseMode} (PermissionGate non-bypass).`
-          );
+        for (const t of match) {
+          const perm = classifyPermission({ action: t.action, mode: baseMode });
+          if (perm === "DENY") {
+            permissionRestrictions.push(
+              `Tool "${t.name}" rejected: forbidden by base mode ${baseMode} (PermissionGate non-bypass).`
+            );
+          }
         }
       }
     }
@@ -176,7 +222,14 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
     }
   }
 
-  // 8. Base mode communication notice
+  // 8. Unsupported profile controls audit
+  if (profile.verificationPreferences?.testCommandOverride) {
+    diagnostics.push(
+      "verificationPreferences.testCommandOverride is not supported; verification commands are discovered from repository manifest (ADR-021 safety invariant)."
+    );
+  }
+
+  // 9. Base mode communication notice
   if (MUTATING_MODES.has(baseMode)) {
     permissionRestrictions.push(
       `Mode utilizes base mode ${baseMode}. Tool mutations will request human confirmation through PermissionGate.`
@@ -193,6 +246,7 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
     baseMode,
     effectiveTools: Object.freeze(effectiveTools),
     customInstructions: profile.customInstructions,
+    contextGuidance: profile.contextGuidance,
     appliedSkills: Object.freeze(appliedSkills),
     missingRequiredSkills: Object.freeze(missingRequiredSkills),
     missingOptionalSkills: Object.freeze(missingOptionalSkills),

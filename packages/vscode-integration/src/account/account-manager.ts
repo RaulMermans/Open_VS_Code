@@ -118,12 +118,22 @@ export class DesktopAccountManager {
   }
 
   public async cleanupAccountIntegrations(mcpService?: McpService, modeService?: ModeService): Promise<void> {
-    if (mcpService && this.accountOwnedServerIds.size > 0) {
+    if (mcpService) {
       for (const serverId of Array.from(this.accountOwnedServerIds)) {
         try {
           await mcpService.unregisterServer(serverId);
         } catch {
           // Safe unregister
+        }
+      }
+      // Guarantee all account-provenance servers are flushed
+      for (const [serverId, prov] of (mcpService as any).provenanceMap.entries()) {
+        if (prov === "account") {
+          try {
+            await mcpService.unregisterServer(serverId);
+          } catch {
+            // Safe unregister
+          }
         }
       }
     }

@@ -74,6 +74,7 @@ export interface RoutedGatewayOptions {
   readonly hasTools: boolean
   readonly hasStructuredOutput: boolean
   readonly budget?: ContextBudget
+  readonly preferredDeploymentId?: string | undefined
 }
 
 /**
@@ -103,6 +104,7 @@ export class RoutedModelGateway implements ModelProvider {
   readonly #hasTools: boolean
   readonly #hasStructuredOutput: boolean
   readonly #budget: ContextBudget | undefined
+  readonly #preferredDeploymentId: string | undefined
 
   #lastDecision?: RouteDecision
   #lastDiagnostics?: RouteDiagnostics
@@ -119,6 +121,7 @@ export class RoutedModelGateway implements ModelProvider {
     this.#hasTools = options.hasTools
     this.#hasStructuredOutput = options.hasStructuredOutput
     this.#budget = options.budget
+    this.#preferredDeploymentId = options.preferredDeploymentId
 
     // Aggregate capabilities from all registered providers
     const allCaps = new Set<ModelCapability>()
@@ -133,13 +136,17 @@ export class RoutedModelGateway implements ModelProvider {
   get lastDecision(): RouteDecision | undefined { return this.#lastDecision }
   get lastDiagnostics(): RouteDiagnostics | undefined { return this.#lastDiagnostics }
   get performanceLedger(): ModelPerformanceLedger | undefined { return this.#performanceLedger }
+  get preferredDeploymentId(): string | undefined { return this.#preferredDeploymentId }
 
   async complete(request: ModelRequest): Promise<ModelResponse> {
     // Step 1: Estimate input tokens from request
     const estimatedInputTokens = this.#estimateInputTokens(request)
 
     // Step 2: Build route requirements from actual runtime facts
-    const hint = request.metadata?.routeHint as ModelRouteHint | undefined
+    const baseHint = request.metadata?.routeHint as ModelRouteHint | undefined
+    const hint: ModelRouteHint | undefined = this.#preferredDeploymentId
+      ? { preferredDeploymentId: this.#preferredDeploymentId, ...baseHint }
+      : baseHint
     const reqInput: RouteRequirementsInput = {
       mode: this.#mode,
       estimatedInputTokens,

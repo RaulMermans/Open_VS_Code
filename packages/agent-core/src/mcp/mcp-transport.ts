@@ -227,6 +227,14 @@ export class StdioMcpTransport implements McpTransport {
       this.rl = undefined;
     }
     if (this.child) {
+      try {
+        this.child.stdin?.end();
+        this.child.stdout?.destroy();
+        this.child.stderr?.destroy();
+        this.child.unref();
+      } catch {
+        // Safe stream destruction
+      }
       killProcessTree(this.child);
       this.child = undefined;
     }
