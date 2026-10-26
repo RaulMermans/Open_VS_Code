@@ -4,6 +4,7 @@ import { CapabilityPackRepository } from "../db/repositories/pack-repository.js"
 import { AuditRepository } from "../db/repositories/audit-repository.js";
 import type { AccountCapabilityPack } from "../types.js";
 import { ConflictError, InvalidInputError, NotFoundError } from "../errors.js";
+import { validateCapabilityPackManifest, verifyPackIntegrity } from "@open-vs-code/agent-core";
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
@@ -32,6 +33,17 @@ export class CapabilityPackService {
   async install(ownerUserId: string, manifest: any): Promise<AccountCapabilityPack> {
     if (!manifest || typeof manifest !== "object") {
       throw new InvalidInputError("Manifest must be a non-null object.");
+    }
+
+    const validation = validateCapabilityPackManifest(manifest);
+    if (!validation.valid) {
+      throw new InvalidInputError(`Capability pack manifest validation failed: ${validation.errors.join("; ")}`);
+    }
+
+    if (!verifyPackIntegrity(manifest, manifest.integrity)) {
+      throw new InvalidInputError(
+        "Manifest integrity verification failed: digest mismatch. Checksum provides integrity, not publisher authenticity."
+      );
     }
 
     const packId = manifest.id;
@@ -121,6 +133,17 @@ export class CapabilityPackService {
       throw new InvalidInputError("New manifest must be a non-null object.");
     }
 
+    const validation = validateCapabilityPackManifest(newManifest);
+    if (!validation.valid) {
+      throw new InvalidInputError(`New manifest validation failed: ${validation.errors.join("; ")}`);
+    }
+
+    if (!verifyPackIntegrity(newManifest, newManifest.integrity)) {
+      throw new InvalidInputError(
+        "New manifest integrity verification failed: digest mismatch. Checksum provides integrity, not publisher authenticity."
+      );
+    }
+
     const newVersion = newManifest.version;
     if (!newVersion || typeof newVersion !== "string" || !SEMVER_PATTERN.test(newVersion)) {
       throw new InvalidInputError(`Invalid SemVer version "${String(newVersion)}".`);
@@ -169,7 +192,16 @@ export class CapabilityPackService {
     try {
       prevParsed = JSON.parse(existing.previousManifestJson);
     } catch {
-      // Safe fallback
+      throw new InvalidInputError(`Corrupt previous manifest JSON for pack "${packId}".`);
+    }
+
+    const validation = validateCapabilityPackManifest(prevParsed);
+    if (!validation.valid) {
+      throw new InvalidInputError(`Rollback manifest validation failed: ${validation.errors.join("; ")}`);
+    }
+
+    if (!verifyPackIntegrity(prevParsed, prevParsed.integrity)) {
+      throw new InvalidInputError("Rollback manifest integrity verification failed: digest mismatch.");
     }
 
     const rolledBack: AccountCapabilityPack = {

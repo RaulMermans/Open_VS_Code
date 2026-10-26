@@ -1,8 +1,8 @@
 # ADR-038: Capability Packs — Declarative Packaging, Dependency Resolution & Governed Installation
 
-- **Status**: Accepted
+- **Status**: Accepted (Amended in Sprint 8E.1)
 - **Date**: 2026-10-26
-- **Sprint**: 8E
+- **Sprint**: 8E, 8E.1 (Capability Packs Integrity, Isolation & Runtime Closure)
 - **Preceded by**: ADR-014 (Metadata-First Skills), ADR-015 (Bounded MCP Integration), ADR-018 (Chat UX Layer), ADR-023 (System Security Boundaries), ADR-029 (Portable Skills Runtime), ADR-034 (MCP Modern Transports & Governance), ADR-035 (Private Accounts & Integration Profiles), ADR-036 (Visual Integration Manager & MCP Lifecycle UX), ADR-037 (Custom Modes Engine & Execution Profiles)
 
 ---
@@ -99,6 +99,13 @@ To prevent ambient authority and supply-chain exploits, pack management enforces
 
 All manifests conform to `open-vs-code/capability-pack@v1`. Manifests must be treated as untrusted external inputs.
 
+### Manifest Integrity Verification (Sprint 8E.1)
+1. **Canonical Serialization**: Manifest digests are calculated using recursive lexicographical key sorting, preserving array ordering, deterministic JSON primitive encoding, and strictly excluding the top-level `integrity` field.
+2. **Digest Verification**: The SHA-256 digest is strictly verified during import, installation, update, rollback, and persisted-record loading.
+3. **Fail-Closed Mismatch Rejection**: Any digest mismatch rejects the manifest immediately with a terminal error; verification failures are **never** downgraded to a warning.
+4. **Authenticity Notice**: A checksum provides integrity, not publisher authenticity. The system explicitly communicates this boundary in documentation and diagnostics.
+5. **Tamper Defense**: Valid-schema manifests with altered custom instructions, expanded permissions, or injected dependencies are rejected due to digest mismatch.
+
 ### A. Manifest Structure (`CapabilityPackManifest`)
 - **Metadata**: `id` (alphanumeric/kebab-case), `name`, `description`, `version` (strict SemVer), `publisher` (`id`, `displayName`, `verified`, `repositoryUrl`, `contactUrl`), `source` (`repositoryUrl`, `commit`, `release`, `tag`), `license` (SPDX identifier), `engines` (`openVsCode` compatible version range).
 - **Referenced Capabilities**:
@@ -152,20 +159,31 @@ The `PackResolver` deterministically inspects the host environment and dependenc
 
 Capability Packs support dual-scope persistence:
 
-### A. Account Packs (Server-Side Persistence)
+### A. Account Packs (Server-Side Persistence & Ephemeral Client Profiles)
 - Persisted in the authenticated user's account database via `AccountService` (SQLite `capability_packs` table with user isolation and audit logging).
 - Seamlessly synchronize across developer machines upon account login.
+- **Sprint 8E.1 Correction**: Account pack modes are registered strictly as ephemeral, account-scoped in-memory execution profiles in `ModeService`. They are **never** converted into or persisted as durable workspace profiles (`.open-vs-code/modes.json`).
 - Pack configuration is strictly separated from machine-specific credentials and local binaries.
+- On account logout or account switch:
+  - Account-derived modes and packs are immediately flushed from memory.
+  - Active turn executions and pending user confirmations are cancelled immediately.
+  - Chat controller active modes revert to base `ASK` mode.
+  - Subsequent users (e.g., Alice → logout → Bob) within the same workspace and across application restarts have zero leakage of account modes or packs.
 
 ### B. Workspace Packs (Local Git-Committed Configuration)
-- Persisted in `.open-vs-code/packs.json` inside the repository.
+- Persisted in `.open-vs-code/packs.json` inside the repository using atomic temporary-file writes (`packs.json.tmp` -> `renameSync`).
+- Corrupt records are backed up safely to `.open-vs-code/packs.json.corrupt.<timestamp>` to prevent crash loops and enable recovery.
 - Version-controlled alongside repository code for reproducible team workflows.
 - Subject to workspace trust boundaries.
 
-### C. Precedence and Conflict Handling
+### C. Precedence, Conflict Handling & Cross-Device Restoration
 - If a pack ID exists in both scopes: **Workspace configuration takes precedence** over Account configuration for execution settings, preserving project-specific requirements.
 - On account logout or switch: Account-derived packs are immediately removed from the active runtime and mode registry. Workspace packs remain untouched.
 - Active sessions dependent on account packs are safely transitioned or terminated.
+- **Cross-Device Restoration (Device A → Device B)**:
+  - Proven across independent client storage environments sharing the same account backend.
+  - Device B synchronizes packs from the account backend, registers effective modes in-memory, and executes permitted tasks through `AgentRuntime` with zero reliance on Device A's `.open-vs-code/modes.json`.
+  - Missing local executables, unconfigured tools, or missing credentials produce explicit blocked states (`isReady: false` with diagnostics) and fail closed.
 
 ---
 

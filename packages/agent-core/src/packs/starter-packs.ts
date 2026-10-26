@@ -2,8 +2,7 @@ import type { CapabilityPackManifest } from "./contracts.ts";
 import { computeManifestDigest } from "./validation.ts";
 
 function createCanonicalManifest(draft: Omit<CapabilityPackManifest, "integrity">): CapabilityPackManifest {
-  const content = JSON.stringify(draft);
-  const digest = computeManifestDigest(content);
+  const digest = computeManifestDigest(draft);
   return Object.freeze({
     ...draft,
     integrity: Object.freeze({

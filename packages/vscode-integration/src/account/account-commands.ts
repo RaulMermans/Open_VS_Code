@@ -1,12 +1,16 @@
 import * as vscode from "vscode";
 import type { DesktopAccountManager } from "./account-manager.js";
 import type { McpService } from "../mcp/mcp-service.js";
+import type { ModeService } from "../modes/mode-service.js";
+import type { CapabilityPackService } from "../packs/capability-pack-service.js";
 
 export function registerAccountCommands(
   context: vscode.ExtensionContext,
   accountManager: DesktopAccountManager,
   mcpService?: McpService,
-  outputChannel?: vscode.OutputChannel
+  outputChannel?: vscode.OutputChannel,
+  modeService?: ModeService,
+  packService?: CapabilityPackService
 ): vscode.Disposable[] {
   const disposables: vscode.Disposable[] = [];
 
@@ -21,7 +25,7 @@ export function registerAccountCommands(
           "Cancel"
         );
         if (choice !== "Switch Account") return;
-        await accountManager.logout(mcpService);
+        await accountManager.logout(mcpService, modeService, packService);
       }
 
       const defaultUrl = state.serverUrl || "http://127.0.0.1:4040";
@@ -60,7 +64,9 @@ export function registerAccountCommands(
               username.trim(),
               password,
               serverUrl.trim(),
-              mcpService
+              mcpService,
+              modeService,
+              packService
             );
             vscode.window.showInformationMessage(
               `Successfully logged in as ${user.username} (${user.role}).`
@@ -91,7 +97,7 @@ export function registerAccountCommands(
       );
       if (confirmed !== "Log Out") return;
 
-      await accountManager.logout(mcpService);
+      await accountManager.logout(mcpService, modeService, packService);
       vscode.window.showInformationMessage("Logged out of Open VS Code account.");
     })
   );
@@ -182,7 +188,7 @@ export function registerAccountCommands(
             title: "Synchronizing MCP integrations from account backend...",
             cancellable: false,
           },
-          async () => accountManager.syncIntegrations(mcpService, mcpService.getRoot())
+          async () => accountManager.syncIntegrations(mcpService, mcpService.getRoot(), modeService, packService)
         );
 
         if (result.isOffline) {

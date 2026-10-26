@@ -120,7 +120,7 @@
         "peakContextTokens": 288,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 184.154541
+        "latencyMs": 304.23575
       },
       {
         "fixture": "T1",
@@ -135,7 +135,7 @@
         "peakContextTokens": 606,
         "repairCycles": 0,
         "approvals": 3,
-        "latencyMs": 282.12308299999995,
+        "latencyMs": 492.434167,
         "stageTokens": {
           "PLAN": 230,
           "IMPLEMENT": 395,
@@ -159,7 +159,7 @@
         "peakContextTokens": 470,
         "repairCycles": 1,
         "approvals": 4,
-        "latencyMs": 296.73875
+        "latencyMs": 532.447791
       },
       {
         "fixture": "T2",
@@ -174,7 +174,7 @@
         "peakContextTokens": 599,
         "repairCycles": 1,
         "approvals": 5,
-        "latencyMs": 423.0892920000001,
+        "latencyMs": 798.8600000000001,
         "stageTokens": {
           "PLAN": 234,
           "IMPLEMENT": 427,
@@ -198,7 +198,7 @@
         "peakContextTokens": 300,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 160.50970899999993
+        "latencyMs": 312.9437499999999
       },
       {
         "fixture": "T3",
@@ -213,7 +213,7 @@
         "peakContextTokens": 642,
         "repairCycles": 0,
         "approvals": 3,
-        "latencyMs": 272.573208,
+        "latencyMs": 568.9472500000002,
         "stageTokens": {
           "PLAN": 239,
           "IMPLEMENT": 432,
@@ -237,7 +237,7 @@
         "peakContextTokens": 286,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 150.78887499999996
+        "latencyMs": 315.10229200000003
       },
       {
         "fixture": "T4",
@@ -252,7 +252,7 @@
         "peakContextTokens": 604,
         "repairCycles": 0,
         "approvals": 3,
-        "latencyMs": 288.7714159999998,
+        "latencyMs": 520.070209,
         "stageTokens": {
           "PLAN": 233,
           "IMPLEMENT": 394,
@@ -276,7 +276,7 @@
         "peakContextTokens": 280,
         "repairCycles": 0,
         "approvals": 2,
-        "latencyMs": 155.17845799999986
+        "latencyMs": 281.1232920000002
       },
       {
         "fixture": "T5",
@@ -291,7 +291,7 @@
         "peakContextTokens": 625,
         "repairCycles": 1,
         "approvals": 5,
-        "latencyMs": 417.37033399999973,
+        "latencyMs": 800.8111250000002,
         "stageTokens": {
           "PLAN": 217,
           "IMPLEMENT": 479,
@@ -315,7 +315,7 @@
         "peakContextTokens": 110,
         "repairCycles": 0,
         "approvals": 0,
-        "latencyMs": 3.6399169999999685
+        "latencyMs": 5.132542000000285
       },
       {
         "fixture": "T6",
@@ -330,7 +330,7 @@
         "peakContextTokens": 110,
         "repairCycles": 0,
         "approvals": 0,
-        "latencyMs": 3.8514579999996386,
+        "latencyMs": 4.923249999999825,
         "workflowEligible": false
       }
     ],
@@ -345,7 +345,7 @@
       "peakContextTokens": 470,
       "repairCycles": 1,
       "approvals": 12,
-      "latencyMs": 947
+      "latencyMs": 1746
     },
     "workflow": {
       "tasks": 5,
@@ -358,7 +358,7 @@
       "peakContextTokens": 642,
       "repairCycles": 2,
       "approvals": 19,
-      "latencyMs": 1684
+      "latencyMs": 3181
     }
   },
   "bias": {
