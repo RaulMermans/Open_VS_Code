@@ -4,6 +4,7 @@ import {
   type CustomModeProfile,
   type ResolvedExecutionProfile,
   type ModeResolverInput,
+  type RegisteredToolInfo,
   getStarterModeProfiles,
   validateCustomModeProfile,
   resolveExecutionProfile,
@@ -371,9 +372,10 @@ export class ModeService {
       workspaceTrusted: boolean;
       availableSkills: { id: string; name?: string }[];
       availableMcpServers: { id: string; connected: boolean; enabled: boolean }[];
-      availableTools: string[];
+      availableTools: (string | RegisteredToolInfo)[];
       availableDeployments?: string[];
       globalWorkflowEnabled?: boolean;
+      globalSkillsEnabled?: boolean;
       accountPolicy?: { allowedModes?: string[]; blockedIntegrations?: string[] };
     }
   ): ResolvedExecutionProfile {
@@ -390,6 +392,7 @@ export class ModeService {
       availableTools: context.availableTools,
       availableDeployments: context.availableDeployments,
       globalWorkflowEnabled: context.globalWorkflowEnabled,
+      globalSkillsEnabled: context.globalSkillsEnabled,
       accountPolicy: context.accountPolicy,
     });
   }

@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget, isSkillApplied } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -15,6 +15,8 @@ export interface BridgeOptions {
   progressMonitor?: { enabled: boolean };
   /** Bounded memory-to-skill learning (ADR-032); disabled unless the host enables it. */
   learning?: { enabled: boolean };
+  /** Authoritative MCP catalog (e.g. from McpService) */
+  mcpCatalog?: McpCatalog;
 }
 
 export class AgentSessionBridge {
@@ -27,6 +29,7 @@ export class AgentSessionBridge {
   private workflow?: BridgeOptions["workflow"];
   private progressMonitor?: BridgeOptions["progressMonitor"];
   private learning?: BridgeOptions["learning"];
+  private mcpCatalog?: BridgeOptions["mcpCatalog"];
   private lastWorkflowState?: WorkflowState;
   
   constructor(options: BridgeOptions) {
@@ -37,6 +40,7 @@ export class AgentSessionBridge {
     this.workflow = options.workflow;
     this.progressMonitor = options.progressMonitor;
     this.learning = options.learning;
+    this.mcpCatalog = options.mcpCatalog;
   }
 
   /** Bounded workflow state of the most recent structured task, if one ran. */
@@ -88,18 +92,33 @@ export class AgentSessionBridge {
       return { status: "FAILED", failureReason: "INTERNAL_ERROR", turns: 0, finalState: { status: "FAILED", events: [] }, events: [], contextDiagnostics: [], toolCalls: [] };
     }
 
-    if (resolvedProfile && !resolvedProfile.isReady) {
-      const msg = `Custom mode "${resolvedProfile.profileName}" is not ready for execution: ${resolvedProfile.diagnostics.join("; ")}`;
-      await this.host.showError(msg);
-      return {
-        status: "FAILED",
-        failureReason: "INTERNAL_ERROR",
-        turns: 0,
-        finalState: { status: "FAILED", events: [] },
-        events: [],
-        contextDiagnostics: resolvedProfile.diagnostics.map((d) => ({ turn: 0, totalEstimatedTokens: 0, omittedItemIds: [], code: "MODE_NOT_READY", message: d })),
-        toolCalls: [],
-      };
+    if (resolvedProfile) {
+      if (resolvedProfile.baseMode !== mode) {
+        const msg = `Base mode mismatch: execution mode "${mode}" does not match profile base mode "${resolvedProfile.baseMode}".`;
+        await this.host.showError(msg);
+        return {
+          status: "FAILED",
+          failureReason: "INTERNAL_ERROR",
+          turns: 0,
+          finalState: { status: "FAILED", events: [] },
+          events: [],
+          contextDiagnostics: [{ turn: 0, totalEstimatedTokens: 0, omittedItemIds: [msg] }],
+          toolCalls: [],
+        };
+      }
+      if (!resolvedProfile.isReady) {
+        const msg = `Custom mode "${resolvedProfile.profileName}" is not ready for execution: ${resolvedProfile.diagnostics.join("; ")}`;
+        await this.host.showError(msg);
+        return {
+          status: "FAILED",
+          failureReason: "INTERNAL_ERROR",
+          turns: 0,
+          finalState: { status: "FAILED", events: [] },
+          events: [],
+          contextDiagnostics: resolvedProfile.diagnostics.map((d) => ({ turn: 0, totalEstimatedTokens: 0, omittedItemIds: [d] })),
+          toolCalls: [],
+        };
+      }
     }
     
     // Capture IDE context
@@ -138,7 +157,12 @@ export class AgentSessionBridge {
         eventSink: sink,
         providerOverride: this.providerOverride,
         ...(resolvedProfile ? { resolvedProfile } : {}),
-        ...(this.skills ? { skills: this.skills } : {}),
+        ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),
+        ...(this.skills
+          ? { skills: this.skills }
+          : resolvedProfile?.appliedSkills && resolvedProfile.appliedSkills.length > 0
+          ? { skills: { enabled: true } }
+          : {}),
         ...(this.learning?.enabled ? { learning: { enabled: true } } : {}),
         ...(this.progressMonitor?.enabled ? {
           progressMonitor: {

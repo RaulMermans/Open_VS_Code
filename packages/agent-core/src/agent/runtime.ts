@@ -102,13 +102,25 @@ export interface CreateAgentRuntimeOptions {
    * and respects the resolved model and workflow configuration.
    */
   resolvedProfile?: ResolvedExecutionProfile;
+  /**
+   * Optional authoritative McpCatalog instance (e.g. from McpService).
+   * When provided, avoids duplicate catalog instantiation and server process spawning.
+   */
+  mcpCatalog?: McpCatalog;
 }
 
 export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
-  if (options.resolvedProfile && !options.resolvedProfile.isReady) {
-    throw new Error(
-      `Cannot execute custom mode "${options.resolvedProfile.profileName}": execution profile is not ready. ${options.resolvedProfile.diagnostics.join("; ")}`
-    );
+  if (options.resolvedProfile) {
+    if (options.resolvedProfile.baseMode !== options.mode) {
+      throw new Error(
+        `Base mode mismatch: runtime mode "${options.mode}" does not match profile base mode "${options.resolvedProfile.baseMode}".`
+      );
+    }
+    if (!options.resolvedProfile.isReady) {
+      throw new Error(
+        `Cannot execute custom mode "${options.resolvedProfile.profileName}": execution profile is not ready. ${options.resolvedProfile.diagnostics.join("; ")}`
+      );
+    }
   }
   let provider = options.providerOverride;
   let routedGateway: RoutedModelGateway | undefined;
@@ -172,6 +184,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       mode: options.mode,
       hasTools: true,
       hasStructuredOutput: false,
+      preferredDeploymentId: options.resolvedProfile?.effectiveModelId,
     });
     provider = routedGateway;
   } else {
@@ -197,12 +210,17 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     }
   }
 
-  const mcpConfig = await loadMcpConfig(options.workspaceRoot);
-  const mcpCatalog = new McpCatalog(mcpConfig, options.eventSink);
-  await mcpCatalog.discover();
+  const mcpCatalog = options.mcpCatalog ?? new McpCatalog(await loadMcpConfig(options.workspaceRoot), options.eventSink);
+  if (!options.mcpCatalog) {
+    await mcpCatalog.discover();
+  }
+  const mcpConfig = mcpCatalog.getConfig();
   
   const allMcpTools = mcpCatalog.getTools();
-  const { selected: selectedMcpTools, eligibleCount: toolsEligible } = selectMcpTools(allMcpTools, {
+  const connectedServers = new Set(mcpCatalog.getConnectedServers());
+  const eligibleMcpTools = allMcpTools.filter((t) => connectedServers.has(t.serverId));
+
+  const { selected: selectedMcpTools, eligibleCount: toolsEligible } = selectMcpTools(eligibleMcpTools, {
     task: options.instruction,
     mode: options.mode,
     maxTools: 3,
@@ -246,7 +264,11 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   const retriever = new MemoryRetriever(memorySnapshot, sessions);
   const memory = retriever.select({ task: options.instruction, mode: options.mode, tokenBudget: 1500 });
   
-  const skillsEnabled = options.skills?.enabled === true;
+  const skillsEnabled =
+    options.skills?.enabled === true ||
+    (options.resolvedProfile?.appliedSkills !== undefined &&
+      options.resolvedProfile.appliedSkills.length > 0 &&
+      process.env.OPEN_VS_CODE_SKILLS !== "0");
   let skillSelection: SkillSelectionResult | undefined;
   let actualSkillTokens = 0;
   const selectedSkills: LoadedSkill[] = [];
@@ -271,6 +293,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       budget: contextBudget,
       reservedTokens: estimateTokens(options.instruction) + memory.estimatedTokens,
       ...(options.skills?.maxSkills !== undefined ? { maxSkills: options.skills.maxSkills } : {}),
+      ...(options.resolvedProfile?.appliedSkills ? { explicitSkillIds: options.resolvedProfile.appliedSkills } : {}),
     });
     skillGuidance = prepared.guidance;
     skillEvidence = prepared.evidence;
@@ -345,6 +368,13 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       content: `[Mode Instructions: ${options.resolvedProfile.profileName}]\n${options.resolvedProfile.customInstructions}`,
     });
   }
+  if (options.resolvedProfile?.contextGuidance) {
+    modeProjectInstructions.push({
+      id: `mode-context-guidance:${options.resolvedProfile.profileId}`,
+      path: `.open-vs-code/modes/${options.resolvedProfile.profileId}.context.json`,
+      content: `[Mode Context Guidance: ${options.resolvedProfile.profileName}]\n${options.resolvedProfile.contextGuidance}`,
+    });
+  }
 
   const runnerInput = {
     task: { id: `session-${Date.now()}`, mode: options.mode, instruction: options.instruction },
@@ -375,8 +405,12 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...progressMonitor,
   });
 
+  const workflowEnabled = options.resolvedProfile
+    ? options.resolvedProfile.effectiveWorkflow === "structured" && options.workflow?.enabled === true
+    : options.workflow?.enabled === true;
+
   const workflowEligibility: WorkflowEligibility = assessWorkflowEligibility({
-    enabled: options.workflow?.enabled === true,
+    enabled: workflowEnabled,
     mode: options.mode,
     instruction: options.instruction,
     isTrusted: options.isTrusted,
@@ -471,7 +505,9 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     performanceLedger: routedGateway?.performanceLedger,
     healthChecker,
     cleanup: async () => {
-      await mcpCatalog.close();
+      if (!options.mcpCatalog) {
+        await mcpCatalog.close();
+      }
       (mcpStats as any).cleanupCount = ((mcpStats as any).cleanupCount || 0) + 1;
     }
   };

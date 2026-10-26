@@ -30,6 +30,16 @@
 
 ## Current sprint
 
+Sprint 8D.1 — Custom Modes End-to-End Execution & Integration Closure (`docs/sprints/SPRINT_8D1_CUSTOM_MODES_RUNTIME_CLOSURE.md`; ADR-037).
+Closes the execution boundary between Custom Modes and runtime components (`AgentSessionBridge`, `AgentRuntime`, `PermissionGate`, tools):
+- Authoritative Production Capability Snapshot: Replaced empty mock capability arrays with runtime-grounded snapshot (`IntegrationManagerController.getProductionCapabilitySnapshot()`) deriving live workspace trust, authenticated account session state, active account/workspace policies, registered tools, enabled skills, connected MCP servers, and available model deployments.
+- Unified MCP Catalog Ownership: Reused long-lived `McpCatalog` from `McpService` directly in `AgentRuntime`, eliminating redundant subprocesses while enforcing mode and user authorization boundaries.
+- Concrete Tool Allowlists: Mapped tool names to real action categories (`KNOWN_REPOSITORY_TOOL_ACTIONS`), computing effective tools via intersection with base mode permissions.
+- Strict Base-Mode Enforcement: Guaranteed `resolvedProfile.baseMode === executionMode` at runtime boundary; failed closed on unready, disabled, or unauthenticated profiles.
+- Profile Execution Effects: Bound `effectiveModelId` to `RoutedModelGateway`, respected `effectiveWorkflow` in workflow gate, injected required skills into model context compilation, and injected custom instructions into project instructions.
+- Real-Time Account Invalidation: Attached account state listener in `ChatController` to cancel active turns on account logout/switch; purged account-owned MCP servers immediately.
+- Comprehensive Verification: 20/20 end-to-end integration tests passing (`custom-modes-e2e.test.ts`), 203/203 vscode-integration tests, 706/706 agent-core tests, 73/73 account-service tests, 14/14 desktop smoke tests (including packaged desktop custom mode execution contract test), and 5/5 real desktop acceptance tests. 0 lint errors, 0 TypeScript errors.
+
 Sprint 8D — Custom Modes Engine, Mode Profiles & Account-Aware Execution (`docs/sprints/SPRINT_8D_CUSTOM_MODES.md`; ADR-037).
 Delivers a reliable Custom Modes system that lets users create specialized AI coding modes by combining existing agent behavior, installed skills, registered MCP tools, model preferences, and permitted workflows without multiplying agent runtimes or compromising the permission system:
 - Core Architecture Invariant: "A custom mode is a configuration profile, not an independent agent." Preserves the 5 canonical base modes (`ASK`, `PLAN`, `BUILD`, `DEBUG`, `REVIEW`) and maps every profile strictly to one base mode (`CustomModeProfile` → `ResolvedExecutionProfile` → `AgentSessionBridge` → `AgentRuntime`).

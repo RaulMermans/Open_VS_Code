@@ -1,4 +1,5 @@
 import type { AgentMode } from "../contracts/agent.ts";
+import type { ToolAction } from "../contracts/tools.ts";
 
 export type ModeProvenance = "builtin" | "workspace" | "account";
 
@@ -51,6 +52,7 @@ export interface ResolvedExecutionProfile {
   readonly baseMode: AgentMode;
   readonly effectiveTools: readonly string[];
   readonly customInstructions?: string | undefined;
+  readonly contextGuidance?: string | undefined;
   readonly appliedSkills: readonly string[];
   readonly missingRequiredSkills: readonly string[];
   readonly missingOptionalSkills: readonly string[];
@@ -66,14 +68,20 @@ export interface ResolvedExecutionProfile {
   readonly timestamp: number;
 }
 
+export interface RegisteredToolInfo {
+  readonly name: string;
+  readonly action?: ToolAction | string | undefined;
+}
+
 export interface ModeResolverInput {
   readonly profile: CustomModeProfile;
   readonly workspaceTrusted: boolean;
   readonly availableSkills: readonly { readonly id: string; readonly name?: string | undefined }[];
   readonly availableMcpServers: readonly { readonly id: string; readonly connected: boolean; readonly enabled: boolean }[];
-  readonly availableTools: readonly string[];
+  readonly availableTools: readonly (string | RegisteredToolInfo)[];
   readonly availableDeployments?: readonly string[] | undefined;
   readonly globalWorkflowEnabled?: boolean | undefined;
+  readonly globalSkillsEnabled?: boolean | undefined;
   readonly accountPolicy?: {
     readonly allowedModes?: readonly string[] | undefined;
     readonly blockedIntegrations?: readonly string[] | undefined;

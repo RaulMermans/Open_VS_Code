@@ -454,7 +454,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
   autocompleteController.register(context);
 
-  chatController = new ChatController(host, diffReviewController, terminalReviewController, (options: { host: any, workspaceRoot: string, mode: 'ASK' | 'PLAN' | 'BUILD' | 'DEBUG' | 'REVIEW' }) => {
+  chatController = new ChatController(host, diffReviewController, terminalReviewController, (options: { host: any, workspaceRoot: string, mode: 'ASK' | 'PLAN' | 'BUILD' | 'DEBUG' | 'REVIEW', mcpCatalog?: any }) => {
 
     if (_testSeam.bridgeFactory) {
       activeBridge = _testSeam.bridgeFactory(options);
@@ -471,6 +471,7 @@ export function activate(context: vscode.ExtensionContext) {
       activeBridge = new AgentSessionBridge({
         ...options,
         ...(providerOverride ? { providerOverride } : {}),
+        mcpCatalog: options.mcpCatalog,
         skills: skillsSettings(context),
         // Structured Engineering Loop (ADR-030); off by default.
         workflow: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('workflow.enabled', false) === true },

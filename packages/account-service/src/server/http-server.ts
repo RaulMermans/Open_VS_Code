@@ -462,8 +462,30 @@ export class AccountServer {
   async stop(): Promise<void> {
     return new Promise((resolve) => {
       if (this.server) {
-        this.server.close(() => {
-          this.server = undefined;
+        const s = this.server;
+        this.server = undefined;
+        try {
+          if (typeof (s as any).closeIdleConnections === "function") {
+            (s as any).closeIdleConnections();
+          }
+          if (typeof (s as any).closeAllConnections === "function") {
+            (s as any).closeAllConnections();
+          }
+        } catch {
+          // Safe fallback
+        }
+        const timer = setTimeout(() => {
+          try {
+            if (typeof (s as any).closeAllConnections === "function") {
+              (s as any).closeAllConnections();
+            }
+          } catch {
+            // Safe fallback
+          }
+          resolve();
+        }, 200);
+        s.close(() => {
+          clearTimeout(timer);
           resolve();
         });
       } else {

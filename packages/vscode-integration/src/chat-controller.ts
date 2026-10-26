@@ -171,6 +171,11 @@ export class ChatController {
         open: this._integrationsOpen,
       });
     });
+    manager.onAccountStateChange(() => {
+      if (this.state.activeTurn) {
+        this.cancelTurn();
+      }
+    });
   }
 
   public syncActiveModeFromManager(): void {
@@ -985,38 +990,136 @@ export class ChatController {
 
     let resolvedProfile: ResolvedExecutionProfile | undefined;
     const modeService = this._modeService || this._integrationManager?.getModeService();
-    if (modeService && this.state.customModeId) {
+    if (this.state.customModeId) {
+      if (!modeService) {
+        this.state.activeTurn = false;
+        this.state.activities = [];
+        this.state.connection = deriveConnectionStatus(this._connectionInput);
+        const errorMsg: ChatMessage = {
+          id: this.generateId(),
+          role: 'system',
+          content: `ModeService is unavailable; cannot resolve custom mode "${this.state.customModeId}".`,
+          timestamp: Date.now(),
+          status: 'failed',
+        };
+        this.state.messages.push(errorMsg);
+        this.state.lastStatus = 'failed';
+        this.persistConversation();
+        this.sendState();
+        return;
+      }
+
       const profile = modeService.getMode(this.state.customModeId);
-      if (profile) {
-        resolvedProfile = modeService.resolveMode(profile.id, {
-          workspaceTrusted: true,
-          availableSkills: [],
-          availableMcpServers: [],
-          availableTools: [],
-        });
-        if (!resolvedProfile.isReady) {
-          this.state.activeTurn = false;
-          this.state.activities = [];
-          this.state.connection = deriveConnectionStatus(this._connectionInput);
-          const diagLines = resolvedProfile.diagnostics.map((d) => `- ${d}`).join('\n');
-          const errorMsg: ChatMessage = {
-            id: this.generateId(),
-            role: 'system',
-            content: `Mode "${resolvedProfile.profileName}" cannot execute: required dependencies are missing or unready.\n${diagLines}`,
-            timestamp: Date.now(),
-            status: 'failed',
-          };
-          this.state.messages.push(errorMsg);
-          this.state.lastStatus = 'failed';
-          this.persistConversation();
-          this.sendState();
-          return;
-        }
+      if (!profile) {
+        this.state.activeTurn = false;
+        this.state.activities = [];
+        this.state.connection = deriveConnectionStatus(this._connectionInput);
+        const errorMsg: ChatMessage = {
+          id: this.generateId(),
+          role: 'system',
+          content: `Selected custom profile "${this.state.customModeId}" no longer exists.`,
+          timestamp: Date.now(),
+          status: 'failed',
+        };
+        this.state.messages.push(errorMsg);
+        this.state.lastStatus = 'failed';
+        this.persistConversation();
+        this.sendState();
+        return;
+      }
+
+      if (!profile.enabled) {
+        this.state.activeTurn = false;
+        this.state.activities = [];
+        this.state.connection = deriveConnectionStatus(this._connectionInput);
+        const errorMsg: ChatMessage = {
+          id: this.generateId(),
+          role: 'system',
+          content: `Custom mode "${profile.name}" is disabled and cannot execute.`,
+          timestamp: Date.now(),
+          status: 'failed',
+        };
+        this.state.messages.push(errorMsg);
+        this.state.lastStatus = 'failed';
+        this.persistConversation();
+        this.sendState();
+        return;
+      }
+
+      if (profile.baseMode !== mode) {
+        this.state.activeTurn = false;
+        this.state.activities = [];
+        this.state.connection = deriveConnectionStatus(this._connectionInput);
+        const errorMsg: ChatMessage = {
+          id: this.generateId(),
+          role: 'system',
+          content: `Execution mode mismatch: requested mode "${mode}" does not match profile base mode "${profile.baseMode}".`,
+          timestamp: Date.now(),
+          status: 'failed',
+        };
+        this.state.messages.push(errorMsg);
+        this.state.lastStatus = 'failed';
+        this.persistConversation();
+        this.sendState();
+        return;
+      }
+
+      const accountState = this._integrationManager?.getAccountManager()?.getState();
+      if (profile.source === 'account' && (!accountState?.user || accountState?.status === 'UNAUTHENTICATED')) {
+        this.state.activeTurn = false;
+        this.state.activities = [];
+        this.state.connection = deriveConnectionStatus(this._connectionInput);
+        const errorMsg: ChatMessage = {
+          id: this.generateId(),
+          role: 'system',
+          content: `Custom mode "${profile.name}" belongs to an account profile but the user is unauthenticated.`,
+          timestamp: Date.now(),
+          status: 'failed',
+        };
+        this.state.messages.push(errorMsg);
+        this.state.lastStatus = 'failed';
+        this.persistConversation();
+        this.sendState();
+        return;
+      }
+
+      const capabilitySnapshot = this._integrationManager
+        ? await this._integrationManager.getProductionCapabilitySnapshot()
+        : await this.buildLocalCapabilitySnapshot(resolvedRoot, mode);
+
+      resolvedProfile = modeService.resolveMode(profile.id, capabilitySnapshot);
+      if (!resolvedProfile.isReady) {
+        this.state.activeTurn = false;
+        this.state.activities = [];
+        this.state.connection = deriveConnectionStatus(this._connectionInput);
+        const diagLines = resolvedProfile.diagnostics.map((d) => `- ${d}`).join('\n');
+        const errorMsg: ChatMessage = {
+          id: this.generateId(),
+          role: 'system',
+          content: `Mode "${resolvedProfile.profileName}" cannot execute: required dependencies are missing or unready.\n${diagLines}`,
+          timestamp: Date.now(),
+          status: 'failed',
+        };
+        this.state.messages.push(errorMsg);
+        this.state.lastStatus = 'failed';
+        this.persistConversation();
+        this.sendState();
+        return;
+      }
+    }
+
+    let mcpCatalog: any;
+    const mcpService = this._integrationManager?.getMcpService();
+    if (mcpService) {
+      try {
+        mcpCatalog = await mcpService.getCatalog();
+      } catch {
+        // Safe fallback
       }
     }
     
     this._activeAbortController = new AbortController();
-    this._activeSessionBridge = this.bridgeFactory({ host: this.host, workspaceRoot: resolvedRoot, mode });
+    this._activeSessionBridge = this.bridgeFactory({ host: this.host, workspaceRoot: resolvedRoot, mode, mcpCatalog } as any);
     
     // Bind current turn for isolation
     const currentConversationId = this.state.conversationId;
@@ -1538,6 +1641,31 @@ export class ChatController {
     await vscode.window.showTextDocument(uri);
   }
   
+  private async buildLocalCapabilitySnapshot(workspaceRoot: string, mode: ChatMode): Promise<any> {
+    const isTrusted = this.host?.isWorkspaceTrusted ? await this.host.isWorkspaceTrusted() : true;
+    const availableTools: any[] = [
+      { name: "read_file", action: "read_repository" },
+      { name: "list_directory", action: "read_repository" },
+      { name: "search_text", action: "search_repository" },
+      { name: "find_files", action: "search_repository" },
+    ];
+    if (isTrusted) {
+      availableTools.push(
+        { name: "apply_patch", action: "write_file" },
+        { name: "create_file", action: "write_file" },
+        { name: "run_verification", action: "run_known_test" }
+      );
+    }
+    return {
+      workspaceTrusted: isTrusted,
+      availableSkills: [],
+      availableMcpServers: [],
+      availableTools,
+      globalWorkflowEnabled: false,
+      globalSkillsEnabled: false,
+    };
+  }
+
   private generateId() {
     return Math.random().toString(36).substring(2, 9);
   }

@@ -12,8 +12,10 @@ import {
   type McpConnectionState,
   type McpPolicyConfig,
   type ResolvedExecutionProfile,
+  type RegisteredToolInfo,
   classifyMcpAction,
   resolveExecutionProfile,
+  loadRoutingConfig,
   SkillRegistry,
   defaultBuiltinSkillsRoot,
 } from "@open-vs-code/agent-core";
@@ -244,6 +246,85 @@ export class IntegrationManagerController {
     return this.activeTab;
   }
 
+  public async getProductionCapabilitySnapshot(): Promise<{
+    workspaceTrusted: boolean;
+    availableSkills: { id: string; name?: string }[];
+    availableMcpServers: { id: string; connected: boolean; enabled: boolean }[];
+    availableTools: RegisteredToolInfo[];
+    availableDeployments?: string[];
+    globalWorkflowEnabled: boolean;
+    globalSkillsEnabled: boolean;
+    accountPolicy?: { allowedModes?: string[]; blockedIntegrations?: string[] };
+  }> {
+    const isTrusted = vscode.workspace.isTrusted ?? true;
+    const skills = await this.getSkillsInventory();
+    const skillsConfig = vscode.workspace.getConfiguration("open-vs-code").get<boolean>("skills.enabled", true);
+    const skillsEnabled = skillsConfig !== false && process.env.OPEN_VS_CODE_SKILLS !== "0";
+    const workflowConfig = vscode.workspace.getConfiguration("open-vs-code").get<boolean>("workflow.enabled", true);
+    const globalWorkflowEnabled = workflowConfig !== false && process.env.OPEN_VS_CODE_STRUCTURED_WORKFLOW !== "0";
+    const serverSummaries = await this.mcpService.listServers();
+
+    const availableTools: RegisteredToolInfo[] = [
+      { name: "read_file", action: "read_repository" },
+      { name: "list_directory", action: "read_repository" },
+      { name: "search_text", action: "search_repository" },
+      { name: "find_files", action: "search_repository" },
+    ];
+
+    if (isTrusted) {
+      availableTools.push(
+        { name: "apply_patch", action: "write_file" },
+        { name: "create_file", action: "write_file" },
+        { name: "run_verification", action: "run_known_test" }
+      );
+    }
+
+    const mcpConfig = (await this.mcpService.getConfigResult()).config;
+    for (const s of serverSummaries) {
+      if (s.state === "CONNECTED" && s.effectiveEnabled && s.tools) {
+        for (const t of s.tools) {
+          availableTools.push({
+            name: t.canonicalName || t.toolName,
+            action: (t as any).action || classifyMcpAction(t, mcpConfig),
+          });
+        }
+      }
+    }
+
+    let availableDeployments: string[] | undefined;
+    const root = this.mcpService.getRoot();
+    if (root) {
+      try {
+        const routingConfig = await loadRoutingConfig(root);
+        if (routingConfig?.deployments) {
+          availableDeployments = routingConfig.deployments.map((d: any) => d.id);
+        }
+      } catch {
+        // Safe fallback
+      }
+    }
+
+    const accountState = this.accountManager.getState();
+    const accountPolicy = (accountState.user as any)?.policy;
+
+    return {
+      workspaceTrusted: isTrusted,
+      availableSkills: skillsEnabled
+        ? skills.filter((s) => s.enabled).map((s) => ({ id: s.id, name: s.name }))
+        : [],
+      availableMcpServers: serverSummaries.map((s) => ({
+        id: s.id,
+        connected: s.state === "CONNECTED",
+        enabled: s.effectiveEnabled,
+      })),
+      availableTools,
+      availableDeployments,
+      globalWorkflowEnabled,
+      globalSkillsEnabled: skillsEnabled,
+      accountPolicy,
+    };
+  }
+
   public async getState(): Promise<IntegrationManagerState> {
     const accountState = this.accountManager.getState();
     const serverSummaries = await this.mcpService.listServers();
@@ -287,50 +368,8 @@ export class IntegrationManagerController {
     }
 
     const skills = await this.getSkillsInventory();
-    const skillsEnabled =
-      vscode.workspace.getConfiguration("open-vs-code").get<boolean>("skills.enabled", false) === true;
     const diagnostics = await this.collectDiagnostics();
-
-    const isTrusted = vscode.workspace.isTrusted ?? true;
-    const availableToolNames = [
-      "read_repository",
-      "search_repository",
-      "read_markdown",
-      "write_file",
-      "delete_file",
-      "run_known_test",
-      "terminal_command",
-      "git_commit",
-      "git_push",
-      "deploy",
-      "mcp_external_read",
-      "mcp_external_side_effect",
-      "mcp_external_unknown",
-      "mcp_sensitive_data_transmission",
-      "mcp_external_destructive",
-    ];
-    for (const s of serverDetails) {
-      if (s.tools) {
-        for (const t of s.tools) {
-          availableToolNames.push(t.canonicalName || t.toolName);
-        }
-      }
-    }
-
-    const globalWorkflowEnabled =
-      vscode.workspace.getConfiguration("open-vs-code").get<boolean>("workflow.enabled", false) === true;
-
-    const resolverContext = {
-      workspaceTrusted: isTrusted,
-      availableSkills: skills.map((s) => ({ id: s.id, name: s.name })),
-      availableMcpServers: serverDetails.map((s) => ({
-        id: s.id,
-        connected: s.state === "CONNECTED",
-        enabled: s.effectiveEnabled,
-      })),
-      availableTools: availableToolNames,
-      globalWorkflowEnabled,
-    };
+    const resolverContext = await this.getProductionCapabilitySnapshot();
 
     const rawModes = this.modeService.listModes();
     const modeSummaries: CustomModeSummaryDto[] = [];
@@ -443,11 +482,13 @@ export class IntegrationManagerController {
       };
       this.modeWizard.resolvedPreview = resolveExecutionProfile({
         profile: previewProfile,
-        workspaceTrusted: isTrusted,
+        workspaceTrusted: resolverContext.workspaceTrusted,
         availableSkills: resolverContext.availableSkills,
         availableMcpServers: resolverContext.availableMcpServers,
         availableTools: resolverContext.availableTools,
-        globalWorkflowEnabled,
+        globalWorkflowEnabled: resolverContext.globalWorkflowEnabled,
+        globalSkillsEnabled: resolverContext.globalSkillsEnabled,
+        accountPolicy: resolverContext.accountPolicy,
       });
     }
 
@@ -456,7 +497,7 @@ export class IntegrationManagerController {
       account: accountState,
       servers: serverDetails,
       skills,
-      skillsRuntimeEnabled: skillsEnabled,
+      skillsRuntimeEnabled: resolverContext.globalSkillsEnabled,
       modes: modeSummaries,
       activeModeId: this.modeService.getActiveModeId(),
       inspectingModeId: this.inspectingModeId,
@@ -820,13 +861,11 @@ export class IntegrationManagerController {
   // --- Skills Section ---
 
   public async getSkillsInventory(): Promise<SkillDetail[]> {
-    if (!this.skillRegistry) {
-      this.skillRegistry = await SkillRegistry.discover({
-        builtinRoot: defaultBuiltinSkillsRoot(),
-        workspaceRoot: this.mcpService.getRoot(),
-        workspaceTrusted: true,
-      });
-    }
+    this.skillRegistry = await SkillRegistry.discover({
+      builtinRoot: defaultBuiltinSkillsRoot(),
+      workspaceRoot: this.mcpService.getRoot(),
+      workspaceTrusted: true,
+    });
 
     const skills = this.skillRegistry.entries;
     const diagnosticsBySkill = new Map<string, string[]>();
@@ -835,8 +874,8 @@ export class IntegrationManagerController {
       list.push(`${d.code}: ${d.message}`);
       diagnosticsBySkill.set(d.skill, list);
     }
-    const skillsEnabled =
-      vscode.workspace.getConfiguration("open-vs-code").get<boolean>("skills.enabled", false) === true;
+    const skillsConfig = vscode.workspace.getConfiguration("open-vs-code").get<boolean>("skills.enabled", true);
+    const skillsEnabled = skillsConfig !== false && process.env.OPEN_VS_CODE_SKILLS !== "0";
 
     return skills.map((s) => ({
       id: s.id,
@@ -1063,6 +1102,22 @@ export class IntegrationManagerController {
 
   public getModeService(): ModeService {
     return this.modeService;
+  }
+
+  public getAccountManager(): DesktopAccountManager {
+    return this.accountManager;
+  }
+
+  public getMcpService(): McpService {
+    return this.mcpService;
+  }
+
+  public onAccountStateChange(listener: (state: AccountState) => void): { dispose: () => void } {
+    return this.accountManager.onStateChange(listener);
+  }
+
+  public notifyAccountChange(): void {
+    (this.accountManager as any).notify();
   }
 
   // --- Tool Permission Helper ---

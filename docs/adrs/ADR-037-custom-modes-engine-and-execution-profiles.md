@@ -195,3 +195,17 @@ Three built-in starter profiles demonstrate the architecture:
 - Existing chat conversations and session history continue to load seamlessly.
 - Conversations recorded with canonical `AgentMode` retain full compatibility.
 - New conversations record optional `customModeId`; schema validation gracefully defaults missing profile IDs to canonical base modes.
+
+---
+
+## 11. Sprint 8D.1 Runtime Closure & Production Invariants
+
+Sprint 8D.1 completes the execution boundary between mode management and the runtime engine:
+1. **Authoritative Capability Snapshot**: Capability resolution is performed via `IntegrationManagerController.getProductionCapabilitySnapshot()` deriving truth from live workspace trust, authenticated account session state, active account/workspace policies, installed skills, connected MCP servers, and available local model deployments.
+2. **Unified MCP Catalog Lifetime**: `AgentRuntime` accepts an authoritative `mcpCatalog` reference from `McpService`, preventing duplicate process spawning and ensuring account-registered servers participate in execution.
+3. **Accurate Tool Allowlists**: Tool names are mapped to real action categories (`KNOWN_REPOSITORY_TOOL_ACTIONS`), with effective tools computed as:
+   $$\text{Effective Tools} = \text{Registered Tools} \cap \text{Base Mode Permissions} \cap \text{Profile Allowlist}$$
+   An omitted allowlist preserves permitted base tools; an explicit empty allowlist (`[]`) permits zero tools.
+4. **Base-Mode & Identity Guards**: `resolvedProfile.baseMode === executionMode` is strictly enforced at runtime entry; mismatched or unready profiles fail closed.
+5. **Real-Time Account Isolation**: Account logout or switching immediately cancels active turns and invalidates account-dependent tool authority.
+

@@ -47,6 +47,13 @@ rl.on("line", (line) => {
   }
 });
 
+rl.on("close", () => {
+  process.exit(0);
+});
+process.stdin.on("end", () => {
+  process.exit(0);
+});
+
 function sendResponse(id, result) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 }

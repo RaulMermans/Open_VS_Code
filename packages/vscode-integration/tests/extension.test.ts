@@ -152,9 +152,12 @@ describe("VS Code Extension Smoke Test", () => {
     const chatController = ext._testSeam.chatController;
     chatController.handleWebviewMessage({ type: 'chat.send', text: 'test', mode: 'ASK' });
     
-    await new Promise(r => setImmediate(r));
+    for (let i = 0; i < 50; i++) {
+      if (chatController['_activeAbortController']) break;
+      await new Promise(r => setTimeout(r, 10));
+    }
     
-    ext.deactivate();
+    await ext.deactivate();
     
     assert.strictEqual(aborted, true, "Active request should be aborted on deactivate");
     assert.strictEqual(ext._testSeam.chatController, null, "Chat controller reference should be cleared");

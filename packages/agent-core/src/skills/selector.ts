@@ -63,6 +63,7 @@ export interface SkillSelectorInput {
   readonly permissionEvaluator?: (input: { readonly action: ToolAction; readonly mode: AgentMode }) => ToolPermission
   /** Defaults to 1. Clamped to the hard cap of 2; a second skill also requires an explicit composes_with rule. */
   readonly maxSkills?: number
+  readonly explicitSkillIds?: readonly string[] | undefined
 }
 
 interface Scored {
@@ -99,7 +100,10 @@ export function selectSkill(input: SkillSelectorInput): SkillSelection {
   const maxSkills = Math.max(0, Math.min(SKILL_LIMITS.maxSkillsPerTask, Math.trunc(input.maxSkills ?? 1)))
   const tools = new Set(input.availableTools)
   const taskTokens = tokenize(input.task)
-  const explicitIds = new Set([...input.task.toLowerCase().matchAll(EXPLICIT_REQUEST)].map((match) => match[1]!))
+  const explicitIds = new Set([
+    ...[...input.task.toLowerCase().matchAll(EXPLICIT_REQUEST)].map((match) => match[1]!),
+    ...(input.explicitSkillIds ?? []),
+  ])
 
   const scored: Scored[] = input.entries.map((entry) => {
     const { score, triggerMatches, reason } = relevance(entry, taskTokens, explicitIds)
