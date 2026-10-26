@@ -657,10 +657,11 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize and register Account Management (Sprint 8B)
   accountManager = new DesktopAccountManager(context, host.outputChannel);
   context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel));
-  void accountManager.initialize(mcpService, modeService);
 
-  // Initialize and register Visual Integration Manager (Sprint 8C/8D)
+  // Initialize and register Visual Integration Manager (Sprint 8C/8D/8E)
   integrationManager = new IntegrationManagerController(context, accountManager, mcpService, host.outputChannel, modeService);
+  void accountManager.initialize(mcpService, modeService, integrationManager.getCapabilityPackService());
+
   if (chatController) {
     chatController.attachIntegrationManager(integrationManager);
   }
@@ -674,6 +675,11 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('open-vs-code.chat.focus');
       await chatController?.openIntegrationsHub();
       integrationManager?.setActiveTab('modes');
+    }),
+    vscode.commands.registerCommand('open-vs-code.openPacksManager', async () => {
+      vscode.commands.executeCommand('open-vs-code.chat.focus');
+      await chatController?.openIntegrationsHub();
+      integrationManager?.setActiveTab('packs');
     })
   );
 }

@@ -277,6 +277,10 @@ UI / future Runtime Evals:
 17. **Account ADMIN does not grant Agent Core authority**: account administrator rights are strictly scoped to account/session/integration administration; they never bypass `PermissionGate`, escalate file system authority, or permit unconfirmed destructive tool actions.
 18. **Raw session tokens are never persisted by the server**: the account backend stores only cryptographically secure SHA-256 hashes of session tokens.
 19. **Client credentials never enter the account database**: client-executed MCP servers store credentials exclusively in client-side secure storage (`vscode.SecretStorage`); the server persists only `credentialRef` tokens.
+20. **Capability Packs are declarative bundles, never executable authorities**: pack manifests are treated as untrusted input; manifests cannot contain executable directives (`runCommand`, `postinstall`, `shell`, `exec`), embedded credentials, prototype pollution keys, or path traversal.
+21. **Pack lifecycle enforces strict non-conflation**: $\text{Import} \neq \text{Install} \neq \text{Enable} \neq \text{Execute}$. Installing or enabling a pack never grants ambient tool execution authority; `PermissionGate` remains the supreme and final authority.
+22. **Packs cannot elevate canonical base mode ceilings**: a pack referencing a `REVIEW` or `ASK` base mode cannot request mutating permissions (`canExecuteCommands` or `mutationAuthority`). Fail-closed dependency resolution blocks unready or disconnected dependencies.
+
 
 
 ---

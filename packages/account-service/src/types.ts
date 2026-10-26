@@ -56,6 +56,25 @@ export interface IntegrationRegistration {
   readonly schemaVersion: number;
 }
 
+export interface AccountCapabilityPack {
+  readonly id: string;
+  readonly ownerUserId: string;
+  readonly packId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly version: string;
+  readonly publisher: string;
+  readonly license: string;
+  readonly manifestJson: string;
+  readonly scope: "account";
+  readonly enabledState: boolean;
+  readonly previousVersion?: string | null | undefined;
+  readonly previousManifestJson?: string | null | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly schemaVersion: number;
+}
+
 export interface IntegrationWorkspacePolicy {
   readonly id: string;
   readonly userId: string;
@@ -82,6 +101,11 @@ export type AuditAction =
   | "MODE_CREATE"
   | "MODE_UPDATE"
   | "MODE_DELETE"
+  | "PACK_INSTALL"
+  | "PACK_UPDATE"
+  | "PACK_ROLLBACK"
+  | "PACK_REMOVE"
+  | "PACK_TOGGLE"
   | "VAULT_ACCESS"
   | "ACCESS_DENIED";
 

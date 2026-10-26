@@ -77,3 +77,7 @@ export * from "./model/performance-ledger.ts"
 
 // Sprint 8D — Custom Modes Engine & Execution Profiles
 export * from "./modes/index.ts"
+
+// Sprint 8E — Capability Packs: Declarative Packaging & Governed Installation
+export * from "./packs/index.ts"
+

@@ -60,6 +60,11 @@ export class ModeService {
     }
   }
 
+  public registerBuiltinProfile(profile: CustomModeProfile): void {
+    this.builtinProfiles.set(profile.id, profile);
+    this.notify();
+  }
+
   public getWorkspaceConfigPath(): string | undefined {
     if (!this.workspaceRoot) return undefined;
     return join(this.workspaceRoot, ".open-vs-code", "modes.json");

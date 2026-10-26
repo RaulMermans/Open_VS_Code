@@ -3020,6 +3020,291 @@ export function renderDiagnosticsSection(container: any, state: any, doc?: any, 
   return panel;
 }
 
+export function renderPackInspector(container: any, pack: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-modes-panel';
+
+  var backBtn = appendAction(d, panel, '← Back to Capability Packs', 'Return to packs list', function () {
+    send({ type: 'integration.inspectPack', packId: undefined });
+  });
+  backBtn.className = 'btn-secondary';
+
+  var header = d.createElement('div');
+  header.className = 'hub-card-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, pack.name + ' (v' + pack.version + ')');
+  header.appendChild(title);
+
+  var statusBadge = d.createElement('span');
+  statusBadge.className = 'status-badge status-' + (pack.isReady ? 'ready' : 'blocked');
+  setText(statusBadge, pack.status);
+  header.appendChild(statusBadge);
+  panel.appendChild(header);
+
+  var metaGrid = d.createElement('div');
+  metaGrid.className = 'hub-meta-grid';
+
+  var metaItems = [
+    { label: 'Pack ID', value: pack.id },
+    { label: 'Scope', value: pack.scope },
+    { label: 'Publisher', value: pack.publisher ? pack.publisher.name : 'Unknown' },
+    { label: 'License', value: pack.license },
+    { label: 'Base Mode', value: pack.baseMode },
+    { label: 'Integrity Digest', value: pack.integrity ? pack.integrity.digest.substring(0, 16) + '...' : 'None' },
+  ];
+
+  for (var m = 0; m < metaItems.length; m++) {
+    var mRow = d.createElement('div');
+    mRow.className = 'hub-meta-item';
+    var lbl = d.createElement('strong');
+    setText(lbl, metaItems[m].label + ': ');
+    mRow.appendChild(lbl);
+    var val = d.createElement('span');
+    setText(val, metaItems[m].value);
+    mRow.appendChild(val);
+    metaGrid.appendChild(mRow);
+  }
+  panel.appendChild(metaGrid);
+
+  var desc = d.createElement('p');
+  desc.className = 'hub-placeholder-desc';
+  setText(desc, pack.description || 'No description provided.');
+  panel.appendChild(desc);
+
+  // Requested Permissions
+  var permSection = d.createElement('div');
+  permSection.className = 'hub-card-section';
+  var permTitle = d.createElement('h4');
+  setText(permTitle, 'Requested Permissions');
+  permSection.appendChild(permTitle);
+
+  var perms = pack.permissionDeclarations || [];
+  if (perms.length === 0) {
+    var noPerm = d.createElement('p');
+    setText(noPerm, 'Zero external or mutation permissions requested.');
+    permSection.appendChild(noPerm);
+  } else {
+    var pList = d.createElement('ul');
+    for (var p = 0; p < perms.length; p++) {
+      var pItem = d.createElement('li');
+      setText(pItem, perms[p]);
+      pList.appendChild(pItem);
+    }
+    permSection.appendChild(pList);
+  }
+  panel.appendChild(permSection);
+
+  // Dependencies
+  var depSection = d.createElement('div');
+  depSection.className = 'hub-card-section';
+  var depTitle = d.createElement('h4');
+  setText(depTitle, 'Dependencies');
+  depSection.appendChild(depTitle);
+
+  var depList = d.createElement('ul');
+  var reqSkills = pack.requiredSkills || [];
+  for (var s = 0; s < reqSkills.length; s++) {
+    var sItem = d.createElement('li');
+    setText(sItem, 'Required Skill: ' + reqSkills[s]);
+    depList.appendChild(sItem);
+  }
+  var reqMcps = pack.requiredMcpServers || [];
+  for (var c = 0; c < reqMcps.length; c++) {
+    var cItem = d.createElement('li');
+    setText(cItem, 'Required MCP Server: ' + (reqMcps[c].id || reqMcps[c]));
+    depList.appendChild(cItem);
+  }
+  if (reqSkills.length === 0 && reqMcps.length === 0) {
+    var noDep = d.createElement('li');
+    setText(noDep, 'Zero external dependencies required.');
+    depList.appendChild(noDep);
+  }
+  depSection.appendChild(depList);
+  panel.appendChild(depSection);
+
+  // Diagnostics
+  if (pack.diagnostics && pack.diagnostics.length > 0) {
+    var diagSection = d.createElement('div');
+    diagSection.className = 'hub-card-section';
+    var diagTitle = d.createElement('h4');
+    setText(diagTitle, 'Readiness Diagnostics');
+    diagSection.appendChild(diagTitle);
+
+    var diagList = d.createElement('ul');
+    for (var dIdx = 0; dIdx < pack.diagnostics.length; dIdx++) {
+      var dItem = d.createElement('li');
+      dItem.className = 'hub-diagnostic-item';
+      setText(dItem, pack.diagnostics[dIdx]);
+      diagList.appendChild(dItem);
+    }
+    diagSection.appendChild(diagList);
+    panel.appendChild(diagSection);
+  }
+
+  // Action Buttons
+  var actions = d.createElement('div');
+  actions.className = 'hub-action-bar';
+
+  if (pack.scope !== 'builtin') {
+    if (pack.enabled) {
+      appendAction(d, actions, 'Disable Pack', 'Disable this capability pack', function () {
+        send({ type: 'integration.disablePack', packId: pack.id });
+      });
+    } else {
+      appendAction(d, actions, 'Enable Pack', 'Enable this capability pack', function () {
+        send({ type: 'integration.enablePack', packId: pack.id });
+      });
+    }
+
+    if (pack.hasRollback) {
+      appendAction(d, actions, 'Roll Back', 'Roll back to previous version (' + pack.previousVersion + ')', function () {
+        send({ type: 'integration.rollbackPack', packId: pack.id });
+      });
+    }
+
+    appendAction(d, actions, 'Remove Pack', 'Remove this pack', function () {
+      send({ type: 'integration.removePack', packId: pack.id });
+    });
+  }
+
+  if (pack.enabled && pack.isReady) {
+    var actBtn = appendAction(d, actions, pack.isActive ? 'Active Mode' : 'Activate Mode', 'Activate underlying custom mode', function () {
+      send({ type: 'integration.activatePack', packId: pack.id });
+    });
+    actBtn.className = 'btn-approve';
+  }
+
+  panel.appendChild(actions);
+  container.appendChild(panel);
+  return panel;
+}
+
+export function renderPacksSection(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+
+  if (state && state.inspectingPackDetail) {
+    return renderPackInspector(container, state.inspectingPackDetail, d, send);
+  }
+
+  var panel = d.createElement('div');
+  panel.className = 'hub-modes-panel';
+
+  var header = d.createElement('div');
+  header.className = 'hub-card-header';
+  var title = d.createElement('h3');
+  title.className = 'hub-card-title';
+  setText(title, 'Capability Packs');
+  header.appendChild(title);
+
+  var importBtn = appendAction(d, header, '+ Import Manifest', 'Import and install a Capability Pack manifest', function () {
+    send({ type: 'integration.importPackPrompt' });
+  });
+  importBtn.className = 'btn-approve';
+  panel.appendChild(header);
+
+  var desc = d.createElement('p');
+  desc.className = 'hub-placeholder-desc';
+  setText(desc, 'Capability Packs are declarative bundles of Custom Modes, portable Skills, MCP tools, and workflow requirements. Installation does not enable; enablement does not grant tool authority.');
+  panel.appendChild(desc);
+
+  var packs = (state && state.packs) || [];
+  if (packs.length === 0) {
+    var empty = d.createElement('div');
+    empty.className = 'hub-empty-state';
+    setText(empty, 'No capability packs loaded.');
+    panel.appendChild(empty);
+  } else {
+    var list = d.createElement('div');
+    list.className = 'hub-server-list';
+    list.setAttribute('role', 'list');
+
+    for (var i = 0; i < packs.length; i++) {
+      var pack = packs[i];
+      var card = d.createElement('div');
+      card.className = 'hub-server-card' + (pack.enabled ? '' : ' is-disabled');
+      card.setAttribute('role', 'listitem');
+
+      var pHeader = d.createElement('div');
+      pHeader.className = 'hub-server-header';
+
+      var titleGroup = d.createElement('div');
+      var nameEl = d.createElement('span');
+      nameEl.className = 'hub-server-name';
+      setText(nameEl, pack.name + ' (v' + pack.version + ')');
+      titleGroup.appendChild(nameEl);
+
+      var badgeGroup = d.createElement('div');
+      badgeGroup.className = 'hub-badge-group';
+
+      var scopeBadge = d.createElement('span');
+      scopeBadge.className = 'status-badge';
+      setText(scopeBadge, pack.scope);
+      badgeGroup.appendChild(scopeBadge);
+
+      var statusBadge = d.createElement('span');
+      statusBadge.className = 'status-badge status-' + (pack.isReady ? 'ready' : 'blocked');
+      setText(statusBadge, pack.status);
+      badgeGroup.appendChild(statusBadge);
+
+      if (pack.isActive) {
+        var activeBadge = d.createElement('span');
+        activeBadge.className = 'status-badge is-active';
+        setText(activeBadge, 'Active');
+        badgeGroup.appendChild(activeBadge);
+      }
+
+      titleGroup.appendChild(badgeGroup);
+      pHeader.appendChild(titleGroup);
+
+      var actionGroup = d.createElement('div');
+      actionGroup.className = 'hub-server-actions';
+
+      appendAction(d, actionGroup, 'Inspect', 'Inspect pack details', (function (pid) {
+        return function () { send({ type: 'integration.inspectPack', packId: pid }); };
+      })(pack.id));
+
+      if (pack.scope !== 'builtin') {
+        if (pack.enabled) {
+          appendAction(d, actionGroup, 'Disable', 'Disable pack', (function (pid) {
+            return function () { send({ type: 'integration.disablePack', packId: pid }); };
+          })(pack.id));
+        } else {
+          appendAction(d, actionGroup, 'Enable', 'Enable pack', (function (pid) {
+            return function () { send({ type: 'integration.enablePack', packId: pid }); };
+          })(pack.id));
+        }
+      }
+
+      if (pack.enabled && pack.isReady && !pack.isActive) {
+        var actBtn = appendAction(d, actionGroup, 'Activate', 'Activate mode', (function (pid) {
+          return function () { send({ type: 'integration.activatePack', packId: pid }); };
+        })(pack.id));
+        actBtn.className = 'btn-approve';
+      }
+
+      pHeader.appendChild(actionGroup);
+      card.appendChild(pHeader);
+
+      var cardDesc = d.createElement('p');
+      cardDesc.className = 'hub-server-desc';
+      setText(cardDesc, pack.description || 'No description');
+      card.appendChild(cardDesc);
+
+      list.appendChild(card);
+    }
+
+    panel.appendChild(list);
+  }
+
+  container.appendChild(panel);
+  return panel;
+}
+
 export function renderIntegrationsHub(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
   if (!state) return null;
   var d = docOf(doc);
@@ -3062,6 +3347,7 @@ export function renderIntegrationsHub(container: any, state: any, doc?: any, pos
     { id: 'mcp', label: 'MCP Servers' },
     { id: 'skills', label: 'Skills' },
     { id: 'modes', label: 'Modes' },
+    { id: 'packs', label: 'Capability Packs' },
     { id: 'diagnostics', label: 'Diagnostics' },
   ];
 
@@ -3130,6 +3416,8 @@ export function renderIntegrationsHub(container: any, state: any, doc?: any, pos
     renderSkillsSection(content, state, d, send);
   } else if (activeTab === 'modes') {
     renderModesSection(content, state, d, send);
+  } else if (activeTab === 'packs') {
+    renderPacksSection(content, state, d, send);
   } else if (activeTab === 'diagnostics') {
     renderDiagnosticsSection(content, state, d, send);
   }
@@ -3192,6 +3480,8 @@ export function webviewRenderRuntime(): string {
     renderModeWizard.toString(),
     renderModeInspector.toString(),
     renderModesSection.toString(),
+    renderPackInspector.toString(),
+    renderPacksSection.toString(),
     renderDiagnosticsSection.toString(),
     renderIntegrationsHub.toString(),
   ].join("\n");

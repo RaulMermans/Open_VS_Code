@@ -121,6 +121,36 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    description: "Sprint 8E: capability_packs table for user-owned capability packs",
+    up: (db: DatabaseConnection) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS capability_packs (
+          id TEXT PRIMARY KEY,
+          owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          pack_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          version TEXT NOT NULL,
+          publisher TEXT NOT NULL,
+          license TEXT NOT NULL,
+          manifest_json TEXT NOT NULL,
+          scope TEXT NOT NULL DEFAULT 'account',
+          enabled_state INTEGER NOT NULL DEFAULT 1,
+          previous_version TEXT,
+          previous_manifest_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          schema_version INTEGER NOT NULL DEFAULT 1,
+          UNIQUE(owner_user_id, pack_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_capability_packs_owner ON capability_packs(owner_user_id);
+        CREATE INDEX IF NOT EXISTS idx_capability_packs_owner_pack ON capability_packs(owner_user_id, pack_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: DatabaseConnection): { applied: number[]; currentVersion: number } {

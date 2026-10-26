@@ -8,8 +8,8 @@ describe("Database Migrations", () => {
     const db = createDatabase(":memory:");
     try {
       const res = runMigrations(db);
-      assert.strictEqual(res.currentVersion, 2);
-      assert.deepStrictEqual(res.applied, [1, 2]);
+      assert.strictEqual(res.currentVersion, 3);
+      assert.deepStrictEqual(res.applied, [1, 2, 3]);
 
       // Verify tables exist
       const tables = db.all<{ name: string }>(
@@ -21,6 +21,7 @@ describe("Database Migrations", () => {
       assert.ok(names.has("integration_registrations"));
       assert.ok(names.has("integration_workspace_policies"));
       assert.ok(names.has("mode_profiles"));
+      assert.ok(names.has("capability_packs"));
       assert.ok(names.has("audit_events"));
       assert.ok(names.has("schema_migrations"));
     } finally {
@@ -32,11 +33,11 @@ describe("Database Migrations", () => {
     const db = createDatabase(":memory:");
     try {
       const first = runMigrations(db);
-      assert.deepStrictEqual(first.applied, [1, 2]);
+      assert.deepStrictEqual(first.applied, [1, 2, 3]);
 
       const second = runMigrations(db);
       assert.deepStrictEqual(second.applied, [], "No new migrations should be applied on second run");
-      assert.strictEqual(second.currentVersion, 2);
+      assert.strictEqual(second.currentVersion, 3);
     } finally {
       db.close();
     }

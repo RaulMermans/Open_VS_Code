@@ -674,7 +674,7 @@ describe("Visual Integration Manager (Sprint 8C)", () => {
     renderIntegrationsHub(container as any, state as any, doc as any, () => {});
 
     const tabs = container.querySelectorAll(".hub-tab-btn");
-    assert.strictEqual(tabs.length, 5, "Must render 5 navigation tabs");
+    assert.strictEqual(tabs.length, 6, "Must render 6 navigation tabs (including Capability Packs)");
 
     const activeTab = tabs.find((t) => t.getAttribute("aria-selected") === "true");
     assert.ok(activeTab, "An active tab must be marked aria-selected=true");
