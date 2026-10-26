@@ -54,16 +54,108 @@ const MUTATION_PERMISSIONS = new Set([
   "mcp_external_side_effect",
 ]);
 
-export function computeManifestDigest(manifestJsonOrPayload: string): string {
-  return createHash("sha256").update(manifestJsonOrPayload, "utf8").digest("hex");
+/**
+ * Deterministically serializes a capability pack manifest into canonical JSON,
+ * excluding the top-level 'integrity' field.
+ *
+ * Rules:
+ * - All object keys sorted lexicographically (recursive).
+ * - Array order is preserved.
+ * - Primitives formatted deterministically without whitespace.
+ * - Undefined and non-JSON values omitted from objects.
+ * - Top-level 'integrity' metadata is strictly excluded so the digest covers the payload content.
+ *
+ * NOTE ON SECURITY:
+ * A checksum (SHA-256) provides tamper-detection integrity across transport and persistence,
+ * NOT publisher authenticity. Cryptographic publisher authenticity requires digital signatures
+ * and public-key infrastructure (ADR-038 / SPRINT_8E1).
+ */
+export function serializeCanonicalManifest(manifest: unknown): string {
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new TypeError("Manifest must be a non-null object.");
+  }
+  return serializeCanonicalValue(manifest, true);
 }
 
-export function verifyPackIntegrity(content: string, integrity: PackIntegrityMetadata): boolean {
-  if (!integrity || integrity.algorithm !== "sha256" || !integrity.digest) {
+function serializeCanonicalValue(value: unknown, isRoot = false): string {
+  if (value === null) {
+    return "null";
+  }
+  const t = typeof value;
+  if (t === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (t === "number") {
+    if (!Number.isFinite(value as number)) {
+      throw new TypeError("Cannot canonically serialize non-finite numbers.");
+    }
+    return String(value);
+  }
+  if (t === "string") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    const items = value.map((v) => serializeCanonicalValue(v, false));
+    return `[${items.join(",")}]`;
+  }
+  if (t === "object") {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).filter((k) => {
+      if (isRoot && k === "integrity") {
+        return false;
+      }
+      return record[k] !== undefined && typeof record[k] !== "symbol" && typeof record[k] !== "function";
+    });
+    keys.sort();
+    const parts = keys.map((k) => `${JSON.stringify(k)}:${serializeCanonicalValue(record[k], false)}`);
+    return `{${parts.join(",")}}`;
+  }
+  throw new TypeError(`Cannot canonically serialize value of type ${t}`);
+}
+
+export function computeManifestDigest(manifestOrJson: unknown): string {
+  if (typeof manifestOrJson === "string") {
+    try {
+      const parsed = JSON.parse(manifestOrJson);
+      return computeManifestDigest(parsed);
+    } catch {
+      return createHash("sha256").update(manifestOrJson, "utf8").digest("hex");
+    }
+  }
+  const target = manifestOrJson;
+  if (target === null || typeof target !== "object" || Array.isArray(target)) {
+    return createHash("sha256").update(String(target), "utf8").digest("hex");
+  }
+  const canonical = serializeCanonicalManifest(target);
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+export function verifyPackIntegrity(manifestOrContent: unknown, integrity?: PackIntegrityMetadata): boolean {
+  let effectiveIntegrity = integrity;
+  let target = manifestOrContent;
+
+  if (typeof target === "string") {
+    try {
+      target = JSON.parse(target);
+    } catch {
+      if (!effectiveIntegrity || effectiveIntegrity.algorithm !== "sha256" || !effectiveIntegrity.digest) {
+        return false;
+      }
+      const rawDigest = createHash("sha256").update(manifestOrContent as string, "utf8").digest("hex");
+      return rawDigest.toLowerCase() === effectiveIntegrity.digest.toLowerCase();
+    }
+  }
+
+  if (target && typeof target === "object" && !effectiveIntegrity) {
+    effectiveIntegrity = (target as any).integrity;
+  }
+
+  if (!effectiveIntegrity || effectiveIntegrity.algorithm !== "sha256" || !effectiveIntegrity.digest) {
     return false;
   }
-  const actual = computeManifestDigest(content);
-  return actual.toLowerCase() === integrity.digest.toLowerCase();
+
+  const actual = computeManifestDigest(target);
+  return actual.toLowerCase() === effectiveIntegrity.digest.toLowerCase();
 }
 
 function scanObjectForPollutionAndExec(
@@ -439,6 +531,15 @@ export function validateCapabilityPackManifest(input: unknown): PackValidationRe
       message: "Integrity digest must be a 64-character hexadecimal SHA-256 string.",
       severity: "error",
     });
+  } else {
+    const computedDigest = computeManifestDigest(manifest);
+    if (computedDigest.toLowerCase() !== manifest.integrity.digest.toLowerCase()) {
+      issues.push({
+        path: "manifest.integrity.digest",
+        message: `Manifest digest mismatch: computed "${computedDigest}" does not match declared digest "${manifest.integrity.digest}". A checksum provides integrity, not publisher authenticity.`,
+        severity: "error",
+      });
+    }
   }
 
   const errors = issues.filter((i) => i.severity === "error").map((i) => `${i.path}: ${i.message}`);

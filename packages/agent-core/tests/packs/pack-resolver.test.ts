@@ -2,10 +2,28 @@ import { describe, it } from "node:test";
 import * as assert from "node:assert";
 import {
   resolveCapabilityPack,
+  computeManifestDigest,
   REPOSITORY_ARCHITECTURE_REVIEW_PACK,
   MCP_RESEARCH_DEMO_PACK,
+  type CapabilityPackManifest,
   type InstalledCapabilityPack,
 } from "../../src/packs/index.ts";
+
+function createValidTestPack(overrides: Partial<CapabilityPackManifest>): CapabilityPackManifest {
+  const base = {
+    ...REPOSITORY_ARCHITECTURE_REVIEW_PACK,
+    ...overrides,
+  };
+  const { integrity: _, ...rest } = base;
+  const digest = computeManifestDigest(rest);
+  return {
+    ...rest,
+    integrity: {
+      algorithm: "sha256",
+      digest,
+    },
+  };
+}
 
 describe("Capability Pack Deterministic Resolution (Sprint 8E)", () => {
   const baseSnapshot = {
@@ -120,10 +138,9 @@ describe("Capability Pack Deterministic Resolution (Sprint 8E)", () => {
   });
 
   it("7. returns INCOMPATIBLE when Open VS Code version requirement is not satisfied", () => {
-    const incompatibleManifest = {
-      ...REPOSITORY_ARCHITECTURE_REVIEW_PACK,
+    const incompatibleManifest = createValidTestPack({
       openVsCodeVersion: "^0.2.0",
-    };
+    });
 
     const res = resolveCapabilityPack({
       pack: incompatibleManifest,
@@ -151,14 +168,13 @@ describe("Capability Pack Deterministic Resolution (Sprint 8E)", () => {
   });
 
   it("9. returns UNTRUSTED when pack uses mutating base mode in untrusted workspace", () => {
-    const mutatingPack = {
-      ...REPOSITORY_ARCHITECTURE_REVIEW_PACK,
+    const mutatingPack = createValidTestPack({
       id: "mutating-pack",
       customMode: {
         ...REPOSITORY_ARCHITECTURE_REVIEW_PACK.customMode,
         baseMode: "BUILD" as const,
       },
-    };
+    });
 
     const res = resolveCapabilityPack({
       pack: mutatingPack,
@@ -184,5 +200,76 @@ describe("Capability Pack Deterministic Resolution (Sprint 8E)", () => {
 
     assert.strictEqual(res.status, "INVALID");
     assert.strictEqual(res.isReady, false);
+  });
+
+  it("11. rejects malformed version requirements instead of treating them as compatible", () => {
+    const malformedVersions = ["not-semver", "abc.def", "^invalid", ">=foo", "1.0"];
+    for (const badVer of malformedVersions) {
+      const packWithBadVer = createValidTestPack({
+        openVsCodeVersion: badVer,
+      });
+
+      const res = resolveCapabilityPack({
+        pack: packWithBadVer,
+        ...baseSnapshot,
+        currentOpenVsCodeVersion: "0.1.0",
+      });
+
+      assert.strictEqual(
+        res.status,
+        "INCOMPATIBLE",
+        `Expected malformed version "${badVer}" to resolve to INCOMPATIBLE, got ${res.status}`
+      );
+      assert.strictEqual(res.isReady, false);
+    }
+  });
+
+  it("12. unmet model deployment requirement prevents READY and returns INCOMPATIBLE", () => {
+    const packWithModel = createValidTestPack({
+      preferredModel: {
+        deploymentId: "claude-3-5-sonnet",
+        family: "claude",
+      },
+    });
+
+    const res = resolveCapabilityPack({
+      pack: packWithModel,
+      ...baseSnapshot,
+      availableDeployments: ["qwen-2.5-coder-7b"], // claude-3-5-sonnet is missing
+    });
+
+    assert.strictEqual(res.status, "INCOMPATIBLE");
+    assert.strictEqual(res.isReady, false);
+    assert.ok(res.unmetModelRequirements.includes("claude-3-5-sonnet"));
+  });
+
+  it("13. unmet model capability requirement prevents READY and returns INCOMPATIBLE", () => {
+    const packWithCap = createValidTestPack({
+      preferredModel: {
+        capabilities: ["vision", "code_review"],
+      },
+    });
+
+    const res = resolveCapabilityPack({
+      pack: packWithCap,
+      ...baseSnapshot,
+      availableModelCapabilities: ["chat", "code_review"], // vision is missing
+    });
+
+    assert.strictEqual(res.status, "INCOMPATIBLE");
+    assert.strictEqual(res.isReady, false);
+    assert.ok(res.unmetModelRequirements.includes("capability:vision"));
+  });
+
+  it("14. disabled global skills flag causes required skill pack to resolve to MISSING_DEPENDENCIES", () => {
+    const res = resolveCapabilityPack({
+      pack: REPOSITORY_ARCHITECTURE_REVIEW_PACK,
+      ...baseSnapshot,
+      globalSkillsEnabled: false,
+    });
+
+    assert.strictEqual(res.status, "MISSING_DEPENDENCIES");
+    assert.strictEqual(res.isReady, false);
+    assert.deepStrictEqual(res.missingSkills, ["security-review"]);
   });
 });

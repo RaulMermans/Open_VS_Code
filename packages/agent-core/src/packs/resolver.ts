@@ -15,6 +15,7 @@ export interface PackResolverInput {
   readonly availableMcpServers: readonly { readonly id: string; readonly connected: boolean; readonly enabled: boolean }[];
   readonly availableTools: readonly (string | RegisteredToolInfo)[];
   readonly availableDeployments?: readonly string[] | undefined;
+  readonly availableModelCapabilities?: readonly string[] | undefined;
   readonly globalWorkflowEnabled?: boolean | undefined;
   readonly globalSkillsEnabled?: boolean | undefined;
   readonly currentOpenVsCodeVersion?: string | undefined;
@@ -25,31 +26,44 @@ export interface PackResolverInput {
   } | undefined;
 }
 
-function parseSemver(v: string): { major: number; minor: number; patch: number } | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
-  if (!m || !m[1] || !m[2] || !m[3]) return null;
+export function parseSemver(v: string): { major: number; minor: number; patch: number } | null {
+  if (typeof v !== "string") return null;
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(v.trim());
+  if (!m || m[1] === undefined || m[2] === undefined || m[3] === undefined) return null;
   return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10), patch: parseInt(m[3], 10) };
 }
 
-function isVersionCompatible(requiredRange: string, currentVersion: string): boolean {
+export function isVersionCompatible(requiredRange: string, currentVersion: string): boolean {
+  if (typeof requiredRange !== "string" || typeof currentVersion !== "string") {
+    return false;
+  }
   const cur = parseSemver(currentVersion);
-  if (!cur) return true;
+  if (!cur) return false;
 
   const trimmed = requiredRange.trim();
   if (trimmed === "*" || trimmed === ">=0.0.0") return true;
 
   if (trimmed.startsWith("^")) {
     const req = parseSemver(trimmed.slice(1));
-    if (!req) return true;
+    if (!req) return false;
     if (cur.major !== req.major) return false;
     if (cur.minor < req.minor) return false;
     if (cur.minor === req.minor && cur.patch < req.patch) return false;
     return true;
   }
 
+  if (trimmed.startsWith("~")) {
+    const req = parseSemver(trimmed.slice(1));
+    if (!req) return false;
+    if (cur.major !== req.major) return false;
+    if (cur.minor !== req.minor) return false;
+    if (cur.patch < req.patch) return false;
+    return true;
+  }
+
   if (trimmed.startsWith(">=")) {
     const req = parseSemver(trimmed.slice(2));
-    if (!req) return true;
+    if (!req) return false;
     if (cur.major > req.major) return true;
     if (cur.major === req.major && cur.minor > req.minor) return true;
     if (cur.major === req.major && cur.minor === req.minor && cur.patch >= req.patch) return true;
@@ -61,7 +75,7 @@ function isVersionCompatible(requiredRange: string, currentVersion: string): boo
     return cur.major === exact.major && cur.minor === exact.minor && cur.patch === exact.patch;
   }
 
-  return true;
+  return false;
 }
 
 export function resolveCapabilityPack(input: PackResolverInput): PackReadinessResult {
@@ -186,12 +200,28 @@ export function resolveCapabilityPack(input: PackResolverInput): PackReadinessRe
   }
 
   // 7. Model Requirements
-  if (manifest.preferredModel?.deploymentId && availableDeployments && availableDeployments.length > 0) {
-    if (!availableDeployments.includes(manifest.preferredModel.deploymentId)) {
-      unmetModelRequirements.push(manifest.preferredModel.deploymentId);
-      diagnostics.push(
-        `Preferred model deployment "${manifest.preferredModel.deploymentId}" is not available on active endpoints.`
-      );
+  if (manifest.preferredModel) {
+    if (manifest.preferredModel.deploymentId) {
+      if (availableDeployments !== undefined) {
+        if (!availableDeployments.includes(manifest.preferredModel.deploymentId)) {
+          unmetModelRequirements.push(manifest.preferredModel.deploymentId);
+          diagnostics.push(
+            `Preferred model deployment "${manifest.preferredModel.deploymentId}" is not available on active endpoints.`
+          );
+        }
+      }
+    }
+    if (manifest.preferredModel.capabilities && manifest.preferredModel.capabilities.length > 0) {
+      if (input.availableModelCapabilities !== undefined) {
+        for (const cap of manifest.preferredModel.capabilities) {
+          if (!input.availableModelCapabilities.includes(cap)) {
+            unmetModelRequirements.push(`capability:${cap}`);
+            diagnostics.push(
+              `Required model capability "${cap}" is not supported by active model deployments.`
+            );
+          }
+        }
+      }
     }
   }
 
@@ -224,6 +254,8 @@ export function resolveCapabilityPack(input: PackResolverInput): PackReadinessRe
     status = "INSTALLED_INACTIVE";
   } else if (missingSkills.length > 0 || missingMcpServers.length > 0 || !modeReadiness.isReady) {
     status = "MISSING_DEPENDENCIES";
+  } else if (unmetModelRequirements.length > 0) {
+    status = "INCOMPATIBLE";
   } else {
     status = "READY";
   }

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type CustomModeProfile,
@@ -25,7 +25,9 @@ export class ModeService {
   private readonly workspaceRoot?: string | undefined;
   private readonly builtinProfiles = new Map<string, CustomModeProfile>();
   private readonly workspaceProfiles = new Map<string, CustomModeProfile>();
+  private readonly workspacePackProfiles = new Map<string, CustomModeProfile>();
   private readonly accountProfiles = new Map<string, CustomModeProfile>();
+  private readonly accountPackProfiles = new Map<string, CustomModeProfile>();
   private activeModeId?: string | undefined;
   private diagnostics: string[] = [];
   private readonly listeners = new Set<() => void>();
@@ -65,6 +67,50 @@ export class ModeService {
     this.notify();
   }
 
+  public registerAccountPackProfile(profile: CustomModeProfile): void {
+    const validation = validateCustomModeProfile(profile);
+    if (!validation.valid) {
+      throw new Error(`Invalid account pack mode profile: ${validation.errors.join("; ")}`);
+    }
+    const normalized: CustomModeProfile = {
+      ...profile,
+      source: "account",
+      scope: "account",
+    };
+    this.accountPackProfiles.set(normalized.id, normalized);
+    this.notify();
+  }
+
+  public unregisterAccountPackProfile(id: string): void {
+    this.accountPackProfiles.delete(id);
+    if (this.activeModeId === id) {
+      this.activeModeId = undefined;
+    }
+    this.notify();
+  }
+
+  public registerWorkspacePackProfile(profile: CustomModeProfile): void {
+    const validation = validateCustomModeProfile(profile);
+    if (!validation.valid) {
+      throw new Error(`Invalid workspace pack mode profile: ${validation.errors.join("; ")}`);
+    }
+    const normalized: CustomModeProfile = {
+      ...profile,
+      source: "workspace",
+      scope: "workspace",
+    };
+    this.workspacePackProfiles.set(normalized.id, normalized);
+    this.notify();
+  }
+
+  public unregisterWorkspacePackProfile(id: string): void {
+    this.workspacePackProfiles.delete(id);
+    if (this.activeModeId === id) {
+      this.activeModeId = undefined;
+    }
+    this.notify();
+  }
+
   public getWorkspaceConfigPath(): string | undefined {
     if (!this.workspaceRoot) return undefined;
     return join(this.workspaceRoot, ".open-vs-code", "modes.json");
@@ -79,7 +125,22 @@ export class ModeService {
 
     try {
       const raw = readFileSync(configPath, "utf8");
-      const parsed = JSON.parse(raw) as WorkspaceModesFile;
+      let parsed: WorkspaceModesFile;
+      try {
+        parsed = JSON.parse(raw) as WorkspaceModesFile;
+      } catch (parseErr: any) {
+        const backupPath = `${configPath}.corrupt.${Date.now()}`;
+        try {
+          writeFileSync(backupPath, raw, "utf8");
+        } catch {
+          // Safe backup
+        }
+        this.diagnostics.push(
+          `Workspace modes.json is corrupt: ${parseErr?.message || String(parseErr)}. Backed up to ${backupPath}. Recovering with empty workspace profiles.`
+        );
+        return;
+      }
+
       if (parsed && Array.isArray(parsed.modes)) {
         for (const item of parsed.modes) {
           const validation = validateCustomModeProfile(item);
@@ -107,6 +168,9 @@ export class ModeService {
     const configPath = this.getWorkspaceConfigPath();
     if (!configPath) return;
 
+    const dir = dirname(configPath);
+    const tempPath = join(dir, `.modes.json.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`);
+
     const data: WorkspaceModesFile = {
       $schema: "https://raw.githubusercontent.com/RaulMermans/Open_VS_Code/main/config/schemas/modes.schema.json",
       version: 1,
@@ -114,9 +178,17 @@ export class ModeService {
     };
 
     try {
-      mkdirSync(dirname(configPath), { recursive: true });
-      writeFileSync(configPath, JSON.stringify(data, null, 2), "utf8");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
+      renameSync(tempPath, configPath);
     } catch (err: any) {
+      try {
+        if (existsSync(tempPath)) {
+          unlinkSync(tempPath);
+        }
+      } catch {
+        // Safe cleanup
+      }
       this.diagnostics.push(`Failed to write workspace modes.json: ${err?.message || String(err)}`);
       throw err;
     }
@@ -177,8 +249,14 @@ export class ModeService {
 
   public cleanupAccountModes(): void {
     this.accountProfiles.clear();
-    // If active mode was account-scoped, revert to undefined
-    if (this.activeModeId && !this.workspaceProfiles.has(this.activeModeId) && !this.builtinProfiles.has(this.activeModeId)) {
+    this.accountPackProfiles.clear();
+    // If active mode was account-scoped or account-pack-scoped, revert to undefined
+    if (
+      this.activeModeId &&
+      !this.workspaceProfiles.has(this.activeModeId) &&
+      !this.workspacePackProfiles.has(this.activeModeId) &&
+      !this.builtinProfiles.has(this.activeModeId)
+    ) {
       this.activeModeId = undefined;
     }
     this.notify();
@@ -192,14 +270,24 @@ export class ModeService {
       map.set(id, p);
     }
 
-    // 2. Account profiles
+    // 2. Account profiles from AccountService
     for (const [id, p] of this.accountProfiles) {
       map.set(id, p);
     }
 
-    // 3. Workspace profiles take precedence locally over account/builtin
+    // 3. Account pack profiles
+    for (const [id, p] of this.accountPackProfiles) {
+      map.set(id, p);
+    }
+
+    // 4. Workspace pack profiles
+    for (const [id, p] of this.workspacePackProfiles) {
+      map.set(id, p);
+    }
+
+    // 5. Workspace profiles take precedence locally over account/builtin/packs
     for (const [id, p] of this.workspaceProfiles) {
-      if (this.accountProfiles.has(id)) {
+      if (this.accountProfiles.has(id) || this.accountPackProfiles.has(id)) {
         this.diagnostics.push(
           `Identifier conflict: A profile with ID "${id}" exists in both Workspace and Account scopes. Workspace profile takes precedence locally.`
         );
@@ -211,14 +299,16 @@ export class ModeService {
   }
 
   public getMode(id: string, preferredScope?: "builtin" | "workspace" | "account"): CustomModeProfile | undefined {
-    if (preferredScope === "workspace") return this.workspaceProfiles.get(id);
-    if (preferredScope === "account") return this.accountProfiles.get(id);
+    if (preferredScope === "workspace") return this.workspaceProfiles.get(id) || this.workspacePackProfiles.get(id);
+    if (preferredScope === "account") return this.accountProfiles.get(id) || this.accountPackProfiles.get(id);
     if (preferredScope === "builtin") return this.builtinProfiles.get(id);
 
-    // Default resolution precedence: Workspace > Account > Builtin
+    // Default resolution precedence: Workspace > WorkspacePack > Account > AccountPack > Builtin
     return (
       this.workspaceProfiles.get(id) ||
+      this.workspacePackProfiles.get(id) ||
       this.accountProfiles.get(id) ||
+      this.accountPackProfiles.get(id) ||
       this.builtinProfiles.get(id)
     );
   }

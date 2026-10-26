@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type CapabilityPackManifest,
@@ -93,16 +93,46 @@ export class CapabilityPackService {
 
     try {
       const raw = readFileSync(configPath, "utf8");
-      const parsed = JSON.parse(raw) as WorkspacePacksFile;
+      let parsed: WorkspacePacksFile;
+      try {
+        parsed = JSON.parse(raw) as WorkspacePacksFile;
+      } catch (parseErr: any) {
+        const backupPath = `${configPath}.corrupt.${Date.now()}`;
+        try {
+          writeFileSync(backupPath, raw, "utf8");
+        } catch {
+          // Safe backup
+        }
+        this.diagnostics.push(
+          `Workspace packs.json is corrupt: ${parseErr?.message || String(parseErr)}. Backed up to ${backupPath}. Recovering with empty workspace packs.`
+        );
+        return;
+      }
+
       if (parsed && Array.isArray(parsed.packs)) {
         for (const item of parsed.packs) {
           const validation = validateCapabilityPackManifest(item.manifest);
           if (validation.valid) {
+            const integrityVerified = verifyPackIntegrity(item.manifest, item.manifest.integrity);
+            if (!integrityVerified) {
+              this.diagnostics.push(
+                `Workspace capability pack "${item.packId}" failed integrity check: digest mismatch. Checksum provides integrity, not publisher authenticity. Pack skipped.`
+              );
+              continue;
+            }
             const normalized: InstalledCapabilityPack = {
               ...item,
               scope: "workspace",
             };
             this.workspacePacks.set(normalized.packId, normalized);
+            if (this.modeService) {
+              this.modeService.registerWorkspacePackProfile({
+                ...normalized.manifest.customMode,
+                source: "workspace",
+                scope: "workspace",
+                enabled: normalized.enabled,
+              });
+            }
           } else {
             this.diagnostics.push(
               `Malformed workspace capability pack "${String((item as any)?.packId || "unknown")}": ${validation.errors.join(", ")}`
@@ -119,6 +149,9 @@ export class CapabilityPackService {
     const configPath = this.getWorkspaceConfigPath();
     if (!configPath) return;
 
+    const dir = dirname(configPath);
+    const tempPath = join(dir, `.packs.json.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`);
+
     const data: WorkspacePacksFile = {
       $schema: "https://raw.githubusercontent.com/RaulMermans/Open_VS_Code/main/config/schemas/packs.schema.json",
       version: 1,
@@ -126,9 +159,17 @@ export class CapabilityPackService {
     };
 
     try {
-      mkdirSync(dirname(configPath), { recursive: true });
-      writeFileSync(configPath, JSON.stringify(data, null, 2), "utf8");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
+      renameSync(tempPath, configPath);
     } catch (err: any) {
+      try {
+        if (existsSync(tempPath)) {
+          unlinkSync(tempPath);
+        }
+      } catch {
+        // Safe cleanup
+      }
       this.diagnostics.push(`Failed to write workspace packs.json: ${err?.message || String(err)}`);
       throw err;
     }
@@ -154,6 +195,14 @@ export class CapabilityPackService {
 
         const validation = validateCapabilityPackManifest(manifest);
         if (validation.valid) {
+          const integrityVerified = verifyPackIntegrity(manifest, manifest.integrity);
+          if (!integrityVerified) {
+            this.diagnostics.push(
+              `Account pack "${sp.packId}" failed integrity verification: digest mismatch. Checksum provides integrity, not publisher authenticity. Pack skipped.`
+            );
+            continue;
+          }
+
           const installed: InstalledCapabilityPack = {
             packId: sp.packId,
             manifest,
@@ -166,6 +215,15 @@ export class CapabilityPackService {
             previousManifest: sp.previousManifestJson ? JSON.parse(sp.previousManifestJson) : undefined,
           };
           this.accountPacks.set(sp.packId, installed);
+
+          if (this.modeService) {
+            this.modeService.registerAccountPackProfile({
+              ...manifest.customMode,
+              source: "account",
+              scope: "account",
+              enabled: sp.enabledState,
+            });
+          }
         } else {
           this.diagnostics.push(
             `Account pack "${sp.packId}" failed validation: ${validation.errors.join(", ")}`
@@ -183,6 +241,9 @@ export class CapabilityPackService {
     this.accountPacks.clear();
     if (this.activePackId && !this.workspacePacks.has(this.activePackId) && !this.builtinPacks.has(this.activePackId)) {
       this.activePackId = undefined;
+    }
+    if (this.modeService) {
+      this.modeService.cleanupAccountModes();
     }
     this.notify();
   }
@@ -230,10 +291,8 @@ export class CapabilityPackService {
   // 1. Import
   public importPack(rawOrObj: string | Record<string, unknown>): CapabilityPackManifest {
     let manifest: unknown;
-    let rawStr = "";
 
     if (typeof rawOrObj === "string") {
-      rawStr = rawOrObj;
       try {
         manifest = JSON.parse(rawOrObj);
       } catch (err: any) {
@@ -241,7 +300,6 @@ export class CapabilityPackService {
       }
     } else {
       manifest = rawOrObj;
-      rawStr = JSON.stringify(rawOrObj);
     }
 
     const validation = validateCapabilityPackManifest(manifest);
@@ -250,17 +308,11 @@ export class CapabilityPackService {
     }
 
     const typed = manifest as CapabilityPackManifest;
-    if (typed.integrity && rawStr) {
-      // If verifying raw JSON string, check integrity
-      const verified = verifyPackIntegrity(rawStr, typed.integrity);
-      if (!verified) {
-        // Also check if JSON stringified of typed matches
-        const typedJson = JSON.stringify(typed);
-        const typedVerified = verifyPackIntegrity(typedJson, typed.integrity);
-        if (!typedVerified) {
-          this.diagnostics.push(`Integrity verification notice: digest for imported pack "${typed.id}" calculated.`);
-        }
-      }
+    const integrityVerified = verifyPackIntegrity(typed, typed.integrity);
+    if (!integrityVerified) {
+      throw new Error(
+        `Pack "${typed.id}" manifest integrity verification failed: digest mismatch. A checksum provides integrity, not publisher authenticity.`
+      );
     }
 
     return typed;
@@ -284,7 +336,7 @@ export class CapabilityPackService {
 
     let integrityVerified = false;
     if (manifest.integrity) {
-      integrityVerified = verifyPackIntegrity(JSON.stringify(manifest), manifest.integrity);
+      integrityVerified = verifyPackIntegrity(manifest, manifest.integrity);
     }
 
     return {
@@ -315,6 +367,13 @@ export class CapabilityPackService {
       throw new Error(`Cannot install invalid pack: ${validation.errors.join("; ")}`);
     }
 
+    const integrityVerified = verifyPackIntegrity(manifest, manifest.integrity);
+    if (!integrityVerified) {
+      throw new Error(
+        `Cannot install pack "${manifest.id}": manifest integrity verification failed (digest mismatch). A checksum provides integrity, not publisher authenticity.`
+      );
+    }
+
     if (this.builtinPacks.has(manifest.id)) {
       throw new Error(`Cannot install pack "${manifest.id}": ID reserved by built-in pack.`);
     }
@@ -337,12 +396,13 @@ export class CapabilityPackService {
       };
       this.accountPacks.set(installed.packId, installed);
 
-      // Register underlying custom mode into ModeService if available
+      // Register underlying custom mode into ModeService as account pack profile (never durable workspace profile!)
       if (this.modeService) {
         try {
-          this.modeService.createWorkspaceMode({
+          this.modeService.registerAccountPackProfile({
             ...manifest.customMode,
-            id: manifest.customMode.id,
+            source: "account",
+            scope: "account",
             enabled: false,
           });
         } catch {
@@ -372,12 +432,13 @@ export class CapabilityPackService {
     this.workspacePacks.set(installed.packId, installed);
     this.saveWorkspacePacks();
 
-    // Register underlying custom mode into ModeService
+    // Register underlying custom mode into ModeService as workspace pack profile
     if (this.modeService) {
       try {
-        this.modeService.createWorkspaceMode({
+        this.modeService.registerWorkspacePackProfile({
           ...manifest.customMode,
-          id: manifest.customMode.id,
+          source: "workspace",
+          scope: "workspace",
           enabled: false,
         });
       } catch {
@@ -413,17 +474,32 @@ export class CapabilityPackService {
       }
       await client.togglePack(packId, true);
       this.accountPacks.set(packId, updated);
+      if (this.modeService) {
+        try {
+          this.modeService.registerAccountPackProfile({
+            ...pack.manifest.customMode,
+            source: "account",
+            scope: "account",
+            enabled: true,
+          });
+        } catch {
+          // Safe registration
+        }
+      }
     } else {
       this.workspacePacks.set(packId, updated);
       this.saveWorkspacePacks();
-    }
-
-    // Enable underlying mode
-    if (this.modeService) {
-      try {
-        this.modeService.updateWorkspaceMode(pack.manifest.customMode.id, { enabled: true });
-      } catch {
-        // Ignore if mode not in workspace
+      if (this.modeService) {
+        try {
+          this.modeService.registerWorkspacePackProfile({
+            ...pack.manifest.customMode,
+            source: "workspace",
+            scope: "workspace",
+            enabled: true,
+          });
+        } catch {
+          // Safe registration
+        }
       }
     }
 
@@ -497,7 +573,7 @@ export class CapabilityPackService {
 
     if (this.activePackId === packId) {
       this.activePackId = undefined;
-      if (this.modeService) {
+      if (this.modeService && this.modeService.getActiveModeId() === pack.manifest.customMode.id) {
         this.modeService.setActiveModeId(undefined);
       }
     }
@@ -508,16 +584,32 @@ export class CapabilityPackService {
       }
       await client.togglePack(packId, false);
       this.accountPacks.set(packId, updated);
+      if (this.modeService) {
+        try {
+          this.modeService.registerAccountPackProfile({
+            ...pack.manifest.customMode,
+            source: "account",
+            scope: "account",
+            enabled: false,
+          });
+        } catch {
+          // Safe fallback
+        }
+      }
     } else {
       this.workspacePacks.set(packId, updated);
       this.saveWorkspacePacks();
-    }
-
-    if (this.modeService) {
-      try {
-        this.modeService.updateWorkspaceMode(pack.manifest.customMode.id, { enabled: false });
-      } catch {
-        // Safe fallback
+      if (this.modeService) {
+        try {
+          this.modeService.registerWorkspacePackProfile({
+            ...pack.manifest.customMode,
+            source: "workspace",
+            scope: "workspace",
+            enabled: false,
+          });
+        } catch {
+          // Safe fallback
+        }
       }
     }
 
@@ -545,6 +637,13 @@ export class CapabilityPackService {
       throw new Error(`Invalid updated pack manifest: ${validation.errors.join("; ")}`);
     }
 
+    const integrityVerified = verifyPackIntegrity(newManifest, newManifest.integrity);
+    if (!integrityVerified) {
+      throw new Error(
+        `Cannot update pack "${packId}": updated manifest integrity verification failed (digest mismatch). A checksum provides integrity, not publisher authenticity.`
+      );
+    }
+
     const now = new Date().toISOString();
     const updated: InstalledCapabilityPack = {
       ...existing,
@@ -561,19 +660,32 @@ export class CapabilityPackService {
       }
       await client.updatePack(packId, newManifest);
       this.accountPacks.set(packId, updated);
+      if (this.modeService) {
+        try {
+          this.modeService.registerAccountPackProfile({
+            ...newManifest.customMode,
+            source: "account",
+            scope: "account",
+            enabled: existing.enabled,
+          });
+        } catch {
+          // Safe fallback
+        }
+      }
     } else {
       this.workspacePacks.set(packId, updated);
       this.saveWorkspacePacks();
-    }
-
-    if (this.modeService) {
-      try {
-        this.modeService.updateWorkspaceMode(existing.manifest.customMode.id, {
-          ...newManifest.customMode,
-          id: existing.manifest.customMode.id,
-        });
-      } catch {
-        // Safe fallback
+      if (this.modeService) {
+        try {
+          this.modeService.registerWorkspacePackProfile({
+            ...newManifest.customMode,
+            source: "workspace",
+            scope: "workspace",
+            enabled: existing.enabled,
+          });
+        } catch {
+          // Safe fallback
+        }
       }
     }
 
@@ -594,7 +706,7 @@ export class CapabilityPackService {
 
     if (this.activePackId === packId) {
       this.activePackId = undefined;
-      if (this.modeService) {
+      if (this.modeService && this.modeService.getActiveModeId() === existing.manifest.customMode.id) {
         this.modeService.setActiveModeId(undefined);
       }
     }
@@ -605,16 +717,22 @@ export class CapabilityPackService {
       }
       await client.removePack(packId);
       this.accountPacks.delete(packId);
+      if (this.modeService) {
+        try {
+          this.modeService.unregisterAccountPackProfile(existing.manifest.customMode.id);
+        } catch {
+          // Safe fallback
+        }
+      }
     } else {
       this.workspacePacks.delete(packId);
       this.saveWorkspacePacks();
-    }
-
-    if (this.modeService) {
-      try {
-        this.modeService.deleteWorkspaceMode(existing.manifest.customMode.id);
-      } catch {
-        // Safe fallback
+      if (this.modeService) {
+        try {
+          this.modeService.unregisterWorkspacePackProfile(existing.manifest.customMode.id);
+        } catch {
+          // Safe fallback
+        }
       }
     }
 
@@ -636,6 +754,18 @@ export class CapabilityPackService {
       throw new Error(`Pack "${packId}" has no previous version recorded for rollback.`);
     }
 
+    const validation = validateCapabilityPackManifest(existing.previousManifest);
+    if (!validation.valid) {
+      throw new Error(`Rollback manifest validation failed: ${validation.errors.join("; ")}`);
+    }
+
+    const integrityVerified = verifyPackIntegrity(existing.previousManifest, existing.previousManifest.integrity);
+    if (!integrityVerified) {
+      throw new Error(
+        `Cannot roll back pack "${packId}": rollback manifest integrity verification failed (digest mismatch). A checksum provides integrity, not publisher authenticity.`
+      );
+    }
+
     const now = new Date().toISOString();
     const rolledBack: InstalledCapabilityPack = {
       ...existing,
@@ -652,19 +782,32 @@ export class CapabilityPackService {
       }
       await client.rollbackPack(packId);
       this.accountPacks.set(packId, rolledBack);
+      if (this.modeService) {
+        try {
+          this.modeService.registerAccountPackProfile({
+            ...existing.previousManifest.customMode,
+            source: "account",
+            scope: "account",
+            enabled: existing.enabled,
+          });
+        } catch {
+          // Safe fallback
+        }
+      }
     } else {
       this.workspacePacks.set(packId, rolledBack);
       this.saveWorkspacePacks();
-    }
-
-    if (this.modeService) {
-      try {
-        this.modeService.updateWorkspaceMode(existing.manifest.customMode.id, {
-          ...existing.previousManifest.customMode,
-          id: existing.manifest.customMode.id,
-        });
-      } catch {
-        // Safe fallback
+      if (this.modeService) {
+        try {
+          this.modeService.registerWorkspacePackProfile({
+            ...existing.previousManifest.customMode,
+            source: "workspace",
+            scope: "workspace",
+            enabled: existing.enabled,
+          });
+        } catch {
+          // Safe fallback
+        }
       }
     }
 

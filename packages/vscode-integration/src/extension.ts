@@ -654,13 +654,14 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize Mode Service (Sprint 8D)
   modeService = new ModeService({ workspaceRoot });
 
-  // Initialize and register Account Management (Sprint 8B)
-  accountManager = new DesktopAccountManager(context, host.outputChannel);
-  context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel));
-
   // Initialize and register Visual Integration Manager (Sprint 8C/8D/8E)
+  accountManager = new DesktopAccountManager(context, host.outputChannel);
   integrationManager = new IntegrationManagerController(context, accountManager, mcpService, host.outputChannel, modeService);
-  void accountManager.initialize(mcpService, modeService, integrationManager.getCapabilityPackService());
+  const packService = integrationManager.getCapabilityPackService();
+
+  // Initialize and register Account Management (Sprint 8B / 8E.1)
+  context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel, modeService, packService));
+  void accountManager.initialize(mcpService, modeService, packService);
 
   if (chatController) {
     chatController.attachIntegrationManager(integrationManager);

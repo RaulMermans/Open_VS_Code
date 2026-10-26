@@ -172,9 +172,20 @@ export class ChatController {
       });
     });
     manager.onAccountStateChange(() => {
-      if (this.state.activeTurn) {
+      if (this.state.activeTurn || this._confirmationResolver || this.state.pendingConfirmation) {
         this.cancelTurn();
       }
+      const service = this._modeService || this._integrationManager?.getModeService();
+      if (this.state.customModeId && service) {
+        const mode = service.getMode(this.state.customModeId);
+        if (!mode) {
+          this.state.customModeId = undefined;
+          this.state.activeCustomProfile = undefined;
+          this.state.mode = 'ASK';
+        }
+      }
+      this.syncActiveModeFromManager();
+      this.sendState();
     });
   }
 

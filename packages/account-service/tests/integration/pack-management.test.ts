@@ -11,6 +11,19 @@ import {
   AuthService,
   AuditRepository,
 } from "../../src/index.js";
+import { computeManifestDigest } from "@open-vs-code/agent-core";
+
+function createSignedManifest(draft: any): any {
+  const { integrity: _, ...rest } = draft;
+  const digest = computeManifestDigest(rest);
+  return {
+    ...rest,
+    integrity: {
+      algorithm: "sha256",
+      digest,
+    },
+  };
+}
 
 describe("CapabilityPackService & Account API Integration (Sprint 8E)", () => {
   let tmpDir: string;
@@ -69,13 +82,14 @@ describe("CapabilityPackService & Account API Integration (Sprint 8E)", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  const testManifestV1 = {
+  const rawTestManifestV1 = {
     schemaVersion: 1,
     id: "alice-review-pack",
     name: "Alice Review Pack",
     description: "Code review capability pack owned by Alice",
     version: "1.0.0",
     publisher: { id: "alice", name: "Alice Walker" },
+    sourceRepository: { url: "https://github.com/alice/review-pack" },
     license: "MIT",
     openVsCodeVersion: "^0.1.0",
     permissionDeclarations: ["read_repository"],
@@ -101,8 +115,9 @@ describe("CapabilityPackService & Account API Integration (Sprint 8E)", () => {
       updatedAt: new Date().toISOString(),
     },
     documentation: { summary: "Alice review pack" },
-    integrity: { algorithm: "sha256", digest: "a".repeat(64) },
   };
+
+  const testManifestV1 = createSignedManifest(rawTestManifestV1);
 
   it("1. Alice installs a capability pack (starts disabled)", async () => {
     const installed = await clientAlice.installPack(testManifestV1);
@@ -133,11 +148,11 @@ describe("CapabilityPackService & Account API Integration (Sprint 8E)", () => {
   });
 
   it("4. Bob can install his own pack with the same packId without collision", async () => {
-    const bobManifest = {
-      ...testManifestV1,
+    const bobManifest = createSignedManifest({
+      ...rawTestManifestV1,
       name: "Bob's Own Custom Pack",
       publisher: { id: "bob", name: "Bob Builder" },
-    };
+    });
     const bobInstalled = await clientBob.installPack(bobManifest);
     assert.equal(bobInstalled.packId, "alice-review-pack");
     assert.equal(bobInstalled.name, "Bob's Own Custom Pack");
@@ -156,11 +171,11 @@ describe("CapabilityPackService & Account API Integration (Sprint 8E)", () => {
   });
 
   it("6. Alice updates her pack (preserves previousVersion for rollback)", async () => {
-    const updatedManifest = {
-      ...testManifestV1,
+    const updatedManifest = createSignedManifest({
+      ...rawTestManifestV1,
       version: "1.1.0",
       description: "Updated description for Alice review pack",
-    };
+    });
     const updated = await clientAlice.updatePack("alice-review-pack", updatedManifest);
     assert.equal(updated.version, "1.1.0");
     assert.equal(updated.previousVersion, "1.0.0");
@@ -171,6 +186,18 @@ describe("CapabilityPackService & Account API Integration (Sprint 8E)", () => {
     const rolledBack = await clientAlice.rollbackPack("alice-review-pack");
     assert.equal(rolledBack.version, "1.0.0");
     assert.equal(rolledBack.previousVersion, "1.1.0");
+  });
+
+  it("7b. Rejects tampered manifest installation with digest mismatch", async () => {
+    const tampered = {
+      ...testManifestV1,
+      id: "tampered-pack",
+      description: "Tampered content without updated digest",
+    };
+    await assert.rejects(
+      async () => clientAlice.installPack(tampered),
+      (err: any) => err.statusCode === 400 && err.message.includes("digest mismatch")
+    );
   });
 
   it("8. Duplicate installation attempt by same user fails with 409 Conflict", async () => {
