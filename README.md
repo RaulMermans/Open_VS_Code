@@ -45,6 +45,7 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 | **Private Account Service** | ✅ Complete | Lightweight, separately deployable Node 22+ service (`@open-vs-code/account-service`) for private identity, Scrypt authentication, opaque session tokens, SQLite persistence, and persistent MCP integration registry. |
 | **Visual Integration Hub** | ✅ Complete | Interactive webview hub for managing MCP connections, 5-step connection wizard, tool schema inspection, and portable skills discovery. |
 | **Custom Modes Engine** | ✅ Complete | Extensible configuration profiles (`CustomModeProfile` → `ResolvedExecutionProfile` → `AgentRuntime`) mapping strictly to canonical base modes (`ASK`, `PLAN`, `BUILD`, `DEBUG`, `REVIEW`), fail-closed validation, immutable task execution, 9-step creation wizard, and dual persistence scopes (account & workspace). |
+| **Capability Packs** | ✅ Complete | Declarative packaging, dependency resolution, and governed installation of reusable bundles (Custom Modes, Skills, MCP tools, workflows, model preferences). Strict 10-step lifecycle (`Import != Install != Enable != Execute`), untrusted manifest defense, deterministic `PackResolver`, dual-scope persistence (account SQLite + workspace packs.json), and Visual Integration Manager hub integration. |
 
 
 ---

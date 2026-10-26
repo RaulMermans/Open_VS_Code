@@ -285,7 +285,17 @@ export type WebviewToHostMessage =
   | { type: "integration.deleteMode"; modeId: string }
   | { type: "integration.duplicateMode"; modeId: string; targetScope?: "workspace" | "account" }
   | { type: "integration.toggleMode"; modeId: string; enabled: boolean }
-  | { type: "integration.setActiveMode"; modeId?: string };
+  | { type: "integration.setActiveMode"; modeId?: string }
+  | { type: "integration.inspectPack"; packId?: string }
+  | { type: "integration.importPackPrompt" }
+  | { type: "integration.importPack"; manifest: Record<string, unknown> }
+  | { type: "integration.installPack"; manifest: Record<string, unknown>; scope?: "workspace" | "account" }
+  | { type: "integration.enablePack"; packId: string }
+  | { type: "integration.disablePack"; packId: string }
+  | { type: "integration.activatePack"; packId: string }
+  | { type: "integration.updatePack"; packId: string; manifest: Record<string, unknown> }
+  | { type: "integration.rollbackPack"; packId: string }
+  | { type: "integration.removePack"; packId: string };
 
 // Host -> Webview
 export type HostToWebviewMessage =
@@ -612,6 +622,56 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
     case "integration.setActiveMode": {
       const modeId = typeof raw.modeId === "string" && raw.modeId ? raw.modeId : undefined;
       return { type: "integration.setActiveMode", modeId };
+    }
+
+    case "integration.inspectPack": {
+      const packId = typeof raw.packId === "string" && raw.packId ? raw.packId : undefined;
+      return { type: "integration.inspectPack", packId };
+    }
+
+    case "integration.importPackPrompt": {
+      return { type: "integration.importPackPrompt" };
+    }
+
+    case "integration.importPack": {
+      if (!raw.manifest || typeof raw.manifest !== "object") return null;
+      return { type: "integration.importPack", manifest: raw.manifest as Record<string, unknown> };
+    }
+
+    case "integration.installPack": {
+      if (!raw.manifest || typeof raw.manifest !== "object") return null;
+      const scope = raw.scope === "account" ? "account" : "workspace";
+      return { type: "integration.installPack", manifest: raw.manifest as Record<string, unknown>, scope };
+    }
+
+    case "integration.enablePack": {
+      if (typeof raw.packId !== "string" || !raw.packId) return null;
+      return { type: "integration.enablePack", packId: raw.packId };
+    }
+
+    case "integration.disablePack": {
+      if (typeof raw.packId !== "string" || !raw.packId) return null;
+      return { type: "integration.disablePack", packId: raw.packId };
+    }
+
+    case "integration.activatePack": {
+      if (typeof raw.packId !== "string" || !raw.packId) return null;
+      return { type: "integration.activatePack", packId: raw.packId };
+    }
+
+    case "integration.updatePack": {
+      if (typeof raw.packId !== "string" || !raw.packId || !raw.manifest || typeof raw.manifest !== "object") return null;
+      return { type: "integration.updatePack", packId: raw.packId, manifest: raw.manifest as Record<string, unknown> };
+    }
+
+    case "integration.rollbackPack": {
+      if (typeof raw.packId !== "string" || !raw.packId) return null;
+      return { type: "integration.rollbackPack", packId: raw.packId };
+    }
+
+    case "integration.removePack": {
+      if (typeof raw.packId !== "string" || !raw.packId) return null;
+      return { type: "integration.removePack", packId: raw.packId };
     }
       
     default:

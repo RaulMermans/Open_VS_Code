@@ -18,12 +18,55 @@ import {
   loadRoutingConfig,
   SkillRegistry,
   defaultBuiltinSkillsRoot,
+  type CapabilityPackManifest,
+  type InstalledCapabilityPack,
+  type PackPreviewInfo,
+  type PackReadinessStatus,
+  type CustomModeProfile,
+  resolveCapabilityPack,
 } from "@open-vs-code/agent-core";
 import { VsCodeSecretProvider } from "../mcp/mcp-vscode-secrets.js";
 import { isLoopbackHost } from "@open-vs-code/account-service";
 import { ModeService } from "../modes/mode-service.js";
+import { CapabilityPackService } from "../packs/capability-pack-service.js";
 
-export type IntegrationTab = "profile" | "mcp" | "skills" | "modes" | "diagnostics";
+export type IntegrationTab = "profile" | "mcp" | "skills" | "modes" | "packs" | "diagnostics";
+
+export interface CapabilityPackSummaryDto {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly version: string;
+  readonly publisher: { readonly id: string; readonly name: string };
+  readonly license: string;
+  readonly scope: "builtin" | "workspace" | "account";
+  readonly enabled: boolean;
+  readonly isReady: boolean;
+  readonly isActive: boolean;
+  readonly status: PackReadinessStatus;
+  readonly baseMode: string;
+  readonly requiredSkillCount: number;
+  readonly requiredMcpCount: number;
+  readonly diagnostics: readonly string[];
+}
+
+export interface CapabilityPackDetailDto extends CapabilityPackSummaryDto {
+  readonly sourceRepository: { readonly url: string; readonly commit?: string; readonly release?: string };
+  readonly attribution?: string;
+  readonly openVsCodeVersion: string;
+  readonly permissionDeclarations: readonly string[];
+  readonly requiredSkills: readonly string[];
+  readonly optionalSkills: readonly string[];
+  readonly requiredMcpServers: readonly { readonly id: string; readonly name?: string }[];
+  readonly optionalMcpServers: readonly { readonly id: string; readonly name?: string }[];
+  readonly customMode: CustomModeProfile;
+  readonly documentation: { readonly summary: string; readonly guidelines?: string; readonly readme?: string };
+  readonly integrity: { readonly algorithm: string; readonly digest: string };
+  readonly previousVersion?: string;
+  readonly hasRollback: boolean;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+}
 
 export interface McpServerDetail {
   readonly id: string;
@@ -160,6 +203,11 @@ export interface IntegrationManagerState {
   readonly inspectingModeId?: string | undefined;
   readonly inspectingModeDetail?: CustomModeDetailDto | undefined;
   readonly modeWizard?: ModeWizardState | undefined;
+  readonly packs: CapabilityPackSummaryDto[];
+  readonly activePackId?: string | undefined;
+  readonly inspectingPackId?: string | undefined;
+  readonly inspectingPackDetail?: CapabilityPackDetailDto | undefined;
+  readonly packPreview?: PackPreviewInfo | undefined;
   readonly diagnostics: string[];
   readonly inspectingServerId?: string | undefined;
   readonly inspectingSkillId?: string | undefined;
@@ -178,6 +226,8 @@ export class IntegrationManagerController {
   private inspectingServerId?: string | undefined;
   private inspectingSkillId?: string | undefined;
   private inspectingModeId?: string | undefined;
+  private inspectingPackId?: string | undefined;
+  private packPreview?: PackPreviewInfo | undefined;
   private wizard?: AddMcpWizardState | undefined;
   private modeWizard?: ModeWizardState | undefined;
   private pendingConfirmation?: {
@@ -191,20 +241,28 @@ export class IntegrationManagerController {
   private secretProvider: VsCodeSecretProvider;
   private skillRegistry?: SkillRegistry;
   private readonly modeService: ModeService;
+  private readonly capabilityPackService: CapabilityPackService;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly accountManager: DesktopAccountManager,
     private readonly mcpService: McpService,
     private readonly outputChannel?: vscode.OutputChannel,
-    modeService?: ModeService
+    modeService?: ModeService,
+    capabilityPackService?: CapabilityPackService
   ) {
     this.modeService = modeService || new ModeService({ workspaceRoot: mcpService.getRoot() });
+    this.capabilityPackService =
+      capabilityPackService ||
+      new CapabilityPackService({ workspaceRoot: mcpService.getRoot(), modeService: this.modeService });
     this.secretProvider = new VsCodeSecretProvider(context.secrets);
     this.accountManager.onStateChange(() => {
       void this.notify();
     });
     this.modeService.onStateChange(() => {
+      void this.notify();
+    });
+    this.capabilityPackService.onStateChange(() => {
       void this.notify();
     });
   }
@@ -235,6 +293,9 @@ export class IntegrationManagerController {
     this.activeTab = tab;
     this.inspectingServerId = undefined;
     this.inspectingSkillId = undefined;
+    this.inspectingModeId = undefined;
+    this.inspectingPackId = undefined;
+    this.packPreview = undefined;
     void this.notify();
   }
 
@@ -492,6 +553,78 @@ export class IntegrationManagerController {
       });
     }
 
+    const rawPacks = this.capabilityPackService.listPacks();
+    const packSummaries: CapabilityPackSummaryDto[] = [];
+
+    for (const p of rawPacks) {
+      const readiness = resolveCapabilityPack({
+        pack: p,
+        ...resolverContext,
+      });
+
+      packSummaries.push({
+        id: p.packId,
+        name: p.manifest.name,
+        description: p.manifest.description,
+        version: p.installedVersion,
+        publisher: { id: p.manifest.publisher.id, name: p.manifest.publisher.name },
+        license: p.manifest.license,
+        scope: p.scope,
+        enabled: p.enabled,
+        isReady: readiness.isReady,
+        isActive: this.capabilityPackService.getActivePackId() === p.packId,
+        status: readiness.status,
+        baseMode: p.manifest.customMode.baseMode,
+        requiredSkillCount: p.manifest.requiredSkills.length,
+        requiredMcpCount: p.manifest.requiredMcpServers.length,
+        diagnostics: readiness.diagnostics,
+      });
+    }
+
+    let inspectingPackDetail: CapabilityPackDetailDto | undefined;
+    if (this.inspectingPackId) {
+      const pack = this.capabilityPackService.getPack(this.inspectingPackId);
+      if (pack) {
+        const readiness = resolveCapabilityPack({
+          pack,
+          ...resolverContext,
+        });
+
+        inspectingPackDetail = {
+          id: pack.packId,
+          name: pack.manifest.name,
+          description: pack.manifest.description,
+          version: pack.installedVersion,
+          publisher: { id: pack.manifest.publisher.id, name: pack.manifest.publisher.name },
+          license: pack.manifest.license,
+          scope: pack.scope,
+          enabled: pack.enabled,
+          isReady: readiness.isReady,
+          isActive: this.capabilityPackService.getActivePackId() === pack.packId,
+          status: readiness.status,
+          baseMode: pack.manifest.customMode.baseMode,
+          requiredSkillCount: pack.manifest.requiredSkills.length,
+          requiredMcpCount: pack.manifest.requiredMcpServers.length,
+          diagnostics: readiness.diagnostics,
+          sourceRepository: pack.manifest.sourceRepository,
+          attribution: pack.manifest.attribution,
+          openVsCodeVersion: pack.manifest.openVsCodeVersion,
+          permissionDeclarations: pack.manifest.permissionDeclarations,
+          requiredSkills: pack.manifest.requiredSkills,
+          optionalSkills: pack.manifest.optionalSkills,
+          requiredMcpServers: pack.manifest.requiredMcpServers,
+          optionalMcpServers: pack.manifest.optionalMcpServers,
+          customMode: pack.manifest.customMode,
+          documentation: pack.manifest.documentation,
+          integrity: pack.manifest.integrity,
+          previousVersion: pack.previousVersion,
+          hasRollback: Boolean(pack.previousVersion && pack.previousManifest),
+          installedAt: pack.installedAt,
+          updatedAt: pack.updatedAt,
+        };
+      }
+    }
+
     return {
       activeTab: this.activeTab,
       account: accountState,
@@ -503,6 +636,11 @@ export class IntegrationManagerController {
       inspectingModeId: this.inspectingModeId,
       inspectingModeDetail,
       modeWizard: this.modeWizard,
+      packs: packSummaries,
+      activePackId: this.capabilityPackService.getActivePackId(),
+      inspectingPackId: this.inspectingPackId,
+      inspectingPackDetail,
+      packPreview: this.packPreview,
       diagnostics,
       inspectingServerId: this.inspectingServerId,
       inspectingSkillId: this.inspectingSkillId,
@@ -1154,5 +1292,93 @@ export class IntegrationManagerController {
       isSensitive,
       description,
     };
+  }
+
+  // --- Capability Packs Management (Sprint 8E) ---
+
+  public getCapabilityPackService(): CapabilityPackService {
+    return this.capabilityPackService;
+  }
+
+  public inspectPack(packId?: string): void {
+    this.inspectingPackId = packId;
+    this.inspectingModeId = undefined;
+    this.inspectingServerId = undefined;
+    this.inspectingSkillId = undefined;
+    void this.notify();
+  }
+
+  public setPackPreview(preview: PackPreviewInfo | undefined): void {
+    this.packPreview = preview;
+    void this.notify();
+  }
+
+  public importPack(rawOrObj: string | Record<string, unknown>): CapabilityPackManifest {
+    return this.capabilityPackService.importPack(rawOrObj);
+  }
+
+  public previewPack(manifest: CapabilityPackManifest): PackPreviewInfo {
+    return this.capabilityPackService.previewPack(manifest);
+  }
+
+  public async installPack(
+    manifest: CapabilityPackManifest,
+    scope: "workspace" | "account" = "workspace"
+  ): Promise<InstalledCapabilityPack> {
+    const client = this.accountManager.getClient();
+    const installed = await this.capabilityPackService.installPack(manifest, scope, client);
+    this.inspectingPackId = installed.packId;
+    this.packPreview = undefined;
+    void this.notify();
+    return installed;
+  }
+
+  public async enablePack(packId: string): Promise<InstalledCapabilityPack> {
+    const client = this.accountManager.getClient();
+    const updated = await this.capabilityPackService.enablePack(packId, client);
+    void this.notify();
+    return updated;
+  }
+
+  public async disablePack(packId: string): Promise<InstalledCapabilityPack> {
+    const client = this.accountManager.getClient();
+    const updated = await this.capabilityPackService.disablePack(packId, client);
+    void this.notify();
+    return updated;
+  }
+
+  public async activatePack(
+    packId: string
+  ): Promise<{ pack: InstalledCapabilityPack; resolvedProfile: ResolvedExecutionProfile }> {
+    const snapshot = await this.getProductionCapabilitySnapshot();
+    const res = this.capabilityPackService.activatePack(packId, snapshot);
+    void this.notify();
+    return res;
+  }
+
+  public async updatePack(
+    packId: string,
+    newManifest: CapabilityPackManifest
+  ): Promise<InstalledCapabilityPack> {
+    const client = this.accountManager.getClient();
+    const updated = await this.capabilityPackService.updatePack(packId, newManifest, client);
+    void this.notify();
+    return updated;
+  }
+
+  public async rollbackPack(packId: string): Promise<InstalledCapabilityPack> {
+    const client = this.accountManager.getClient();
+    const rolledBack = await this.capabilityPackService.rollbackPack(packId, client);
+    void this.notify();
+    return rolledBack;
+  }
+
+  public async removePack(packId: string): Promise<void> {
+    const client = this.accountManager.getClient();
+    await this.capabilityPackService.removePack(packId, client);
+    if (this.inspectingPackId === packId) {
+      this.inspectingPackId = undefined;
+    }
+    void this.notify();
   }
 }

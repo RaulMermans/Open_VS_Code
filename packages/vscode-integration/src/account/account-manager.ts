@@ -8,6 +8,7 @@ import {
 } from "@open-vs-code/account-service";
 import type { McpService } from "../mcp/mcp-service.js";
 import type { ModeService } from "../modes/mode-service.js";
+import type { CapabilityPackService } from "../packs/capability-pack-service.js";
 import type { McpServerConfig } from "@open-vs-code/agent-core";
 
 export type AccountStatus = "UNAUTHENTICATED" | "CONNECTING" | "ONLINE" | "OFFLINE";
@@ -117,7 +118,11 @@ export class DesktopAccountManager {
     return this.client;
   }
 
-  public async cleanupAccountIntegrations(mcpService?: McpService, modeService?: ModeService): Promise<void> {
+  public async cleanupAccountIntegrations(
+    mcpService?: McpService,
+    modeService?: ModeService,
+    packService?: CapabilityPackService
+  ): Promise<void> {
     if (mcpService) {
       for (const serverId of Array.from(this.accountOwnedServerIds)) {
         try {
@@ -141,9 +146,16 @@ export class DesktopAccountManager {
     if (modeService) {
       modeService.cleanupAccountModes();
     }
+    if (packService) {
+      packService.cleanupAccountPacks();
+    }
   }
 
-  public async initialize(mcpService?: McpService, modeService?: ModeService): Promise<AccountState> {
+  public async initialize(
+    mcpService?: McpService,
+    modeService?: ModeService,
+    packService?: CapabilityPackService
+  ): Promise<AccountState> {
     let rawSecret: string | undefined;
     try {
       rawSecret = await this.context.secrets.get(ACCOUNT_SESSION_SECRET_KEY);
@@ -152,7 +164,7 @@ export class DesktopAccountManager {
     }
 
     if (!rawSecret) {
-      await this.cleanupAccountIntegrations(mcpService, modeService);
+      await this.cleanupAccountIntegrations(mcpService, modeService, packService);
       this.status = "UNAUTHENTICATED";
       this.user = undefined;
       this.isStale = false;
@@ -165,7 +177,7 @@ export class DesktopAccountManager {
       sessionData = JSON.parse(rawSecret);
     } catch {
       await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
-      await this.cleanupAccountIntegrations(mcpService, modeService);
+      await this.cleanupAccountIntegrations(mcpService, modeService, packService);
       this.status = "UNAUTHENTICATED";
       this.notify();
       return this.getState();
@@ -185,7 +197,7 @@ export class DesktopAccountManager {
             `[Account] Configured server URL origin (${configuredOrigin}) differs from session origin (${storedOrigin}). Invalidating session to prevent credential forwarding.`
           );
           await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
-          await this.cleanupAccountIntegrations(mcpService, modeService);
+          await this.cleanupAccountIntegrations(mcpService, modeService, packService);
           this.status = "UNAUTHENTICATED";
           this.user = undefined;
           this.notify();
@@ -218,9 +230,14 @@ export class DesktopAccountManager {
       this.outputChannel?.appendLine(`[Account] Authenticated as ${profile.username} (${profile.role}).`);
 
       if (mcpService) {
-        await this.syncIntegrations(mcpService, undefined, modeService);
-      } else if (modeService) {
-        await modeService.syncAccountModes(this.client);
+        await this.syncIntegrations(mcpService, undefined, modeService, packService);
+      } else {
+        if (modeService) {
+          await modeService.syncAccountModes(this.client);
+        }
+        if (packService) {
+          await packService.syncAccountPacks(this.client);
+        }
       }
     } catch (err: any) {
       if (
@@ -231,7 +248,7 @@ export class DesktopAccountManager {
       ) {
         this.outputChannel?.appendLine(`[Account] Session rejected (${err.code}): ${err.message}. Clearing credentials.`);
         await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
-        await this.cleanupAccountIntegrations(mcpService, modeService);
+        await this.cleanupAccountIntegrations(mcpService, modeService, packService);
         this.status = "UNAUTHENTICATED";
         this.user = undefined;
         this.isStale = false;
@@ -255,12 +272,13 @@ export class DesktopAccountManager {
     password: string,
     serverUrl?: string,
     mcpService?: McpService,
-    modeService?: ModeService
+    modeService?: ModeService,
+    packService?: CapabilityPackService
   ): Promise<UserProfile> {
     const effectiveUrl = serverUrl || this.getConfiguredServerUrl();
 
     // Clean up any existing account integrations prior to new login to guarantee account isolation
-    await this.cleanupAccountIntegrations(mcpService, modeService);
+    await this.cleanupAccountIntegrations(mcpService, modeService, packService);
 
     this.client.setBaseUrl(effectiveUrl);
     this.status = "CONNECTING";
@@ -285,9 +303,14 @@ export class DesktopAccountManager {
       this.outputChannel?.appendLine(`[Account] Successfully logged in as ${result.user.username}.`);
 
       if (mcpService) {
-        await this.syncIntegrations(mcpService, undefined, modeService);
-      } else if (modeService) {
-        await modeService.syncAccountModes(this.client);
+        await this.syncIntegrations(mcpService, undefined, modeService, packService);
+      } else {
+        if (modeService) {
+          await modeService.syncAccountModes(this.client);
+        }
+        if (packService) {
+          await packService.syncAccountPacks(this.client);
+        }
       }
 
       this.notify();
@@ -303,14 +326,18 @@ export class DesktopAccountManager {
     }
   }
 
-  public async logout(mcpService?: McpService, modeService?: ModeService): Promise<void> {
+  public async logout(
+    mcpService?: McpService,
+    modeService?: ModeService,
+    packService?: CapabilityPackService
+  ): Promise<void> {
     try {
       await this.client.logout();
     } catch {
       // Best effort remote revocation
     } finally {
       this.client.setToken(undefined);
-      await this.cleanupAccountIntegrations(mcpService, modeService);
+      await this.cleanupAccountIntegrations(mcpService, modeService, packService);
       await this.context.secrets.delete(ACCOUNT_SESSION_SECRET_KEY);
       this.status = "UNAUTHENTICATED";
       this.user = undefined;
@@ -324,7 +351,8 @@ export class DesktopAccountManager {
   public async syncIntegrations(
     mcpService: McpService,
     workspaceIdentity?: string,
-    modeService?: ModeService
+    modeService?: ModeService,
+    packService?: CapabilityPackService
   ): Promise<SyncResult> {
     if (this.status === "UNAUTHENTICATED") {
       return { total: 0, restored: 0, skipped: 0, isOffline: false, errors: ["Not authenticated."] };
@@ -432,6 +460,14 @@ export class DesktopAccountManager {
         await modeService.syncAccountModes(this.client);
       } catch (err: any) {
         errors.push(`Failed to sync account modes: ${err.message}`);
+      }
+    }
+
+    if (packService) {
+      try {
+        await packService.syncAccountPacks(this.client);
+      } catch (err: any) {
+        errors.push(`Failed to sync account capability packs: ${err.message}`);
       }
     }
 

@@ -1,5 +1,6 @@
 import type {
   AuditEvent,
+  AccountCapabilityPack,
   AccountModeProfile,
   IntegrationRegistration,
   IntegrationWorkspacePolicy,
@@ -381,6 +382,58 @@ export class AccountClient {
     await this.request<{ ok: boolean }>(
       "DELETE",
       `/api/v1/modes/${encodeURIComponent(profileId)}`
+    );
+  }
+
+  // Capability Packs APIs (Sprint 8E)
+  async listPacks(): Promise<AccountCapabilityPack[]> {
+    const res = await this.request<{ packs: AccountCapabilityPack[] }>("GET", "/api/v1/packs");
+    return res.packs;
+  }
+
+  async getPack(packId: string): Promise<AccountCapabilityPack> {
+    const res = await this.request<{ pack: AccountCapabilityPack }>(
+      "GET",
+      `/api/v1/packs/${encodeURIComponent(packId)}`
+    );
+    return res.pack;
+  }
+
+  async installPack(manifest: any): Promise<AccountCapabilityPack> {
+    const res = await this.request<{ pack: AccountCapabilityPack }>("POST", "/api/v1/packs", manifest);
+    return res.pack;
+  }
+
+  async togglePack(packId: string, enabled: boolean): Promise<AccountCapabilityPack> {
+    const res = await this.request<{ pack: AccountCapabilityPack }>(
+      "PATCH",
+      `/api/v1/packs/${encodeURIComponent(packId)}`,
+      { enabled }
+    );
+    return res.pack;
+  }
+
+  async updatePack(packId: string, newManifest: any): Promise<AccountCapabilityPack> {
+    const res = await this.request<{ pack: AccountCapabilityPack }>(
+      "PUT",
+      `/api/v1/packs/${encodeURIComponent(packId)}`,
+      newManifest
+    );
+    return res.pack;
+  }
+
+  async rollbackPack(packId: string): Promise<AccountCapabilityPack> {
+    const res = await this.request<{ pack: AccountCapabilityPack }>(
+      "POST",
+      `/api/v1/packs/${encodeURIComponent(packId)}/rollback`
+    );
+    return res.pack;
+  }
+
+  async removePack(packId: string): Promise<void> {
+    await this.request<{ ok: boolean }>(
+      "DELETE",
+      `/api/v1/packs/${encodeURIComponent(packId)}`
     );
   }
 }

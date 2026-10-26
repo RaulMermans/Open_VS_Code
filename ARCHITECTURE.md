@@ -775,3 +775,52 @@ AgentRuntime (Existing Single Authoritative Agent Loop)
 | `ChatController` | `@open-vs-code/vscode-integration/` | Active mode management and execution lifecycle. | Enforces execution immutability: mode switches and profile edits during `activeTurn: true` are blocked. Disallows pending confirmation transfer across mode transitions. |
 | `IntegrationManagerController` & UI | `@open-vs-code/vscode-integration/` | Webview Custom Modes Hub and 9-step wizard. | Replaces Sprint 8C placeholder. Zero auto-execution on render; tracks `lastModesSig` and `lastBadgeSig` for zero DOM node re-creation on unchanged state pushes. |
 
+## Capability Packs Subsystem (Sprint 8E, ADR-038)
+
+The Capability Packs subsystem provides declarative packaging, deterministic dependency resolution, and governed installation for reusable bundles containing Custom Modes, Skills, MCP tools, workflow preferences, model requirements, and evaluation assertions.
+
+```text
+Capability Pack Manifest (.json)
+       │
+       ▼
+Manifest Validation (validatePackManifest)
+       │
+       ▼
+Deterministic Pack Resolver (PackResolver)
+       │
+       ▼
+Installation Registry (Workspace: .open-vs-code/packs.json | Account: SQLite DB)
+       │
+       ▼
+Custom Mode Activation (ModeService / ModeResolver)
+       │
+       ▼
+AgentSessionBridge (Existing Session Orchestrator)
+       │
+       ▼
+AgentRuntime (Existing Single Authoritative Agent Loop)
+```
+
+### Core Architecture Invariant
+
+**A Capability Pack is a declarative bundle of references, not a secondary agent runtime.**
+
+- Packs resolve into Custom Modes and validated capability snapshots; the core `AgentRuntime` remains unaware of marketplace or package-installation concerns.
+- Governed 10-step lifecycle: Import, Validate, Preview, Install, Enable, Activate, Disable, Update, Remove, Rollback.
+- Strictly enforces $\text{Import} \neq \text{Install} \neq \text{Enable} \neq \text{Execute}$.
+- Zero execution of arbitrary scripts (`npm`, `npx`, shell commands, Docker containers).
+- `PermissionGate` remains the supreme tool execution authority; pack declarations cannot override canonical mode boundaries.
+
+### Module Boundaries
+
+| Component | Package / Path | Responsibility | Security Invariants |
+| :--- | :--- | :--- | :--- |
+| `contracts.ts` | `@open-vs-code/agent-core/packs/` | Declarative manifest schema (`CapabilityPackManifest`), `InstalledCapabilityPack`, `PackReadinessResult`. | Versioned schema (`open-vs-code/capability-pack@v1`). Strict SemVer typing. |
+| `validation.ts` | `@open-vs-code/agent-core/packs/` | Manifest validation (`validatePackManifest`). | Rejects prototype pollution (`__proto__`), path traversal (`../`), embedded credentials (`AKIA...`), executable directives (`runCommand`, `postinstall`, `shell`, `exec`), and base mode permission ceiling escalation. Verifies SHA-256 integrity digests. |
+| `resolver.ts` | `@open-vs-code/agent-core/packs/` | Dependency resolution (`resolvePackReadiness`). | Evaluates Custom Modes, Skills, MCP live connections and tools, model preferences, and workspace trust into 7 structured states (`READY`, `INSTALLED_INACTIVE`, `MISSING_DEPENDENCIES`, `INCOMPATIBLE`, `BLOCKED_BY_POLICY`, `UNTRUSTED`, `INVALID`). Fail-closed. |
+| `starter-packs.ts` | `@open-vs-code/agent-core/packs/` | Canonical starter packs. | Reference Pack A (`repo-architecture-review`, read-only REVIEW base mode) and Reference Pack B (`mcp-research-demo`, PLAN base mode with local MCP server). |
+| `CapabilityPackService` | `@open-vs-code/vscode-integration/packs/` | Dual-scope pack persistence, lifecycle operations, and mode registration. | Workspace packs stored in `.open-vs-code/packs.json`; account packs synchronized from `AccountService`. On logout, account packs are flushed while workspace packs persist. Workspace overrides Account on collision. |
+| `IntegrationManagerController` & UI | `@open-vs-code/vscode-integration/` | 6th navigation tab ("Capability Packs") in Visual Integration Manager. | Pack cards with status chips (Installed, Enabled, Ready, Running, Blocked), manifest importer, dependency graph breakdown, permissions view, update, and rollback. |
+| `AccountService` Pack Endpoints | `@open-vs-code/account-service/pack/` | Account-level pack persistence in SQLite. | Table `capability_packs` (Migration 3) with foreign key cascade, unique `(owner_user_id, pack_id)`, version tracking, rollback preservation, and audit logging. |
+
+

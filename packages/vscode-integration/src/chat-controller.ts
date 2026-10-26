@@ -808,6 +808,82 @@ export class ChatController {
         this.persistConversation();
         this.sendState();
         break;
+      case 'integration.inspectPack':
+        this._integrationManager?.inspectPack(message.packId);
+        break;
+      case 'integration.importPackPrompt':
+        try {
+          const jsonInput = await vscode.window.showInputBox({
+            prompt: 'Paste Capability Pack Manifest JSON',
+            placeHolder: '{"schemaVersion": 1, "id": "my-pack", ...}',
+            ignoreFocusOut: true,
+          });
+          if (jsonInput) {
+            const manifest = this._integrationManager?.importPack(jsonInput);
+            if (manifest) {
+              await this._integrationManager?.installPack(manifest, 'workspace');
+              vscode.window.showInformationMessage(`Capability Pack "${manifest.name}" installed.`);
+            }
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to import pack: ${err.message}`);
+        }
+        break;
+      case 'integration.importPack':
+        try {
+          const manifest = this._integrationManager?.importPack(message.manifest);
+          if (manifest) {
+            const preview = this._integrationManager?.previewPack(manifest);
+            this._integrationManager?.setPackPreview(preview);
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to validate pack: ${err.message}`);
+        }
+        break;
+      case 'integration.installPack':
+        try {
+          await this._integrationManager?.installPack(message.manifest as any, message.scope || 'workspace');
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to install pack: ${err.message}`);
+        }
+        break;
+      case 'integration.enablePack':
+        await this._integrationManager?.enablePack(message.packId);
+        break;
+      case 'integration.disablePack':
+        await this._integrationManager?.disablePack(message.packId);
+        break;
+      case 'integration.activatePack':
+        try {
+          await this._integrationManager?.activatePack(message.packId);
+          this.syncActiveModeFromManager();
+          this.persistConversation();
+          this.sendState();
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to activate pack: ${err.message}`);
+        }
+        break;
+      case 'integration.updatePack':
+        try {
+          await this._integrationManager?.updatePack(message.packId, message.manifest as any);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to update pack: ${err.message}`);
+        }
+        break;
+      case 'integration.rollbackPack':
+        try {
+          await this._integrationManager?.rollbackPack(message.packId);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to roll back pack: ${err.message}`);
+        }
+        break;
+      case 'integration.removePack':
+        try {
+          await this._integrationManager?.removePack(message.packId);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to remove pack: ${err.message}`);
+        }
+        break;
     }
   }
 

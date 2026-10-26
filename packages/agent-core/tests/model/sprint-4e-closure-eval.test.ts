@@ -2329,6 +2329,11 @@ describe("Sprint 4E.1 — Comprehensive Closure & Security Boundary Evaluation",
           agentModelId: "qwen2.5-coder:7b",
           fimModelId: "qwen2.5-coder:7b",
           allowDirtyWorktree: true,
+          fetchFn: (async () => {
+            const err: any = new Error("connect ECONNREFUSED 127.0.0.1:59999")
+            err.code = "ECONNREFUSED"
+            throw err
+          }) as any,
         })
         assert.equal(preflight.status, "BLOCKED_WITH_EVIDENCE")
         assert.equal(preflight.inferenceAuthorized, true)

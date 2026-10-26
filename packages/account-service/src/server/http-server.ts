@@ -6,6 +6,7 @@ import { AuthService } from "../auth/auth-service.js";
 import { AdminService } from "../admin/admin-service.js";
 import { IntegrationService } from "../integration/integration-service.js";
 import { ModeService } from "../mode/mode-service.js";
+import { CapabilityPackService } from "../pack/pack-service.js";
 import {
   AccountServiceError,
   ForbiddenError,
@@ -34,6 +35,7 @@ export class AccountServer {
   public readonly adminService: AdminService;
   public readonly integrationService: IntegrationService;
   public readonly modeService: ModeService;
+  public readonly packService: CapabilityPackService;
   private server?: http.Server | https.Server | undefined;
   private readonly port: number;
   private readonly host: string;
@@ -51,6 +53,7 @@ export class AccountServer {
     this.adminService = new AdminService(db);
     this.integrationService = new IntegrationService(db);
     this.modeService = new ModeService(db);
+    this.packService = new CapabilityPackService(db);
   }
 
   private isLoopbackHost(host: string): boolean {
@@ -404,6 +407,68 @@ export class AccountServer {
           this.sendJson(res, 200, { ok: true });
           return;
         }
+      }
+
+      // 9. Capability Packs Endpoints (Sprint 8E)
+      // GET /api/v1/packs
+      if (method === "GET" && pathname === "/api/v1/packs") {
+        const packs = await this.packService.list(user.id);
+        this.sendJson(res, 200, { packs });
+        return;
+      }
+
+      // POST /api/v1/packs (install)
+      if (method === "POST" && pathname === "/api/v1/packs") {
+        const body = await this.parseJsonBody(req);
+        const pack = await this.packService.install(user.id, body);
+        this.sendJson(res, 201, { pack });
+        return;
+      }
+
+      // Single Pack Routes: /api/v1/packs/:id
+      const packIdMatch = pathname.match(/^\/api\/v1\/packs\/([^/]+)$/);
+      if (packIdMatch && packIdMatch[1]) {
+        const packId = packIdMatch[1];
+
+        // GET /api/v1/packs/:id
+        if (method === "GET") {
+          const pack = await this.packService.get(user.id, packId);
+          this.sendJson(res, 200, { pack });
+          return;
+        }
+
+        // PATCH /api/v1/packs/:id (enable/disable)
+        if (method === "PATCH") {
+          const body = await this.parseJsonBody(req);
+          const enabled = Boolean(body?.enabled);
+          const pack = await this.packService.toggle(user.id, packId, enabled);
+          this.sendJson(res, 200, { pack });
+          return;
+        }
+
+        // PUT /api/v1/packs/:id (update)
+        if (method === "PUT") {
+          const body = await this.parseJsonBody(req);
+          const updated = await this.packService.update(user.id, packId, body);
+          this.sendJson(res, 200, { pack: updated });
+          return;
+        }
+
+        // DELETE /api/v1/packs/:id (remove)
+        if (method === "DELETE") {
+          await this.packService.remove(user.id, packId);
+          this.sendJson(res, 200, { ok: true });
+          return;
+        }
+      }
+
+      // Rollback Route: POST /api/v1/packs/:id/rollback
+      const rollbackMatch = pathname.match(/^\/api\/v1\/packs\/([^/]+)\/rollback$/);
+      if (rollbackMatch && rollbackMatch[1] && method === "POST") {
+        const packId = rollbackMatch[1];
+        const rolledBack = await this.packService.rollback(user.id, packId);
+        this.sendJson(res, 200, { pack: rolledBack });
+        return;
       }
 
       // 404 Route Not Found
