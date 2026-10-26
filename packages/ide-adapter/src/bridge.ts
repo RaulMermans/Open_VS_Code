@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget, isSkillApplied } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -17,6 +17,8 @@ export interface BridgeOptions {
   learning?: { enabled: boolean };
   /** Authoritative MCP catalog (e.g. from McpService) */
   mcpCatalog?: McpCatalog;
+  /** Governed BrowserSessionManager (Sprint 9A) */
+  browserSessionManager?: BrowserSessionManager;
 }
 
 export class AgentSessionBridge {
@@ -30,6 +32,7 @@ export class AgentSessionBridge {
   private progressMonitor?: BridgeOptions["progressMonitor"];
   private learning?: BridgeOptions["learning"];
   private mcpCatalog?: BridgeOptions["mcpCatalog"];
+  private browserSessionManager?: BrowserSessionManager;
   private lastWorkflowState?: WorkflowState;
   
   constructor(options: BridgeOptions) {
@@ -41,6 +44,7 @@ export class AgentSessionBridge {
     this.progressMonitor = options.progressMonitor;
     this.learning = options.learning;
     this.mcpCatalog = options.mcpCatalog;
+    this.browserSessionManager = options.browserSessionManager;
   }
 
   /** Bounded workflow state of the most recent structured task, if one ran. */
@@ -158,6 +162,7 @@ export class AgentSessionBridge {
         providerOverride: this.providerOverride,
         ...(resolvedProfile ? { resolvedProfile } : {}),
         ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),
+        ...(this.browserSessionManager ? { browserSessionManager: this.browserSessionManager } : {}),
         ...(this.skills
           ? { skills: this.skills }
           : resolvedProfile?.appliedSkills && resolvedProfile.appliedSkills.length > 0

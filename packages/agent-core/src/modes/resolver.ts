@@ -23,6 +23,13 @@ export const KNOWN_REPOSITORY_TOOL_ACTIONS: Readonly<Record<string, ToolAction>>
   git_commit: "git_commit",
   git_push: "git_push",
   deploy: "deploy",
+  browser_open: "browser_inspection",
+  browser_navigate: "browser_interaction",
+  browser_snapshot: "browser_inspection",
+  browser_click: "browser_interaction",
+  browser_fill: "browser_interaction",
+  browser_screenshot: "browser_inspection",
+  browser_close: "browser_inspection",
 });
 
 export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecutionProfile {

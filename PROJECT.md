@@ -30,6 +30,22 @@
 
 ## Current sprint
 
+Sprint 9A — Governed Playwright Browser Runtime & Agent Tool Integration (`docs/sprints/SPRINT_9A_PLAYWRIGHT_BROWSER_RUNTIME.md`; ADR-039).
+Delivers a secure, locally executable browser automation capability integrated directly into the existing Agent Runtime through governed tools:
+- Zero Secondary Agent Brains: Browser capabilities execute through the canonical execution pipeline (`Custom Mode -> AgentSessionBridge -> AgentRuntime -> PermissionGate -> Governed Browser Tool Adapter -> BrowserSessionManager -> Playwright Chromium -> Structured Browser Result`).
+- Technology Selection: Evaluated `microsoft/playwright-mcp` and `microsoft/playwright-cli`; implemented governed direct session management wrapping pinned `playwright-core` with compact MCP-compatible tool signatures, process tree tracking, and granular network route interception.
+- Mandatory Preflight Account Pack Reconciliation: Reconciles authoritative server packs against ephemeral account mode profiles in `ModeService`, pruning orphaned profiles, invalidating active mode selections when revoked, preserving workspace modes, and preventing revoked execution.
+- Governed Browser Tools (7): `browser_open`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_screenshot`, `browser_close`.
+- Token Efficiency: Byte-bounded accessibility snapshots (32KB default limit) and element references (`refId`) with automatic invalidation upon navigation/reload (`[STALE_ELEMENT_REFERENCE]`).
+- Strict Permission Classification: Low-risk inspection (`browser_inspection`, ALLOW), interaction (`browser_interaction`, CONFIRM in BUILD), sensitive fields (`browser_sensitive`, masked review), and destructive actions (`browser_destructive`, CONFIRM/DENY). High-risk tools (arbitrary `eval`, CDP, cookie exports) strictly excluded.
+- Network Guard & SSRF Protection: Origin allowlisting, link-local blocking (`169.254.0.0/16`), private subnet blocking (`10.0.0.0/8`, etc.), cloud metadata blocking (`metadata.google.internal`), and `file://` protocol rejection enforced via `isBrowserUrlPermitted()` and `page.route` interception.
+- Browser Provisioning Diagnostics: Scans environment overrides, Playwright cache, and system paths. Fails closed with `NOT_CONFIGURED` without running uncontrolled `npx/npm` auto-downloads from inside the agent.
+- Starter Profile & Pack: `Browser QA — Local Development` (`browser-qa-local-dev`, base mode `PLAN`) and `Browser QA — Local Development Pack` (`browser-qa-local-dev-pack`) with SHA-256 integrity verification.
+- Comprehensive Verification: 31 high-value scenarios passing across runtime lifecycle, security and policy gates, and end-to-end integration with real local Chromium execution.
+
+Sprint 8E.1 — Capability Packs Integrity, Isolation & Runtime Closure (`docs/sprints/SPRINT_8E1_CAPABILITY_PACKS_CLOSURE.md`; ADR-038).
+Resolves verified integration, integrity, and isolation gaps across manifest integrity verification, account-owned ephemeral mode lifecycle, cross-device restoration, SemVer readiness parsing, and atomic storage.
+
 Sprint 8E — Capability Packs: Declarative Packaging, Dependency Resolution & Governed Installation (`docs/sprints/SPRINT_8E_CAPABILITY_PACKS.md`; ADR-038).
 Delivers a declarative packaging, dependency resolution, and governed installation subsystem that allows developers to combine Custom Modes, portable Skills, MCP tools, workflow configurations, model preferences, and evaluation requirements into portable Capability Packs:
 - Core Architecture Invariant: A Capability Pack is a declarative bundle of references, not a secondary agent loop or parallel execution authority. Execution flows through `ModeResolver` into the existing `AgentSessionBridge`, `AgentRuntime`, and `PermissionGate`.

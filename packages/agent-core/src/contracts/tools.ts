@@ -20,6 +20,10 @@ export type ToolAction =
   | "mcp_external_unknown"
   | "mcp_sensitive_data_transmission"
   | "mcp_external_destructive"
+  | "browser_inspection"
+  | "browser_interaction"
+  | "browser_sensitive"
+  | "browser_destructive"
 export interface ToolDefinition {
   readonly name: string
   readonly description: string

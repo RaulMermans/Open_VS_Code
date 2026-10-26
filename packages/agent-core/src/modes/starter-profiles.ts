@@ -69,6 +69,39 @@ export const STARTER_MODE_PROFILES: readonly CustomModeProfile[] = Object.freeze
     createdAt: "2026-10-25T00:00:00.000Z",
     updatedAt: "2026-10-25T00:00:00.000Z",
   },
+  {
+    id: "browser-qa-local-dev",
+    name: "Browser QA — Local Development",
+    description:
+      "Inspect local development servers, analyze accessibility snapshots, examine console errors, and verify UI state without unapproved mutations.",
+    icon: "browser",
+    version: 1,
+    schemaVersion: 1,
+    source: "builtin",
+    baseMode: "PLAN",
+    customInstructions:
+      "Navigate to authorized local development URLs, inspect structured accessibility snapshots, locate interactive elements, capture screenshots, and examine console errors. Produce an evidence-backed QA report.",
+    requiredSkills: [],
+    optionalSkills: [],
+    requiredMcpServers: [],
+    optionalMcpServers: [],
+    toolAllowlist: [
+      "browser_open",
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_click",
+      "browser_fill",
+      "browser_screenshot",
+      "browser_close",
+      "read_file",
+      "search_text",
+    ],
+    workflowPreference: "direct",
+    scope: "builtin",
+    enabled: true,
+    createdAt: "2026-10-26T00:00:00.000Z",
+    updatedAt: "2026-10-26T00:00:00.000Z",
+  },
 ]);
 
 export function getStarterModeProfiles(): readonly CustomModeProfile[] {

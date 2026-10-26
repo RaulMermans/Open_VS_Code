@@ -1141,4 +1141,134 @@ describe("Sprint 8E — Capability Packs End-to-End Governance & Runtime Integra
     assert.ok(readiness.missingSkills.length > 0 || readiness.missingMcpServers.length > 0);
     assert.ok(readiness.diagnostics.some((d: string) => d.includes("specialized-local-skill") || d.includes("missing-local-mcp-server")));
   });
+
+  // =========================================================================
+  // 12. Cross-Device Deletion and Resynchronization
+  // =========================================================================
+  test("12. Cross-device deletion and resynchronization purges orphaned mode profiles and prevents revoked execution while preserving workspace modes", async () => {
+    const { AccountClient } = await import("@open-vs-code/account-service");
+
+    // --- Device A Setup ---
+    const deviceAClient = new AccountClient({ baseUrl: authServerUrl });
+    await deviceAClient.login("alice", "alice-pass-123");
+
+    const sharedPackManifest = buildTestManifest({
+      id: "alice-deletable-pack",
+      name: "Alice Deletable Pack",
+      publisher: { id: "alice", name: "Alice" },
+      customMode: {
+        id: "alice-deletable-mode",
+        name: "Alice Deletable Mode",
+        baseMode: "PLAN",
+        toolAllowlist: ["read_file"],
+      },
+    });
+
+    await deviceAClient.installPack(sharedPackManifest);
+    await deviceAClient.togglePack("alice-deletable-pack", true);
+
+    // --- Device B Setup (Independent Storage & Services) ---
+    const deviceBWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "device-b-sync-"));
+    const deviceBContext = new MockExtensionContext();
+    const deviceBOutput = new MockOutputChannel();
+    const deviceBSecretProvider = new VsCodeSecretProvider(deviceBContext.secrets);
+    const deviceBMcp = new McpService(deviceBWorkspace, deviceBSecretProvider, deviceBOutput);
+    const deviceBAccount = new DesktopAccountManager(deviceBContext, deviceBOutput);
+    await deviceBAccount.initialize(deviceBMcp);
+
+    const deviceBModeService = new ModeService({ workspaceRoot: deviceBWorkspace });
+    const deviceBPackService = new CapabilityPackService({
+      workspaceRoot: deviceBWorkspace,
+      modeService: deviceBModeService,
+    });
+
+    // Device B has a local workspace-owned mode
+    deviceBModeService.createWorkspaceMode({
+      id: "device-b-local-mode",
+      name: "Device B Local Mode",
+      description: "Local workspace mode on Device B",
+      icon: "code",
+      schemaVersion: 1,
+      version: 1,
+      baseMode: "PLAN",
+      source: "workspace",
+      scope: "workspace",
+      enabled: true,
+      requiredSkills: [],
+      optionalSkills: [],
+      requiredMcpServers: [],
+      optionalMcpServers: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Device B logs in as Alice
+    const deviceBClient = new AccountClient({ baseUrl: authServerUrl });
+    await deviceBClient.login("alice", "alice-pass-123");
+    await deviceBPackService.syncAccountPacks(deviceBClient);
+
+    // Verify Device B sees the account pack and mode
+    const initialPacksB = deviceBPackService.listPacks();
+    assert.ok(initialPacksB.some((p: any) => p.packId === "alice-deletable-pack"), "Device B must see alice-deletable-pack");
+    const initialModesB = deviceBModeService.listModes();
+    assert.ok(initialModesB.some((m: any) => m.id === "alice-deletable-mode"), "Device B must see alice-deletable-mode");
+    assert.ok(initialModesB.some((m: any) => m.id === "device-b-local-mode"), "Device B must see device-b-local-mode");
+
+    // Device B selects the account mode as active
+    deviceBModeService.setActiveModeId("alice-deletable-mode");
+    assert.strictEqual(deviceBModeService.getActiveModeId(), "alice-deletable-mode");
+
+    // --- Device A removes the pack on the backend ---
+    await deviceAClient.removePack("alice-deletable-pack");
+
+    // --- Device B performs same-account synchronization (NOT logout) ---
+    await deviceBPackService.syncAccountPacks(deviceBClient);
+
+    // Verify:
+    // 1. Pack removed from Device B packService
+    const syncedPacksB = deviceBPackService.listPacks();
+    assert.strictEqual(
+      syncedPacksB.some((p: any) => p.packId === "alice-deletable-pack"),
+      false,
+      "Deleted pack must be removed from Device B pack registry"
+    );
+
+    // 2. Mode profile removed from Device B modeService
+    const syncedModesB = deviceBModeService.listModes();
+    assert.strictEqual(
+      syncedModesB.some((m: any) => m.id === "alice-deletable-mode"),
+      false,
+      "Orphaned account mode profile must be removed from Device B modeService"
+    );
+
+    // 3. Active mode selection on Device B was invalidated
+    assert.strictEqual(
+      deviceBModeService.getActiveModeId(),
+      undefined,
+      "Active mode selection must be invalidated when revoked from backend"
+    );
+
+    // 4. Workspace-owned mode is PRESERVED intact
+    assert.ok(
+      syncedModesB.some((m: any) => m.id === "device-b-local-mode"),
+      "Workspace-owned mode must be preserved across account pack reconciliation"
+    );
+
+    // 5. Revoked profile cannot execute (fails closed)
+    assert.throws(
+      () =>
+        deviceBModeService.resolveMode("alice-deletable-mode", {
+          workspaceTrusted: true,
+          availableSkills: [],
+          availableMcpServers: [],
+          availableTools: [],
+        }),
+      /Cannot resolve mode: profile "alice-deletable-mode" not found/,
+      "Revoked mode profile must fail closed and cannot execute"
+    );
+
+    // Cleanup
+    await deviceBMcp.dispose();
+    fs.rmSync(deviceBWorkspace, { recursive: true, force: true });
+  });
 });

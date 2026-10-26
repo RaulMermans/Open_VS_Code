@@ -16,6 +16,7 @@ import { createVerificationToolRegistrations } from "../tools/verification-regis
 import { McpCatalog, selectMcpTools, createMcpToolRegistration } from "../mcp/index.ts";
 import { loadMcpConfig } from "../mcp/mcp-config-loader.ts";
 import { classifyPermission } from "../tools/permissions.ts";
+import { BrowserSessionManager, createBrowserToolRegistrations } from "../browser/index.ts";
 import { ProjectMemoryLoader } from "../context/memory-loader.ts";
 import { SessionSummaryStorage } from "../context/session-storage.ts";
 import { MemoryRetriever } from "../context/memory-retriever.ts";
@@ -107,6 +108,11 @@ export interface CreateAgentRuntimeOptions {
    * When provided, avoids duplicate catalog instantiation and server process spawning.
    */
   mcpCatalog?: McpCatalog;
+  /**
+   * Optional governed BrowserSessionManager instance (Sprint 9A).
+   * When provided, exposes governed browser tools (browser_open, browser_navigate, browser_snapshot, etc.).
+   */
+  browserSessionManager?: BrowserSessionManager;
 }
 
 export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
@@ -206,6 +212,12 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       registry.register(r);
     }
     for (const r of createVerificationToolRegistrations(options.workspaceRoot)) {
+      registry.register(r);
+    }
+  }
+
+  if (options.browserSessionManager) {
+    for (const r of createBrowserToolRegistrations(options.browserSessionManager)) {
       registry.register(r);
     }
   }

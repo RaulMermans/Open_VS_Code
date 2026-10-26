@@ -24,6 +24,10 @@ test("classifies the baseline action table deterministically in BUILD mode", () 
     mcp_sensitive_data_transmission: "CONFIRM",
     mcp_external_destructive: "CONFIRM",
     mcp_external_unknown: "CONFIRM",
+    browser_inspection: "ALLOW",
+    browser_interaction: "CONFIRM",
+    browser_sensitive: "CONFIRM",
+    browser_destructive: "CONFIRM",
   }
   for (const [action, permission] of Object.entries(expected)) {
     assert.equal(classifyPermission({ action: action as ActionCategory, mode: "BUILD" }), permission)

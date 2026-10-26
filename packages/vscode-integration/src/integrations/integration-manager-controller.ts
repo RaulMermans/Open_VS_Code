@@ -24,6 +24,7 @@ import {
   type PackReadinessStatus,
   type CustomModeProfile,
   resolveCapabilityPack,
+  detectBrowserProvisioning,
 } from "@open-vs-code/agent-core";
 import { VsCodeSecretProvider } from "../mcp/mcp-vscode-secrets.js";
 import { isLoopbackHost } from "@open-vs-code/account-service";
@@ -337,6 +338,19 @@ export class IntegrationManagerController {
         { name: "apply_patch", action: "write_file" },
         { name: "create_file", action: "write_file" },
         { name: "run_verification", action: "run_known_test" }
+      );
+    }
+
+    const browserDiag = detectBrowserProvisioning();
+    if (browserDiag.status === "READY") {
+      availableTools.push(
+        { name: "browser_open", action: "browser_inspection" },
+        { name: "browser_navigate", action: "browser_interaction" },
+        { name: "browser_snapshot", action: "browser_inspection" },
+        { name: "browser_click", action: "browser_interaction" },
+        { name: "browser_fill", action: "browser_interaction" },
+        { name: "browser_screenshot", action: "browser_inspection" },
+        { name: "browser_close", action: "browser_inspection" }
       );
     }
 

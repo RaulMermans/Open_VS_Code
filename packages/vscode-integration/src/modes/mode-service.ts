@@ -89,6 +89,29 @@ export class ModeService {
     this.notify();
   }
 
+  public reconcileAccountPackProfiles(validModeIds: Set<string>): void {
+    const toRemove: string[] = [];
+    for (const id of this.accountPackProfiles.keys()) {
+      if (!validModeIds.has(id)) {
+        toRemove.push(id);
+      }
+    }
+    for (const id of toRemove) {
+      this.accountPackProfiles.delete(id);
+      if (
+        this.activeModeId === id &&
+        !this.workspaceProfiles.has(id) &&
+        !this.workspacePackProfiles.has(id) &&
+        !this.builtinProfiles.has(id)
+      ) {
+        this.activeModeId = undefined;
+      }
+    }
+    if (toRemove.length > 0) {
+      this.notify();
+    }
+  }
+
   public registerWorkspacePackProfile(profile: CustomModeProfile): void {
     const validation = validateCustomModeProfile(profile);
     if (!validation.valid) {
