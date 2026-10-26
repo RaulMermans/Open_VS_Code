@@ -183,6 +183,8 @@ export class CapabilityPackService {
 
     try {
       const serverPacks = await client.listPacks();
+      const validPackIds = new Set<string>();
+      const validModeIds = new Set<string>();
       this.accountPacks.clear();
       for (const sp of serverPacks) {
         let manifest: CapabilityPackManifest;
@@ -202,6 +204,9 @@ export class CapabilityPackService {
             );
             continue;
           }
+
+          validPackIds.add(sp.packId);
+          validModeIds.add(manifest.customMode.id);
 
           const installed: InstalledCapabilityPack = {
             packId: sp.packId,
@@ -230,6 +235,22 @@ export class CapabilityPackService {
           );
         }
       }
+
+      // Reconcile active pack selection if it was an account pack that no longer exists
+      if (
+        this.activePackId &&
+        !this.workspacePacks.has(this.activePackId) &&
+        !this.builtinPacks.has(this.activePackId) &&
+        !validPackIds.has(this.activePackId)
+      ) {
+        this.activePackId = undefined;
+      }
+
+      // Reconcile ModeService account pack profiles (removes orphaned profiles, invalidates active mode selection if affected)
+      if (this.modeService) {
+        this.modeService.reconcileAccountPackProfiles(validModeIds);
+      }
+
       this.notify();
     } catch (err: any) {
       this.diagnostics.push(`Account capability packs synchronization failed: ${err?.message || String(err)}`);

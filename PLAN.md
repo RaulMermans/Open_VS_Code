@@ -489,7 +489,28 @@ Sprint 8E — Capability Packs: Declarative Packaging, Dependency Resolution & G
     - Comprehensive Verification: 56 new tests across core (22), account service (10), and vscode-integration (24); 1,038 total passing tests monorepo-wide (728 core, 83 account service, 227 vscode-integration). 100% clean typecheck and linting (0 warnings, 0 errors). All evals passed (`eval:runtime` 14/14, `eval:skills` 38/40, `eval:workflow` 14/14, `desktop:smoke` 14/14, `desktop:accept` 5/5 real Electron GUI tests).
   - Record: `docs/sprints/SPRINT_8E_CAPABILITY_PACKS.md`.
 
+Sprint 8E.1 — Capability Packs Integrity, Isolation & Runtime Closure — SPRINT_8E1_ACCEPTED
+  - ADR-038 amended. Closed verified gaps in manifest integrity, account mode cleanup, cross-device restoration, and SemVer parsing:
+    - Canonical manifest serialization and strict SHA-256 integrity validation.
+    - Ephemeral in-memory account pack mode registration with immediate purge and turn cancellation upon logout/switch.
+    - Cross-device multi-client synchronization and mode restoration.
+    - Strict SemVer range parsing and atomic storage with corruption recovery.
+    - Verified across 12 comprehensive end-to-end integration scenarios (`capability-packs-e2e.test.ts`).
+  - Record: `docs/sprints/SPRINT_8E1_CAPABILITY_PACKS_CLOSURE.md`.
+
+Sprint 9A — Governed Playwright Browser Runtime & Agent Tool Integration — SPRINT_9A_ACCEPTED
+  - ADR-039. Implemented secure, locally executable browser automation capability integrated directly into existing Agent Runtime:
+    - Zero Secondary Agent Brains: Browser tools execute via canonical pipeline (`Custom Mode -> AgentSessionBridge -> AgentRuntime -> PermissionGate -> Governed Browser Tool Adapter -> BrowserSessionManager -> Playwright Chromium -> Structured Browser Result`).
+    - Technology Selection: Evaluated `microsoft/playwright-mcp` and `microsoft/playwright-cli`; implemented governed direct session management wrapping pinned `playwright-core` with compact MCP-compatible tool signatures, process tree tracking, and granular network route interception.
+    - Mandatory Preflight Account Pack Reconciliation: Reconciled authoritative server packs against ephemeral account mode profiles in `ModeService`, pruning orphaned profiles, invalidating active mode selections when revoked, preserving workspace modes, and preventing revoked execution.
+    - Governed Browser Tools (7): `browser_open`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_screenshot`, `browser_close`.
+    - Token Efficiency: Byte-bounded accessibility snapshots (32KB default limit) and element references (`refId`) with automatic invalidation upon navigation/reload (`[STALE_ELEMENT_REFERENCE]`).
+    - Strict Permission Classification: Low-risk inspection (`browser_inspection`, ALLOW), interaction (`browser_interaction`, CONFIRM in BUILD), sensitive fields (`browser_sensitive`, masked review), and destructive actions (`browser_destructive`, CONFIRM/DENY). High-risk tools (arbitrary `eval`, CDP, cookie exports) strictly excluded.
+    - Network Guard & SSRF Protection: Origin allowlisting, link-local blocking (`169.254.0.0/16`), private subnet blocking (`10.0.0.0/8`, etc.), cloud metadata blocking (`metadata.google.internal`), and `file://` protocol rejection enforced via `isBrowserUrlPermitted()` and `page.route` interception.
+    - Browser Provisioning Diagnostics: Scans environment overrides, Playwright cache, and system paths. Fails closed with `NOT_CONFIGURED` without running uncontrolled `npx/npm` auto-downloads from inside the agent.
+    - Starter Profile & Pack: `Browser QA — Local Development` (`browser-qa-local-dev`, base mode `PLAN`) and `Browser QA — Local Development Pack` (`browser-qa-local-dev-pack`) with SHA-256 integrity verification.
+    - Comprehensive Verification: 31 high-value scenarios passing across runtime lifecycle, security and policy gates, and end-to-end integration with real local Chromium execution.
+  - Record: `docs/sprints/SPRINT_9A_PLAYWRIGHT_BROWSER_RUNTIME.md`.
+
 Next:
-1. Execute the HALO target-host acceptance runbook (`OPEN_VS_CODE_REAL_INFERENCE=1 npm run eval:models`) once provisioned, then the same-model A/Bs: skills off vs `--skills`; skills + direct vs skills + `--workflow`; skills + workflow with `--progress-monitor` off vs on.
-2. Run the five-arm V1.1 real-model benchmark contract in `docs/evals/V1_1_BENCHMARK.md` on HALO. OPEN VS CODE V1.1 DEVELOPMENT COMPLETE; no Sprint 5E unless that benchmark reveals a concrete defect or gap.
-3. Optional UX follow-up: packaged GUI checklist (7A–7D); provider-contract streaming; executable resume from the editor behind a UI re-authorization contract (ADR-033 §5).
+1. Sprint 9B: Visual Browser Panel & Observation UX in Desktop Host.

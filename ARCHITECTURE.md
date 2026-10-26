@@ -823,4 +823,61 @@ AgentRuntime (Existing Single Authoritative Agent Loop)
 | `IntegrationManagerController` & UI | `@open-vs-code/vscode-integration/` | 6th navigation tab ("Capability Packs") in Visual Integration Manager. | Pack cards with status chips (Installed, Enabled, Ready, Running, Blocked), manifest importer, dependency graph breakdown, permissions view, update, and rollback. |
 | `AccountService` Pack Endpoints | `@open-vs-code/account-service/pack/` | Account-level pack persistence in SQLite. | Table `capability_packs` (Migration 3) with foreign key cascade, unique `(owner_user_id, pack_id)`, version tracking, rollback preservation, and audit logging. |
 
+---
+
+## Governed Playwright Browser Runtime & Agent Tool Integration (Sprint 9A — ADR-039)
+
+The Governed Playwright Browser Runtime introduces locally executable browser automation into Open VS Code directly through governed agent tools without spawning secondary agent brains or browser-specific planning loops.
+
+```text
+User Request
+       │
+       ▼
+Custom Mode (`browser-qa-local-dev`) / Capability Pack
+       │
+       ▼
+AgentSessionBridge
+       │
+       ▼
+AgentRuntime
+       │
+       ▼
+PermissionGate (Action Classification: ALLOW / CONFIRM / DENY)
+       │
+       ▼
+Governed Browser Tool Adapter (`browser-tools.ts`)
+       │
+       ▼
+BrowserSessionManager (`browser-session-manager.ts`)
+       │
+       ▼
+Playwright Chromium Session (Isolated Context, Route Interception)
+       │
+       ▼
+Structured Browser Result (Compact Accessibility Snapshot / Element Refs)
+```
+
+### Core Architectural Invariants
+
+1. **Zero Secondary Agent Brains**: All browsing capabilities execute as governed tools inside the existing `AgentRuntime`. The agent reasons over compact, structured accessibility trees and element references rather than executing an autonomous side-car loop.
+2. **Ephemeral Context Isolation**: Each session runs inside an isolated `BrowserContext`. No cookies, local storage, or authenticated state persist across workspaces, users, or tasks.
+3. **SSRF Guard & Route Interception**: Target navigation and all subresource requests are intercepted via `page.route` and checked against `isBrowserUrlPermitted()`, blocking private subnets, cloud metadata (`169.254.169.254`, `metadata.google.internal`), and unauthorized origins.
+4. **Deterministic Process Cleanup**: Browser processes and their descendant process trees are tracked and terminated via POSIX `killProcessTree` on session closure, disposal, or cancellation.
+5. **No Runtime Auto-Downloads**: Browser provisioning detection is deterministic and fails closed with `NOT_CONFIGURED`. The agent never runs `npx playwright install` or `npm install`.
+6. **High-Risk Capability Exclusion**: Arbitrary JavaScript execution (`page.evaluate`), raw CDP commands, and cookie/session storage export are excluded from the tool catalog.
+
+### Module Boundaries
+
+| Component | Package / Path | Responsibility | Security Invariants |
+| :--- | :--- | :--- | :--- |
+| `browser-contracts.ts` | `@open-vs-code/agent-core/browser/` | Type definitions for sessions, events, diagnostics, accessibility trees, and element references. | Read-only contracts. Strict typing for element refs, action categories, and error codes. |
+| `browser-provisioning.ts` | `@open-vs-code/agent-core/browser/` | Detects browser binaries across env, Playwright cache, and system paths. | Returns `NOT_CONFIGURED` if absent. Zero automatic installation or shell scripts. |
+| `browser-network-policy.ts` | `@open-vs-code/agent-core/browser/` | URL validation and request interception policy. | Blocks non-HTTP (`file://`), private IP ranges, link-local metadata endpoints, and unapproved origins. |
+| `browser-action-classifier.ts`| `@open-vs-code/agent-core/browser/` | Classifies browser tool actions into `ToolAction` risk categories. | Identifies sensitive fields (masks values in review payload) and destructive elements. |
+| `browser-session-manager.ts` | `@open-vs-code/agent-core/browser/` | Manages Playwright browser lifecycle, page navigation, accessibility snapshots, and process cleanup. | Enforces byte-bounded snapshots, stale element reference invalidation, and process tree termination. |
+| `browser-tools.ts` | `@open-vs-code/agent-core/browser/` | Factory for 7 governed browser tool registrations. | Compact JSON schemas, input validation, and review payload preparation. |
+| `starter-profiles.ts` / `starter-packs.ts` | `@open-vs-code/agent-core/` | Starter mode `browser-qa-local-dev` and pack `browser-qa-local-dev-pack`. | Base mode `PLAN`, SHA-256 integrity digest. |
+| `ModeService.reconcileAccountPackProfiles` | `@open-vs-code/vscode-integration/modes/` | Reconciles authoritative server packs against ephemeral account mode profiles. | Purges orphaned modes, invalidates active mode if revoked, preserves workspace modes. |
+
+
 
