@@ -28,6 +28,39 @@ export const SENSITIVE_KEYWORDS = Object.freeze([
   "pin",
 ]);
 
+export const SIDE_EFFECT_KEYWORDS = Object.freeze([
+  "submit",
+  "purchase",
+  "buy",
+  "order",
+  "checkout",
+  "pay",
+  "payment",
+  "transfer",
+  "upload",
+  "publish",
+  "deploy",
+  "commit",
+  "save",
+  "send",
+  "apply",
+  "confirm",
+  "register",
+  "sign up",
+  "signup",
+  "login",
+  "log in",
+  "sign in",
+  "signin",
+  "mutate",
+  "update profile",
+  "change password",
+  "reset password",
+  "change email",
+  "authenticate",
+  "authorize",
+]);
+
 export function isDestructiveElement(element: Pick<ElementRef, "name" | "role" | "tag">): boolean {
   const text = `${element.name} ${element.role} ${element.tag}`.toLowerCase();
   return DESTRUCTIVE_KEYWORDS.some((kw) => text.includes(kw));
@@ -35,10 +68,18 @@ export function isDestructiveElement(element: Pick<ElementRef, "name" | "role" |
 
 export function isSensitiveField(element: Pick<ElementRef, "name" | "role" | "tag" | "selector">): boolean {
   const text = `${element.name} ${element.role} ${element.tag} ${element.selector}`.toLowerCase();
-  if (text.includes("type=\"password\"") || text.includes("type='password'")) {
+  if (text.includes('type="password"') || text.includes("type='password'")) {
     return true;
   }
   return SENSITIVE_KEYWORDS.some((kw) => text.includes(kw));
+}
+
+export function isSideEffectElement(element: Pick<ElementRef, "name" | "role" | "tag" | "selector">): boolean {
+  const text = `${element.name} ${element.role} ${element.tag} ${element.selector}`.toLowerCase();
+  if (text.includes('type="submit"') || text.includes("type='submit'")) {
+    return true;
+  }
+  return SIDE_EFFECT_KEYWORDS.some((kw) => text.includes(kw));
 }
 
 export function classifyBrowserToolAction(input: {
@@ -59,23 +100,31 @@ export function classifyBrowserToolAction(input: {
       return "browser_interaction";
 
     case "browser_click": {
-      if (targetElement) {
-        if (targetElement.destructive || isDestructiveElement(targetElement)) {
-          return "browser_destructive";
-        }
+      if (targetElement?.destructive || (targetElement && isDestructiveElement(targetElement))) {
+        return "browser_destructive";
+      }
+      if (targetElement?.sensitive || (targetElement && isSensitiveField(targetElement))) {
+        return "browser_sensitive";
+      }
+      if (targetElement?.sideEffect || (targetElement && isSideEffectElement(targetElement))) {
+        return "browser_side_effect";
       }
       return "browser_interaction";
     }
 
     case "browser_fill": {
-      if (targetElement) {
-        if (targetElement.sensitive || isSensitiveField(targetElement)) {
-          return "browser_sensitive";
-        }
+      if (targetElement?.sensitive || (targetElement && isSensitiveField(targetElement))) {
+        return "browser_sensitive";
       }
       const val = typeof input.args?.value === "string" ? input.args.value.toLowerCase() : "";
       if (SENSITIVE_KEYWORDS.some((kw) => val.includes(kw))) {
         return "browser_sensitive";
+      }
+      if (targetElement?.destructive || (targetElement && isDestructiveElement(targetElement))) {
+        return "browser_destructive";
+      }
+      if (targetElement?.sideEffect || (targetElement && isSideEffectElement(targetElement))) {
+        return "browser_side_effect";
       }
       return "browser_interaction";
     }

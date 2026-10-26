@@ -1110,13 +1110,14 @@ export class AgentRunner {
       return false
     }
     const signature = `${prepared.name}\0${stableValue(prepared.arguments)}`
-    const permission = this.#permission(prepared.definition.action)
+    const effectiveAction = prepared.effectiveAction ?? prepared.definition.action
+    const permission = this.#permission(effectiveAction)
     if (permission === "DENY") {
-      this.#emit("permission.denied", { callId: prepared.id, name: prepared.name, action: prepared.definition.action })
+      this.#emit("permission.denied", { callId: prepared.id, name: prepared.name, action: effectiveAction })
       this.#addErrorObservation(prepared, "PERMISSION_DENIED", "Permission policy denied this tool request", "DENIED")
       session.evidenceCollector.recordSecuritySignal({
         id: prepared.id,
-        action: prepared.definition.action,
+        action: effectiveAction,
         reason: "Permission policy denied this tool request",
         denied: true,
       })
@@ -1177,7 +1178,7 @@ export class AgentRunner {
         }
       }
       session.pending = { prepared, signature }
-      this.#emit("permission.requested", { callId: prepared.id, name: prepared.name, action: prepared.definition.action })
+      this.#emit("permission.requested", { callId: prepared.id, name: prepared.name, action: effectiveAction })
       return true
     }
     return this.#execute(prepared, signature)

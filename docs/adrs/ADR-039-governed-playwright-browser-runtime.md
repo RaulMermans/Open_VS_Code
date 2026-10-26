@@ -174,3 +174,40 @@ The browser runtime enforces strict network boundaries via `isBrowserUrlPermitte
 ### Trade-offs / Limitations
 - Headless testing on loopback requires operator-provisioned browser binaries.
 - Complex SPA sites requiring custom scripts cannot use arbitrary `page.evaluate()`; automation must rely on standard interactive element queries.
+
+---
+
+## 12. Addendum — Sprint 9A.1 Security Hardening & Runtime Closure
+
+Following security and architecture audit of Sprint 9A, Sprint 9A.1 closed critical security, network, permission, and integration gaps prior to Sprint 9B:
+
+### 12.1 P0 — Chromium Isolation & Ephemeral Profiles
+- **Sandbox Preservation**: Removed unconditional `--no-sandbox` and `--disable-setuid-sandbox` flags from all browser launches.
+- **Platform Verification**: Added `verifyEffectiveSandboxSupport()` to detect native platform sandboxing (macOS Seatbelt, Linux unprivileged user namespaces / setuid sandbox, Windows restricted tokens). If isolation cannot be established, the system fails closed with `SANDBOX_UNAVAILABLE` rather than silently disabling sandboxing.
+- **Ephemeral Isolation**: Chromium profiles are allocated in isolated workspace paths (`.browser-profile/<sessionId>`) and destroyed upon `dispose()`, completely decoupling automation from user personal profiles.
+
+### 12.2 P0 — BrowserContext Network Boundary & DNS Rebinding Protection
+- **Context-Wide Controls**: Replaced page-scoped routes with context-wide request interception covering main pages, popups, and iframes (`attachNetworkPolicyToContext`).
+- **Service Worker Neutralization**: Service Workers are blocked by default (`serviceWorkers: "block"`).
+- **Redirect Chain Enforcement**: Redirect chains track hop counts against `maxRedirects` and re-evaluate each intermediate URL against the network policy.
+- **DNS Rebinding Guard**: Introduced `verifyHostDnsSafety()` to resolve target hostnames before connection, rejecting hostnames that resolve to link-local (`169.254.0.0/16`), cloud metadata (`169.254.169.254`, `metadata.google.internal`), or private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+- **Strict Localhost Origins**: Removed default port wildcards (`:*`) from `DEFAULT_ALLOWED_LOCAL_ORIGINS`. Local development origins must be explicitly authorized with exact ports.
+- **WebSocket Restrictions**: Intercepts `ws://` and `wss://` connections, blocking unauthorized WebSocket channels fail-closed.
+
+### 12.3 P0 — Sensitive Observation Masking & Privacy Assurance
+- **Form Value Masking**: Password, token, and API key fields are never emitted with plain text values in accessibility snapshots or model context. They report only `[hasValue]` metadata with `value: undefined`.
+- **Diagnostic Redaction**: Implemented `redactSensitiveText()` to scrub embedded HTTP Basic credentials (`user:pass@host`), query parameters (`?token=`, `&password=`), Bearer tokens, and AWS access keys from URLs, console buffers, and network error logs.
+
+### 12.4 P0 — Per-Operation Risk Classification & Effective Action Determination
+- **Dynamic Effective Action**: Added `classifyAction` to `ToolRegistration` and `effectiveAction: ToolAction` to `PreparedToolCall`. `AgentRunner` evaluates `effectiveAction` against `PermissionGate` before decision-making rather than relying on static definitions.
+- **Side Effect Classification**: Added `browser_side_effect` action category. Form submit buttons, purchases, checkouts, uploads, and account mutations classify as `browser_side_effect` (requiring `CONFIRM` in `BUILD` mode, and strictly `DENIED` in `PLAN` mode).
+- **Stale Target Revalidation**: `prepareForReview.apply()` validates active page URL and `snapshotId` prior to execution, aborting if the target or page mutated after approval.
+
+### 12.5 P1 — Production Desktop Extension Composition Root
+- **Lazy Provisioning**: Governed `BrowserSessionManager` is lazily initialized via `getGovernedBrowserSessionManager(workspaceRoot)` in `packages/vscode-integration/src/extension.ts` and passed through `AgentSessionBridge` to `AgentRuntime`.
+- **Account & Extension Lifecycle**: `accountManager.onStateChange` terminates and disposes the browser session on logout or unauthenticated state change. Clean disposal is guaranteed in extension `deactivate()`.
+
+### 12.6 P1 — Browser QA Profile Bifurcation
+- **Inspection Profile (`browser-qa-local-dev`)**: Read-only inspection under base mode `PLAN` containing only non-mutating tools (`browser_open`, `browser_snapshot`, `browser_screenshot`, `browser_close`, `read_file`, `search_text`).
+- **Interactive QA Profile (`browser-qa-interactive-local-dev`)**: Interactive testing under base mode `BUILD` containing full browser tool surface with explicit confirmation gates.
+- **Canonical Capability Packs**: `browser-qa-local-dev-pack` and `browser-qa-interactive-pack` provide deterministic SHA-256 integrity verification.

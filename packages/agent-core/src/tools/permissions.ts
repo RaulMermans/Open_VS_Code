@@ -27,6 +27,7 @@ const BASELINE: Readonly<Record<ActionCategory, ToolPermission>> = {
   mcp_external_destructive: "CONFIRM",
   browser_inspection: "ALLOW",
   browser_interaction: "CONFIRM",
+  browser_side_effect: "CONFIRM",
   browser_sensitive: "CONFIRM",
   browser_destructive: "CONFIRM",
 }
@@ -43,6 +44,7 @@ const PLAN_DENIES: readonly ActionCategory[] = [
   "mcp_sensitive_data_transmission",
   "mcp_external_destructive",
   "browser_interaction",
+  "browser_side_effect",
   "browser_sensitive",
   "browser_destructive",
 ]

@@ -72,13 +72,40 @@ describe("Sprint 9A — Governed Browser Runtime End-to-End & Pack Governance", 
 
   // Scenario 24: Custom Mode selection
   test("24. Custom Mode selection: Browser QA profile enables governed tools and base mode constraints", () => {
+    // 1. Read-only inspection profile under PLAN
     const qaProfile = STARTER_MODE_PROFILES.find((p) => p.id === "browser-qa-local-dev");
     assert.ok(qaProfile, "Browser QA profile must exist in starter profiles");
     assert.strictEqual(qaProfile.name, "Browser QA — Local Development");
     assert.strictEqual(qaProfile.baseMode, "PLAN");
 
-    // All 7 browser tools are in allowedTools
-    const browserTools = [
+    const inspectionTools = [
+      "browser_open",
+      "browser_snapshot",
+      "browser_screenshot",
+      "browser_close",
+    ];
+    for (const tool of inspectionTools) {
+      assert.ok(qaProfile.toolAllowlist?.includes(tool), `Profile must include ${tool}`);
+    }
+
+    // Resolving execution profile with inspection tools succeeds
+    const resolvedInspection = resolveExecutionProfile({
+      profile: qaProfile,
+      workspaceTrusted: true,
+      availableSkills: [],
+      availableMcpServers: [],
+      availableTools: inspectionTools.map((name) => ({ name, action: "browser_inspection" })),
+      globalWorkflowEnabled: true,
+    });
+    assert.strictEqual(resolvedInspection.isReady, true);
+    assert.strictEqual(resolvedInspection.baseMode, "PLAN");
+
+    // 2. Interactive QA profile under BUILD
+    const interactiveProfile = STARTER_MODE_PROFILES.find((p) => p.id === "browser-qa-interactive-local-dev");
+    assert.ok(interactiveProfile, "Browser QA Interactive profile must exist");
+    assert.strictEqual(interactiveProfile.baseMode, "BUILD");
+
+    const allBrowserTools = [
       "browser_open",
       "browser_navigate",
       "browser_snapshot",
@@ -87,22 +114,20 @@ describe("Sprint 9A — Governed Browser Runtime End-to-End & Pack Governance", 
       "browser_screenshot",
       "browser_close",
     ];
-    for (const tool of browserTools) {
-      assert.ok(qaProfile.toolAllowlist?.includes(tool), `Profile must include ${tool}`);
+    for (const tool of allBrowserTools) {
+      assert.ok(interactiveProfile.toolAllowlist?.includes(tool), `Interactive profile must include ${tool}`);
     }
 
-    // Resolving execution profile with available browser tools succeeds
-    const resolved = resolveExecutionProfile({
-      profile: qaProfile,
+    const resolvedInteractive = resolveExecutionProfile({
+      profile: interactiveProfile,
       workspaceTrusted: true,
       availableSkills: [],
       availableMcpServers: [],
-      availableTools: browserTools.map((name) => ({ name, action: "browser_interaction" })),
+      availableTools: allBrowserTools.map((name) => ({ name, action: "browser_interaction" })),
       globalWorkflowEnabled: true,
     });
-
-    assert.strictEqual(resolved.isReady, true);
-    assert.strictEqual(resolved.baseMode, "PLAN");
+    assert.strictEqual(resolvedInteractive.isReady, true);
+    assert.strictEqual(resolvedInteractive.baseMode, "BUILD");
   });
 
   // Scenario 25: Workspace boundary isolation
