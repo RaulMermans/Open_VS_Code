@@ -15,6 +15,7 @@ export interface ReviewableExecution {
 export interface ToolRegistration {
   readonly definition: ToolDefinition
   readonly validate: (input: unknown) => Readonly<Record<string, unknown>>
+  readonly classifyAction?: (input: Readonly<Record<string, unknown>>) => ToolAction
   readonly prepareForReview?: (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext) => Promise<ReviewableExecution>
   readonly execute: (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext) => Promise<unknown>
 }
@@ -24,6 +25,7 @@ export interface PreparedToolCall {
   readonly name: string
   readonly arguments: Readonly<Record<string, unknown>>
   readonly definition: ToolDefinition
+  readonly effectiveAction: ToolAction
   readonly prepareForReview?: (context: ToolExecutionContext) => Promise<ReviewableExecution>
   invoke(context: ToolExecutionContext): Promise<unknown>
 }
@@ -104,11 +106,13 @@ export class ToolRegistry {
       const message = error instanceof Error ? error.message : "arguments did not match the schema"
       throw new ToolRegistryError("INVALID_ARGUMENTS", `Invalid arguments for ${candidate.name}: ${message}`, { cause: error })
     }
+    const effectiveAction = registration.classifyAction ? registration.classifyAction(validated) : registration.definition.action
     return {
       id: candidate.id,
       name: candidate.name,
       arguments: validated,
       definition: registration.definition,
+      effectiveAction,
       invoke: async (context) => {
         throwIfAborted(context.signal)
         const result = await registration.execute(validated, context)

@@ -22,6 +22,7 @@ export type ToolAction =
   | "mcp_external_destructive"
   | "browser_inspection"
   | "browser_interaction"
+  | "browser_side_effect"
   | "browser_sensitive"
   | "browser_destructive"
 export interface ToolDefinition {

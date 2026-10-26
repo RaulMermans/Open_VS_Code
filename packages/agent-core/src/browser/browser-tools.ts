@@ -157,6 +157,15 @@ export function createBrowserToolRegistrations(
       const refId = validateString(raw.refId, "refId");
       return { refId };
     },
+    classifyAction: (input: Readonly<Record<string, unknown>>) => {
+      const refId = input.refId as string;
+      const target = sessionManager.getElementRef(refId);
+      return classifyBrowserToolAction({
+        toolName: "browser_click",
+        args: input,
+        targetElement: target,
+      });
+    },
     prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
       const refId = input.refId as string;
       const target = sessionManager.getElementRef(refId);
@@ -165,6 +174,9 @@ export function createBrowserToolRegistrations(
         args: input,
         targetElement: target,
       });
+      const page = sessionManager.getActivePage();
+      const pageUrl = page ? page.url() : "";
+      const snapshotId = sessionManager.getActiveSnapshotId();
 
       return {
         id: `browser_click_${crypto.randomUUID().slice(0, 8)}`,
@@ -174,8 +186,19 @@ export function createBrowserToolRegistrations(
           targetName: target?.name,
           targetRole: target?.role,
           action,
+          pageUrl,
+          snapshotId,
         },
         apply: async () => {
+          // Revalidate before execution to prevent stale approval or target substitution
+          const currentSnapshot = sessionManager.getActiveSnapshotId();
+          const currentPage = sessionManager.getActivePage();
+          if (!currentPage || (pageUrl && currentPage.url() !== pageUrl)) {
+            throw new Error("Page URL changed since approval was granted. Target action aborted.");
+          }
+          if (snapshotId && currentSnapshot !== snapshotId) {
+            throw new Error("Page navigated or snapshot became stale since approval was granted. Target action aborted.");
+          }
           return await sessionManager.click(refId, context.signal);
         },
       };
@@ -220,6 +243,15 @@ export function createBrowserToolRegistrations(
       }
       return { refId, value: raw.value };
     },
+    classifyAction: (input: Readonly<Record<string, unknown>>) => {
+      const refId = input.refId as string;
+      const target = sessionManager.getElementRef(refId);
+      return classifyBrowserToolAction({
+        toolName: "browser_fill",
+        args: input,
+        targetElement: target,
+      });
+    },
     prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
       const refId = input.refId as string;
       const value = input.value as string;
@@ -229,6 +261,10 @@ export function createBrowserToolRegistrations(
         args: input,
         targetElement: target,
       });
+      const page = sessionManager.getActivePage();
+      const pageUrl = page ? page.url() : "";
+      const snapshotId = sessionManager.getActiveSnapshotId();
+      const isSens = action === "browser_sensitive" || (target?.sensitive ?? false);
 
       return {
         id: `browser_fill_${crypto.randomUUID().slice(0, 8)}`,
@@ -238,10 +274,21 @@ export function createBrowserToolRegistrations(
           fieldName: target?.name,
           fieldRole: target?.role,
           action,
-          // Redact password value in review display
-          displayValue: target?.sensitive ? "[REDACTED SENSITIVE DATA]" : value,
+          pageUrl,
+          snapshotId,
+          // Never expose sensitive values in review display payload
+          displayValue: isSens ? "[REDACTED SENSITIVE DATA]" : value,
         },
         apply: async () => {
+          // Revalidate before execution to prevent stale approval or target substitution
+          const currentSnapshot = sessionManager.getActiveSnapshotId();
+          const currentPage = sessionManager.getActivePage();
+          if (!currentPage || (pageUrl && currentPage.url() !== pageUrl)) {
+            throw new Error("Page URL changed since approval was granted. Target action aborted.");
+          }
+          if (snapshotId && currentSnapshot !== snapshotId) {
+            throw new Error("Page navigated or snapshot became stale since approval was granted. Target action aborted.");
+          }
           return await sessionManager.fill(refId, value, context.signal);
         },
       };

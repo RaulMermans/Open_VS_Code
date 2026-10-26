@@ -28,6 +28,8 @@ export interface BrowserNetworkPolicyConfig {
   readonly blockPrivateSubnets?: boolean | undefined;
   readonly blockCloudMetadata?: boolean | undefined;
   readonly blockFileProtocol?: boolean | undefined;
+  readonly blockServiceWorkers?: boolean | undefined;
+  readonly blockWebSockets?: boolean | undefined;
   readonly maxRedirects?: number | undefined;
 }
 
@@ -54,6 +56,7 @@ export interface ElementRef {
   readonly value?: string | undefined;
   readonly sensitive?: boolean | undefined;
   readonly destructive?: boolean | undefined;
+  readonly sideEffect?: boolean | undefined;
 }
 
 export interface AccessibilitySnapshot {

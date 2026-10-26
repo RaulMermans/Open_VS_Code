@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, type AutocompleteGateway } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, type AutocompleteGateway, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
@@ -302,6 +302,26 @@ let chatController: ChatController | null = null;
 let diffReviewController: DiffReviewController | null = null;
 let terminalReviewController: TerminalReviewController | null = null;
 let autocompleteController: AutocompleteController | null = null;
+let activeBrowserSessionManager: BrowserSessionManager | null = null;
+
+function getGovernedBrowserSessionManager(workspaceRoot: string): BrowserSessionManager | undefined {
+  const diag = detectBrowserProvisioning();
+  if (diag.status !== "READY") {
+    return undefined;
+  }
+  if (!activeBrowserSessionManager) {
+    const config = vscode.workspace.getConfiguration('open-vs-code');
+    const allowedOrigins = config.get<string[]>('browser.allowedOrigins', []);
+    activeBrowserSessionManager = new BrowserSessionManager({
+      workspaceRoot,
+      headless: config.get<boolean>('browser.headless', true),
+      networkPolicy: {
+        allowedOrigins,
+      },
+    });
+  }
+  return activeBrowserSessionManager;
+}
 
 /**
  * Sprint 7D: runs at most one refresh at a time. Calls that arrive while one is
@@ -334,6 +354,8 @@ export const _testSeam = {
   get terminalReviewController() { return terminalReviewController; },
   get autocompleteController() { return autocompleteController; },
   get diffReviewController() { return diffReviewController; },
+  get activeBrowserSessionManager() { return activeBrowserSessionManager; },
+  setActiveBrowserSessionManager(m: BrowserSessionManager | null) { activeBrowserSessionManager = m; },
   get currentAbortController() { return currentAbortController; },
   setCurrentAbortController(ac: AbortController | null) { currentAbortController = ac; },
   /** For tests only: inject a ChatController so deactivate() exercises the real path. */
@@ -468,10 +490,12 @@ export function activate(context: vscode.ExtensionContext) {
           token: haloToken(context),
         })
         : undefined;
+      const browserManager = getGovernedBrowserSessionManager(options.workspaceRoot);
       activeBridge = new AgentSessionBridge({
         ...options,
         ...(providerOverride ? { providerOverride } : {}),
         mcpCatalog: options.mcpCatalog,
+        ...(browserManager ? { browserSessionManager: browserManager } : {}),
         skills: skillsSettings(context),
         // Structured Engineering Loop (ADR-030); off by default.
         workflow: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('workflow.enabled', false) === true },
@@ -663,6 +687,18 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel, modeService, packService));
   void accountManager.initialize(mcpService, modeService, packService);
 
+  // Invalidate and dispose active browser session on account logout or switch
+  context.subscriptions.push(
+    accountManager.onStateChange((state) => {
+      if (state.status === "UNAUTHENTICATED" || !state.user) {
+        if (activeBrowserSessionManager) {
+          void activeBrowserSessionManager.dispose();
+          activeBrowserSessionManager = null;
+        }
+      }
+    })
+  );
+
   if (chatController) {
     chatController.attachIntegrationManager(integrationManager);
   }
@@ -808,6 +844,14 @@ export async function deactivate(): Promise<void> {
       // Safe containment
     }
     mcpService = null;
+  }
+  if (activeBrowserSessionManager) {
+    try {
+      await activeBrowserSessionManager.dispose();
+    } catch {
+      // Safe containment
+    }
+    activeBrowserSessionManager = null;
   }
   if (integrationManager) {
     try {

@@ -512,5 +512,17 @@ Sprint 9A — Governed Playwright Browser Runtime & Agent Tool Integration — S
     - Comprehensive Verification: 31 high-value scenarios passing across runtime lifecycle, security and policy gates, and end-to-end integration with real local Chromium execution.
   - Record: `docs/sprints/SPRINT_9A_PLAYWRIGHT_BROWSER_RUNTIME.md`.
 
+Sprint 9A.1 — Browser Security, Permission Integrity & Desktop Runtime Closure — SPRINT_9A1_ACCEPTED
+  - ADR-039 amended. Closed verified security, network, permission, and integration gaps prior to Sprint 9B:
+    - P0 Chromium Isolation: Removed unconditional `--no-sandbox` and `--disable-setuid-sandbox` from browser launches; added platform sandbox verification (`verifyEffectiveSandboxSupport()`); fails closed with `SANDBOX_UNAVAILABLE` rather than silently disabling isolation; ephemeral isolated profile storage in `.browser-profile/<sessionId>`.
+    - P0 Network Boundary: Replaced page-scoped filtering with `BrowserContext`-wide interception covering popups and secondary pages; blocked Service Workers by default (`serviceWorkers: "block"`); redirect-chain tracking against `maxRedirects`; DNS rebinding defenses (`verifyHostDnsSafety`); exact localhost origin/port matching without wildcards; WebSocket restrictions.
+    - P0 Sensitive Observations: Masked passwords, tokens, and keys in snapshots (`[hasValue]` with undefined contents); implemented `redactSensitiveText` for console buffers, URLs, and errors; byte limits enforced.
+    - P0 Real Permission Classification: Dynamic effective action promotion (`classifyAction` on `ToolRegistration` and `effectiveAction` on `PreparedToolCall`); `AgentRunner` evaluates `effectiveAction` before `PermissionGate`; introduced `browser_side_effect` for form submissions/purchases/mutations; stale target revalidation in `prepareForReview.apply()`.
+    - P1 Desktop Integration: Governed `BrowserSessionManager` wired into VS Code extension composition root (`extension.ts`), passed via `AgentSessionBridge` to `AgentRuntime`; account logout/switch cleanup via `accountManager.onStateChange`; clean disposal on `deactivate()`.
+    - P1 Browser QA Profiles: Bifurcated into read-only inspection profile `browser-qa-local-dev` (`PLAN`) and interactive profile `browser-qa-interactive-local-dev` (`BUILD`) with canonical packs.
+    - Reference Stability & Cancellation: Relative `nth-of-type` selector calculation; session DOM `data-ovsc-ref`; `window.stop()` on navigation abort; process tree cleanup.
+    - Verified across 20 comprehensive independent acceptance scenarios (`browser-acceptance-9a1.test.ts`), 10 security tests (`browser-security.test.ts`), and full monorepo lint and typecheck.
+  - Record: `docs/sprints/SPRINT_9A1_BROWSER_SECURITY_RUNTIME_CLOSURE.md`.
+
 Next:
 1. Sprint 9B: Visual Browser Panel & Observation UX in Desktop Host.
