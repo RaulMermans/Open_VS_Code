@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto";
 import type { ToolRegistration, ToolExecutionContext, ReviewableExecution } from "../tools/registry.ts";
-import type { BrowserSessionManager } from "./browser-session-manager.ts";
+import { BrowserSessionManager, redactSensitiveText } from "./browser-session-manager.ts";
 import { classifyBrowserToolAction } from "./browser-action-classifier.ts";
 
 function validateString(value: unknown, fieldName: string): string {
@@ -22,7 +22,10 @@ export function createBrowserToolRegistrations(
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "URL to open in the browser (must be within authorized origins)" },
+          url: {
+            type: "string",
+            description: "URL to open in the browser (must be within authorized origins)",
+          },
         },
         required: ["url"],
       },
@@ -69,17 +72,25 @@ export function createBrowserToolRegistrations(
       const url = validateString(raw.url, "url");
       return { url };
     },
-    prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
+    prepareForReview: async (
+      input: Readonly<Record<string, unknown>>,
+      context: ToolExecutionContext
+    ): Promise<ReviewableExecution> => {
       const url = input.url as string;
       return {
         id: `browser_nav_${crypto.randomUUID().slice(0, 8)}`,
         reviewPayload: {
           tool: "browser_navigate",
-          url,
+          url: redactSensitiveText(url),
           action: "browser_interaction",
         },
-        apply: async () => {
-          return await sessionManager.navigate(url, context.signal);
+        apply: async (applyContext?: ToolExecutionContext) => {
+          const res = await sessionManager.navigate(url, applyContext?.signal ?? context.signal);
+          return {
+            ok: true,
+            url: res.url,
+            title: res.title,
+          };
         },
       };
     },
@@ -98,7 +109,8 @@ export function createBrowserToolRegistrations(
   const browserSnapshot: ToolRegistration = {
     definition: {
       name: "browser_snapshot",
-      description: "Capture a structured accessibility snapshot and indexed interactive elements from the current browser page.",
+      description:
+        "Capture a structured accessibility snapshot and indexed interactive elements from the current browser page.",
       action: "browser_inspection",
       inputSchema: {
         type: "object",
@@ -139,12 +151,16 @@ export function createBrowserToolRegistrations(
   const browserClick: ToolRegistration = {
     definition: {
       name: "browser_click",
-      description: "Click an interactive element identified by refId from the latest accessibility snapshot.",
+      description:
+        "Click an interactive element identified by refId from the latest accessibility snapshot.",
       action: "browser_interaction",
       inputSchema: {
         type: "object",
         properties: {
-          refId: { type: "string", description: "Element refId from the latest snapshot (e.g. e1, e2)" },
+          refId: {
+            type: "string",
+            description: "Element refId from the latest snapshot (e.g. e1, e2)",
+          },
         },
         required: ["refId"],
       },
@@ -166,40 +182,52 @@ export function createBrowserToolRegistrations(
         targetElement: target,
       });
     },
-    prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
+    prepareForReview: async (
+      input: Readonly<Record<string, unknown>>,
+      context: ToolExecutionContext
+    ): Promise<ReviewableExecution> => {
       const refId = input.refId as string;
       const target = sessionManager.getElementRef(refId);
-      const action = classifyBrowserToolAction({
+      const approvedAction = classifyBrowserToolAction({
         toolName: "browser_click",
         args: input,
         targetElement: target,
       });
       const page = sessionManager.getActivePage();
-      const pageUrl = page ? page.url() : "";
-      const snapshotId = sessionManager.getActiveSnapshotId();
+      const rawPageUrl = page ? page.url() : "";
+      const approvedSnapshotId = sessionManager.getActiveSnapshotId();
+      const approvedFingerprint = target?.targetFingerprint;
 
       return {
         id: `browser_click_${crypto.randomUUID().slice(0, 8)}`,
         reviewPayload: {
           tool: "browser_click",
           refId,
-          targetName: target?.name,
+          targetName: target?.name ? redactSensitiveText(target.name) : undefined,
           targetRole: target?.role,
-          action,
-          pageUrl,
-          snapshotId,
+          action: approvedAction,
+          pageUrl: redactSensitiveText(rawPageUrl),
+          snapshotId: approvedSnapshotId,
+          targetFingerprint: approvedFingerprint,
         },
-        apply: async () => {
-          // Revalidate before execution to prevent stale approval or target substitution
-          const currentSnapshot = sessionManager.getActiveSnapshotId();
-          const currentPage = sessionManager.getActivePage();
-          if (!currentPage || (pageUrl && currentPage.url() !== pageUrl)) {
-            throw new Error("Page URL changed since approval was granted. Target action aborted.");
-          }
-          if (snapshotId && currentSnapshot !== snapshotId) {
-            throw new Error("Page navigated or snapshot became stale since approval was granted. Target action aborted.");
-          }
-          return await sessionManager.click(refId, context.signal);
+        apply: async (applyContext?: ToolExecutionContext) => {
+          await sessionManager.revalidateApproval({
+            toolName: "browser_click",
+            refId,
+            approvedSnapshotId,
+            approvedPageUrl: rawPageUrl,
+            approvedFingerprint,
+            approvedAction,
+          });
+          const res = await sessionManager.click(refId, applyContext?.signal ?? context.signal);
+          return {
+            ok: res.success,
+            refId,
+            target: {
+              name: res.target.name,
+              role: res.target.role,
+            },
+          };
         },
       };
     },
@@ -221,12 +249,16 @@ export function createBrowserToolRegistrations(
   const browserFill: ToolRegistration = {
     definition: {
       name: "browser_fill",
-      description: "Fill a form input or text field identified by refId from the latest accessibility snapshot.",
+      description:
+        "Fill a form input or text field identified by refId from the latest accessibility snapshot.",
       action: "browser_interaction",
       inputSchema: {
         type: "object",
         properties: {
-          refId: { type: "string", description: "Field refId from the latest snapshot (e.g. e1)" },
+          refId: {
+            type: "string",
+            description: "Field refId from the latest snapshot (e.g. e1)",
+          },
           value: { type: "string", description: "Text value to fill into the field" },
         },
         required: ["refId", "value"],
@@ -252,44 +284,61 @@ export function createBrowserToolRegistrations(
         targetElement: target,
       });
     },
-    prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
+    prepareForReview: async (
+      input: Readonly<Record<string, unknown>>,
+      context: ToolExecutionContext
+    ): Promise<ReviewableExecution> => {
       const refId = input.refId as string;
       const value = input.value as string;
       const target = sessionManager.getElementRef(refId);
-      const action = classifyBrowserToolAction({
+      const approvedAction = classifyBrowserToolAction({
         toolName: "browser_fill",
         args: input,
         targetElement: target,
       });
       const page = sessionManager.getActivePage();
-      const pageUrl = page ? page.url() : "";
-      const snapshotId = sessionManager.getActiveSnapshotId();
-      const isSens = action === "browser_sensitive" || (target?.sensitive ?? false);
+      const rawPageUrl = page ? page.url() : "";
+      const approvedSnapshotId = sessionManager.getActiveSnapshotId();
+      const isSens = approvedAction === "browser_sensitive" || (target?.sensitive ?? false);
+      const approvedFingerprint = target?.targetFingerprint;
 
       return {
         id: `browser_fill_${crypto.randomUUID().slice(0, 8)}`,
         reviewPayload: {
           tool: "browser_fill",
           refId,
-          fieldName: target?.name,
+          fieldName: target?.name ? redactSensitiveText(target.name) : undefined,
           fieldRole: target?.role,
-          action,
-          pageUrl,
-          snapshotId,
-          // Never expose sensitive values in review display payload
-          displayValue: isSens ? "[REDACTED SENSITIVE DATA]" : value,
+          action: approvedAction,
+          pageUrl: redactSensitiveText(rawPageUrl),
+          snapshotId: approvedSnapshotId,
+          targetFingerprint: approvedFingerprint,
+          // Never expose sensitive values or embedded secrets in review display payload
+          displayValue: isSens ? "[REDACTED SENSITIVE DATA]" : redactSensitiveText(value),
         },
-        apply: async () => {
-          // Revalidate before execution to prevent stale approval or target substitution
-          const currentSnapshot = sessionManager.getActiveSnapshotId();
-          const currentPage = sessionManager.getActivePage();
-          if (!currentPage || (pageUrl && currentPage.url() !== pageUrl)) {
-            throw new Error("Page URL changed since approval was granted. Target action aborted.");
-          }
-          if (snapshotId && currentSnapshot !== snapshotId) {
-            throw new Error("Page navigated or snapshot became stale since approval was granted. Target action aborted.");
-          }
-          return await sessionManager.fill(refId, value, context.signal);
+        apply: async (applyContext?: ToolExecutionContext) => {
+          await sessionManager.revalidateApproval({
+            toolName: "browser_fill",
+            refId,
+            approvedSnapshotId,
+            approvedPageUrl: rawPageUrl,
+            approvedFingerprint,
+            approvedAction,
+            fillValue: value,
+          });
+          const res = await sessionManager.fill(
+            refId,
+            value,
+            applyContext?.signal ?? context.signal
+          );
+          return {
+            ok: res.success,
+            refId,
+            target: {
+              name: res.target.name,
+              role: res.target.role,
+            },
+          };
         },
       };
     },
@@ -317,7 +366,10 @@ export function createBrowserToolRegistrations(
       inputSchema: {
         type: "object",
         properties: {
-          fullPage: { type: "boolean", description: "Whether to capture the entire scrollable page" },
+          fullPage: {
+            type: "boolean",
+            description: "Whether to capture the entire scrollable page",
+          },
         },
       },
     },

@@ -38,6 +38,8 @@ packages/agent-core/.eval-tmp/
 
 # Local Memory
 .open-vs-code/
+.browser-profile/
+**/.browser-profile/
 
 # Model weights — NEVER commit
 *.gguf

@@ -97,6 +97,7 @@ describe("Sprint 9A.1 Acceptance Tests — Browser Security, Permission Integrit
       workspaceRoot: workspaceRootA,
       sessionId: "sw-policy-sess",
       networkPolicy: {
+        allowedOrigins: [],
         blockServiceWorkers: true,
       },
     });
@@ -297,7 +298,7 @@ describe("Sprint 9A.1 Acceptance Tests — Browser Security, Permission Integrit
     // Attempting to apply stale approval without active page or with mismatched snapshot must reject
     await assert.rejects(
       async () => {
-        await review.apply();
+        await review.apply({ workspaceRoot: workspaceRootA, signal: new AbortController().signal });
       },
       (err: any) => err instanceof Error
     );
@@ -392,7 +393,7 @@ describe("Sprint 9A.1 Acceptance Tests — Browser Security, Permission Integrit
         name: "test_browser_inspect",
         description: "Test inspection tool",
         action: "browser_interaction", // Static action is interaction (which is DENIED in PLAN)
-        parameters: { type: "object", properties: { target: { type: "string" } } },
+        inputSchema: { type: "object", properties: { target: { type: "string" } } },
       },
       validate: (raw: unknown) => raw as Record<string, unknown>,
       classifyAction: (args: any) => {

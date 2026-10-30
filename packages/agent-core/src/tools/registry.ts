@@ -1,4 +1,4 @@
-import type { ToolCall, ToolDefinition } from "../contracts/tools.ts"
+import type { ToolAction, ToolCall, ToolDefinition } from "../contracts/tools.ts"
 
 export interface ToolExecutionContext {
   readonly workspaceRoot: string

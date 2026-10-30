@@ -1727,6 +1727,7 @@ export class AgentRunner {
               action: "terminal_command",
               inputSchema: {},
             },
+            effectiveAction: "terminal_command",
             invoke: async () => "APPROVED",
           },
           signature: "human_authorization",

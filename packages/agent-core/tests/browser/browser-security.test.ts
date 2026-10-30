@@ -8,6 +8,7 @@ import {
   createBrowserToolRegistrations,
   detectBrowserProvisioning,
   BrowserSessionManager,
+  BrowserSessionError,
   type ElementRef,
 } from "../../src/browser/index.ts";
 
@@ -250,22 +251,33 @@ describe("Sprint 9A — Browser Security & Policy Enforcement", () => {
     });
 
     assert.strictEqual(session.getStatus(), "UNINITIALIZED");
-    await session.dispose();
+    await session.close();
     assert.strictEqual(session.getStatus(), "CLOSED");
 
-    // Operations after close/dispose throw clean BrowserSessionError
+    // Operations after close() throw clean NO_PAGE BrowserSessionError
     await assert.rejects(
       async () => {
         await session.snapshot();
       },
-      (err: any) => err.code === "NO_PAGE"
+      (err: any) => err instanceof BrowserSessionError && err.code === "NO_PAGE"
+    );
+
+    await session.dispose();
+    assert.strictEqual(session.getStatus(), "CLOSED");
+
+    // Operations after terminal dispose() throw clean DISPOSED BrowserSessionError
+    await assert.rejects(
+      async () => {
+        await session.snapshot();
+      },
+      (err: any) => err instanceof BrowserSessionError && err.code === "DISPOSED"
     );
 
     await assert.rejects(
       async () => {
         await session.click("e1");
       },
-      (err: any) => err.code === "NO_PAGE"
+      (err: any) => err instanceof BrowserSessionError && err.code === "DISPOSED"
     );
   });
 });

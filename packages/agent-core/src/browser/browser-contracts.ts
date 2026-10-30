@@ -31,11 +31,14 @@ export interface BrowserNetworkPolicyConfig {
   readonly blockServiceWorkers?: boolean | undefined;
   readonly blockWebSockets?: boolean | undefined;
   readonly maxRedirects?: number | undefined;
+  readonly customResolver?: ((hostname: string) => Promise<string[]>) | undefined;
 }
 
 export interface BrowserSessionConfig {
   readonly workspaceRoot: string;
   readonly sessionId?: string | undefined;
+  readonly accountId?: string | undefined;
+  readonly storageDir?: string | undefined;
   readonly headless?: boolean | undefined;
   readonly executablePath?: string | undefined;
   readonly networkPolicy?: BrowserNetworkPolicyConfig | undefined;
@@ -44,6 +47,27 @@ export interface BrowserSessionConfig {
   readonly maxSnapshotBytes?: number | undefined;
   readonly maxConsoleMessages?: number | undefined;
   readonly maxNetworkEvents?: number | undefined;
+}
+
+export interface EffectiveSandboxVerification {
+  readonly supported: boolean;
+  readonly capabilitySupported: boolean;
+  readonly runtimeVerified: boolean;
+  readonly platform: NodeJS.Platform;
+  readonly osRelease: string;
+  readonly browserVersion?: string | undefined;
+  readonly executablePath?: string | undefined;
+  readonly executableSource?: "env" | "playwright_cache" | "system" | "custom" | undefined;
+  readonly browserPid?: number | undefined;
+  readonly helperPids?: readonly number[] | undefined;
+  readonly verificationMethod?: string | undefined;
+  readonly details: string;
+  readonly processFlags: {
+    readonly noSandboxIntroduced: boolean;
+    readonly chromiumSandboxOption: boolean;
+    readonly seatbeltClientActive?: boolean | undefined;
+    readonly seccompActive?: boolean | undefined;
+  };
 }
 
 export interface ElementRef {
@@ -57,6 +81,11 @@ export interface ElementRef {
   readonly sensitive?: boolean | undefined;
   readonly destructive?: boolean | undefined;
   readonly sideEffect?: boolean | undefined;
+  readonly targetFingerprint?: string | undefined;
+  readonly inputType?: string | undefined;
+  readonly href?: string | undefined;
+  readonly formAction?: string | undefined;
+  readonly parentSignature?: string | undefined;
 }
 
 export interface AccessibilitySnapshot {
@@ -80,11 +109,18 @@ export type BrowserEventType =
   | "action_approved"
   | "action_denied"
   | "snapshot_taken"
+  | "screenshot_taken"
   | "console_message"
   | "network_failure"
+  | "network_policy_denied"
+  | "destination_resolution_failed"
   | "timeout"
   | "cancellation"
-  | "process_cleanup";
+  | "process_cleanup"
+  | "sandbox_verified"
+  | "target_validated"
+  | "approval_revalidated"
+  | "session_invalidated";
 
 export interface BrowserEvent {
   readonly type: BrowserEventType;
