@@ -43,6 +43,10 @@
 | | Instructions & guidance | Bounded string length; credential scanner; non-authoritative |
 | | Tool allowlist | Computes intersection with base mode; cannot expand tools |
 | | Mode switching | Blocked during active turns; pending approvals isolated |
+| **K. GOVERNED BROWSER RUNTIME** | Network egress | `BrowserContext` interception + `BrowserEgressProxy` socket IP pinning |
+| | Chromium sandbox | `chromiumSandbox: true`; OS process-table runtime proof; fail-closed |
+| | DOM action targets | `[data-ovsc-*]` + SHA-256 `targetFingerprint` + pre-apply revalidation |
+| | Ephemeral profiles & observations | Outside-repo `0o700` profiles; `(workspace, account)` scoping; 8-surface secret redaction |
 
 
 ---
@@ -254,6 +258,21 @@ UI / future Runtime Evals:
   - A corrupt store is never overwritten; a hand-edited learned skill is never silently updated.
 - **Result**: learning cannot grant authority, widen a skill's capabilities, change prompts before approval, persist secrets or reasoning, contact a network, or download a model. Evidence: `packages/agent-core/tests/learning/` (L-10/10b, L-13, L-15, L-16, L-17–19, L-21, L-24, L-34/35; candidate boundary C-01–C-24) and `eval:learning` fixtures G/H.
 
+### Governed Browser Isolation, DNS Rebinding & Approval Binding (Sprint 9A / 9A.1 / 9A.2, ADR-039)
+- **Input**:
+  - malicious pages attempting SSRF against unauthorized local ports, RFC1918/ULA/link-local addresses, cloud metadata (`169.254.169.254`, `[::ffff:169.254.169.254]`, `metadata.google.internal`), redirects, popups, iframes, Service Workers, or WebSockets;
+  - DNS rebinding where a hostname resolves to a public IP during preflight checks and rebinds to `127.0.0.1` or metadata at socket connect time;
+  - DOM mutation, node replacement, control reordering, duplicate `data-ovsc-ref` attribute injection, or asynchronous escalation of a harmless button into a destructive/sensitive/form-submitting control after human approval;
+  - cross-workspace or cross-account session reuse, repository-internal browser profile creation, or secret leakage across snapshots, console logs, URLs, titles, screenshots, and approval payloads.
+- **Control**:
+  - `attachNetworkPolicyToContext()` enforces `isBrowserUrlPermitted()` and `verifyHostDnsSafety()` before `route.continue()` across navigations, redirects, frames, popups, and `routeWebSocket()`, while `serviceWorkers: "block"` blocks Service Worker registration;
+  - per-session local `BrowserEgressProxy` (`proxy: { server, bypass: "<-loopback>" }`) intercepts actual outbound HTTP/HTTPS, `Upgrade`, and `CONNECT` connections, re-verifies DNS at connection time, and pins outbound sockets via `createPinnedLookup(verifiedIp)` with zero second DNS lookup;
+  - `BrowserSessionManager` launches Chromium with `chromiumSandbox: true`, verifies pre-launch OS sandbox capability (`verifyEffectiveSandboxSupport()`) and post-launch OS process-table sandboxing (`EffectiveSandboxVerification` checking macOS `--seatbelt-client=` helpers / Linux `Seccomp: 2` and absence of `--no-sandbox`), failing closed with `SANDBOX_UNAVAILABLE` if isolation cannot be proven;
+  - `snapshot()` strips pre-existing `data-ovsc-*` attributes before stamping `[data-ovsc-ref][data-ovsc-snap][data-ovsc-session]` and computing a SHA-256 `targetFingerprint`; `revalidateApproval()` in `prepareForReview.apply()` and pre-action `click()`/`fill()` reject duplicate refs (`AMBIGUOUS_TARGET_REFERENCE`), detached/replaced nodes (`STALE_ELEMENT_REFERENCE`), and semantic or risk escalation (`APPROVAL_INVALIDATED`) without CSS fallback selectors;
+  - `extension.ts` scopes sessions strictly to `(workspaceRoot, accountId, configKey)` and invalidates/disposes on workspace change, logout, account switch, config change, untrusted workspace, and `deactivate()`;
+  - profiles are restricted to `0o700` outside-repository directories (`os.tmpdir()` or `globalStorageUri`), sensitive inputs are visually masked during `screenshot()`, and `redactSensitiveText()` sanitizes all 8 observation/diagnostic surfaces.
+- **Result**: unauthorized destinations and rebound sockets receive 0 requests, mutated or substituted DOM targets cannot reuse prior approvals, nested/unsupported sandboxes fail closed, and raw secrets do not enter logs or model observations. Evidence: `packages/agent-core/tests/browser/browser-acceptance-9a2.test.ts` (20 real-Chromium scenarios) and `packages/vscode-integration/tests/browser-isolation-9a2.test.ts`.
+
 ---
 
 ## 4. Security Invariants
@@ -280,6 +299,10 @@ UI / future Runtime Evals:
 20. **Capability Packs are declarative bundles, never executable authorities**: pack manifests are treated as untrusted input; manifests cannot contain executable directives (`runCommand`, `postinstall`, `shell`, `exec`), embedded credentials, prototype pollution keys, or path traversal.
 21. **Pack lifecycle enforces strict non-conflation**: $\text{Import} \neq \text{Install} \neq \text{Enable} \neq \text{Execute}$. Installing or enabling a pack never grants ambient tool execution authority; `PermissionGate` remains the supreme and final authority.
 22. **Packs cannot elevate canonical base mode ceilings**: a pack referencing a `REVIEW` or `ASK` base mode cannot request mutating permissions (`canExecuteCommands` or `mutationAuthority`). Fail-closed dependency resolution blocks unready or disconnected dependencies.
+23. **Browser network policy binds to actual socket connections**: URL allowlisting and preflight DNS checks are backed by per-session `BrowserEgressProxy` socket IP pinning (`createPinnedLookup`), blocking unauthorized ports, private/link-local/metadata IPs, redirects, popups, WebSockets, Service Workers, and TOCTOU DNS rebinding fail-closed.
+24. **Chromium sandboxing is runtime-verified and never silently disabled**: browser launches enforce `chromiumSandbox: true`, verify OS process-table sandboxing post-launch, never inject `--no-sandbox`, and fail closed (`SANDBOX_UNAVAILABLE`) when effective sandboxing cannot be established.
+25. **Browser approvals are non-transferable across target mutations**: actions bind strictly to `[data-ovsc-ref][data-ovsc-snap][data-ovsc-session]` and SHA-256 `targetFingerprint` without CSS fallback selectors; `revalidateApproval()` rejects detached, replaced, duplicate, or risk-escalated DOM targets before execution.
+26. **Browser authority and ephemeral profiles are strictly scoped and redacted**: sessions isolate by `(workspaceRoot, accountId, configKey)`, store `0o700` profiles exclusively outside repositories, visually mask sensitive inputs in screenshots, and redact secrets across observations, diagnostics, and approval payloads.
 
 
 

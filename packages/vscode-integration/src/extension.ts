@@ -302,25 +302,85 @@ let chatController: ChatController | null = null;
 let diffReviewController: DiffReviewController | null = null;
 let terminalReviewController: TerminalReviewController | null = null;
 let autocompleteController: AutocompleteController | null = null;
-let activeBrowserSessionManager: BrowserSessionManager | null = null;
+interface ScopedBrowserSession {
+  readonly manager: BrowserSessionManager;
+  readonly accountId: string;
+  readonly workspaceRoot: string;
+  readonly configKey: string;
+}
 
-function getGovernedBrowserSessionManager(workspaceRoot: string): BrowserSessionManager | undefined {
+let activeScopedBrowserSession: ScopedBrowserSession | null = null;
+let extensionGlobalBrowserStorageDir: string | undefined;
+
+function getGovernedBrowserSessionManager(workspaceRoot: string, accountId?: string): BrowserSessionManager | undefined {
+  if (!workspaceRoot || !workspaceRoot.trim()) {
+    return undefined;
+  }
+
+  // Enforce workspace trust: untrusted workspaces cannot use browser automation
+  if (vscode.workspace.isTrusted === false) {
+    if (activeScopedBrowserSession) {
+      void activeScopedBrowserSession.manager.invalidate("untrusted_workspace");
+      activeScopedBrowserSession = null;
+    }
+    return undefined;
+  }
+
   const diag = detectBrowserProvisioning();
   if (diag.status !== "READY") {
     return undefined;
   }
-  if (!activeBrowserSessionManager) {
-    const config = vscode.workspace.getConfiguration('open-vs-code');
-    const allowedOrigins = config.get<string[]>('browser.allowedOrigins', []);
-    activeBrowserSessionManager = new BrowserSessionManager({
-      workspaceRoot,
-      headless: config.get<boolean>('browser.headless', true),
+
+  const normalizedWorkspace = path.resolve(workspaceRoot);
+  const effectiveAccountId = accountId || accountManager?.getState().user?.id || "anonymous";
+  const resourceUri = vscode.Uri?.file ? vscode.Uri.file(normalizedWorkspace) : undefined;
+  const config = (vscode.workspace.getConfiguration as any)('open-vs-code', resourceUri);
+  const allowedOrigins = [...(config.get('browser.allowedOrigins', []) as string[] ?? [])];
+  const headless = Boolean(config.get('browser.headless', true));
+  const configKey = JSON.stringify({ allowedOrigins, headless });
+
+  // Sprint 9A.2 P1: Invalidate and dispose if workspace, account, or configuration boundary changed
+  if (
+    activeScopedBrowserSession &&
+    (activeScopedBrowserSession.workspaceRoot !== normalizedWorkspace ||
+      activeScopedBrowserSession.accountId !== effectiveAccountId ||
+      activeScopedBrowserSession.configKey !== configKey)
+  ) {
+    const reason =
+      activeScopedBrowserSession.workspaceRoot !== normalizedWorkspace
+        ? "workspace_change"
+        : activeScopedBrowserSession.accountId !== effectiveAccountId
+        ? "account_switch"
+        : "browser_configuration_changed";
+    void activeScopedBrowserSession.manager.invalidate(reason);
+    activeScopedBrowserSession = null;
+  }
+
+  if (!activeScopedBrowserSession) {
+    const safeStorageDir =
+      extensionGlobalBrowserStorageDir &&
+      extensionGlobalBrowserStorageDir !== normalizedWorkspace &&
+      !extensionGlobalBrowserStorageDir.startsWith(normalizedWorkspace + path.sep)
+        ? extensionGlobalBrowserStorageDir
+        : undefined;
+
+    const manager = new BrowserSessionManager({
+      workspaceRoot: normalizedWorkspace,
+      accountId: effectiveAccountId,
+      ...(safeStorageDir ? { storageDir: safeStorageDir } : {}),
+      headless,
       networkPolicy: {
         allowedOrigins,
       },
     });
+    activeScopedBrowserSession = {
+      manager,
+      accountId: effectiveAccountId,
+      workspaceRoot: normalizedWorkspace,
+      configKey,
+    };
   }
-  return activeBrowserSessionManager;
+  return activeScopedBrowserSession.manager;
 }
 
 /**
@@ -354,8 +414,24 @@ export const _testSeam = {
   get terminalReviewController() { return terminalReviewController; },
   get autocompleteController() { return autocompleteController; },
   get diffReviewController() { return diffReviewController; },
-  get activeBrowserSessionManager() { return activeBrowserSessionManager; },
-  setActiveBrowserSessionManager(m: BrowserSessionManager | null) { activeBrowserSessionManager = m; },
+  get activeBrowserSessionManager() { return activeScopedBrowserSession?.manager ?? null; },
+  get activeScopedBrowserSession() { return activeScopedBrowserSession; },
+  setActiveBrowserSessionManager(m: BrowserSessionManager | null) {
+    if (!m) {
+      if (activeScopedBrowserSession) {
+        void activeScopedBrowserSession.manager.invalidate("manual_reset");
+        activeScopedBrowserSession = null;
+      }
+    } else {
+      activeScopedBrowserSession = {
+        manager: m,
+        accountId: m.getAccountId?.() || "anonymous",
+        workspaceRoot: m.getWorkspaceRoot?.() || "/",
+        configKey: "{}",
+      };
+    }
+  },
+  getGovernedBrowserSessionManager,
   get currentAbortController() { return currentAbortController; },
   setCurrentAbortController(ac: AbortController | null) { currentAbortController = ac; },
   /** For tests only: inject a ChatController so deactivate() exercises the real path. */
@@ -687,16 +763,42 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(...registerAccountCommands(context, accountManager, mcpService, host.outputChannel, modeService, packService));
   void accountManager.initialize(mcpService, modeService, packService);
 
-  // Invalidate and dispose active browser session on account logout or switch
+  // Dedicated outside-repository storage path for ephemeral browser profiles when globalStorageUri exists
+  extensionGlobalBrowserStorageDir = (context as any).globalStorageUri?.fsPath
+    ? path.join((context as any).globalStorageUri.fsPath, 'browser-profiles')
+    : undefined;
+
+  // Invalidate and dispose active browser session on account logout, switch, workspace change, or config change
   context.subscriptions.push(
     accountManager.onStateChange((state) => {
-      if (state.status === "UNAUTHENTICATED" || !state.user) {
-        if (activeBrowserSessionManager) {
-          void activeBrowserSessionManager.dispose();
-          activeBrowserSessionManager = null;
+      if (activeScopedBrowserSession) {
+        const currentUserId = state.user?.id || "anonymous";
+        const loggedOutAuthenticated =
+          activeScopedBrowserSession.accountId !== "anonymous" &&
+          state.status === "UNAUTHENTICATED";
+        if (loggedOutAuthenticated || currentUserId !== activeScopedBrowserSession.accountId) {
+          const reason = loggedOutAuthenticated ? "account_logout" : "account_switch";
+          void activeScopedBrowserSession.manager.invalidate(reason);
+          activeScopedBrowserSession = null;
         }
       }
-    })
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      if (activeScopedBrowserSession) {
+        void activeScopedBrowserSession.manager.invalidate("workspace_change");
+        activeScopedBrowserSession = null;
+      }
+    }),
+    ...(typeof (vscode.workspace as any).onDidChangeConfiguration === 'function'
+      ? [
+          (vscode.workspace as any).onDidChangeConfiguration((e: any) => {
+            if (activeScopedBrowserSession && (!e?.affectsConfiguration || e.affectsConfiguration('open-vs-code.browser'))) {
+              void activeScopedBrowserSession.manager.invalidate("browser_configuration_changed");
+              activeScopedBrowserSession = null;
+            }
+          }),
+        ]
+      : [])
   );
 
   if (chatController) {
@@ -845,14 +947,15 @@ export async function deactivate(): Promise<void> {
     }
     mcpService = null;
   }
-  if (activeBrowserSessionManager) {
+  if (activeScopedBrowserSession) {
     try {
-      await activeBrowserSessionManager.dispose();
+      await activeScopedBrowserSession.manager.invalidate("extension_shutdown");
     } catch {
       // Safe containment
     }
-    activeBrowserSessionManager = null;
+    activeScopedBrowserSession = null;
   }
+  extensionGlobalBrowserStorageDir = undefined;
   if (integrationManager) {
     try {
       integrationManager.dispose();

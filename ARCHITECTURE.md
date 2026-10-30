@@ -825,7 +825,7 @@ AgentRuntime (Existing Single Authoritative Agent Loop)
 
 ---
 
-## Governed Playwright Browser Runtime & Agent Tool Integration (Sprint 9A — ADR-039)
+## Governed Playwright Browser Runtime & Agent Tool Integration (Sprint 9A / 9A.1 / 9A.2 — ADR-039)
 
 The Governed Playwright Browser Runtime introduces locally executable browser automation into Open VS Code directly through governed agent tools without spawning secondary agent brains or browser-specific planning loops.
 
@@ -833,50 +833,54 @@ The Governed Playwright Browser Runtime introduces locally executable browser au
 User Request
        │
        ▼
-Custom Mode (`browser-qa-local-dev`) / Capability Pack
+Custom Mode (`browser-qa-local-dev` / `browser-qa-interactive-local-dev`) / Capability Pack
        │
        ▼
-AgentSessionBridge
+AgentSessionBridge (Scoped by Workspace + Account + Browser Config)
        │
        ▼
-AgentRuntime
+AgentRuntime & AgentRunner (`effectiveAction` Evaluation)
        │
        ▼
 PermissionGate (Action Classification: ALLOW / CONFIRM / DENY)
        │
        ▼
-Governed Browser Tool Adapter (`browser-tools.ts`)
+Governed Browser Tool Adapter (`browser-tools.ts` + `revalidateApproval()`)
        │
        ▼
-BrowserSessionManager (`browser-session-manager.ts`)
+BrowserSessionManager (`browser-session-manager.ts`, Outside-Repo 0o700 Profile)
        │
        ▼
-Playwright Chromium Session (Isolated Context, Route Interception)
+Playwright Chromium (`chromiumSandbox: true`, OS Process-Table Runtime Proof)
        │
        ▼
-Structured Browser Result (Compact Accessibility Snapshot / Element Refs)
+Context Interception + `BrowserEgressProxy` (Connection-Time DNS & Socket IP Pinning)
+       │
+       ▼
+Structured Redacted Browser Result (Bounded Accessibility Snapshot / Fingerprinted Element Refs)
 ```
 
 ### Core Architectural Invariants
 
 1. **Zero Secondary Agent Brains**: All browsing capabilities execute as governed tools inside the existing `AgentRuntime`. The agent reasons over compact, structured accessibility trees and element references rather than executing an autonomous side-car loop.
-2. **Ephemeral Context Isolation**: Each session runs inside an isolated `BrowserContext`. No cookies, local storage, or authenticated state persist across workspaces, users, or tasks.
-3. **SSRF Guard & Route Interception**: Target navigation and all subresource requests are intercepted via `page.route` and checked against `isBrowserUrlPermitted()`, blocking private subnets, cloud metadata (`169.254.169.254`, `metadata.google.internal`), and unauthorized origins.
-4. **Deterministic Process Cleanup**: Browser processes and their descendant process trees are tracked and terminated via POSIX `killProcessTree` on session closure, disposal, or cancellation.
-5. **No Runtime Auto-Downloads**: Browser provisioning detection is deterministic and fails closed with `NOT_CONFIGURED`. The agent never runs `npx playwright install` or `npm install`.
-6. **High-Risk Capability Exclusion**: Arbitrary JavaScript execution (`page.evaluate`), raw CDP commands, and cookie/session storage export are excluded from the tool catalog.
+2. **Workspace, Account & Ephemeral Profile Isolation**: Sessions in `extension.ts` are strictly scoped to `(workspaceRoot, accountId, configKey)` and invalidated on workspace switch, logout, account switch, config change, or `deactivate()`. Ephemeral `0o700` profiles reside exclusively outside project repositories (`os.tmpdir()` or `globalStorageUri`) and are deleted on disposal and orphan sweeps.
+3. **Connection-Level Network Boundary & TOCTOU DNS Pinning**: `attachNetworkPolicyToContext()` enforces `isBrowserUrlPermitted()` and `verifyHostDnsSafety()` across navigations, redirects, frames, popups, and WebSockets (`serviceWorkers: "block"`), while per-session `BrowserEgressProxy` (`proxy: { server, bypass: "<-loopback>" }`) pins outbound HTTP/HTTPS, `Upgrade`, and `CONNECT` sockets to verified IPs via `createPinnedLookup()`, neutralizing DNS rebinding and blocking private/link-local/metadata destinations.
+4. **Runtime-Verified Chromium Sandbox & Process Cleanup**: Launches enforce `chromiumSandbox: true`, distinguish pre-launch OS capability probes from post-launch OS process-table runtime verification (`EffectiveSandboxVerification`), fail closed (`SANDBOX_UNAVAILABLE`) without ever adding `--no-sandbox`, and terminate tracked browser/helper PIDs via `killProcessTree` on close, crash, or failed startup.
+5. **Cryptographic Target & Approval Binding**: Snapshots strip pre-existing `data-ovsc-*` attributes, stamp `[data-ovsc-ref][data-ovsc-snap][data-ovsc-session]`, and record SHA-256 `targetFingerprint` + semantic attributes. `revalidateApproval()` and pre-action checks reject duplicate refs (`AMBIGUOUS_TARGET_REFERENCE`), replaced/detached DOM nodes (`STALE_ELEMENT_REFERENCE`), and risk escalation (`APPROVAL_INVALIDATED`) with zero CSS selector fallback.
+6. **No Runtime Auto-Downloads & High-Risk Exclusion**: Browser provisioning detection fails closed with `NOT_CONFIGURED` without executing `npx`/`npm`. Arbitrary JS execution (`page.evaluate`), raw CDP, and cookie/storage exports remain excluded, while sensitive inputs are masked in snapshots and screenshots and redacted across all 8 diagnostic/observation surfaces.
 
 ### Module Boundaries
 
 | Component | Package / Path | Responsibility | Security Invariants |
 | :--- | :--- | :--- | :--- |
-| `browser-contracts.ts` | `@open-vs-code/agent-core/browser/` | Type definitions for sessions, events, diagnostics, accessibility trees, and element references. | Read-only contracts. Strict typing for element refs, action categories, and error codes. |
-| `browser-provisioning.ts` | `@open-vs-code/agent-core/browser/` | Detects browser binaries across env, Playwright cache, and system paths. | Returns `NOT_CONFIGURED` if absent. Zero automatic installation or shell scripts. |
-| `browser-network-policy.ts` | `@open-vs-code/agent-core/browser/` | URL validation and request interception policy. | Blocks non-HTTP (`file://`), private IP ranges, link-local metadata endpoints, and unapproved origins. |
-| `browser-action-classifier.ts`| `@open-vs-code/agent-core/browser/` | Classifies browser tool actions into `ToolAction` risk categories. | Identifies sensitive fields (masks values in review payload) and destructive elements. |
-| `browser-session-manager.ts` | `@open-vs-code/agent-core/browser/` | Manages Playwright browser lifecycle, page navigation, accessibility snapshots, and process cleanup. | Enforces byte-bounded snapshots, stale element reference invalidation, and process tree termination. |
-| `browser-tools.ts` | `@open-vs-code/agent-core/browser/` | Factory for 7 governed browser tool registrations. | Compact JSON schemas, input validation, and review payload preparation. |
-| `starter-profiles.ts` / `starter-packs.ts` | `@open-vs-code/agent-core/` | Starter mode `browser-qa-local-dev` and pack `browser-qa-local-dev-pack`. | Base mode `PLAN`, SHA-256 integrity digest. |
+| `browser-contracts.ts` | `@open-vs-code/agent-core/browser/` | Type definitions for sessions, `EffectiveSandboxVerification`, observability events, snapshots, and fingerprinted `ElementRef`s. | Read-only contracts. Strict typing for element fingerprints, action categories, and bounded event payloads. |
+| `browser-provisioning.ts` | `@open-vs-code/agent-core/browser/` | Detects browser binaries across env, Playwright cache, and system paths (CJS/ESM bundle-safe). | Returns `NOT_CONFIGURED` if absent. Zero automatic installation or shell scripts. |
+| `browser-network-policy.ts` | `@open-vs-code/agent-core/browser/` | Context-wide route/WebSocket interception, IPv4/IPv6/DNS safety validation, and `BrowserEgressProxy`. | Blocks non-HTTP/WS schemes, URL credentials, private/ULA/link-local/metadata IPs, unapproved origins/ports, and DNS rebinding via `createPinnedLookup`. |
+| `browser-action-classifier.ts`| `@open-vs-code/agent-core/browser/` | Classifies browser tool calls into `ToolAction` risk categories (`browser_inspection`, `browser_interaction`, `browser_side_effect`, `browser_sensitive`, `browser_destructive`). | Identifies side-effecting, sensitive, and destructive targets for dynamic `effectiveAction` evaluation in `AgentRunner`. |
+| `browser-session-manager.ts` | `@open-vs-code/agent-core/browser/` | Manages Playwright persistent context, OS sandbox runtime proof, outside-repo `0o700` profiles, DOM target fingerprinting, `revalidateApproval()`, screenshot masking, and redaction. | Fails closed on `SANDBOX_UNAVAILABLE` or `UNSAFE_PROFILE_PATH`; rejects stale/ambiguous/escalated targets; terminates process trees. |
+| `browser-tools.ts` | `@open-vs-code/agent-core/browser/` | Factory for 7 governed browser tool registrations with `classifyAction` and `prepareForReview`. | Invokes `revalidateApproval()` in `prepareForReview.apply()`, propagates `AbortSignal`, and redacts review payloads. |
+| `extension.ts` | `@open-vs-code/vscode-integration/` | Scopes governed `BrowserSessionManager` to `(workspaceRoot, accountId, configKey)` with dedicated `globalStorageUri` storage. | Invalidates sessions on workspace/account/config/trust changes and `deactivate()`; never launches browser when rendering Integrations Hub. |
+| `starter-profiles.ts` / `starter-packs.ts` | `@open-vs-code/agent-core/` | Starter modes `browser-qa-local-dev` (`PLAN`) & `browser-qa-interactive-local-dev` (`BUILD`) and canonical packs. | Base mode ceilings preserved; SHA-256 integrity digests verified. |
 | `ModeService.reconcileAccountPackProfiles` | `@open-vs-code/vscode-integration/modes/` | Reconciles authoritative server packs against ephemeral account mode profiles. | Purges orphaned modes, invalidates active mode if revoked, preserves workspace modes. |
 
 

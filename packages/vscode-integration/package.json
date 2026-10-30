@@ -190,12 +190,27 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically synchronize saved MCP integrations upon login."
+        },
+        "open-vs-code.browser.allowedOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Explicitly authorized exact browser origins and ports for this workspace (e.g. [\"http://127.0.0.1:3000\"])."
+        },
+        "open-vs-code.browser.headless": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Launch governed Chromium browser in headless mode."
         }
       }
     }
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node && node -e \"require('fs').cpSync('../agent-core/skills/builtins','dist/skills/builtins',{recursive:true})\"",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:playwright-core --format=cjs --platform=node && node -e \"require('fs').cpSync('../agent-core/skills/builtins','dist/skills/builtins',{recursive:true})\"",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "eval:performance": "node --expose-gc --import tsx tests/perf/ide-performance.bench.ts"

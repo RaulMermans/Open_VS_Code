@@ -26,6 +26,7 @@ test("classifies the baseline action table deterministically in BUILD mode", () 
     mcp_external_unknown: "CONFIRM",
     browser_inspection: "ALLOW",
     browser_interaction: "CONFIRM",
+    browser_side_effect: "CONFIRM",
     browser_sensitive: "CONFIRM",
     browser_destructive: "CONFIRM",
   }

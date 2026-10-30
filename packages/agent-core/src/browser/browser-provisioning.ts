@@ -2,8 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { createRequire } from "node:module";
-
-const nodeRequire = createRequire(import.meta.url);
 import type { BrowserProvisioningDiagnostic } from "./browser-contracts.ts";
 
 export const PINNED_SUPPORTED_PLAYWRIGHT_VERSIONS = Object.freeze([
@@ -187,6 +185,11 @@ export function detectBrowserProvisioning(
 
   // 3. Playwright default executablePath
   try {
+    const reqUrl =
+      typeof import.meta?.url === "string" && import.meta.url.length > 0
+        ? import.meta.url
+        : path.join(process.cwd(), "package.json");
+    const nodeRequire = createRequire(reqUrl);
     const pw = nodeRequire("playwright-core");
     const defaultPath = pw?.chromium?.executablePath?.();
     if (defaultPath && fs.existsSync(defaultPath)) {

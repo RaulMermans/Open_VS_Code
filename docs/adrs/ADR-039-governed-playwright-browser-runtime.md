@@ -211,3 +211,35 @@ Following security and architecture audit of Sprint 9A, Sprint 9A.1 closed criti
 - **Inspection Profile (`browser-qa-local-dev`)**: Read-only inspection under base mode `PLAN` containing only non-mutating tools (`browser_open`, `browser_snapshot`, `browser_screenshot`, `browser_close`, `read_file`, `search_text`).
 - **Interactive QA Profile (`browser-qa-interactive-local-dev`)**: Interactive testing under base mode `BUILD` containing full browser tool surface with explicit confirmation gates.
 - **Canonical Capability Packs**: `browser-qa-local-dev-pack` and `browser-qa-interactive-pack` provide deterministic SHA-256 integrity verification.
+
+---
+
+## 13. Sprint 9A.2 Addendum — Browser Security Proof, Connection-Level Network Isolation & Runtime Verification (2026-10-30)
+
+Independent inspection of Sprint 9A.1 identified five concrete security and verification gaps between helper contracts and real Chromium runtime behavior. Sprint 9A.2 closes all five defects and establishes real-Chromium adversarial verification (`packages/agent-core/tests/browser/browser-acceptance-9a2.test.ts` and `packages/vscode-integration/tests/browser-isolation-9a2.test.ts`):
+
+### 13.1 P0 — Connection-Level DNS Enforcement & Socket IP Pinning (`BrowserEgressProxy`)
+- **Context Route Enforcement**: `attachNetworkPolicyToContext()` invokes `verifyHostDnsSafety()` before `route.continue()` across primary navigations, redirect-chain hops, frames, subresources, popups, and `context.routeWebSocket()` handshakes.
+- **Sandboxed Local Egress Proxy**: Every `BrowserSessionManager` launches a per-session loopback `BrowserEgressProxy` (`proxy: { server, bypass: "<-loopback>" }`) covering HTTP/HTTPS requests, HTTP `Upgrade` (`ws://`), and `CONNECT` tunnels (`https://`, `wss://`, proxied `ws://`).
+- **TOCTOU DNS Rebinding Neutralization**: `BrowserEgressProxy` resolves and validates destination hostnames at connection time and binds outbound sockets strictly to the verified IP via `createPinnedLookup(pinnedIp)`, eliminating validation-to-connect DNS rebinding gaps without performing a second OS DNS lookup.
+- **Complete IP & Protocol Coverage**: Closed IPv6 literal inspection gaps (`fc00::/7` ULA, `fe80::/10` link-local, `::ffff:169.254.169.254` IPv4-mapped metadata), alternate IPv4 encodings (octal, hex, dword), embedded URL credentials, and `blockWebSockets` policy enforcement.
+
+### 13.2 P0 — Independent Chromium Sandbox Capability vs. Runtime Proof
+- **Explicit Platform Sandboxing**: `launchPersistentContext` configures `chromiumSandbox: true` across supported platforms (`darwin`, `linux`, `win32`) and never introduces `--no-sandbox` or `--disable-setuid-sandbox`.
+- **Two-Stage Verification (`EffectiveSandboxVerification`)**:
+  1. *Pre-launch capability probe* (`verifyEffectiveSandboxSupport()`): Executes a real `sandbox-exec` kernel check on macOS and inspects `/proc/sys/kernel/unprivileged_userns_clone` + AppArmor restrictions on Linux. Environments blocking sandbox initialization (such as nested macOS Seatbelt sandboxes) fail closed immediately with `SANDBOX_UNAVAILABLE`.
+  2. *Post-launch runtime proof*: Inspects the live OS process table (`ps` command lines and `--seatbelt-client=` helper PIDs on macOS, `/proc/<pid>/status` `Seccomp: 2` + `/proc/<pid>/cmdline` on Linux, `Get-CimInstance` on Windows) to verify live `browserPid`, sandboxed `helperPids`, absence of sandbox-disabling flags, actual Chromium version, OS release, and executable path provenance (`executableSource`).
+
+### 13.3 P0 — Cryptographic Target Binding & Pre-Action Risk Revalidation
+- **Elimination of Unsafe CSS Fallbacks**: `click()` and `fill()` resolve targets exclusively via exact `[data-ovsc-ref="<refId>"][data-ovsc-snap="<snapshotId>"][data-ovsc-session="<sessionId>"]` attribute locators.
+- **Adversarial Attribute Sanitization**: Before each `snapshot()`, all pre-existing or page-injected `data-ovsc-ref`, `data-ovsc-snap`, and `data-ovsc-session` attributes are stripped from the DOM. Duplicate matching elements at action time fail closed with `AMBIGUOUS_TARGET_REFERENCE`.
+- **Live Semantic & Risk Revalidation (`revalidateApproval`)**: Both `prepareForReview.apply()` and `click()`/`fill()` inspect live DOM properties (`tag`, `role`, `name`, `inputType`, `href`, `formAction`, `parentSignature`), recompute `destructive`, `sensitive`, and `sideEffect` classifications, and verify the SHA-256 `targetFingerprint`. Detached, replaced, reordered, renamed, or risk-escalated controls reject prior approvals fail-closed (`STALE_ELEMENT_REFERENCE` or `APPROVAL_INVALIDATED`).
+
+### 13.4 P1 — Workspace & Account Session Isolation
+- **Scoped Composition Root**: `packages/vscode-integration/src/extension.ts` scopes `BrowserSessionManager` instances to `(normalizedWorkspaceRoot, effectiveAccountId, configKey)` with resource-scoped settings (`open-vs-code.browser.allowedOrigins`, `open-vs-code.browser.headless`).
+- **Deterministic Invalidation**: Sessions are invalidated and disposed (`invalidate(reason)`) on workspace folder changes, untrusted workspace transitions, account logout, account identity switches, browser configuration edits, and extension `deactivate()`, while preserving local-first anonymous mode and never launching Chromium when rendering the Integrations Hub.
+
+### 13.5 P1 — Outside-Repository Profiles & Multi-Surface Secret Protection
+- **Outside-Repository `0o700` Storage**: Rejects any `storageDir` inside `workspaceRoot` (`UNSAFE_PROFILE_PATH`). Allocates isolated profiles under `os.tmpdir()/open-vs-code-browser-profiles/ovsc_<sessionId>` or extension `globalStorageUri` with `0o700` permissions, 1-hour orphan pruning (`cleanupOrphanedBrowserProfiles`), and failed-launch/crash process-tree cleanup (`killProcessTree`).
+- **8-Surface Secret Redaction & Screenshot Masking**: Applies `redactSensitiveText()` across form values, URLs, page titles, console logs, network diagnostics, approval payloads, and error messages, and applies temporary CSS visual masking (`-webkit-text-security: disc`, transparent text) to password/sensitive inputs during `screenshot()`.
+
