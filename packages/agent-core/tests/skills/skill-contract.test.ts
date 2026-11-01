@@ -242,8 +242,22 @@ test("5A: the JSON Schema mirror matches the runtime validator", async () => {
 test("5A: the curated built-in set is small, valid, and fits its own budgets", async () => {
   const registry = await SkillRegistry.discover({ builtinRoot: defaultBuiltinSkillsRoot()!, workspaceTrusted: true })
   assert.deepEqual(registry.diagnostics, [])
-  assert.deepEqual(registry.entries.map((entry) => entry.id), ["bug-triage", "refactor-with-guards", "security-review", "tdd", "verification"])
-  assert.ok(registry.entries.length >= 5 && registry.entries.length <= 6)
+  assert.deepEqual(registry.entries.map((entry) => entry.id), [
+    "accessibility-review",
+    "bug-triage",
+    "design-direction",
+    "design-polish",
+    "design-system-engineering",
+    "frontend-composition",
+    "motion-engineering",
+    "refactor-with-guards",
+    "security-review",
+    "tdd",
+    "ux-information-architecture",
+    "verification",
+    "visual-qa",
+  ])
+  assert.ok(registry.entries.length >= 5 && registry.entries.length <= 15)
   for (const entry of registry.entries) {
     assert.equal(entry.source, "builtin")
     assert.ok(entry.triggers.length > 0 && entry.triggers.length <= SKILL_LIMITS.maxTriggers, `${entry.id} has a narrow trigger set`)

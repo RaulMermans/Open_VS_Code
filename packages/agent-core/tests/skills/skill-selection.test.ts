@@ -161,7 +161,7 @@ test("5A-17: selected skill id, version, source and reason appear in evidence", 
   assert.equal(evidence.skillSource, "builtin")
   assert.equal(evidence.selectionReason, "trigger_match")
   assert.equal(evidence.skillLoadStatus, "LOADED")
-  assert.equal(evidence.skillsIndexed, 5)
+  assert.equal(evidence.skillsIndexed, 13)
   assert.equal(evidence.indexTokens, estimateTokens(renderSkillIndex(registry.entries)))
   assert.ok(evidence.candidateSkills.includes("security-review"))
   assert.ok(evidence.skillContextTokens > 0)
@@ -208,7 +208,7 @@ test("5A-22: deterministic selection evaluation meets its acceptance thresholds"
 test("5A-23: lazy loading materially reduces skill context versus eager injection", async () => {
   const registry = await loadBuiltinRegistry()
   const report = await runEfficiencyBenchmark(registry)
-  assert.equal(report.totalSkills, 5)
+  assert.equal(report.totalSkills, 13)
   assert.ok(report.indexTokens < report.eagerTokens / 10, "metadata index is an order of magnitude smaller than the bodies")
   assert.ok(report.maxSelectedSkillTokens < report.eagerTokens / 4)
   assert.ok(report.reductionPercent >= 70, `reduction ${report.reductionPercent}%`)

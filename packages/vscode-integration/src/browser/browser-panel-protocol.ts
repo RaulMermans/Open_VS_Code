@@ -24,6 +24,7 @@ import type {
   ObservationEvidenceSnapshot,
   ViewportPresetId,
   VisualBaselineArtifact,
+  VisualQAReport,
 } from "@open-vs-code/agent-core";
 
 export type BrowserZoomMode = "fit" | "actual";
@@ -170,6 +171,9 @@ export interface BrowserPanelState {
   readonly animationObservation?: AnimationObservation;
   readonly visualBaseline?: SanitizedVisualBaselineSummary;
   readonly visualComparison?: BeforeAfterComparison;
+  readonly visualQaReport?: VisualQAReport;
+  readonly activeDesignPackId?: string;
+  readonly designWorkflowStage?: string;
   readonly evidence: ObservationEvidenceSnapshot;
   readonly timeline: readonly BrowserTimelineItem[];
   readonly navigationError?: string;
@@ -204,6 +208,8 @@ export type InboundBrowserPanelMessage =
   | { readonly type: "browserPanel.closeSession" }
   | { readonly type: "browserPanel.captureBaseline" }
   | { readonly type: "browserPanel.compareWithBaseline" }
+  | { readonly type: "browserPanel.measureMotion"; readonly durationMs?: number }
+  | { readonly type: "browserPanel.runVisualQa" }
   | { readonly type: "browserPanel.toggleEvidenceRecording"; readonly enabled: boolean }
   | { readonly type: "browserPanel.clearEvidence" };
 
@@ -333,6 +339,14 @@ export function parseBrowserPanelMessage(raw: unknown): InboundBrowserPanelMessa
 
     case "browserPanel.compareWithBaseline":
       return { type: "browserPanel.compareWithBaseline" };
+
+    case "browserPanel.measureMotion": {
+      const dur = typeof msg.durationMs === "number" && msg.durationMs > 0 ? msg.durationMs : undefined;
+      return { type: "browserPanel.measureMotion", durationMs: dur };
+    }
+
+    case "browserPanel.runVisualQa":
+      return { type: "browserPanel.runVisualQa" };
 
     case "browserPanel.toggleEvidenceRecording": {
       if (typeof msg.enabled !== "boolean") return null;

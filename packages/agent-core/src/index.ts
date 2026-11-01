@@ -84,3 +84,7 @@ export * from "./packs/index.ts"
 // Sprint 9A — Governed Playwright Browser Runtime
 export * from "./browser/index.ts"
 
+// Sprint 9C — Advanced Design & Motion Capability Pack
+export * from "./design/index.ts"
+
+

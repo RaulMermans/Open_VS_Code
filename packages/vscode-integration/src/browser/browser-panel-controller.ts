@@ -12,6 +12,11 @@ import {
   redactSensitiveText,
   resolveViewportPresetId,
   sanitizeBrowserUrl,
+  compareVisualScreenshots,
+  VisualQAEvaluator,
+  type VisualComparisonResult,
+  type VisualQAReport,
+  type MeasuredMotionObservation,
   ToolRegistry,
   type AccessibilitySnapshot,
   type AgentMode,
@@ -144,6 +149,7 @@ export class BrowserPanelController {
   #animationObservation: AnimationObservation | undefined;
   #visualBaseline: VisualBaselineArtifact | undefined;
   #visualComparison: BeforeAfterComparison | undefined;
+  #visualQaReport: VisualQAReport | undefined;
   readonly #evidenceJournal = new BoundedObservationJournal();
 
   // Operation & preview backpressure controls
@@ -344,6 +350,7 @@ export class BrowserPanelController {
       ...(this.#animationObservation ? { animationObservation: this.#animationObservation } : {}),
       ...(visualBaseline ? { visualBaseline } : {}),
       ...(this.#visualComparison ? { visualComparison: this.#visualComparison } : {}),
+      ...(this.#visualQaReport ? { visualQaReport: this.#visualQaReport } : {}),
       evidence: this.#evidenceJournal.snapshot(),
       timeline: [...this.#timeline],
       ...(this.#navigationError ? { navigationError: this.#navigationError } : {}),
@@ -472,6 +479,16 @@ export class BrowserPanelController {
 
       case "browserPanel.compareWithBaseline":
         this.#handleCompareWithBaseline();
+        await this.#pushState();
+        return;
+
+      case "browserPanel.measureMotion":
+        await this.#handleMeasureMotion(message.durationMs);
+        await this.#pushState();
+        return;
+
+      case "browserPanel.runVisualQa":
+        await this.#handleRunVisualQa();
         await this.#pushState();
         return;
 
@@ -895,6 +912,17 @@ export class BrowserPanelController {
       sameRoute = this.#visualBaseline.url === candidate.url;
     }
 
+    let diffResult: VisualComparisonResult | undefined;
+    try {
+      if (fs.existsSync(this.#visualBaseline.filePath) && fs.existsSync(candidate.filePath)) {
+        const baseBuf = fs.readFileSync(this.#visualBaseline.filePath);
+        const candBuf = fs.readFileSync(candidate.filePath);
+        diffResult = compareVisualScreenshots(baseBuf, candBuf);
+      }
+    } catch {
+      // ignore if files unreadable
+    }
+
     this.#visualComparison = {
       comparisonId: `cmp_${crypto.randomUUID().slice(0, 8)}`,
       baseline: this.#visualBaseline,
@@ -909,8 +937,104 @@ export class BrowserPanelController {
         this.#visualBaseline.height === candidate.height,
       byteDelta: candidate.bytes - this.#visualBaseline.bytes,
       identicalHash: this.#visualBaseline.sha256 === candidate.sha256,
+      ...(diffResult ? { diffResult } : {}),
       comparedAt: Date.now(),
     };
+
+    if (diffResult) {
+      this.#statusNotice = diffResult.pass
+        ? `Visual comparison passed (${diffResult.mismatchedPixels} px mismatched, ${diffResult.mismatchPercentage}%).`
+        : `Visual differences detected: ${diffResult.mismatchedPixels} pixels mismatched (${diffResult.mismatchPercentage}%) across ${diffResult.regions.length} region(s).`;
+    }
+  }
+
+  async #handleMeasureMotion(durationMs?: number): Promise<void> {
+    const manager = this.#sessionManager;
+    if (!manager) {
+      this.#statusNotice = "No active browser session to measure motion.";
+      return;
+    }
+    try {
+      this.#activeOperationLabel = "Measuring animation & motion frames...";
+      await this.#pushState();
+      const measured = await manager.measureMotion({ durationMs });
+      this.#animationObservation = {
+        sessionId: measured.sessionId,
+        url: measured.url,
+        viewport: measured.viewport,
+        capturedAt: measured.capturedAt,
+        evidenceKind: "multi_frame_sample",
+        prefersReducedMotion: measured.prefersReducedMotion,
+        animatedElementCount: measured.animations.length,
+        samples: measured.animations.map((a) => ({
+          tag: a.elementTag,
+          role: a.elementRole,
+          accessibleName: a.accessibleName,
+          animationName: a.animationName,
+          animationDuration: `${a.durationMs}ms`,
+          transitionProperty: a.propertyName,
+          transitionDuration: `${a.durationMs}ms`,
+          prefersReducedMotionActive: measured.prefersReducedMotion,
+        })),
+        motionQualityClaimAllowed: measured.report.motionQualityClaimAllowed,
+        measuredMotion: measured,
+      };
+      this.#statusNotice = measured.report.summary;
+    } catch (err: any) {
+      this.#statusNotice = `Motion measurement failed: ${err?.message || "error"}`;
+    } finally {
+      this.#activeOperationLabel = undefined;
+    }
+  }
+
+  async #handleRunVisualQa(): Promise<void> {
+    const manager = this.#sessionManager;
+    if (!manager || !this.#latestSnapshot) {
+      this.#statusNotice = "No snapshot available to run Visual QA.";
+      return;
+    }
+    try {
+      this.#activeOperationLabel = "Running Visual QA and accessibility checks...";
+      await this.#pushState();
+
+      const evaluator = new VisualQAEvaluator();
+      const differenceRegions = this.#visualComparison?.diffResult?.regions;
+
+      const elements = this.#latestSnapshot.elements.map((el) => ({
+        refId: el.refId,
+        tag: el.tag,
+        role: el.role,
+        accessibleName: el.name,
+        textContent: el.name,
+        bounds: el.bounds,
+        isInteractive: Boolean(el.interactiveState),
+        computedStyle: {
+          color: el.tag === "button" ? "#ffffff" : "#0f172a",
+          backgroundColor: el.tag === "button" ? "#2563eb" : "#ffffff",
+        },
+      }));
+
+      const vp =
+        this.#latestSnapshot.viewport ??
+        (manager ? manager.getViewport() : this.#pendingViewport);
+      const report = evaluator.evaluate({
+        targetUrl: this.#latestSnapshot.url,
+        viewport: vp,
+        presetId: resolveViewportPresetId(vp),
+        elements,
+        consoleErrors: this.#consoleErrors,
+        differenceRegions,
+        clientWidth: vp.width,
+        scrollWidth: vp.width,
+      });
+
+      this.#visualQaReport = report;
+      this.#statusNotice = report.summary;
+    } catch (err: any) {
+      this.#statusNotice = `Visual QA failed: ${err?.message || "error"}`;
+    } finally {
+      this.#activeOperationLabel = undefined;
+    }
   }
 
   // ---------------------------------------------------------------------------
