@@ -71,7 +71,24 @@ describe("Skills commands (Sprint 5A)", () => {
     await mockVscode.commands.registered["open-vs-code.listSkills"]();
     assert.strictEqual(shown.quickPicks.length, 1);
     const { items, options } = shown.quickPicks[0];
-    assert.deepStrictEqual(items.map((item: any) => item.label), ["bug-triage", "refactor-with-guards", "security-review", "tdd", "verification"]);
+    assert.deepStrictEqual(
+      items.map((item: any) => item.label),
+      [
+        "accessibility-review",
+        "bug-triage",
+        "design-direction",
+        "design-polish",
+        "design-system-engineering",
+        "frontend-composition",
+        "motion-engineering",
+        "refactor-with-guards",
+        "security-review",
+        "tdd",
+        "ux-information-architecture",
+        "verification",
+        "visual-qa",
+      ]
+    );
     assert.ok(items.every((item: any) => item.detail.length <= 200 && !item.detail.includes("# Workflow")), "descriptions only, never bodies");
     assert.ok(String(options.title).includes("enabled"));
     assert.ok(shown.output.some((line) => line.includes("broken") && line.includes("MALFORMED_FRONTMATTER")));

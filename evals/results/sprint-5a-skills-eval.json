@@ -424,21 +424,45 @@
     ]
   },
   "efficiency": {
-    "totalSkills": 5,
-    "totalBodyTokens": 2530,
-    "eagerTokens": 2530,
-    "indexTokens": 128,
+    "totalSkills": 13,
+    "totalBodyTokens": 8026,
+    "eagerTokens": 8026,
+    "indexTokens": 394,
     "averageSelectedSkillTokens": 510.96153846153845,
     "maxSelectedSkillTokens": 559,
     "averageLazyPromptTokens": 332.125,
-    "averageLazyWithIndexTokens": 460.125,
-    "tokensAvoidedPerTask": 2197.875,
-    "reductionPercent": 86.87252964426877,
-    "reductionWithIndexPercent": 81.81324110671937,
+    "averageLazyWithIndexTokens": 726.125,
+    "tokensAvoidedPerTask": 7693.875,
+    "reductionPercent": 95.86188636929978,
+    "reductionWithIndexPercent": 90.9528407675056,
     "perSkill": [
+      {
+        "id": "accessibility-review",
+        "bodyTokens": 709
+      },
       {
         "id": "bug-triage",
         "bodyTokens": 559
+      },
+      {
+        "id": "design-direction",
+        "bodyTokens": 720
+      },
+      {
+        "id": "design-polish",
+        "bodyTokens": 727
+      },
+      {
+        "id": "design-system-engineering",
+        "bodyTokens": 704
+      },
+      {
+        "id": "frontend-composition",
+        "bodyTokens": 649
+      },
+      {
+        "id": "motion-engineering",
+        "bodyTokens": 702
       },
       {
         "id": "refactor-with-guards",
@@ -453,8 +477,16 @@
         "bodyTokens": 483
       },
       {
+        "id": "ux-information-architecture",
+        "bodyTokens": 619
+      },
+      {
         "id": "verification",
         "bodyTokens": 453
+      },
+      {
+        "id": "visual-qa",
+        "bodyTokens": 666
       }
     ]
   }

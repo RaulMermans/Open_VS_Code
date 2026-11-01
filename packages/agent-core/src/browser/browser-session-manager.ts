@@ -44,6 +44,8 @@ import {
   sanitizeBrowserUrl,
 } from "./browser-action-classifier.ts";
 import { killProcessTree, execProcessProbe } from "../tools/kill-process-tree.ts";
+import { evaluateMotionObservations } from "../design/motion-evaluator.ts";
+import type { MeasuredMotionObservation } from "../design/contracts.ts";
 
 export { redactSensitiveText, sanitizeBrowserUrl };
 
@@ -2539,6 +2541,197 @@ export class BrowserSessionManager {
       limitationNotice:
         "Static screenshot preview and CSS declaration probe only; frame-rate, easing smoothness, and runtime motion quality cannot be claimed from static captures.",
     };
+  }
+
+  /**
+   * Sprint 9C Real Measured Motion: executes temporal frame sampling (rAF) and animation
+   * introspection inside the active Chromium page, then runs evaluateMotionObservations.
+   */
+  public async measureMotion(options?: {
+    durationMs?: number;
+    signal?: AbortSignal;
+  }): Promise<MeasuredMotionObservation> {
+    if (this.#disposed) {
+      throw new BrowserSessionError("DISPOSED", "BrowserSessionManager has already been disposed.");
+    }
+    if (options?.signal?.aborted) {
+      throw new DOMException("Motion measurement cancelled", "AbortError");
+    }
+    if (
+      !this.#activePage ||
+      this.#unexpectedlyClosed ||
+      (typeof this.#activePage.isClosed === "function" && this.#activePage.isClosed())
+    ) {
+      throw new BrowserSessionError("NO_PAGE", "No active browser page open.");
+    }
+
+    const duration = Math.max(200, Math.min(options?.durationMs ?? 600, 1500));
+
+    const rawData = await this.#activePage.evaluate((sampleDuration: number) => {
+      return new Promise<{
+        reducedMotion: boolean;
+        frameTimings: { frameIndex: number; timestampMs: number; deltaMs: number }[];
+        activeAnimations: {
+          elementTag: string;
+          elementRole: string;
+          accessibleName: string;
+          animationName: string;
+          propertyName: string;
+          durationMs: number;
+          easing: string;
+          isComposited: boolean;
+          causesLayoutShift: boolean;
+        }[];
+        layoutShifts: { value: number; timestampMs: number }[];
+      }>((resolve) => {
+        // Define __name helper in page context in case of transpiled helper references
+        const g = globalThis as any;
+        if (typeof g["__name"] === "undefined") {
+          g["__name"] = (f: any) => f;
+        }
+        const win = (globalThis as any).window;
+        const doc = (globalThis as any).document;
+        const reducedMotion = Boolean(win.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+
+        const frameTimings: { frameIndex: number; timestampMs: number; deltaMs: number }[] = [];
+        const layoutShifts: { value: number; timestampMs: number }[] = [];
+
+        let observer: any;
+        try {
+          if (typeof win.PerformanceObserver !== "undefined") {
+            observer = new win.PerformanceObserver((list: any) => {
+              for (const entry of list.getEntries()) {
+                if (entry.entryType === "layout-shift" && !entry.hadRecentInput) {
+                  layoutShifts.push({ value: entry.value, timestampMs: entry.startTime });
+                }
+              }
+            });
+            observer.observe({ type: "layout-shift", buffered: true });
+          }
+        } catch {
+          // ignore if layout-shift observer is unsupported
+        }
+
+        const startTime = win.performance.now();
+        let lastTime = startTime;
+        let frameCount = 0;
+
+        const recordFrame = (now: number) => {
+          const delta = now - lastTime;
+          lastTime = now;
+          frameTimings.push({
+            frameIndex: frameCount++,
+            timestampMs: Math.round(now - startTime),
+            deltaMs: Math.round(delta * 10) / 10,
+          });
+
+          if (now - startTime < sampleDuration && frameCount < 90) {
+            win.requestAnimationFrame(recordFrame);
+          } else {
+            try {
+              observer?.disconnect();
+            } catch {}
+
+            // Inspect active animations via Web Animations API and CSS
+            const activeAnimations: any[] = [];
+            try {
+              if (typeof doc.getAnimations === "function") {
+                const anims = doc.getAnimations().slice(0, 30);
+                const metaKeys = ["offset", "computedOffset", "easing", "composite"];
+                for (const a of anims) {
+                  const target = a.effect?.target;
+                  if (target) {
+                    const tag = String(target.tagName || "").toLowerCase();
+                    const name = String(target.getAttribute?.("aria-label") || target.id || tag);
+                    const animTiming = a.effect?.getComputedTiming?.() || {};
+                    const keyframes = a.effect?.getKeyframes?.() || [];
+                    const foundProps: string[] = [];
+                    for (const kf of keyframes) {
+                      for (const k of Object.keys(kf)) {
+                        if (!metaKeys.includes(k) && !foundProps.includes(k)) {
+                          foundProps.push(k);
+                        }
+                      }
+                    }
+                    const propList = foundProps.length > 0 ? foundProps : ["transform"];
+                    for (const prop of propList) {
+                      activeAnimations.push({
+                        elementTag: tag,
+                        elementRole: String(target.getAttribute?.("role") || tag),
+                        accessibleName: name,
+                        animationName: a.animationName || a.id || "web-animation",
+                        propertyName: prop,
+                        durationMs: typeof animTiming.duration === "number" ? animTiming.duration : 300,
+                        easing: String(animTiming.easing || "ease"),
+                        isComposited: prop === "transform" || prop === "opacity",
+                        causesLayoutShift:
+                          prop.includes("width") ||
+                          prop.includes("height") ||
+                          prop.includes("top") ||
+                          prop.includes("left"),
+                      });
+                    }
+                  }
+                }
+              }
+            } catch {}
+
+            // Fallback to inspecting elements with computed animations/transitions
+            if (activeAnimations.length === 0) {
+              const nodes = Array.from(doc?.querySelectorAll?.("*") || []).slice(0, 300);
+              for (const node of nodes as any[]) {
+                const s = win.getComputedStyle(node);
+                const hasAnim = s.animationName && s.animationName !== "none";
+                const hasTrans =
+                  s.transitionProperty &&
+                  s.transitionProperty !== "none" &&
+                  parseFloat(s.transitionDuration || "0") > 0;
+                if (hasAnim || hasTrans) {
+                  const tag = String(node.tagName || "").toLowerCase();
+                  const name = String(node.getAttribute?.("aria-label") || node.id || tag);
+                  const prop = hasTrans ? String(s.transitionProperty) : "transform";
+                  activeAnimations.push({
+                    elementTag: tag,
+                    elementRole: String(node.getAttribute?.("role") || tag),
+                    accessibleName: name,
+                    animationName: hasAnim ? String(s.animationName) : "transition",
+                    propertyName: prop,
+                    durationMs: parseFloat(s.transitionDuration || s.animationDuration || "0.3") * 1000,
+                    easing: String(s.transitionTimingFunction || s.animationTimingFunction || "ease"),
+                    isComposited: prop === "transform" || prop === "opacity",
+                    causesLayoutShift:
+                      prop.includes("width") ||
+                      prop.includes("height") ||
+                      prop.includes("top") ||
+                      prop.includes("left"),
+                  });
+                  if (activeAnimations.length >= 20) break;
+                }
+              }
+            }
+
+            resolve({
+              reducedMotion,
+              frameTimings,
+              activeAnimations,
+              layoutShifts,
+            });
+          }
+        };
+
+        win.requestAnimationFrame(recordFrame);
+      });
+    }, duration);
+
+    return evaluateMotionObservations({
+      sessionId: this.#sessionId,
+      url: sanitizeBrowserUrl(this.#activePage.url()),
+      viewport: { ...this.#viewport },
+      prefersReducedMotion: rawData.reducedMotion,
+      frameTimings: rawData.frameTimings,
+      animations: rawData.activeAnimations,
+      layoutShifts: rawData.layoutShifts,
+    });
   }
 
   public getConsoleDiagnostics(): readonly BrowserConsoleEntry[] {

@@ -15,6 +15,19 @@
  */
 
 import { redactSensitiveText, sanitizeBrowserUrl } from "./browser-action-classifier.ts";
+import type {
+  VisualComparisonResult,
+  MeasuredMotionObservation,
+  DifferenceRegion,
+  DifferenceCategory,
+} from "../design/contracts.ts";
+
+export type {
+  VisualComparisonResult,
+  MeasuredMotionObservation,
+  DifferenceRegion,
+  DifferenceCategory,
+};
 
 export type ViewportPresetId = "desktop" | "tablet" | "mobile" | "custom";
 
@@ -158,6 +171,7 @@ export interface BeforeAfterComparison {
   readonly dimensionsMatch: boolean;
   readonly byteDelta: number;
   readonly identicalHash: boolean;
+  readonly diffResult?: VisualComparisonResult;
   readonly comparedAt: number;
 }
 
@@ -183,10 +197,12 @@ export interface AnimationObservation {
   readonly samples: readonly AnimationDeclarationSample[];
   /**
    * Explicitly `false` when collected from a static screenshot or CSS declaration probe.
-   * Prevents downstream packs from claiming smooth motion quality without temporal sampling.
+   * `true` only when verified via real temporal frame sampling, >= 55 FPS, zero layout thrashing,
+   * and proven reduced-motion compliance.
    */
   readonly motionQualityClaimAllowed: boolean;
-  readonly limitationNotice: string;
+  readonly limitationNotice?: string;
+  readonly measuredMotion?: MeasuredMotionObservation;
 }
 
 // ---------------------------------------------------------------------------

@@ -326,6 +326,15 @@ export const BROWSER_QA_INTERACTIVE_PACK: CapabilityPackManifest = createCanonic
   },
 });
 
+export { ADVANCED_DESIGN_MOTION_PACK } from "../design/starter-pack.ts";
+import { ADVANCED_DESIGN_MOTION_PACK } from "../design/starter-pack.ts";
+
 export function getStarterCapabilityPacks(): readonly CapabilityPackManifest[] {
-  return [REPOSITORY_ARCHITECTURE_REVIEW_PACK, MCP_RESEARCH_DEMO_PACK, BROWSER_QA_LOCAL_DEV_PACK, BROWSER_QA_INTERACTIVE_PACK];
+  return [
+    REPOSITORY_ARCHITECTURE_REVIEW_PACK,
+    MCP_RESEARCH_DEMO_PACK,
+    BROWSER_QA_LOCAL_DEV_PACK,
+    BROWSER_QA_INTERACTIVE_PACK,
+    ADVANCED_DESIGN_MOTION_PACK,
+  ];
 }

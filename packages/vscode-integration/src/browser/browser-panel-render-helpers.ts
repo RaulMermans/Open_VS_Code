@@ -729,21 +729,90 @@ export function renderBrowserObservationPrep(
       String(state.visualComparison.viewportMatch) +
       " · byteDelta=" +
       String(state.visualComparison.byteDelta) +
-      " B";
+      " B" +
+      (state.visualComparison.diffResult
+        ? " · Pixel delta: " +
+          String(state.visualComparison.diffResult.mismatchedPixels) +
+          " px (" +
+          String(state.visualComparison.diffResult.mismatchPercentage) +
+          "%) across " +
+          String(state.visualComparison.diffResult.regions.length) +
+          " region(s)"
+        : "");
     designCard.appendChild(compLine);
+
+    if (state.visualComparison.diffResult && state.visualComparison.diffResult.regions.length > 0) {
+      for (var rIdx = 0; rIdx < Math.min(state.visualComparison.diffResult.regions.length, 5); rIdx++) {
+        var reg = state.visualComparison.diffResult.regions[rIdx]!;
+        var regLine = d.createElement("div");
+        regLine.className = "bp-detail-meta bp-diff-region";
+        regLine.textContent = "  └ [" + reg.category + "] " + reg.description;
+        designCard.appendChild(regLine);
+      }
+    }
   }
 
   if (state.animationObservation) {
     var animLine = d.createElement("div");
     animLine.className = "bp-detail-meta";
-    animLine.textContent =
-      "CSS Declarations: " +
-      String(state.animationObservation.animatedElementCount) +
-      " animated/transitioning element(s) · motionQualityClaimAllowed=" +
-      String(state.animationObservation.motionQualityClaimAllowed) +
-      " — " +
-      state.animationObservation.limitationNotice;
+    if (state.animationObservation.measuredMotion) {
+      var mm = state.animationObservation.measuredMotion;
+      var frameCount = mm.frameTimings ? mm.frameTimings.length : (mm.report ? mm.report.totalFrames : 0);
+      animLine.textContent =
+        "Measured Motion: " +
+        String(mm.report.measuredFps) +
+        " FPS (min " +
+        String(mm.report.minFps) +
+        ") · " +
+        String(frameCount) +
+        " frames · jankCount=" +
+        String(mm.report.jankCount) +
+        " · reducedMotion=" +
+        String(mm.prefersReducedMotion) +
+        " · claimAllowed=" +
+        String(mm.report.motionQualityClaimAllowed) +
+        (mm.report.layoutThrashingProperties.length > 0
+          ? " · Thrashing: " + mm.report.layoutThrashingProperties.join(", ")
+          : "");
+    } else {
+      animLine.textContent =
+        "CSS Declarations: " +
+        String(state.animationObservation.animatedElementCount) +
+        " animated/transitioning element(s) · motionQualityClaimAllowed=" +
+        String(state.animationObservation.motionQualityClaimAllowed) +
+        " — " +
+        (state.animationObservation.limitationNotice || "Static observation only.");
+    }
     designCard.appendChild(animLine);
+  }
+
+  if (state.visualQaReport) {
+    var vqaLine = d.createElement("div");
+    vqaLine.className = "bp-detail-meta bp-vqa-summary";
+    vqaLine.textContent =
+      "Visual QA: " +
+      (state.visualQaReport.overallPass ? "PASSED" : "FAILED") +
+      " (Score " +
+      String(state.visualQaReport.score) +
+      "/100) · " +
+      String(state.visualQaReport.findings.length) +
+      " finding(s) — " +
+      state.visualQaReport.summary;
+    designCard.appendChild(vqaLine);
+
+    for (var fIdx = 0; fIdx < Math.min(state.visualQaReport.findings.length, 6); fIdx++) {
+      var find = state.visualQaReport.findings[fIdx]!;
+      var findRow = d.createElement("div");
+      findRow.className = "bp-detail-meta bp-vqa-finding";
+      findRow.textContent =
+        "  • [" +
+        find.severity.toUpperCase() +
+        "] " +
+        find.criterion +
+        ": " +
+        find.observedEvidence;
+      designCard.appendChild(findRow);
+    }
   }
   container.appendChild(designCard);
 
@@ -755,22 +824,24 @@ export function renderBrowserObservationPrep(
   evTitle.textContent = "Bounded Observation Journal";
   evCard.appendChild(evTitle);
 
-  var ret = state.evidence.retention;
-  var evMeta = d.createElement("div");
-  evMeta.className = "bp-detail-meta";
-  evMeta.textContent =
-    "Recording: " +
-    (ret.recordingEnabled ? "ON" : "OFF") +
-    " · Observed facts: " +
-    String(ret.retainedFacts) +
-    "/" +
-    String(ret.maxFacts) +
-    (ret.droppedFacts > 0 ? " (" + String(ret.droppedFacts) + " evicted)" : "") +
-    " · Inferred: " +
-    String(ret.retainedInferences) +
-    " · Unknown details: " +
-    String(ret.retainedUnknowns) +
-    " · Response bodies/cookies/storage: never recorded";
-  evCard.appendChild(evMeta);
+  if (state.evidence && state.evidence.retention) {
+    var ret = state.evidence.retention;
+    var evMeta = d.createElement("div");
+    evMeta.className = "bp-detail-meta";
+    evMeta.textContent =
+      "Recording: " +
+      (ret.recordingEnabled ? "ON" : "OFF") +
+      " · Observed facts: " +
+      String(ret.retainedFacts) +
+      "/" +
+      String(ret.maxFacts) +
+      (ret.droppedFacts > 0 ? " (" + String(ret.droppedFacts) + " evicted)" : "") +
+      " · Inferred: " +
+      String(ret.retainedInferences) +
+      " · Unknown details: " +
+      String(ret.retainedUnknowns) +
+      " · Response bodies/cookies/storage: never recorded";
+    evCard.appendChild(evMeta);
+  }
   container.appendChild(evCard);
 }

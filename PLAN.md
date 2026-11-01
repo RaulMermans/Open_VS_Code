@@ -546,5 +546,18 @@ Sprint 9B — Integrated Visual Browser, Agent Activity & Observation UX — SPR
     - Comprehensive Verification: 30 new unit and security tests in `browser-observation-9b.test.ts`, `browser-panel-9b.test.ts`, and `browser-panel-security-9b.test.ts`; 9 real Chromium performance and observation tests in `browser-panel-real-chromium-9b.test.ts`; Category C packaged desktop acceptance test 6 passing in real Electron host; all evals green (`eval:runtime` 14/14, `eval:skills` 38/40, `eval:workflow` 14/14).
   - Record: `docs/sprints/SPRINT_9B_VISUAL_BROWSER_EXPERIENCE.md`.
 
+Sprint 9C — Advanced Design & Motion — Specialized Skills, Visual Engineering & Quality Evaluation — SPRINT_9C_ACCEPTED
+  - ADR-041 (`docs/adrs/ADR-041-advanced-design-motion.md`). Transformed Open VS Code into an advanced frontend design and motion engineering system:
+    - Single Authoritative Runtime & Declarative Capability Pack: Packaged `advanced-design-motion-pack@1.0.0` conformant to `open-vs-code/capability-pack@v1` and custom mode `advanced-design-motion` in BUILD mode. Rejects autonomous multi-agent swarms in favor of sequential, checkpointed workflow stages.
+    - 8 Progressive Disclosure Skills (<1,000 tokens each): Authored built-in skills `design-direction`, `ux-information-architecture`, `design-system-engineering`, `frontend-composition`, `motion-engineering`, `visual-qa`, `accessibility-review`, and `design-polish` loaded dynamically per workflow stage to prevent context prompt bloat.
+    - Structured DesignBrief Contract & Durable Design Artifacts: Canonical `DesignBrief` validation, non-destructive `DESIGN.md` / `PRODUCT.md` documentation generation, token derivation, and production CSS variable export with dark/light themes and `@media (prefers-reduced-motion: reduce)` zero-duration transitions.
+    - Bounded 5-Stage Sequential Workflow Engine: `DesignWorkflowEngine` executing Stage A (Discover & Shape), Stage B (Design System), Stage C (Frontend Implementation), Stage D (Motion Engineering), and Stage E (Visual QA & Refinement). Enforces a hard bounded improvement loop of maximum 3 iterations in Stage E.
+    - Zero-Dependency Pure TypeScript Visual Comparison Engine: Complete PNG chunk parser/encoder using Node native `node:zlib` (0 external dependencies like `sharp` or `canvas`), perceptual Euclidean color-distance diffing, bounding box clustering of changed regions, and semantic classification (`layout_shift`, `color_mismatch`, `element_missing`, `text_change`, `minor_anti_aliasing`).
+    - Objective In-Browser Measured Motion Evaluation: In-page `requestAnimationFrame` temporal sampling, frame jitter/FPS calculation, jank detection (>50ms frame gap), Web Animations API keyframe inspection, layout thrashing property detection (`top`, `left`, `width`, `height`, etc.), and strict gating on `motionQualityClaimAllowed` (requiring avg FPS >= 50, 0 jank, 0 thrashing).
+    - Independent Hybrid Visual QA Evaluator: Deterministic checks (WCAG 2.1 AA 4.5:1 / 3.0:1 contrast ratios, DOM overflow, focus rings, accessible names, image alts, console errors) and ergonomic heuristics (typographic reading measure 45–85 chars/line, CTA hierarchy).
+    - Real Chromium & Browser Panel Integration: Real Chromium test suite verifying in-browser rAF sampling and animation keyframe inspection; VS Code Webview Browser Panel rendering diff clusters, motion telemetry, and Visual QA findings.
+    - Comprehensive Verification: 1,238 / 1,238 monorepo tests passing, 0 lint warnings/errors, 0 typecheck errors across all 5 workspaces, eval:skills 95.0% accuracy with 91.0% context reduction, desktop smoke 14/14, desktop accept 6/6.
+  - Record: `docs/sprints/SPRINT_9C_ADVANCED_DESIGN_MOTION.md`.
+
 Next:
-1. Sprint 9C: Advanced Design & Motion QA Capability Pack.
+1. Sprint 9D: Reverse Engineering, Architectural Analysis & Observation Journal.

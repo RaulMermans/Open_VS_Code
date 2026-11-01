@@ -104,15 +104,16 @@ describe("Custom Modes Engine (Sprint 8D) — Validation", () => {
 });
 
 describe("Custom Modes Engine (Sprint 8D) — Starter Profiles", () => {
-  it("provides all five canonical starter profiles", () => {
+  it("provides all canonical starter profiles", () => {
     const starters = getStarterModeProfiles();
-    assert.equal(starters.length, 5);
+    assert.equal(starters.length, 6);
     const ids = starters.map((p) => p.id);
     assert.ok(ids.includes("architecture-review"));
     assert.ok(ids.includes("reverse-engineering-analysis"));
     assert.ok(ids.includes("design-exploration"));
     assert.ok(ids.includes("browser-qa-local-dev"));
     assert.ok(ids.includes("browser-qa-interactive-local-dev"));
+    assert.ok(ids.includes("advanced-design-motion"));
   });
 
   it("all starter profiles pass strict schema validation", () => {
