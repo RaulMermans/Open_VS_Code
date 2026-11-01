@@ -290,6 +290,11 @@ export class AgentRunner {
     delete session.pending
     if (decision === "REJECT") {
       if (pending.reviewable) {
+        try {
+          await pending.reviewable.reject?.("USER_REJECTED")
+        } catch {
+          // Safe rejection observer cleanup
+        }
         const isVerification = pending.prepared.definition.action === "run_known_test"
         this.#emit(isVerification ? "verification.rejected" : "mutation.rejected", {
           callId: pending.prepared.id,
@@ -305,6 +310,7 @@ export class AgentRunner {
       if (pending.reviewable) {
         const reviewable = pending.reviewable
         const isVerification = pending.prepared.definition.action === "run_known_test"
+        const isBrowserReview = pending.prepared.name.startsWith("browser_")
         this.#emit(isVerification ? "verification.approved" : "mutation.approved", {
           callId: pending.prepared.id,
           name: pending.prepared.name,
@@ -324,7 +330,7 @@ export class AgentRunner {
           }
           const reviewableId = reviewable.id
           let targetFilePath = ""
-          if (this.#checkpointCoordinator && !isVerification) {
+          if (this.#checkpointCoordinator && !isVerification && !isBrowserReview) {
             const payload = reviewable.reviewPayload as any
             targetFilePath = payload?.path ?? (pending.prepared.arguments as any)?.targetFile ?? (pending.prepared.arguments as any)?.path ?? ""
             if (!targetFilePath.startsWith("/") && session.input.workspaceRoot) {
@@ -426,6 +432,9 @@ export class AgentRunner {
             workspaceRoot: session.input.workspaceRoot,
             signal: session.input.signal ?? new AbortController().signal,
             onOutput,
+            taskId: session.input.task.id,
+            callId: pending.prepared.id,
+            origin: "agent",
           }) as any
 
           let postDurabilityError: Error | undefined
@@ -465,7 +474,9 @@ export class AgentRunner {
               postDurabilityError = err instanceof Error ? err : new Error(String(err))
             }
           }
+          let reviewSucceeded = false
           if (isVerification) {
+            reviewSucceeded = true
             this.#emit("verification.completed", {
               callId: pending.prepared.id,
               name: pending.prepared.name,
@@ -482,8 +493,23 @@ export class AgentRunner {
               stdout: result.stdout,
               stderr: result.stderr,
             })
+          } else if (isBrowserReview) {
+            reviewSucceeded = Boolean(result && typeof result === "object" && result.ok === true)
+            if (reviewSucceeded) {
+              this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
+            } else {
+              this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, error: result?.error })
+            }
+            session.evidenceCollector.recordToolAction({
+              id: pending.prepared.id,
+              toolName: pending.prepared.name,
+              outcome: reviewSucceeded ? "COMPLETED" : "FAILED",
+              args: pending.prepared.arguments as Record<string, unknown>,
+              output: result,
+            })
           } else {
-            if (result.status === "APPLIED") {
+            reviewSucceeded = result.status === "APPLIED"
+            if (reviewSucceeded) {
               this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
             } else {
               this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, error: result.error })
@@ -497,7 +523,7 @@ export class AgentRunner {
           }
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
-          session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: (!isVerification && result.status === "APPLIED") || isVerification ? "COMPLETED" : "FAILED", truncated: observation.truncated })
+          session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: reviewSucceeded ? "COMPLETED" : "FAILED", truncated: observation.truncated })
           session.evidenceLedger.recordObservation(
             pending.prepared.name,
             pending.prepared.id,
@@ -1113,6 +1139,16 @@ export class AgentRunner {
     const effectiveAction = prepared.effectiveAction ?? prepared.definition.action
     const permission = this.#permission(effectiveAction)
     if (permission === "DENY") {
+      try {
+        prepared.notifyDenied?.("Permission policy denied this tool request", {
+          workspaceRoot: session.input.workspaceRoot,
+          taskId: session.input.task.id,
+          callId: prepared.id,
+          origin: "agent",
+        })
+      } catch {
+        // Safe observer notification
+      }
       this.#emit("permission.denied", { callId: prepared.id, name: prepared.name, action: effectiveAction })
       this.#addErrorObservation(prepared, "PERMISSION_DENIED", "Permission policy denied this tool request", "DENIED")
       session.evidenceCollector.recordSecuritySignal({
@@ -1139,7 +1175,13 @@ export class AgentRunner {
       let reviewable: import("../tools/registry.ts").ReviewableExecution | undefined
       if (prepared.prepareForReview) {
         try {
-          reviewable = await prepared.prepareForReview({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
+          reviewable = await prepared.prepareForReview({
+            workspaceRoot: session.input.workspaceRoot,
+            signal: session.input.signal ?? new AbortController().signal,
+            taskId: session.input.task.id,
+            callId: prepared.id,
+            origin: "agent",
+          })
           const isVerification = prepared.definition.action === "run_known_test"
           this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", {
             callId: prepared.id,
@@ -1258,7 +1300,13 @@ export class AgentRunner {
     }
 
     try {
-      const output = await prepared.invoke({ workspaceRoot: session.input.workspaceRoot, signal: session.input.signal ?? new AbortController().signal })
+      const output = await prepared.invoke({
+        workspaceRoot: session.input.workspaceRoot,
+        signal: session.input.signal ?? new AbortController().signal,
+        taskId: session.input.task.id,
+        callId: prepared.id,
+        origin: "agent",
+      })
       let postDurabilityError: Error | undefined
       if (this.#checkpointCoordinator && opId) {
         try {
@@ -2374,7 +2422,7 @@ export class AgentRunner {
           callId: session.pending.prepared.id,
           toolName: session.pending.prepared.name,
           arguments: session.pending.prepared.arguments,
-          action: session.pending.prepared.definition.action,
+          action: session.pending.prepared.effectiveAction ?? session.pending.prepared.definition.action,
           ...(session.pending.reviewable
             ? (session.pending.prepared.definition.action === "run_known_test"
                 ? { preparedCommand: session.pending.reviewable.reviewPayload as any }

@@ -14,7 +14,8 @@
     "onCommand:open-vs-code.plan",
     "onCommand:open-vs-code.build",
     "onCommand:open-vs-code.debug",
-    "onCommand:open-vs-code.review"
+    "onCommand:open-vs-code.review",
+    "onCommand:open-vs-code.openBrowserPanel"
   ],
   "contributes": {
     "views": {
@@ -46,6 +47,10 @@
       {
         "command": "open-vs-code.review",
         "title": "Agent: Review"
+      },
+      {
+        "command": "open-vs-code.openBrowserPanel",
+        "title": "Open VS Code: Open Visual Browser"
       },
       {
         "command": "open-vs-code.toggleAutocomplete",

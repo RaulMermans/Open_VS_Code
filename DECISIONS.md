@@ -59,3 +59,10 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 5D**: Bounded Memory-to-Skill Learning (ADR-032) — Accepted; deterministic verification complete, V1.1 deterministic benchmark consolidated (`docs/evals/V1_1_BENCHMARK.md`), real-model benchmark deferred to HALO.
 - **Sprint 7C**: Persistent Conversation History & Read-only Recovery View (ADR-033) — Accepted; display-only store in VS Code workspace storage, read-only recovery inspection over ADR-025, no executable resume from the editor.
 - **Sprint 7D**: IDE responsiveness amendments to ADR-026 (with ADR-018, ADR-022, ADR-033 notes) — Accepted; measured before/after, no new subsystem, dependency or authority.
+- **Sprint 8A / 8A.1**: Modern MCP Transports & Governance Architecture (ADR-034) — Accepted.
+- **Sprint 8B**: Private Accounts, Integration Profiles & Secret Vaults (ADR-035) — Accepted.
+- **Sprint 8C**: Visual Integration Manager & MCP Lifecycle UX (ADR-036) — Accepted.
+- **Sprint 8D / 8D.1**: Custom Modes Engine & Execution Profiles (ADR-037) — Accepted.
+- **Sprint 8E / 8E.1**: Capability Packs Architecture & Governed Installation (ADR-038) — Accepted.
+- **Sprint 9A / 9A.1 / 9A.2**: Governed Playwright Browser Runtime & Agent Tool Integration (ADR-039) — Accepted.
+- **Sprint 9B**: Integrated Visual Browser Panel & Agent Observation UX (ADR-040) — Accepted; passive observation presentation layer over single authoritative session, outside-workspace screenshot ring buffer, bounded timeline with correlation, coordinate-free accessibility highlighting, governed manual controls, and Sprint 9C/9D observation contracts.

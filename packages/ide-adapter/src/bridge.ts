@@ -221,8 +221,23 @@ export class AgentSessionBridge {
           };
           const res = await this.host.requestConfirmation(prompt, payload);
           approved = (res === "APPROVE");
-        } else if (conf.action.startsWith("mcp_external")) {
+        } else if (conf.action.startsWith("mcp_external") || conf.action === "mcp_sensitive_data_transmission") {
           const prompt = `Approve MCP tool execution? (${conf.action})`;
+          const res = await this.host.requestConfirmation(prompt, conf);
+          approved = (res === "APPROVE");
+        } else if (conf.action.startsWith("browser_")) {
+          const review = (conf.preparedMutation ?? {}) as Record<string, unknown>;
+          const targetDesc =
+            typeof review.targetName === "string" && review.targetName
+              ? ` on "${review.targetName}"`
+              : typeof review.fieldName === "string" && review.fieldName
+              ? ` into "${review.fieldName}"`
+              : typeof review.url === "string" && review.url
+              ? ` to ${review.url}`
+              : typeof review.refId === "string"
+              ? ` (${review.refId})`
+              : "";
+          const prompt = `Approve ${conf.toolName}${targetDesc}? (${conf.action})`;
           const res = await this.host.requestConfirmation(prompt, conf);
           approved = (res === "APPROVE");
         }

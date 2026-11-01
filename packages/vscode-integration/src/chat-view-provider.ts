@@ -932,6 +932,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             <span id="mode-badge" class="status-badge" style="display:none;"></span>
             <div id="connection-status"></div>
         </div>
+        <button id="browser-panel-btn" class="secondary" type="button" aria-label="Open visual browser panel">Browser</button>
         <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Integrations</button>
         <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
         <button id="new-chat-btn" class="secondary" aria-label="Start a new conversation">New</button>
@@ -998,6 +999,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const pickFileBtn = document.getElementById('pick-file-btn');
         const filePicker = document.getElementById('file-picker');
         
+        const browserPanelBtn = document.getElementById('browser-panel-btn');
         const integrationsBtn = document.getElementById('integrations-btn');
         const integrationsPanel = document.getElementById('integrations-panel');
         let integrationsOpen = false;
@@ -1245,6 +1247,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (open && lastIntegrationsState) {
                 renderIntegrationsHub(integrationsPanel, lastIntegrationsState, document, vscode.postMessage);
             }
+        }
+
+        if (browserPanelBtn) {
+            browserPanelBtn.addEventListener('click', function () {
+                vscode.postMessage({ type: 'ui.openBrowserPanel' });
+            });
         }
 
         integrationsBtn.addEventListener('click', function () {

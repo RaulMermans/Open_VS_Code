@@ -882,6 +882,31 @@ Structured Redacted Browser Result (Bounded Accessibility Snapshot / Fingerprint
 | `extension.ts` | `@open-vs-code/vscode-integration/` | Scopes governed `BrowserSessionManager` to `(workspaceRoot, accountId, configKey)` with dedicated `globalStorageUri` storage. | Invalidates sessions on workspace/account/config/trust changes and `deactivate()`; never launches browser when rendering Integrations Hub. |
 | `starter-profiles.ts` / `starter-packs.ts` | `@open-vs-code/agent-core/` | Starter modes `browser-qa-local-dev` (`PLAN`) & `browser-qa-interactive-local-dev` (`BUILD`) and canonical packs. | Base mode ceilings preserved; SHA-256 integrity digests verified. |
 | `ModeService.reconcileAccountPackProfiles` | `@open-vs-code/vscode-integration/modes/` | Reconciles authoritative server packs against ephemeral account mode profiles. | Purges orphaned modes, invalidates active mode if revoked, preserves workspace modes. |
+| `browser-observation-contracts.ts` | `@open-vs-code/agent-core/browser/` | Viewport presets, bounding boxes, element interactive states, correlation metadata, design baseline/comparison contracts, and bounded observation journal. | Immutable types; strict schema enforcement; epistemic tripartition (facts vs inferences vs unknowns). |
+| `browser-panel-controller.ts` | `@open-vs-code/vscode-integration/browser/` | Presentation controller managing Webview lifecycle, passive observation, screenshot ring buffer, and manual controls. | Zero browser launch on panel open; pauses captures when hidden; isolates cross-workspace/account sessions; ring buffer auto-eviction. |
+| `browser-webview-panel.ts` | `@open-vs-code/vscode-integration/browser/` | VS Code WebviewPanel container with strict CSP, resource roots, and message dispatcher. | Enforces strict CSP; blocks raw HTML/script injection; validates inbound messages against allowlist. |
+| `browser-panel-render-helpers.ts` | `@open-vs-code/vscode-integration/browser/` | Pure DOM rendering functions for state, timeline, inspector, and overlays. | Renders untrusted text strictly through `textContent`; non-interactive `pointer-events: none` highlight overlays. |
+
+---
+
+## Visual Browser Panel & Observation Presentation Layer (Sprint 9B — ADR-040)
+
+The Visual Browser Panel provides an integrated observation and inspection interface in the Open VS Code desktop host without compromising execution isolation or security boundaries.
+
+```text
+EXECUTION PATH (Authoritative, Governed, Single Session)
+User / Agent Request ──▶ AgentSessionBridge ──▶ AgentRuntime ──▶ PermissionGate ──▶ Browser Tools ──▶ BrowserSessionManager ──▶ Playwright Chromium
+
+OBSERVATION PATH (Passive, Redacted, Webview Presentation)
+BrowserSessionManager ──▶ BrowserEvent Subscription ──▶ BrowserPanelController ──▶ Sanitized View State ──▶ WebviewPanel
+```
+
+### Key Architectural Invariants
+1. **Passive Panel Open**: Opening the browser panel (`open-vs-code.openBrowserPanel`) never launches Chromium, acquires no session, and makes zero network requests.
+2. **Outside-Workspace Ring Buffer**: Previews are backed by temporary screenshot files in `os.tmpdir()/open-vs-code-browser-artifacts/` (max 10 screenshots / 20MB) with automatic FIFO cleanup.
+3. **Hidden Suspension**: Captures and refresh intervals pause immediately when the panel is hidden (`panel.visible === false`), reducing extension host CPU consumption to zero.
+4. **Coordinate-Free Visual Inspection**: Selected element bounding boxes render as a visual overlay on the screenshot preview with `pointer-events: none`, preventing coordinate-based tool execution.
+5. **Sprint 9C & 9D Preparation**: Implements observation contracts for design baselines, before/after comparisons, computed typography/spacing, and an opt-in observation journal categorizing facts, inferences, and unknown details without creating premature monolithic capability packs.
 
 
 

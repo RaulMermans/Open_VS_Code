@@ -1,5 +1,7 @@
 import * as crypto from "node:crypto";
+import type { ToolAction } from "../contracts/tools.ts";
 import type { ToolRegistration, ToolExecutionContext, ReviewableExecution } from "../tools/registry.ts";
+import type { BrowserEventCorrelation } from "./browser-observation-contracts.ts";
 import { BrowserSessionManager, redactSensitiveText } from "./browser-session-manager.ts";
 import { classifyBrowserToolAction } from "./browser-action-classifier.ts";
 
@@ -10,9 +12,47 @@ function validateString(value: unknown, fieldName: string): string {
   return value.trim();
 }
 
+function buildCorrelation(
+  context?: Partial<ToolExecutionContext>,
+  confirmationId?: string
+): BrowserEventCorrelation {
+  return {
+    origin: context?.origin ?? "agent",
+    ...(context?.taskId ? { taskId: context.taskId } : {}),
+    ...(context?.callId ? { toolCallId: context.callId } : {}),
+    ...(confirmationId ? { confirmationId } : {}),
+  };
+}
+
 export function createBrowserToolRegistrations(
   sessionManager: BrowserSessionManager
 ): readonly ToolRegistration[] {
+  const reportDenied = (
+    toolName: string,
+    input: Readonly<Record<string, unknown>>,
+    effectiveAction: ToolAction,
+    reason: string,
+    context?: Partial<ToolExecutionContext>
+  ) => {
+    const refId = typeof input.refId === "string" ? input.refId : undefined;
+    const rawTarget =
+      typeof input.url === "string"
+        ? input.url
+        : refId
+        ? sessionManager.getElementRef(refId)?.name
+        : undefined;
+    sessionManager.recordActionDenied(
+      {
+        tool: toolName,
+        action: effectiveAction,
+        ...(refId ? { refId } : {}),
+        ...(rawTarget ? { target: redactSensitiveText(rawTarget) } : {}),
+        reason,
+      },
+      buildCorrelation(context)
+    );
+  };
+
   // 1. browser_open
   const browserOpen: ToolRegistration = {
     definition: {
@@ -38,9 +78,13 @@ export function createBrowserToolRegistrations(
       const url = validateString(raw.url, "url");
       return { url };
     },
+    onDenied: (input, effectiveAction, reason, context) =>
+      reportDenied("browser_open", input, effectiveAction, reason, context),
     execute: async (input, context: ToolExecutionContext) => {
       const url = input.url as string;
-      const result = await sessionManager.open(url, context.signal);
+      const result = await sessionManager.withCorrelation(buildCorrelation(context), () =>
+        sessionManager.open(url, context.signal)
+      );
       return {
         ok: true,
         pageId: result.pageId,
@@ -72,20 +116,60 @@ export function createBrowserToolRegistrations(
       const url = validateString(raw.url, "url");
       return { url };
     },
+    onDenied: (input, effectiveAction, reason, context) =>
+      reportDenied("browser_navigate", input, effectiveAction, reason, context),
     prepareForReview: async (
       input: Readonly<Record<string, unknown>>,
       context: ToolExecutionContext
     ): Promise<ReviewableExecution> => {
       const url = input.url as string;
+      const redactedUrl = redactSensitiveText(url);
+      const confirmationId = `browser_nav_${crypto.randomUUID().slice(0, 8)}`;
+      const correlation = buildCorrelation(context, confirmationId);
+      sessionManager.recordApprovalRequested(
+        {
+          tool: "browser_navigate",
+          action: "browser_interaction",
+          target: redactedUrl,
+          confirmationId,
+        },
+        correlation
+      );
       return {
-        id: `browser_nav_${crypto.randomUUID().slice(0, 8)}`,
+        id: confirmationId,
         reviewPayload: {
           tool: "browser_navigate",
-          url: redactSensitiveText(url),
+          url: redactedUrl,
           action: "browser_interaction",
         },
+        reject: (reason?: string) => {
+          sessionManager.recordApprovalResolved(
+            {
+              tool: "browser_navigate",
+              action: "browser_interaction",
+              approved: false,
+              target: redactedUrl,
+              reason: reason || "USER_REJECTED",
+              confirmationId,
+            },
+            correlation
+          );
+        },
         apply: async (applyContext?: ToolExecutionContext) => {
-          const res = await sessionManager.navigate(url, applyContext?.signal ?? context.signal);
+          const activeCorrelation = buildCorrelation(applyContext ?? context, confirmationId);
+          sessionManager.recordApprovalResolved(
+            {
+              tool: "browser_navigate",
+              action: "browser_interaction",
+              approved: true,
+              target: redactedUrl,
+              confirmationId,
+            },
+            activeCorrelation
+          );
+          const res = await sessionManager.withCorrelation(activeCorrelation, () =>
+            sessionManager.navigate(url, applyContext?.signal ?? context.signal)
+          );
           return {
             ok: true,
             url: res.url,
@@ -96,7 +180,9 @@ export function createBrowserToolRegistrations(
     },
     execute: async (input, context: ToolExecutionContext) => {
       const url = input.url as string;
-      const result = await sessionManager.navigate(url, context.signal);
+      const result = await sessionManager.withCorrelation(buildCorrelation(context), () =>
+        sessionManager.navigate(url, context.signal)
+      );
       return {
         ok: true,
         url: result.url,
@@ -128,11 +214,12 @@ export function createBrowserToolRegistrations(
         maxDepth: typeof raw.maxDepth === "number" ? raw.maxDepth : undefined,
       };
     },
+    onDenied: (input, effectiveAction, reason, context) =>
+      reportDenied("browser_snapshot", input, effectiveAction, reason, context),
     execute: async (input, context: ToolExecutionContext) => {
       const maxDepth = typeof input.maxDepth === "number" ? input.maxDepth : undefined;
-      const snapshot = await sessionManager.snapshot(
-        maxDepth !== undefined ? { maxDepth } : undefined,
-        context.signal
+      const snapshot = await sessionManager.withCorrelation(buildCorrelation(context), () =>
+        sessionManager.snapshot(maxDepth !== undefined ? { maxDepth } : undefined, context.signal)
       );
       return {
         ok: true,
@@ -182,6 +269,8 @@ export function createBrowserToolRegistrations(
         targetElement: target,
       });
     },
+    onDenied: (input, effectiveAction, reason, context) =>
+      reportDenied("browser_click", input, effectiveAction, reason, context),
     prepareForReview: async (
       input: Readonly<Record<string, unknown>>,
       context: ToolExecutionContext
@@ -197,43 +286,87 @@ export function createBrowserToolRegistrations(
       const rawPageUrl = page ? page.url() : "";
       const approvedSnapshotId = sessionManager.getActiveSnapshotId();
       const approvedFingerprint = target?.targetFingerprint;
+      const redactedTargetName = target?.name ? redactSensitiveText(target.name) : undefined;
+      const confirmationId = `browser_click_${crypto.randomUUID().slice(0, 8)}`;
+      const correlation = buildCorrelation(context, confirmationId);
+
+      sessionManager.recordApprovalRequested(
+        {
+          tool: "browser_click",
+          action: approvedAction,
+          refId,
+          ...(redactedTargetName ? { target: redactedTargetName } : {}),
+          confirmationId,
+        },
+        correlation
+      );
 
       return {
-        id: `browser_click_${crypto.randomUUID().slice(0, 8)}`,
+        id: confirmationId,
         reviewPayload: {
           tool: "browser_click",
           refId,
-          targetName: target?.name ? redactSensitiveText(target.name) : undefined,
+          targetName: redactedTargetName,
           targetRole: target?.role,
           action: approvedAction,
           pageUrl: redactSensitiveText(rawPageUrl),
           snapshotId: approvedSnapshotId,
           targetFingerprint: approvedFingerprint,
         },
-        apply: async (applyContext?: ToolExecutionContext) => {
-          await sessionManager.revalidateApproval({
-            toolName: "browser_click",
-            refId,
-            approvedSnapshotId,
-            approvedPageUrl: rawPageUrl,
-            approvedFingerprint,
-            approvedAction,
-          });
-          const res = await sessionManager.click(refId, applyContext?.signal ?? context.signal);
-          return {
-            ok: res.success,
-            refId,
-            target: {
-              name: res.target.name,
-              role: res.target.role,
+        reject: (reason?: string) => {
+          sessionManager.recordApprovalResolved(
+            {
+              tool: "browser_click",
+              action: approvedAction,
+              approved: false,
+              refId,
+              ...(redactedTargetName ? { target: redactedTargetName } : {}),
+              reason: reason || "USER_REJECTED",
+              confirmationId,
             },
-          };
+            correlation
+          );
+        },
+        apply: async (applyContext?: ToolExecutionContext) => {
+          const activeCorrelation = buildCorrelation(applyContext ?? context, confirmationId);
+          sessionManager.recordApprovalResolved(
+            {
+              tool: "browser_click",
+              action: approvedAction,
+              approved: true,
+              refId,
+              ...(redactedTargetName ? { target: redactedTargetName } : {}),
+              confirmationId,
+            },
+            activeCorrelation
+          );
+          return sessionManager.withCorrelation(activeCorrelation, async () => {
+            await sessionManager.revalidateApproval({
+              toolName: "browser_click",
+              refId,
+              approvedSnapshotId,
+              approvedPageUrl: rawPageUrl,
+              approvedFingerprint,
+              approvedAction,
+            });
+            const res = await sessionManager.click(refId, applyContext?.signal ?? context.signal);
+            return {
+              ok: res.success,
+              refId,
+              target: {
+                name: res.target.name,
+                role: res.target.role,
+              },
+            };
+          });
         },
       };
     },
     execute: async (input, context: ToolExecutionContext) => {
       const refId = input.refId as string;
-      const res = await sessionManager.click(refId, context.signal);
+      const res = await sessionManager.withCorrelation(buildCorrelation(context), () =>
+        sessionManager.click(refId, context.signal)
+      );
       return {
         ok: res.success,
         refId,
@@ -284,6 +417,8 @@ export function createBrowserToolRegistrations(
         targetElement: target,
       });
     },
+    onDenied: (input, effectiveAction, reason, context) =>
+      reportDenied("browser_fill", input, effectiveAction, reason, context),
     prepareForReview: async (
       input: Readonly<Record<string, unknown>>,
       context: ToolExecutionContext
@@ -301,13 +436,27 @@ export function createBrowserToolRegistrations(
       const approvedSnapshotId = sessionManager.getActiveSnapshotId();
       const isSens = approvedAction === "browser_sensitive" || (target?.sensitive ?? false);
       const approvedFingerprint = target?.targetFingerprint;
+      const redactedFieldName = target?.name ? redactSensitiveText(target.name) : undefined;
+      const confirmationId = `browser_fill_${crypto.randomUUID().slice(0, 8)}`;
+      const correlation = buildCorrelation(context, confirmationId);
+
+      sessionManager.recordApprovalRequested(
+        {
+          tool: "browser_fill",
+          action: approvedAction,
+          refId,
+          ...(redactedFieldName ? { target: redactedFieldName } : {}),
+          confirmationId,
+        },
+        correlation
+      );
 
       return {
-        id: `browser_fill_${crypto.randomUUID().slice(0, 8)}`,
+        id: confirmationId,
         reviewPayload: {
           tool: "browser_fill",
           refId,
-          fieldName: target?.name ? redactSensitiveText(target.name) : undefined,
+          fieldName: redactedFieldName,
           fieldRole: target?.role,
           action: approvedAction,
           pageUrl: redactSensitiveText(rawPageUrl),
@@ -316,36 +465,66 @@ export function createBrowserToolRegistrations(
           // Never expose sensitive values or embedded secrets in review display payload
           displayValue: isSens ? "[REDACTED SENSITIVE DATA]" : redactSensitiveText(value),
         },
-        apply: async (applyContext?: ToolExecutionContext) => {
-          await sessionManager.revalidateApproval({
-            toolName: "browser_fill",
-            refId,
-            approvedSnapshotId,
-            approvedPageUrl: rawPageUrl,
-            approvedFingerprint,
-            approvedAction,
-            fillValue: value,
-          });
-          const res = await sessionManager.fill(
-            refId,
-            value,
-            applyContext?.signal ?? context.signal
-          );
-          return {
-            ok: res.success,
-            refId,
-            target: {
-              name: res.target.name,
-              role: res.target.role,
+        reject: (reason?: string) => {
+          sessionManager.recordApprovalResolved(
+            {
+              tool: "browser_fill",
+              action: approvedAction,
+              approved: false,
+              refId,
+              ...(redactedFieldName ? { target: redactedFieldName } : {}),
+              reason: reason || "USER_REJECTED",
+              confirmationId,
             },
-          };
+            correlation
+          );
+        },
+        apply: async (applyContext?: ToolExecutionContext) => {
+          const activeCorrelation = buildCorrelation(applyContext ?? context, confirmationId);
+          sessionManager.recordApprovalResolved(
+            {
+              tool: "browser_fill",
+              action: approvedAction,
+              approved: true,
+              refId,
+              ...(redactedFieldName ? { target: redactedFieldName } : {}),
+              confirmationId,
+            },
+            activeCorrelation
+          );
+          return sessionManager.withCorrelation(activeCorrelation, async () => {
+            await sessionManager.revalidateApproval({
+              toolName: "browser_fill",
+              refId,
+              approvedSnapshotId,
+              approvedPageUrl: rawPageUrl,
+              approvedFingerprint,
+              approvedAction,
+              fillValue: value,
+            });
+            const res = await sessionManager.fill(
+              refId,
+              value,
+              applyContext?.signal ?? context.signal
+            );
+            return {
+              ok: res.success,
+              refId,
+              target: {
+                name: res.target.name,
+                role: res.target.role,
+              },
+            };
+          });
         },
       };
     },
     execute: async (input, context: ToolExecutionContext) => {
       const refId = input.refId as string;
       const value = input.value as string;
-      const res = await sessionManager.fill(refId, value, context.signal);
+      const res = await sessionManager.withCorrelation(buildCorrelation(context), () =>
+        sessionManager.fill(refId, value, context.signal)
+      );
       return {
         ok: res.success,
         refId,
@@ -382,12 +561,18 @@ export function createBrowserToolRegistrations(
         fullPage: Boolean(raw.fullPage),
       };
     },
+    onDenied: (input, effectiveAction, reason, context) =>
+      reportDenied("browser_screenshot", input, effectiveAction, reason, context),
     execute: async (input, context: ToolExecutionContext) => {
       const fullPage = Boolean(input.fullPage);
-      const res = await sessionManager.screenshot({ fullPage }, context.signal);
+      const res = await sessionManager.withCorrelation(buildCorrelation(context), () =>
+        sessionManager.screenshot({ fullPage }, context.signal)
+      );
       return {
         ok: true,
         bytes: res.bytes,
+        width: res.width,
+        height: res.height,
         mimeType: res.mimeType,
         hasImage: Boolean(res.base64),
       };
@@ -406,8 +591,10 @@ export function createBrowserToolRegistrations(
       },
     },
     validate: () => ({}),
-    execute: async () => {
-      await sessionManager.close();
+    onDenied: (input, effectiveAction, reason, context) =>
+      reportDenied("browser_close", input, effectiveAction, reason, context),
+    execute: async (_input, context: ToolExecutionContext) => {
+      await sessionManager.withCorrelation(buildCorrelation(context), () => sessionManager.close());
       return { ok: true, status: "CLOSED" };
     },
   };

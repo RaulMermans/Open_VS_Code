@@ -134,3 +134,54 @@ export function classifyBrowserToolAction(input: {
       return "unknown";
   }
 }
+
+/**
+ * Redacts sensitive credentials, tokens, cookies, passwords, session verifiers, and private keys
+ * from diagnostics, console logs, URLs, approval payloads, page titles, and errors.
+ */
+export function redactSensitiveText(text: string): string {
+  if (!text) return text;
+  let redacted = text;
+  // Redact embedded HTTP/WS Basic credentials
+  redacted = redacted.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^:\s/@]+):([^@\s/]+)@/g, "$1[REDACTED_CREDENTIALS]@");
+  // Redact sensitive URL query & hash parameters
+  redacted = redacted.replace(
+    /([?&#](?:password|passwd|pwd|token|secret|api_key|apikey|key|access_token|refresh_token|client_secret|session|session_id|auth|credential)=)[^&#\s]+/gi,
+    "$1[REDACTED_SECRET]"
+  );
+  // Redact Cookie / Set-Cookie headers
+  redacted = redacted.replace(/((?:Set-)?Cookie:\s*)[^\r\n]+/gi, "$1[REDACTED_COOKIES]");
+  // Redact Bearer tokens
+  redacted = redacted.replace(/(Bearer\s+)[a-zA-Z0-9_\-.=+/]{12,}/gi, "$1[REDACTED_TOKEN]");
+  // Redact Open VS Code session tokens
+  redacted = redacted.replace(/ovsc_sess_[a-zA-Z0-9_-]{8,}/g, "[REDACTED_SESSION_TOKEN]");
+  // Redact AWS access keys
+  redacted = redacted.replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_KEY]");
+  // Redact GitHub / PAT tokens
+  redacted = redacted.replace(/(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, "[REDACTED_GITHUB_TOKEN]");
+  // Redact sk- style API keys
+  redacted = redacted.replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, "[REDACTED_API_KEY]");
+  // Redact JSON-encoded secret values
+  redacted = redacted.replace(
+    /("(?:password|passwd|secret|token|apiKey|api_key|accessToken|access_token|refreshToken|refresh_token|privateKey|private_key|authorization|cookie)"\s*:\s*")[^"]+(")/gi,
+    "$1[REDACTED_SECRET]$2"
+  );
+  // Redact PEM private keys
+  redacted = redacted.replace(
+    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    "[REDACTED_PRIVATE_KEY]"
+  );
+  return redacted;
+}
+
+/**
+ * Sanitizes a browser URL for display, timeline, and evidence records:
+ * strips embedded credentials, redacts sensitive query/hash parameters, and bounds length.
+ */
+export function sanitizeBrowserUrl(rawUrl: string | undefined, maxLength = 512): string {
+  if (!rawUrl) return "";
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  const redacted = redactSensitiveText(trimmed);
+  return redacted.length > maxLength ? `${redacted.slice(0, maxLength)}…` : redacted;
+}
