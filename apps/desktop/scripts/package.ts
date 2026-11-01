@@ -217,6 +217,21 @@ exit $?
   const builtinSkillsPath = join(REPO_ROOT, 'packages', 'agent-core', 'skills', 'builtins');
   cpSync(builtinSkillsPath, join(bundledExtDir, 'dist', 'skills', 'builtins'), { recursive: true });
 
+  // Sprint 9B: Bundle playwright-core JS driver + browsers.json (excluding bin/ install scripts)
+  // so standalone extracted Open VS Code.app resolves playwright-core without uncontrolled downloads.
+  const playwrightCoreSrc = join(REPO_ROOT, 'node_modules', 'playwright-core');
+  if (existsSync(playwrightCoreSrc)) {
+    const playwrightCoreDest = join(bundledExtDir, 'node_modules', 'playwright-core');
+    mkdirSync(join(bundledExtDir, 'node_modules'), { recursive: true });
+    cpSync(playwrightCoreSrc, playwrightCoreDest, {
+      recursive: true,
+      filter: (src) => {
+        const rel = src.slice(playwrightCoreSrc.length);
+        return rel !== '/bin' && !rel.startsWith('/bin/') && rel !== '\\bin' && !rel.startsWith('\\bin\\');
+      },
+    });
+  }
+
   // Maintain compatibility alias directory 'open-vs-code'
   const compatExtDir = join(extensionsDir, 'open-vs-code');
   rmSync(compatExtDir, { recursive: true, force: true });

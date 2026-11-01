@@ -534,5 +534,17 @@ Sprint 9A.2 — Browser Security Proof, Network Isolation & Runtime Reliability 
     - Real Chromium Adversarial Verification & Regression Gates: 20/20 real Chromium scenarios passing in `browser-acceptance-9a2.test.ts` (Chromium `156.0.0.0` on `darwin 25.5.0`), 2/2 VS Code workspace/account isolation tests in `browser-isolation-9a2.test.ts`, 1,157/1,157 monorepo tests (`84` account-service, `807` agent-core, `21` cli, `7` ide-adapter, `238` vscode-integration), 0 TypeScript errors, 0 oxlint warnings/errors, `eval:runtime` 14/14, `eval:skills` 38/40 (95.0%), `eval:workflow` 14/14, `desktop:smoke` 14/14, and `desktop:accept` 5/5 real packaged Electron GUI tests.
   - Record: `docs/sprints/SPRINT_9A2_BROWSER_SECURITY_PROOF.md`.
 
+Sprint 9B — Integrated Visual Browser, Agent Activity & Observation UX — SPRINT_9B_ACCEPTED
+  - ADR-040 (`docs/adrs/ADR-040-browser-panel-observation-ux.md`). Delivered a dedicated visual browser panel integrated into the desktop application:
+    - Strict Execution vs Observation Separation: Visual browser functions strictly as a presentation layer observing the existing `BrowserSessionManager` for the active `(workspaceRoot, accountId, configKey)`. Opening the panel never launches Chromium or navigates.
+    - Dedicated WebviewPanel: Registered `open-vs-code.openBrowserPanel` (`ViewColumn.Beside`) with active URL, page title, session identity, viewport metrics, provisioning diagnostics, and accessibility tree.
+    - Bounded Outside-Workspace Ring Buffer: Serves screenshot previews via an isolated temporary directory (`os.tmpdir()/open-vs-code-browser-artifacts/`) with automatic FIFO eviction (up to 10 screenshots / 20MB max), coalesced 1–2 fps rate limiting, and instant capture suspension when hidden.
+    - Bounded Event Timeline & Correlation: Records ordered lifecycle, navigation, tool, approval, policy denial, and crash events with origin attribution (`AGENT`, `USER`, `SYSTEM`) and correlated `taskId` and `confirmationId`. Zero secret/token leakage across URLs and titles.
+    - Accessibility Inspector & Coordinate-Free Bounding Box Overlay: Renders element hierarchy with `refId`, role, interactive states, warnings, and non-interactive `pointer-events: none` bounding box overlay tied to the active viewport and snapshot. Disables actions upon DOM staleness.
+    - Governed Manual Browser Controls: User operations (open, navigate, refresh, screenshot, inspect, click, fill, close) execute through `PermissionGate` and `classifyAction()`. Enforces network allowlists, workspace trust, read-only mode ceilings, and side-effect confirmation. Excludes arbitrary JavaScript `eval`, CDP, and cookie exports.
+    - Sprint 9C & 9D Observation Contracts: Supports baseline pinning, before/after side-by-side comparison, computed typography/spacing inspection, non-claim animation probe (`motionQualityClaimAllowed: false`), and opt-in observation journal categorizing Observed Facts, Inferred Behavior, and Unknown Details.
+    - Comprehensive Verification: 30 new unit and security tests in `browser-observation-9b.test.ts`, `browser-panel-9b.test.ts`, and `browser-panel-security-9b.test.ts`; 9 real Chromium performance and observation tests in `browser-panel-real-chromium-9b.test.ts`; Category C packaged desktop acceptance test 6 passing in real Electron host; all evals green (`eval:runtime` 14/14, `eval:skills` 38/40, `eval:workflow` 14/14).
+  - Record: `docs/sprints/SPRINT_9B_VISUAL_BROWSER_EXPERIENCE.md`.
+
 Next:
-1. Sprint 9B: Visual Browser Panel & Observation UX in Desktop Host.
+1. Sprint 9C: Advanced Design & Motion QA Capability Pack.

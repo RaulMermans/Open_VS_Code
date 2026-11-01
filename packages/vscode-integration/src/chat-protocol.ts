@@ -295,7 +295,8 @@ export type WebviewToHostMessage =
   | { type: "integration.activatePack"; packId: string }
   | { type: "integration.updatePack"; packId: string; manifest: Record<string, unknown> }
   | { type: "integration.rollbackPack"; packId: string }
-  | { type: "integration.removePack"; packId: string };
+  | { type: "integration.removePack"; packId: string }
+  | { type: "ui.openBrowserPanel" };
 
 // Host -> Webview
 export type HostToWebviewMessage =
@@ -672,6 +673,10 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
     case "integration.removePack": {
       if (typeof raw.packId !== "string" || !raw.packId) return null;
       return { type: "integration.removePack", packId: raw.packId };
+    }
+
+    case "ui.openBrowserPanel": {
+      return { type: "ui.openBrowserPanel" };
     }
       
     default:

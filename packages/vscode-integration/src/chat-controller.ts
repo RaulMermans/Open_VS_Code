@@ -320,6 +320,18 @@ export class ChatController {
     return this.terminalReviewController;
   }
 
+  public getActiveExecutionMode(): { mode: ChatMode; label: string } {
+    const baseMode = this.state.mode;
+    const customId = this.state.customModeId;
+    if (customId && this.state.customModes) {
+      const found = this.state.customModes.find((m) => m.id === customId);
+      if (found) {
+        return { mode: found.baseMode as ChatMode, label: `${found.name} (${found.baseMode})` };
+      }
+    }
+    return { mode: baseMode, label: baseMode };
+  }
+
   public async requestConfirmation(prompt: string, payload: any): Promise<"APPROVE" | "REJECT"> {
     if (!this.state.activeTurn) {
       return "REJECT";
@@ -332,9 +344,18 @@ export class ChatController {
 
     const isWriteFile = payload?.action === 'write_file' || payload?.operation === 'patch' || payload?.operation === 'create';
     const isVerification = payload?.action === 'run_known_test' || payload?.action === 'run_verification' || Boolean(payload?.preparedCommand);
+    const isBrowserAction = typeof payload?.action === 'string' && payload.action.startsWith('browser_');
     this.pushActivity({
       type: 'permission.requested',
-      payload: { name: isVerification ? 'verification' : isWriteFile ? 'write_file' : 'confirmation' },
+      payload: {
+        name: isVerification
+          ? 'verification'
+          : isWriteFile
+          ? 'write_file'
+          : isBrowserAction
+          ? (payload?.toolName || payload.action)
+          : 'confirmation',
+      },
     });
     const confirmationId = this.generateId();
     const mutationId = payload?.id || confirmationId;
@@ -414,12 +435,27 @@ export class ChatController {
       });
     }
 
+    const browserRiskLabel =
+      payload?.action === 'browser_destructive'
+        ? 'Destructive Browser Action'
+        : payload?.action === 'browser_sensitive'
+        ? 'Sensitive Browser Field'
+        : payload?.action === 'browser_side_effect'
+        ? 'Browser Side-Effect Action'
+        : payload?.action === 'browser_interaction'
+        ? 'Browser Interaction'
+        : undefined;
+
     this._confirmationInFlight = false;
     this.state.pendingConfirmation = {
       id: confirmationId,
       type: payload?.action || payload?.operation || (isVerification ? 'run_known_test' : 'unknown'),
       summary: prompt,
-      riskLabel: isWriteFile ? 'High Risk Mutation' : isVerification ? 'Controlled Verification Terminal' : 'Verification/External',
+      riskLabel: isWriteFile
+        ? 'High Risk Mutation'
+        : isVerification
+        ? 'Controlled Verification Terminal'
+        : browserRiskLabel || 'Verification/External',
       mutationId: isWriteFile ? mutationId : undefined,
       path: payload?.path || payload?.reviewPayload?.path,
       mutation: mutationSummary,
@@ -894,6 +930,9 @@ export class ChatController {
         } catch (err: any) {
           vscode.window.showErrorMessage(`Failed to remove pack: ${err.message}`);
         }
+        break;
+      case 'ui.openBrowserPanel':
+        await vscode.commands.executeCommand('open-vs-code.openBrowserPanel');
         break;
     }
   }

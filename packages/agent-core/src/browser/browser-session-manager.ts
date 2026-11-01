@@ -7,6 +7,9 @@ import type { ToolAction } from "../contracts/tools.ts";
 import type {
   BrowserSessionConfig,
   BrowserSessionStatus,
+  BrowserNetworkPolicyConfig,
+  BrowserScreenshotOptions,
+  BrowserScreenshotResult,
   AccessibilitySnapshot,
   ElementRef,
   BrowserEvent,
@@ -14,6 +17,15 @@ import type {
   BrowserNetworkFailure,
   EffectiveSandboxVerification,
 } from "./browser-contracts.ts";
+import {
+  resolveViewportPresetId,
+  type AnimationObservation,
+  type BrowserEventCorrelation,
+  type BrowserViewportDimensions,
+  type ElementBoundingBox,
+  type ElementDesignMetadata,
+  type ElementInteractiveState,
+} from "./browser-observation-contracts.ts";
 import { detectBrowserProvisioning } from "./browser-provisioning.ts";
 import {
   isBrowserUrlPermitted,
@@ -28,8 +40,12 @@ import {
   isSensitiveField,
   isSideEffectElement,
   classifyBrowserToolAction,
+  redactSensitiveText,
+  sanitizeBrowserUrl,
 } from "./browser-action-classifier.ts";
 import { killProcessTree, execProcessProbe } from "../tools/kill-process-tree.ts";
+
+export { redactSensitiveText, sanitizeBrowserUrl };
 
 export class BrowserSessionError extends Error {
   readonly code: string;
@@ -38,45 +54,6 @@ export class BrowserSessionError extends Error {
     this.name = "BrowserSessionError";
     this.code = code;
   }
-}
-
-/**
- * Redacts sensitive credentials, tokens, cookies, passwords, session verifiers, and private keys
- * from diagnostics, console logs, URLs, approval payloads, page titles, and errors.
- */
-export function redactSensitiveText(text: string): string {
-  if (!text) return text;
-  let redacted = text;
-  // Redact embedded HTTP/WS Basic credentials
-  redacted = redacted.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^:\s/@]+):([^@\s/]+)@/g, "$1[REDACTED_CREDENTIALS]@");
-  // Redact sensitive URL query & hash parameters
-  redacted = redacted.replace(
-    /([?&#](?:password|passwd|pwd|token|secret|api_key|apikey|key|access_token|refresh_token|client_secret|session|session_id|auth|credential)=)[^&#\s]+/gi,
-    "$1[REDACTED_SECRET]"
-  );
-  // Redact Cookie / Set-Cookie headers
-  redacted = redacted.replace(/((?:Set-)?Cookie:\s*)[^\r\n]+/gi, "$1[REDACTED_COOKIES]");
-  // Redact Bearer tokens
-  redacted = redacted.replace(/(Bearer\s+)[a-zA-Z0-9_\-.=+/]{12,}/gi, "$1[REDACTED_TOKEN]");
-  // Redact Open VS Code session tokens
-  redacted = redacted.replace(/ovsc_sess_[a-zA-Z0-9_-]{8,}/g, "[REDACTED_SESSION_TOKEN]");
-  // Redact AWS access keys
-  redacted = redacted.replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_KEY]");
-  // Redact GitHub / PAT tokens
-  redacted = redacted.replace(/(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, "[REDACTED_GITHUB_TOKEN]");
-  // Redact sk- style API keys
-  redacted = redacted.replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, "[REDACTED_API_KEY]");
-  // Redact JSON-encoded secret values
-  redacted = redacted.replace(
-    /("(?:password|passwd|secret|token|apiKey|api_key|accessToken|access_token|refreshToken|refresh_token|privateKey|private_key|authorization|cookie)"\s*:\s*")[^"]+(")/gi,
-    "$1[REDACTED_SECRET]$2"
-  );
-  // Redact PEM private keys
-  redacted = redacted.replace(
-    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
-    "[REDACTED_PRIVATE_KEY]"
-  );
-  return redacted;
 }
 
 /**
@@ -363,6 +340,11 @@ export class BrowserSessionManager {
   readonly #maxConsoleMessages: number;
   readonly #maxNetworkEvents: number;
   readonly #maxSnapshotBytes: number;
+  #viewport: BrowserViewportDimensions;
+  #currentUrl = "";
+  #currentTitle = "";
+  #latestSnapshot?: AccessibilitySnapshot | undefined;
+  readonly #correlationStack: BrowserEventCorrelation[] = [];
   #disposed = false;
   #unexpectedlyClosed = false;
 
@@ -373,6 +355,9 @@ export class BrowserSessionManager {
     this.#maxConsoleMessages = config.maxConsoleMessages ?? 100;
     this.#maxNetworkEvents = config.maxNetworkEvents ?? 100;
     this.#maxSnapshotBytes = config.maxSnapshotBytes ?? 32768; // 32 KB limit
+    this.#viewport = config.viewport
+      ? { width: config.viewport.width, height: config.viewport.height }
+      : { width: 1280, height: 800 };
   }
 
   public getSessionId(): string {
@@ -389,6 +374,161 @@ export class BrowserSessionManager {
 
   public getStatus(): BrowserSessionStatus {
     return this.#status;
+  }
+
+  public isDisposed(): boolean {
+    return this.#disposed;
+  }
+
+  public hasUnexpectedCrash(): boolean {
+    return this.#unexpectedlyClosed;
+  }
+
+  public getCurrentUrl(): string {
+    if (
+      this.#activePage &&
+      !this.#unexpectedlyClosed &&
+      !(typeof this.#activePage.isClosed === "function" && this.#activePage.isClosed())
+    ) {
+      try {
+        const raw = this.#activePage.url();
+        if (raw && raw !== "about:blank") {
+          this.#currentUrl = sanitizeBrowserUrl(raw);
+        }
+      } catch {
+        // Safe fallback to cached URL
+      }
+    }
+    return this.#currentUrl;
+  }
+
+  public getCurrentTitle(): string {
+    return this.#currentTitle;
+  }
+
+  public getViewport(): BrowserViewportDimensions {
+    return { ...this.#viewport };
+  }
+
+  public getLatestSnapshot(): AccessibilitySnapshot | undefined {
+    return this.#latestSnapshot;
+  }
+
+  public isSnapshotFresh(snapshotId?: string): boolean {
+    if (!this.#activeSnapshotId || this.#disposed || this.#unexpectedlyClosed) {
+      return false;
+    }
+    if (snapshotId && snapshotId !== this.#activeSnapshotId) {
+      return false;
+    }
+    return true;
+  }
+
+  public getNetworkPolicyConfig(): BrowserNetworkPolicyConfig {
+    return (
+      this.#config.networkPolicy ?? {
+        allowedOrigins: DEFAULT_ALLOWED_LOCAL_ORIGINS,
+      }
+    );
+  }
+
+  public async withCorrelation<T>(
+    correlation: BrowserEventCorrelation,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    this.#correlationStack.push(correlation);
+    try {
+      return await fn();
+    } finally {
+      this.#correlationStack.pop();
+    }
+  }
+
+  public recordApprovalRequested(
+    details: {
+      readonly tool: string;
+      readonly action: ToolAction;
+      readonly target?: string | undefined;
+      readonly refId?: string | undefined;
+      readonly confirmationId?: string | undefined;
+    },
+    correlation?: BrowserEventCorrelation
+  ): void {
+    this.#emit("approval_requested", { ...details }, correlation);
+  }
+
+  public recordApprovalResolved(
+    details: {
+      readonly tool: string;
+      readonly action: ToolAction;
+      readonly approved: boolean;
+      readonly target?: string | undefined;
+      readonly refId?: string | undefined;
+      readonly reason?: string | undefined;
+      readonly confirmationId?: string | undefined;
+    },
+    correlation?: BrowserEventCorrelation
+  ): void {
+    this.#emit("approval_resolved", { ...details }, correlation);
+    if (!details.approved) {
+      this.#emit(
+        "action_denied",
+        {
+          tool: details.tool,
+          action: details.action,
+          ...(details.refId ? { refId: details.refId } : {}),
+          ...(details.target ? { target: details.target } : {}),
+          reason: details.reason || "USER_REJECTED",
+        },
+        correlation
+      );
+    }
+  }
+
+  public recordActionDenied(
+    details: {
+      readonly tool: string;
+      readonly action: ToolAction;
+      readonly target?: string | undefined;
+      readonly refId?: string | undefined;
+      readonly reason: string;
+    },
+    correlation?: BrowserEventCorrelation
+  ): void {
+    this.#emit("action_denied", { ...details }, correlation);
+  }
+
+  public async setViewport(dimensions: BrowserViewportDimensions): Promise<BrowserViewportDimensions> {
+    if (this.#disposed) {
+      throw new BrowserSessionError("DISPOSED", "BrowserSessionManager has already been disposed.");
+    }
+    const width = Math.round(Number(dimensions.width));
+    const height = Math.round(Number(dimensions.height));
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 240 || width > 3840 || height < 240 || height > 2160) {
+      throw new BrowserSessionError(
+        "INVALID_VIEWPORT",
+        `Viewport dimensions must be between 240×240 and 3840×2160 (received ${dimensions.width}×${dimensions.height}).`
+      );
+    }
+    this.#viewport = { width, height };
+    this.#activeSnapshotId = undefined;
+    this.#elementRefs.clear();
+
+    if (
+      this.#activePage &&
+      !this.#unexpectedlyClosed &&
+      !(typeof this.#activePage.isClosed === "function" && this.#activePage.isClosed()) &&
+      typeof (this.#activePage as any).setViewportSize === "function"
+    ) {
+      await (this.#activePage as any).setViewportSize({ width, height });
+    }
+
+    this.#emit("viewport_changed", {
+      width,
+      height,
+      presetId: resolveViewportPresetId(this.#viewport),
+    });
+    return { ...this.#viewport };
   }
 
   public getActivePage(): Page | undefined {
@@ -414,7 +554,11 @@ export class BrowserSessionManager {
     };
   }
 
-  #emit(type: BrowserEvent["type"], details: Readonly<Record<string, unknown>>): void {
+  #emit(
+    type: BrowserEvent["type"],
+    details: Readonly<Record<string, unknown>>,
+    correlationOverride?: BrowserEventCorrelation
+  ): void {
     const sanitizedDetails: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(details)) {
       if (typeof v === "string") {
@@ -423,11 +567,14 @@ export class BrowserSessionManager {
         sanitizedDetails[k] = v;
       }
     }
+    const activeCorrelation =
+      correlationOverride ?? this.#correlationStack[this.#correlationStack.length - 1];
     const event: BrowserEvent = {
       type,
       sessionId: this.#sessionId,
       timestamp: Date.now(),
       details: sanitizedDetails,
+      ...(activeCorrelation ? { correlation: activeCorrelation } : {}),
     };
     for (const listener of this.#eventListeners) {
       try {
@@ -514,6 +661,7 @@ export class BrowserSessionManager {
       this.#status = "ERROR";
       this.#activeSnapshotId = undefined;
       this.#elementRefs.clear();
+      this.#emit("browser_crashed", { reason: "page_crash", url: this.#currentUrl });
       this.#emit("process_cleanup", { reason: "page_crash" });
     });
   }
@@ -655,7 +803,7 @@ export class BrowserSessionManager {
         },
         serviceWorkers: blockSw ? "block" : "allow",
         ignoreHTTPSErrors: false,
-        viewport: this.#config.viewport ?? { width: 1280, height: 800 },
+        viewport: { ...this.#viewport },
       });
 
       this.#context.on("close", () => {
@@ -666,6 +814,7 @@ export class BrowserSessionManager {
           this.#context = undefined;
           this.#activeSnapshotId = undefined;
           this.#elementRefs.clear();
+          this.#emit("browser_crashed", { reason: "context_unexpected_close", url: this.#currentUrl });
           this.#emit("process_cleanup", { reason: "context_unexpected_close" });
         }
       });
@@ -968,6 +1117,8 @@ export class BrowserSessionManager {
         );
       }
       const title = redactSensitiveText(await page.title());
+      this.#currentUrl = finalUrl;
+      this.#currentTitle = title;
 
       // Invalidate existing element references on navigation
       this.#activeSnapshotId = undefined;
@@ -986,6 +1137,9 @@ export class BrowserSessionManager {
         this.#status = "READY";
       }
       const cleanErr = redactSensitiveText(err?.message || String(err));
+      if (err?.name === "TimeoutError" || /timeout\s+\d+ms\s+exceeded/i.test(cleanErr)) {
+        this.#emit("timeout", { action: "open", url: redactedTarget, error: cleanErr });
+      }
       this.#emit("navigation_failed", { url: redactedTarget, error: cleanErr });
       if (err?.name === "AbortError" || signal?.aborted) {
         throw new DOMException("Navigation cancelled", "AbortError");
@@ -1071,6 +1225,8 @@ export class BrowserSessionManager {
         );
       }
       const title = redactSensitiveText(await this.#activePage.title());
+      this.#currentUrl = finalUrl;
+      this.#currentTitle = title;
 
       // Invalidate existing element references on navigation
       this.#activeSnapshotId = undefined;
@@ -1088,6 +1244,9 @@ export class BrowserSessionManager {
         this.#status = "READY";
       }
       const cleanErr = redactSensitiveText(err?.message || String(err));
+      if (err?.name === "TimeoutError" || /timeout\s+\d+ms\s+exceeded/i.test(cleanErr)) {
+        this.#emit("timeout", { action: "navigate", url: redactedTarget, error: cleanErr });
+      }
       this.#emit("navigation_failed", { url: redactedTarget, error: cleanErr });
       if (err?.name === "AbortError" || signal?.aborted) {
         throw new DOMException("Navigation cancelled", "AbortError");
@@ -1139,16 +1298,22 @@ export class BrowserSessionManager {
       parentSignature: string;
       hasValue?: boolean;
       isSensitive?: boolean;
+      bounds: ElementBoundingBox;
+      interactiveState: ElementInteractiveState;
     }[];
 
     try {
       url = redactSensitiveText(page.url());
       title = redactSensitiveText(await page.title());
+      this.#currentUrl = url;
+      this.#currentTitle = title;
 
       rawElements = await page.evaluate(
-        (args: { snapId: string; sessId: string }) => {
+        (args: { snapId: string; sessId: string; fallbackW: number; fallbackH: number }) => {
           const doc = (globalThis as any).document;
           const win = (globalThis as any).window;
+          const vpWidth = Math.round(Number(win.innerWidth) || args.fallbackW);
+          const vpHeight = Math.round(Number(win.innerHeight) || args.fallbackH);
 
           // Strip any pre-existing or maliciously injected data-ovsc-* attributes across the entire document first
           const staleTagged = Array.from(
@@ -1192,6 +1357,23 @@ export class BrowserSessionManager {
             parentSignature: string;
             hasValue?: boolean;
             isSensitive?: boolean;
+            bounds: {
+              x: number;
+              y: number;
+              width: number;
+              height: number;
+              viewportWidth: number;
+              viewportHeight: number;
+            };
+            interactiveState: {
+              disabled: boolean;
+              checked?: boolean;
+              expanded?: boolean;
+              readonly: boolean;
+              required: boolean;
+              focused: boolean;
+              editable: boolean;
+            };
           }[] = [];
 
           const nodes = Array.from(doc.querySelectorAll(selectors.join(",")));
@@ -1278,6 +1460,54 @@ export class BrowserSessionManager {
             el.setAttribute("data-ovsc-snap", args.snapId);
             el.setAttribute("data-ovsc-session", args.sessId);
 
+            const ariaChecked = el.getAttribute("aria-checked");
+            const ariaExpanded = el.getAttribute("aria-expanded");
+            const isEditableTag =
+              (tag === "input" &&
+                !["button", "submit", "reset", "checkbox", "radio", "file", "image"].includes(
+                  inputType
+                )) ||
+              tag === "textarea" ||
+              role === "textbox" ||
+              Boolean(el.isContentEditable);
+            const disabled = Boolean(el.disabled || el.getAttribute("aria-disabled") === "true");
+            const readonly = Boolean(el.readOnly || el.getAttribute("aria-readonly") === "true");
+            const required = Boolean(el.required || el.getAttribute("aria-required") === "true");
+            const focused = doc.activeElement === el;
+
+            const interactiveState: {
+              disabled: boolean;
+              checked?: boolean;
+              expanded?: boolean;
+              readonly: boolean;
+              required: boolean;
+              focused: boolean;
+              editable: boolean;
+            } = {
+              disabled,
+              readonly,
+              required,
+              focused,
+              editable: isEditableTag && !disabled && !readonly,
+              ...(typeof el.checked === "boolean" && (inputType === "checkbox" || inputType === "radio")
+                ? { checked: el.checked }
+                : ariaChecked === "true" || ariaChecked === "false"
+                ? { checked: ariaChecked === "true" }
+                : {}),
+              ...(ariaExpanded === "true" || ariaExpanded === "false"
+                ? { expanded: ariaExpanded === "true" }
+                : {}),
+            };
+
+            const bounds = {
+              x: Math.round(rect.x),
+              y: Math.round(rect.y),
+              width: Math.max(0, Math.round(rect.width)),
+              height: Math.max(0, Math.round(rect.height)),
+              viewportWidth: vpWidth,
+              viewportHeight: vpHeight,
+            };
+
             const item: {
               tag: string;
               role: string;
@@ -1290,6 +1520,8 @@ export class BrowserSessionManager {
               parentSignature: string;
               hasValue?: boolean;
               isSensitive?: boolean;
+              bounds: typeof bounds;
+              interactiveState: typeof interactiveState;
             } = {
               tag,
               role,
@@ -1300,6 +1532,8 @@ export class BrowserSessionManager {
               formAction,
               parentSignature: parentSig,
               isSensitive: isSens,
+              bounds,
+              interactiveState,
             };
 
             // P0 Sensitive observation protection: NEVER expose password or sensitive field values!
@@ -1314,7 +1548,12 @@ export class BrowserSessionManager {
           }
           return found;
         },
-        { snapId: snapshotId, sessId: this.#sessionId }
+        {
+          snapId: snapshotId,
+          sessId: this.#sessionId,
+          fallbackW: this.#viewport.width,
+          fallbackH: this.#viewport.height,
+        }
       );
     } catch (err: any) {
       const msg = redactSensitiveText(err?.message || String(err));
@@ -1380,6 +1619,8 @@ export class BrowserSessionManager {
         href: redactSensitiveText(raw.href),
         formAction: redactSensitiveText(raw.formAction),
         parentSignature: raw.parentSignature,
+        bounds: raw.bounds,
+        interactiveState: raw.interactiveState,
       };
 
       elements.push(ref);
@@ -1420,6 +1661,7 @@ export class BrowserSessionManager {
       bytes = Buffer.byteLength(treeText, "utf8");
     }
 
+    const capturedAt = Date.now();
     const snapshot: AccessibilitySnapshot = {
       snapshotId,
       url,
@@ -1429,7 +1671,10 @@ export class BrowserSessionManager {
       elementCount: elements.length,
       truncated,
       bytes,
+      capturedAt,
+      viewport: { ...this.#viewport },
     };
+    this.#latestSnapshot = snapshot;
 
     this.#emit("snapshot_taken", {
       snapshotId,
@@ -1761,19 +2006,38 @@ export class BrowserSessionManager {
         signal.removeEventListener("abort", abortListener);
       }
 
-      this.#emit("action_approved", { tool: "browser_click", refId });
+      if (this.#activePage) {
+        try {
+          const updatedUrl = redactSensitiveText(this.#activePage.url());
+          const updatedTitle = redactSensitiveText(await this.#activePage.title());
+          if (updatedUrl && updatedUrl !== this.#currentUrl) {
+            this.#currentUrl = updatedUrl;
+            this.#activeSnapshotId = undefined;
+            this.#elementRefs.clear();
+          }
+          this.#currentTitle = updatedTitle;
+        } catch {
+          // Safe post-click URL/title probe
+        }
+      }
+
+      this.#emit("action_approved", { tool: "browser_click", refId, target: element.name });
       return { success: true, target: element };
     } catch (err: any) {
       if (signal?.aborted || err?.name === "AbortError") {
         this.#emit("cancellation", { tool: "browser_click", refId });
         throw new DOMException("Click cancelled", "AbortError");
       }
+      const cleanErr = redactSensitiveText(err?.message || String(err));
+      if (err?.name === "TimeoutError" || /timeout\s+\d+ms\s+exceeded/i.test(cleanErr)) {
+        this.#emit("timeout", { action: "browser_click", refId, error: cleanErr });
+      }
       if (err instanceof BrowserSessionError) {
         throw err;
       }
       throw new BrowserSessionError(
         "CLICK_FAILED",
-        `Failed to click element "${refId}": ${redactSensitiveText(err?.message || String(err))}`,
+        `Failed to click element "${refId}": ${cleanErr}`,
         { cause: err }
       );
     }
@@ -1816,28 +2080,32 @@ export class BrowserSessionManager {
         signal.removeEventListener("abort", abortListener);
       }
 
-      this.#emit("action_approved", { tool: "browser_fill", refId });
+      this.#emit("action_approved", { tool: "browser_fill", refId, target: element.name });
       return { success: true, target: element };
     } catch (err: any) {
       if (signal?.aborted || err?.name === "AbortError") {
         this.#emit("cancellation", { tool: "browser_fill", refId });
         throw new DOMException("Fill cancelled", "AbortError");
       }
+      const cleanErr = redactSensitiveText(err?.message || String(err));
+      if (err?.name === "TimeoutError" || /timeout\s+\d+ms\s+exceeded/i.test(cleanErr)) {
+        this.#emit("timeout", { action: "browser_fill", refId, error: cleanErr });
+      }
       if (err instanceof BrowserSessionError) {
         throw err;
       }
       throw new BrowserSessionError(
         "FILL_FAILED",
-        `Failed to fill field "${refId}": ${redactSensitiveText(err?.message || String(err))}`,
+        `Failed to fill field "${refId}": ${cleanErr}`,
         { cause: err }
       );
     }
   }
 
   public async screenshot(
-    options?: { fullPage?: boolean },
+    options?: BrowserScreenshotOptions,
     signal?: AbortSignal
-  ): Promise<{ bytes: number; mimeType: "image/png"; base64?: string }> {
+  ): Promise<BrowserScreenshotResult> {
     if (this.#disposed) {
       throw new BrowserSessionError("DISPOSED", "BrowserSessionManager has already been disposed.");
     }
@@ -1852,6 +2120,22 @@ export class BrowserSessionManager {
     if (signal?.aborted) {
       this.#emit("cancellation", { reason: "Cancelled before screenshot" });
       throw new DOMException("Screenshot cancelled", "AbortError");
+    }
+
+    let resolvedOutputPath: string | undefined;
+    if (options?.outputPath) {
+      resolvedOutputPath = path.resolve(options.outputPath);
+      const resolvedWorkspace = path.resolve(this.#config.workspaceRoot);
+      if (
+        !options.allowWorkspaceExport &&
+        (resolvedOutputPath === resolvedWorkspace ||
+          resolvedOutputPath.startsWith(resolvedWorkspace + path.sep))
+      ) {
+        throw new BrowserSessionError(
+          "UNSAFE_ARTIFACT_PATH",
+          "Browser screenshot artifacts must not be written inside the workspace repository unless explicitly exported."
+        );
+      }
     }
 
     // Visually mask sensitive inputs before capturing PNG pixels, then restore cleanly
@@ -1894,11 +2178,39 @@ export class BrowserSessionManager {
       // Proceed safely if DOM styling fails
     }
 
+    const maxHeightPx = Math.max(240, Math.min(options?.maxHeightPx ?? 4096, 8192));
+    const maxBytes = Math.max(65536, Math.min(options?.maxBytes ?? 6 * 1024 * 1024, 16 * 1024 * 1024));
+
     let buffer: Buffer;
     let abortListener: (() => void) | undefined;
     try {
+      let clip: { x: number; y: number; width: number; height: number } | undefined;
+      if (options?.fullPage) {
+        try {
+          const docDim = await this.#activePage.evaluate(() => {
+            const doc = (globalThis as any).document;
+            const win = (globalThis as any).window;
+            return {
+              width: Math.max(win?.innerWidth || 0, doc?.documentElement?.scrollWidth || 0),
+              height: Math.max(win?.innerHeight || 0, doc?.documentElement?.scrollHeight || 0),
+            };
+          });
+          if (docDim.height > maxHeightPx && docDim.width > 0) {
+            clip = {
+              x: 0,
+              y: 0,
+              width: Math.min(docDim.width, 3840),
+              height: maxHeightPx,
+            };
+          }
+        } catch {
+          // Proceed with standard Playwright screenshot
+        }
+      }
+
       const shotPromise = this.#activePage.screenshot({
-        fullPage: options?.fullPage ?? false,
+        fullPage: clip ? false : (options?.fullPage ?? false),
+        ...(clip ? { clip } : {}),
         type: "png",
       });
 
@@ -1933,20 +2245,299 @@ export class BrowserSessionManager {
     }
 
     const bytes = buffer.length;
-    const base64 = bytes <= 524288 ? buffer.toString("base64") : undefined;
+    if (bytes > maxBytes) {
+      throw new BrowserSessionError(
+        "SCREENSHOT_TOO_LARGE",
+        `Captured screenshot (${bytes} bytes) exceeds maximum allowed preview budget (${maxBytes} bytes).`
+      );
+    }
+
+    // Parse PNG IHDR width & height (bytes 16..24 of a valid PNG file)
+    let width = this.#viewport.width;
+    let height = this.#viewport.height;
+    if (
+      buffer.length >= 24 &&
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47
+    ) {
+      width = buffer.readUInt32BE(16);
+      height = buffer.readUInt32BE(20);
+    }
+
+    if (resolvedOutputPath) {
+      const parentDir = path.dirname(resolvedOutputPath);
+      fs.mkdirSync(parentDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(resolvedOutputPath, buffer, { mode: 0o600 });
+    }
+
+    const capturedAt = Date.now();
+    let url = this.#currentUrl;
+    let pageTitle = this.#currentTitle;
+    try {
+      url = redactSensitiveText(this.#activePage.url());
+      pageTitle = redactSensitiveText(await this.#activePage.title());
+      this.#currentUrl = url;
+      this.#currentTitle = pageTitle;
+    } catch {
+      // Safe fallback to cached url/title
+    }
+
+    const base64 =
+      !options?.omitBase64 && bytes <= 524288 ? buffer.toString("base64") : undefined;
 
     // Never log raw screenshot bytes in event stream
     this.#emit("screenshot_taken", {
       bytes,
+      width,
+      height,
       mimeType: "image/png",
       fullPage: options?.fullPage ?? false,
       maskedSensitiveFields: maskedCount,
+      url,
+      ...(this.#activeSnapshotId ? { snapshotId: this.#activeSnapshotId } : {}),
     });
 
     return {
       bytes,
       mimeType: "image/png",
+      width,
+      height,
+      capturedAt,
+      url,
+      pageTitle,
+      viewport: { ...this.#viewport },
+      ...(this.#activeSnapshotId ? { snapshotId: this.#activeSnapshotId } : {}),
+      maskedSensitiveFields: maskedCount,
+      ...(resolvedOutputPath ? { filePath: resolvedOutputPath } : {}),
       ...(base64 !== undefined ? { base64 } : {}),
+    };
+  }
+
+  /**
+   * Sprint 9C Design Observation preparation: read-only computed typography, spacing, and layout
+   * metadata for an inspected element tied to the current fresh snapshot and viewport.
+   */
+  public async inspectElementDesign(
+    refId: string,
+    signal?: AbortSignal
+  ): Promise<ElementDesignMetadata> {
+    if (this.#disposed) {
+      throw new BrowserSessionError("DISPOSED", "BrowserSessionManager has already been disposed.");
+    }
+    if (signal?.aborted) {
+      throw new DOMException("Design inspection cancelled", "AbortError");
+    }
+    if (
+      !this.#activePage ||
+      this.#unexpectedlyClosed ||
+      (typeof this.#activePage.isClosed === "function" && this.#activePage.isClosed())
+    ) {
+      throw new BrowserSessionError("NO_PAGE", "No active browser page open.");
+    }
+    if (!this.#activeSnapshotId) {
+      throw new BrowserSessionError(
+        "STALE_ELEMENT_REFERENCE",
+        "[STALE_ELEMENT_REFERENCE] Snapshot is stale or missing. Refresh observation before inspecting design metadata."
+      );
+    }
+    const element = this.#elementRefs.get(refId);
+    if (!element || element.snapshotId !== this.#activeSnapshotId) {
+      throw new BrowserSessionError(
+        "STALE_ELEMENT_REFERENCE",
+        `[STALE_ELEMENT_REFERENCE] Element "${refId}" does not belong to the active snapshot.`
+      );
+    }
+
+    const activeSnapshotId = this.#activeSnapshotId;
+    const rawMeta = await this.#activePage.evaluate(
+      (args: { sessId: string; snapId: string; ref: string; fallbackW: number; fallbackH: number }) => {
+        const doc = (globalThis as any).document;
+        const win = (globalThis as any).window;
+        const selector = `[data-ovsc-session="${args.sessId}"][data-ovsc-snap="${args.snapId}"][data-ovsc-ref="${args.ref}"]`;
+        const matches = doc.querySelectorAll(selector);
+        if (matches.length !== 1) {
+          return null;
+        }
+        const el = matches[0] as any;
+        const style = win.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return {
+          bounds: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.max(0, Math.round(rect.width)),
+            height: Math.max(0, Math.round(rect.height)),
+            viewportWidth: Math.round(Number(win.innerWidth) || args.fallbackW),
+            viewportHeight: Math.round(Number(win.innerHeight) || args.fallbackH),
+          },
+          typography: {
+            fontFamily: String(style.fontFamily || "").slice(0, 120),
+            fontSize: String(style.fontSize || ""),
+            fontWeight: String(style.fontWeight || ""),
+            lineHeight: String(style.lineHeight || ""),
+            letterSpacing: String(style.letterSpacing || ""),
+            color: String(style.color || ""),
+            textAlign: String(style.textAlign || ""),
+          },
+          spacing: {
+            marginTop: String(style.marginTop || ""),
+            marginRight: String(style.marginRight || ""),
+            marginBottom: String(style.marginBottom || ""),
+            marginLeft: String(style.marginLeft || ""),
+            paddingTop: String(style.paddingTop || ""),
+            paddingRight: String(style.paddingRight || ""),
+            paddingBottom: String(style.paddingBottom || ""),
+            paddingLeft: String(style.paddingLeft || ""),
+            gap: String(style.gap || ""),
+          },
+          layout: {
+            display: String(style.display || ""),
+            position: String(style.position || ""),
+            ...(style.display.includes("flex")
+              ? {
+                  flexDirection: String(style.flexDirection || ""),
+                  alignItems: String(style.alignItems || ""),
+                  justifyContent: String(style.justifyContent || ""),
+                }
+              : {}),
+            ...(style.display.includes("grid")
+              ? {
+                  gridTemplateColumns: String(style.gridTemplateColumns || "").slice(0, 120),
+                }
+              : {}),
+            backgroundColor: String(style.backgroundColor || ""),
+            borderRadius: String(style.borderRadius || ""),
+            opacity: String(style.opacity || ""),
+            overflow: String(style.overflow || ""),
+          },
+        };
+      },
+      {
+        sessId: this.#sessionId,
+        snapId: activeSnapshotId,
+        ref: refId,
+        fallbackW: this.#viewport.width,
+        fallbackH: this.#viewport.height,
+      }
+    );
+
+    if (!rawMeta) {
+      throw new BrowserSessionError(
+        "STALE_ELEMENT_REFERENCE",
+        `[STALE_ELEMENT_REFERENCE] Element "${refId}" is no longer uniquely bound in the live DOM.`
+      );
+    }
+
+    const url = sanitizeBrowserUrl(this.#activePage.url());
+    return {
+      sessionId: this.#sessionId,
+      snapshotId: activeSnapshotId,
+      refId,
+      url,
+      viewport: { ...this.#viewport },
+      presetId: resolveViewportPresetId(this.#viewport),
+      capturedAt: Date.now(),
+      role: element.role,
+      tag: element.tag,
+      accessibleName: element.name,
+      bounds: rawMeta.bounds,
+      typography: rawMeta.typography,
+      spacing: rawMeta.spacing,
+      layout: rawMeta.layout,
+    };
+  }
+
+  /**
+   * Sprint 9C Motion Observation preparation: collects declared CSS animation/transition metadata
+   * while explicitly forbidding motion-quality claims from static screenshots or declaration probes.
+   */
+  public async observeAnimations(signal?: AbortSignal): Promise<AnimationObservation> {
+    if (this.#disposed) {
+      throw new BrowserSessionError("DISPOSED", "BrowserSessionManager has already been disposed.");
+    }
+    if (signal?.aborted) {
+      throw new DOMException("Animation observation cancelled", "AbortError");
+    }
+    if (
+      !this.#activePage ||
+      this.#unexpectedlyClosed ||
+      (typeof this.#activePage.isClosed === "function" && this.#activePage.isClosed())
+    ) {
+      throw new BrowserSessionError("NO_PAGE", "No active browser page open.");
+    }
+
+    const probe = await this.#activePage.evaluate(() => {
+      const doc = (globalThis as any).document;
+      const win = (globalThis as any).window;
+      const reducedMotion = Boolean(win.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+      const nodes = Array.from(doc?.querySelectorAll?.("*") || []).slice(0, 600);
+      const samples: {
+        tag: string;
+        role: string;
+        accessibleName: string;
+        animationName: string;
+        animationDuration: string;
+        transitionProperty: string;
+        transitionDuration: string;
+        prefersReducedMotionActive: boolean;
+      }[] = [];
+      let total = 0;
+
+      for (const raw of nodes as any[]) {
+        const style = win.getComputedStyle(raw);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        const animName = String(style.animationName || "none");
+        const animDur = String(style.animationDuration || "0s");
+        const transDur = String(style.transitionDuration || "0s");
+        const transProp = String(style.transitionProperty || "none");
+        const hasAnim = animName !== "none" && animDur !== "0s";
+        const hasTrans =
+          transProp !== "none" &&
+          transDur
+            .split(",")
+            .some((part: string) => parseFloat(part.trim()) > 0);
+        if (!hasAnim && !hasTrans) continue;
+        total += 1;
+        if (samples.length < 20) {
+          const tag = String(raw.tagName || "").toLowerCase();
+          const role = String(raw.getAttribute?.("role") || tag);
+          const name = String(
+            raw.getAttribute?.("aria-label") || raw.getAttribute?.("title") || raw.id || ""
+          ).slice(0, 80);
+          samples.push({
+            tag,
+            role,
+            accessibleName: name,
+            animationName: animName.slice(0, 80),
+            animationDuration: animDur.slice(0, 40),
+            transitionProperty: transProp.slice(0, 80),
+            transitionDuration: transDur.slice(0, 40),
+            prefersReducedMotionActive: reducedMotion,
+          });
+        }
+      }
+      return { reducedMotion, total, samples };
+    });
+
+    const sanitizedSamples = probe.samples.map((s) => ({
+      ...s,
+      accessibleName: redactSensitiveText(s.accessibleName),
+    }));
+
+    return {
+      sessionId: this.#sessionId,
+      url: sanitizeBrowserUrl(this.#activePage.url()),
+      viewport: { ...this.#viewport },
+      capturedAt: Date.now(),
+      evidenceKind: "static_css_declaration_probe",
+      prefersReducedMotion: probe.reducedMotion,
+      animatedElementCount: probe.total,
+      samples: sanitizedSamples,
+      motionQualityClaimAllowed: false,
+      limitationNotice:
+        "Static screenshot preview and CSS declaration probe only; frame-rate, easing smoothness, and runtime motion quality cannot be claimed from static captures.",
     };
   }
 
@@ -1961,6 +2552,9 @@ export class BrowserSessionManager {
   public async close(): Promise<void> {
     this.#status = "CLOSING";
     this.#activeSnapshotId = undefined;
+    this.#latestSnapshot = undefined;
+    this.#currentUrl = "";
+    this.#currentTitle = "";
     this.#elementRefs.clear();
 
     if (this.#egressProxy) {

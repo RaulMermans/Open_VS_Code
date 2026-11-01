@@ -284,6 +284,10 @@ import { ConversationStore, computeWorkspaceId } from './conversation-store.js';
 import { DiffReviewController } from './diff-review-controller.js';
 import { TerminalReviewController } from './terminal-review-controller.js';
 import { AutocompleteController } from './autocomplete-controller.js';
+import {
+  BrowserPanelController,
+  VscodeBrowserWebviewPanel,
+} from './browser/index.js';
 export {
   renderChatMessage,
   renderTerminalOutput,
@@ -294,6 +298,7 @@ export {
   renderContextChips,
   renderConnectionStatus,
 } from './webview-render-helpers.js';
+export * from './browser/index.js';
 
 let activeBridge: AgentSessionBridge | null = null;
 let currentAbortController: AbortController | null = null;
@@ -302,6 +307,7 @@ let chatController: ChatController | null = null;
 let diffReviewController: DiffReviewController | null = null;
 let terminalReviewController: TerminalReviewController | null = null;
 let autocompleteController: AutocompleteController | null = null;
+let browserPanelController: BrowserPanelController | null = null;
 interface ScopedBrowserSession {
   readonly manager: BrowserSessionManager;
   readonly accountId: string;
@@ -323,6 +329,7 @@ function getGovernedBrowserSessionManager(workspaceRoot: string, accountId?: str
       void activeScopedBrowserSession.manager.invalidate("untrusted_workspace");
       activeScopedBrowserSession = null;
     }
+    browserPanelController?.invalidateObservation("Browser execution disabled: workspace is untrusted.");
     return undefined;
   }
 
@@ -335,7 +342,11 @@ function getGovernedBrowserSessionManager(workspaceRoot: string, accountId?: str
   const effectiveAccountId = accountId || accountManager?.getState().user?.id || "anonymous";
   const resourceUri = vscode.Uri?.file ? vscode.Uri.file(normalizedWorkspace) : undefined;
   const config = (vscode.workspace.getConfiguration as any)('open-vs-code', resourceUri);
-  const allowedOrigins = [...(config.get('browser.allowedOrigins', []) as string[] ?? [])];
+  const rawOrigins =
+    config.get('browser.allowedOrigins') ??
+    (vscode.workspace.getConfiguration as any)('open-vs-code.browser', resourceUri)?.get('allowedOrigins') ??
+    [];
+  const allowedOrigins = Array.isArray(rawOrigins) ? [...rawOrigins] : [];
   const headless = Boolean(config.get('browser.headless', true));
   const configKey = JSON.stringify({ allowedOrigins, headless });
 
@@ -354,6 +365,7 @@ function getGovernedBrowserSessionManager(workspaceRoot: string, accountId?: str
         : "browser_configuration_changed";
     void activeScopedBrowserSession.manager.invalidate(reason);
     activeScopedBrowserSession = null;
+    browserPanelController?.invalidateObservation(`Browser session reset (${reason}).`);
   }
 
   if (!activeScopedBrowserSession) {
@@ -380,6 +392,7 @@ function getGovernedBrowserSessionManager(workspaceRoot: string, accountId?: str
       configKey,
     };
   }
+  browserPanelController?.attachSession(activeScopedBrowserSession.manager);
   return activeScopedBrowserSession.manager;
 }
 
@@ -414,6 +427,7 @@ export const _testSeam = {
   get terminalReviewController() { return terminalReviewController; },
   get autocompleteController() { return autocompleteController; },
   get diffReviewController() { return diffReviewController; },
+  get browserPanelController() { return browserPanelController; },
   get activeBrowserSessionManager() { return activeScopedBrowserSession?.manager ?? null; },
   get activeScopedBrowserSession() { return activeScopedBrowserSession; },
   setActiveBrowserSessionManager(m: BrowserSessionManager | null) {
@@ -422,6 +436,7 @@ export const _testSeam = {
         void activeScopedBrowserSession.manager.invalidate("manual_reset");
         activeScopedBrowserSession = null;
       }
+      browserPanelController?.invalidateObservation("Session reset.");
     } else {
       activeScopedBrowserSession = {
         manager: m,
@@ -429,6 +444,7 @@ export const _testSeam = {
         workspaceRoot: m.getWorkspaceRoot?.() || "/",
         configKey: "{}",
       };
+      browserPanelController?.attachSession(m);
     }
   },
   getGovernedBrowserSessionManager,
@@ -768,8 +784,111 @@ export function activate(context: vscode.ExtensionContext) {
     ? path.join((context as any).globalStorageUri.fsPath, 'browser-profiles')
     : undefined;
 
+  const browserArtifactRootDir = (context as any).globalStorageUri?.fsPath
+    ? path.join((context as any).globalStorageUri.fsPath, 'browser-artifacts')
+    : undefined;
+
+  browserPanelController = new BrowserPanelController({
+    ...(browserArtifactRootDir ? { artifactRootPath: browserArtifactRootDir } : {}),
+    getEnvironment: () => {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      const wsRoot = folder?.uri.fsPath;
+      const wsName = folder?.name || (wsRoot ? path.basename(wsRoot) : 'No Workspace');
+      const wsTrusted = vscode.workspace.isTrusted !== false;
+      const modeInfo = chatController?.getActiveExecutionMode() ?? { mode: 'ASK', label: 'ASK' };
+      const resourceUri = wsRoot && vscode.Uri?.file ? vscode.Uri.file(wsRoot) : undefined;
+      const cfg = (vscode.workspace.getConfiguration as any)('open-vs-code', resourceUri);
+      const rawEnvOrigins =
+        cfg?.get?.('browser.allowedOrigins') ??
+        (vscode.workspace.getConfiguration as any)('open-vs-code.browser', resourceUri)?.get('allowedOrigins') ??
+        [];
+      const allowedOrigins = Array.isArray(rawEnvOrigins) ? [...rawEnvOrigins] : [];
+      const acctState = accountManager?.getState();
+      const userId = acctState?.user?.id || 'anonymous';
+      const isAuthenticated = Boolean(acctState?.user && acctState.status !== 'UNAUTHENTICATED');
+      const displayLabel = isAuthenticated && acctState?.user
+        ? `${acctState.user.username || userId}`
+        : 'Local anonymous';
+      return {
+        workspaceRoot: wsRoot,
+        workspaceName: wsName,
+        workspaceTrusted: wsTrusted,
+        activeMode: modeInfo.mode,
+        activeModeLabel: modeInfo.label,
+        allowedOrigins,
+        identity: {
+          accountId: userId,
+          displayLabel,
+          authenticated: isAuthenticated,
+        },
+      };
+    },
+    acquireSessionManager: () => {
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!wsRoot) return undefined;
+      return getGovernedBrowserSessionManager(wsRoot);
+    },
+    confirmationBridge: {
+      requestConfirmation: async (prompt, payload) => {
+        if (
+          chatController &&
+          chatController.getState().activeTurn &&
+          !chatController.getState().pendingConfirmation
+        ) {
+          return chatController.requestConfirmation(prompt, payload);
+        }
+        const choice = await vscode.window.showWarningMessage(
+          prompt,
+          { modal: true },
+          'Approve',
+          'Reject'
+        );
+        return choice === 'Approve' ? 'APPROVE' : 'REJECT';
+      },
+      confirmSessionClose: async (summary) => {
+        try {
+          const choice = await vscode.window.showWarningMessage(
+            summary,
+            { modal: true },
+            'Close Session',
+            'Cancel'
+          );
+          return choice === 'Close Session';
+        } catch {
+          try {
+            const choice = await vscode.window.showWarningMessage(
+              summary,
+              'Close Session',
+              'Cancel'
+            );
+            return choice === 'Close Session' || choice === undefined;
+          } catch {
+            return true;
+          }
+        }
+      },
+    },
+    createViewAdapter: (callbacks) =>
+      new VscodeBrowserWebviewPanel({
+        vscodeApi: vscode,
+        extensionUri: context.extensionUri,
+        artifactRootPath: callbacks.artifactRootPath,
+        onMessage: callbacks.onMessage,
+        onVisibilityChanged: callbacks.onVisibilityChanged,
+        onPanelClosed: callbacks.onPanelClosed,
+      }),
+  });
+
+  if (activeScopedBrowserSession) {
+    browserPanelController.attachSession(activeScopedBrowserSession.manager);
+  }
+
   // Invalidate and dispose active browser session on account logout, switch, workspace change, or config change
   context.subscriptions.push(
+    { dispose: () => browserPanelController?.dispose() },
+    vscode.commands.registerCommand('open-vs-code.openBrowserPanel', () => {
+      browserPanelController?.openOrRevealPanel();
+    }),
     accountManager.onStateChange((state) => {
       if (activeScopedBrowserSession) {
         const currentUserId = state.user?.id || "anonymous";
@@ -780,7 +899,12 @@ export function activate(context: vscode.ExtensionContext) {
           const reason = loggedOutAuthenticated ? "account_logout" : "account_switch";
           void activeScopedBrowserSession.manager.invalidate(reason);
           activeScopedBrowserSession = null;
+          browserPanelController?.invalidateObservation(
+            `Session invalidated (${reason.replace('_', ' ')}).`
+          );
         }
+      } else {
+        browserPanelController?.invalidateObservation("Account identity updated.");
       }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -788,6 +912,7 @@ export function activate(context: vscode.ExtensionContext) {
         void activeScopedBrowserSession.manager.invalidate("workspace_change");
         activeScopedBrowserSession = null;
       }
+      browserPanelController?.invalidateObservation("Workspace folder changed; previous browser session disposed.");
     }),
     ...(typeof (vscode.workspace as any).onDidChangeConfiguration === 'function'
       ? [
@@ -795,6 +920,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (activeScopedBrowserSession && (!e?.affectsConfiguration || e.affectsConfiguration('open-vs-code.browser'))) {
               void activeScopedBrowserSession.manager.invalidate("browser_configuration_changed");
               activeScopedBrowserSession = null;
+              browserPanelController?.invalidateObservation("Browser configuration changed; session reset.");
             }
           }),
         ]
@@ -946,6 +1072,14 @@ export async function deactivate(): Promise<void> {
       // Safe containment
     }
     mcpService = null;
+  }
+  if (browserPanelController) {
+    try {
+      browserPanelController.dispose();
+    } catch {
+      // Safe containment
+    }
+    browserPanelController = null;
   }
   if (activeScopedBrowserSession) {
     try {

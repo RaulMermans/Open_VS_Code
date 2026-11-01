@@ -273,6 +273,22 @@ UI / future Runtime Evals:
   - profiles are restricted to `0o700` outside-repository directories (`os.tmpdir()` or `globalStorageUri`), sensitive inputs are visually masked during `screenshot()`, and `redactSensitiveText()` sanitizes all 8 observation/diagnostic surfaces.
 - **Result**: unauthorized destinations and rebound sockets receive 0 requests, mutated or substituted DOM targets cannot reuse prior approvals, nested/unsupported sandboxes fail closed, and raw secrets do not enter logs or model observations. Evidence: `packages/agent-core/tests/browser/browser-acceptance-9a2.test.ts` (20 real-Chromium scenarios) and `packages/vscode-integration/tests/browser-isolation-9a2.test.ts`.
 
+### Visual Browser Panel & Webview Observation Security (Sprint 9B, ADR-040)
+- **Input**:
+  - malicious or untrusted web pages attempting to inject malicious HTML, SVG, or scripts into the VS Code Webview via page titles, URLs, element names, or console logs;
+  - unauthorized inbound Webview messages attempting arbitrary JavaScript evaluation (`page.evaluate`), raw Chrome DevTools Protocol (`CDP`) commands, cookie export, or prototype pollution;
+  - attempts to use screenshot image coordinates as an unrestricted, unvalidated tool execution mechanism;
+  - malicious image sources attempting to load `javascript:`, `data:`, `file:`, or arbitrary remote image URIs into the Webview;
+  - cross-workspace or cross-account session observation leakage, or attempt to launch background Chromium processes solely by opening the browser panel.
+- **Control**:
+  - `BrowserWebviewPanel` enforces strict Content Security Policy (`default-src 'none'; img-src ${cspSource} https: data:; script-src 'nonce-${nonce}'; style-src ${cspSource} 'unsafe-inline'; font-src ${cspSource}; connect-src 'none'; frame-src 'none'; object-src 'none'`);
+  - `browser-panel-render-helpers.ts` renders all untrusted page titles, URLs, accessible names, warnings, and console logs strictly via pure DOM `textContent`, with zero raw HTML injection or executable script tags;
+  - inbound Webview messages are validated against a strict typed allowlist, rejecting `eval`, CDP, cookie exports, and prototype pollution attempts (`__proto__`, `constructor`, `prototype`);
+  - element bounding-box visual highlights are rendered with `pointer-events: none` and `aria-hidden="true"`, ensuring visual overlays cannot be used as coordinate-based click authorities;
+  - screenshots are served strictly via `webview.asWebviewUri` from a bounded temporary ring buffer outside the repository (`os.tmpdir()/open-vs-code-browser-artifacts/`), rejecting in-repo paths (`UNSAFE_ARTIFACT_PATH`);
+  - opening the browser panel never launches Chromium or navigates; cross-workspace and cross-account attachment is rejected fail-closed.
+- **Result**: untrusted web content cannot execute scripts inside the Webview, coordinates cannot bypass `PermissionGate`, opening the panel consumes zero browser resources, and secrets are redacted from view state. Evidence: `packages/vscode-integration/tests/browser-panel-security-9b.test.ts` (12 scenarios) and `packages/vscode-integration/tests/browser-panel-9b.test.ts` (13 scenarios).
+
 ---
 
 ## 4. Security Invariants
@@ -303,6 +319,9 @@ UI / future Runtime Evals:
 24. **Chromium sandboxing is runtime-verified and never silently disabled**: browser launches enforce `chromiumSandbox: true`, verify OS process-table sandboxing post-launch, never inject `--no-sandbox`, and fail closed (`SANDBOX_UNAVAILABLE`) when effective sandboxing cannot be established.
 25. **Browser approvals are non-transferable across target mutations**: actions bind strictly to `[data-ovsc-ref][data-ovsc-snap][data-ovsc-session]` and SHA-256 `targetFingerprint` without CSS fallback selectors; `revalidateApproval()` rejects detached, replaced, duplicate, or risk-escalated DOM targets before execution.
 26. **Browser authority and ephemeral profiles are strictly scoped and redacted**: sessions isolate by `(workspaceRoot, accountId, configKey)`, store `0o700` profiles exclusively outside repositories, visually mask sensitive inputs in screenshots, and redact secrets across observations, diagnostics, and approval payloads.
+27. **Browser observation strictly separates from execution**: opening or revealing the visual browser panel never starts Chromium or navigates; the panel passively observes the single authoritative session, suspending captures when hidden and evicting older screenshots via an outside-repository ring buffer.
+28. **Webview observation preserves strict DOM isolation**: panel HTML renders untrusted content exclusively through pure DOM `textContent` under a strict Content Security Policy; remote scripts, arbitrary HTML injection, and Webview execution of JavaScript `eval` or CDP commands are strictly prohibited.
+29. **Element inspection overlays are coordinate-free**: element bounding-box overlays use `pointer-events: none` and cannot serve as alternative or unvalidated tool execution targets; manual actions must pass canonical target fingerprinting and `PermissionGate` revalidation.
 
 
 

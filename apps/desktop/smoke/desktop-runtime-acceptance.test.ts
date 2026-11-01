@@ -161,6 +161,7 @@ async function doRun() {
     'open-vs-code.listSkills',
     'open-vs-code.showActiveSkill',
     'open-vs-code.reviewLearningCandidates',
+    'open-vs-code.openBrowserPanel',
     'open-vs-code.showConversationHistory',
     'open-vs-code.newConversation',
   ];
@@ -519,6 +520,167 @@ module.exports = { run };
       assert.ok(probe.messagesInConversationA > 0 && probe.messagesInConversationA <= 100, 'transcript bound holds');
       console.log('[perf-probe] ' + JSON.stringify(probe));
       if (process.env.OVSC_PERF_PROBE_OUT) writeFileSync(process.env.OVSC_PERF_PROBE_OUT, JSON.stringify(probe, null, 2) + '\n');
+    } finally {
+      rmSync(testTmp, { recursive: true, force: true });
+    }
+  });
+
+  test('6. Sprint 9B: Real packaged desktop application executes Visual Browser QA panel workflow', async () => {
+    assert.strictEqual(existsSync(APP_EXE), true, `Executable must exist at ${APP_EXE}`);
+    const bundledExtDir = join(APP_PATH, 'Contents', 'Resources', 'app', 'extensions', 'open-vs-code.vscode-integration');
+    const testTmp = mkdtempSync(join(tmpdir(), 'ovsc-browser-accept-'));
+    const userDataDir = join(testTmp, 'userData');
+    const extDir = join(testTmp, 'extDir');
+    const workspaceDir = join(testTmp, 'workspace');
+    for (const dir of [userDataDir, extDir, workspaceDir]) mkdirSync(dir, { recursive: true });
+    const outFile = join(testTmp, 'browser-probe.json');
+
+    const runner = `
+const vscode = require('vscode');
+const assert = require('assert');
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+
+const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function doRun() {
+  console.log('[browser-accept] Starting packaged Browser QA acceptance probe...');
+
+  let serverHits = 0;
+  const server = http.createServer((req, res) => {
+    serverHits++;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<!DOCTYPE html><html><head><title>Packaged QA Portal ?token=Secret999</title></head><body><h1>Desktop QA Ready</h1><button id="cta-btn" type="button">Order Now</button></body></html>');
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const appOrigin = 'http://127.0.0.1:' + port;
+  console.log('[browser-accept] Fixture server running at:', appOrigin);
+
+  try {
+    console.log('[browser-accept] Step 1: Discovering extension...');
+    const ext = vscode.extensions.getExtension('open-vs-code.vscode-integration');
+    assert.ok(ext, 'bundled extension discovered');
+    console.log('[browser-accept] Step 2: Activating extension...');
+    await ext.activate();
+    console.log('[browser-accept] Step 3: Loading extension module...');
+    const mod = require(path.join(ext.extensionPath, 'dist', 'extension.js'));
+    const controller = mod._testSeam.browserPanelController;
+    assert.ok(controller, 'live browserPanelController available');
+
+    console.log('[browser-accept] Step 4: Opening browser panel...');
+    await vscode.commands.executeCommand('open-vs-code.openBrowserPanel');
+    assert.strictEqual(controller.isPanelOpen(), true, 'Browser panel must be open');
+    assert.strictEqual(controller.getObservedSessionManager(), undefined, 'Opening panel MUST NOT start a browser session');
+    const initialState = controller.getState();
+    assert.strictEqual(initialState.hasActiveSession, false);
+    assert.strictEqual(initialState.sessionStatus, 'DISCONNECTED');
+    assert.strictEqual(initialState.provisioning.status, 'READY');
+
+    console.log('[browser-accept] Step 5: Configuring allowedOrigins...');
+    await vscode.workspace.getConfiguration('open-vs-code').update('browser.allowedOrigins', [appOrigin], vscode.ConfigurationTarget.Workspace);
+    await vscode.workspace.getConfiguration('open-vs-code.browser').update('allowedOrigins', [appOrigin], vscode.ConfigurationTarget.Workspace);
+    await tick(300);
+
+    console.log('[browser-accept] Step 6: Navigating to fixture URL...');
+    await controller.handleMessage({ type: 'browserPanel.openUrl', url: appOrigin + '/qa' });
+
+    console.log('[browser-accept] Step 7: Awaiting screenshot preview...');
+    for (let i = 0; i < 80 && !controller.getState().screenshot; i++) {
+      if (controller.getState().navigationError) {
+        throw new Error('Navigation failed: ' + controller.getState().navigationError);
+      }
+      await tick(100);
+    }
+
+    const state = controller.getState();
+    assert.strictEqual(state.hasActiveSession, true, 'Active browser session created upon navigation');
+    assert.strictEqual(state.sessionStatus, 'READY');
+    assert.strictEqual(state.activeUrl, appOrigin + '/qa');
+    assert.strictEqual(state.pageTitle.includes('Secret999'), false, 'Sensitive query parameter redacted from title');
+    assert.ok(state.screenshot, 'Screenshot preview captured');
+    const safeSchemes = ['vscode-webview-resource:', 'vscode-file:', 'vscode-resource:', 'https://'];
+    assert.ok(
+      safeSchemes.some((s) => state.screenshot.webviewUri.startsWith(s)),
+      'Screenshot served via webview URI: ' + state.screenshot.webviewUri
+    );
+
+    // Screenshot stored outside workspace repository
+    const wsFiles = fs.readdirSync(${JSON.stringify(workspaceDir)});
+    assert.strictEqual(wsFiles.filter((f) => f.endsWith('.png')).length, 0, 'Zero screenshots in workspace');
+
+    // Accessibility snapshot & element bounds
+    assert.ok(state.snapshot, 'Accessibility snapshot populated');
+    const btn = state.snapshot.elements.find((e) => e.name === 'Order Now');
+    assert.ok(btn, 'Order Now button present in accessibility tree');
+    assert.ok(btn.bounds && btn.bounds.width > 0, 'Button bounds populated from real Chromium');
+
+    // 3. Close session cleanly
+    console.log('[browser-accept] Step 8: Closing session...');
+    await controller.closeSession();
+    assert.strictEqual(controller.getState().sessionStatus, 'CLOSED');
+    assert.strictEqual(controller.getPerformanceMetrics().retainedScreenshotCount, 0, 'Screenshots cleaned up on close');
+
+    fs.writeFileSync(${JSON.stringify(outFile)}, JSON.stringify({
+      ok: true,
+      serverHits,
+      screenshotArtifact: state.screenshot.artifactId,
+      viewport: state.viewport,
+      metrics: controller.getPerformanceMetrics(),
+    }));
+    console.log('[browser-accept] Packaged Browser QA acceptance passed successfully.');
+  } catch (err) {
+    fs.writeFileSync(${JSON.stringify(outFile)}, JSON.stringify({
+      ok: false,
+      error: err && err.stack ? err.stack : String(err),
+    }));
+    throw err;
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function run(testsRoot, clb) {
+  return doRun().then(
+    () => { if (typeof clb === 'function') clb(null, 0); },
+    (err) => {
+      console.error('[browser-accept]', err && err.stack || err);
+      if (typeof clb === 'function') clb(err);
+      throw err;
+    }
+  );
+}
+
+module.exports = { run };
+`;
+
+    try {
+      const runnerPath = join(testTmp, 'browser-runner.js');
+      writeFileSync(runnerPath, runner, 'utf8');
+      const code = await new Promise<number>((resolve, reject) => {
+        const proc = spawn(APP_EXE, [
+          '--extensionDevelopmentPath=' + bundledExtDir,
+          '--extensionTestsPath=' + runnerPath,
+          '--user-data-dir=' + userDataDir,
+          '--extensions-dir=' + extDir,
+          '--password-store=basic',
+          '--use-mock-keychain',
+          '--disable-gpu',
+          '--disable-crash-reporter',
+          '--disable-telemetry',
+          '--disable-workspace-trust',
+          workspaceDir,
+        ], { stdio: 'inherit', env: cleanAppEnv() });
+        const timer = setTimeout(() => { try { process.kill(proc.pid!, 'SIGKILL'); } catch {} reject(new Error('packaged app did not exit')); }, 180_000);
+        proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+        proc.on('exit', (c) => { clearTimeout(timer); resolve(c ?? 0); });
+      });
+      assert.strictEqual(code, 0, 'Browser QA acceptance probe must exit 0');
+      const probe = JSON.parse(readFileSync(outFile, 'utf8'));
+      assert.strictEqual(probe.ok, true, 'Probe report marked ok');
+      console.log('[browser-accept] Report: ' + JSON.stringify(probe));
     } finally {
       rmSync(testTmp, { recursive: true, force: true });
     }

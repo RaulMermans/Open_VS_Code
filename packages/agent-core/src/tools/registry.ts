@@ -4,12 +4,16 @@ export interface ToolExecutionContext {
   readonly workspaceRoot: string
   readonly signal: AbortSignal
   readonly onOutput?: ((chunk: { stream: "stdout" | "stderr"; chunk: string }) => void) | undefined
+  readonly taskId?: string | undefined
+  readonly callId?: string | undefined
+  readonly origin?: "agent" | "user" | "system" | undefined
 }
 
 export interface ReviewableExecution {
   readonly id: string
   readonly reviewPayload: Readonly<Record<string, unknown>>
   apply(context: ToolExecutionContext): Promise<unknown>
+  reject?(reason?: string): void | Promise<void>
 }
 
 export interface ToolRegistration {
@@ -17,6 +21,7 @@ export interface ToolRegistration {
   readonly validate: (input: unknown) => Readonly<Record<string, unknown>>
   readonly classifyAction?: (input: Readonly<Record<string, unknown>>) => ToolAction
   readonly prepareForReview?: (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext) => Promise<ReviewableExecution>
+  readonly onDenied?: (input: Readonly<Record<string, unknown>>, effectiveAction: ToolAction, reason: string, context?: Partial<ToolExecutionContext>) => void
   readonly execute: (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext) => Promise<unknown>
 }
 
@@ -27,6 +32,7 @@ export interface PreparedToolCall {
   readonly definition: ToolDefinition
   readonly effectiveAction: ToolAction
   readonly prepareForReview?: (context: ToolExecutionContext) => Promise<ReviewableExecution>
+  readonly notifyDenied?: (reason: string, context?: Partial<ToolExecutionContext>) => void
   invoke(context: ToolExecutionContext): Promise<unknown>
 }
 
@@ -125,6 +131,11 @@ export class ToolRegistry {
           const reviewable = await registration.prepareForReview!(validated, context)
           throwIfAborted(context.signal)
           return reviewable
+        }
+      } : {}),
+      ...(registration.onDenied ? {
+        notifyDenied: (reason, context) => {
+          registration.onDenied!(validated, effectiveAction, reason, context)
         }
       } : {}),
     }

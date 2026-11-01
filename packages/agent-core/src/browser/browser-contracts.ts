@@ -1,3 +1,10 @@
+import type {
+  BrowserEventCorrelation,
+  BrowserViewportDimensions,
+  ElementBoundingBox,
+  ElementInteractiveState,
+} from "./browser-observation-contracts.ts";
+
 export type BrowserSessionStatus =
   | "UNINITIALIZED"
   | "READY"
@@ -86,6 +93,8 @@ export interface ElementRef {
   readonly href?: string | undefined;
   readonly formAction?: string | undefined;
   readonly parentSignature?: string | undefined;
+  readonly bounds?: ElementBoundingBox | undefined;
+  readonly interactiveState?: ElementInteractiveState | undefined;
 }
 
 export interface AccessibilitySnapshot {
@@ -97,6 +106,8 @@ export interface AccessibilitySnapshot {
   readonly elementCount: number;
   readonly truncated: boolean;
   readonly bytes: number;
+  readonly capturedAt?: number | undefined;
+  readonly viewport?: BrowserViewportDimensions | undefined;
 }
 
 export type BrowserEventType =
@@ -106,6 +117,8 @@ export type BrowserEventType =
   | "navigation_completed"
   | "navigation_failed"
   | "tool_invoked"
+  | "approval_requested"
+  | "approval_resolved"
   | "action_approved"
   | "action_denied"
   | "snapshot_taken"
@@ -120,13 +133,40 @@ export type BrowserEventType =
   | "sandbox_verified"
   | "target_validated"
   | "approval_revalidated"
-  | "session_invalidated";
+  | "session_invalidated"
+  | "browser_crashed"
+  | "viewport_changed";
 
 export interface BrowserEvent {
   readonly type: BrowserEventType;
   readonly sessionId: string;
   readonly timestamp: number;
   readonly details: Readonly<Record<string, unknown>>;
+  readonly correlation?: BrowserEventCorrelation | undefined;
+}
+
+export interface BrowserScreenshotOptions {
+  readonly fullPage?: boolean | undefined;
+  readonly outputPath?: string | undefined;
+  readonly omitBase64?: boolean | undefined;
+  readonly allowWorkspaceExport?: boolean | undefined;
+  readonly maxBytes?: number | undefined;
+  readonly maxHeightPx?: number | undefined;
+}
+
+export interface BrowserScreenshotResult {
+  readonly base64?: string | undefined;
+  readonly filePath?: string | undefined;
+  readonly bytes: number;
+  readonly mimeType: "image/png";
+  readonly width: number;
+  readonly height: number;
+  readonly capturedAt: number;
+  readonly url: string;
+  readonly pageTitle: string;
+  readonly viewport: BrowserViewportDimensions;
+  readonly snapshotId?: string | undefined;
+  readonly maskedSensitiveFields: number;
 }
 
 export interface BrowserConsoleEntry {
