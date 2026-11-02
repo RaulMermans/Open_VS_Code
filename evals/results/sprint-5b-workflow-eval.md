@@ -34,8 +34,8 @@ Real-model workflow delta: **DEFERRED_TO_HALO**. The model here is a determinist
 
 | Arm | Correct | Verified | Defects caught | Model calls | Prompt tokens | Peak context | Repair cycles | Approvals | Latency ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A direct (workflow off) | 4/5 | 5/5 | 1/2 | 17 | 5206 | 470 | 1 | 12 | 1913 |
-| B structured (workflow on) | 5/5 | 5/5 | 2/2 | 25 | 10069 | 642 | 2 | 19 | 2999 |
+| A direct (workflow off) | 4/5 | 5/5 | 1/2 | 17 | 5206 | 470 | 1 | 12 | 923 |
+| B structured (workflow on) | 5/5 | 5/5 | 2/2 | 25 | 10069 | 642 | 2 | 19 | 1555 |
 
 | Fixture | Kind | Arm | Outcome | Correct | Verification runs | Defect caught | Model calls | Prompt tokens | Peak context | Repairs | Approvals |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

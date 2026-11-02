@@ -164,6 +164,17 @@ export function renderBrowserStatusHeader(
   modeBadge.textContent = "Mode: " + (state.activeExecutionMode || "ASK");
   topRow.appendChild(modeBadge);
 
+  if (state.activeReaPackId) {
+    var reaBadge = d.createElement("span");
+    reaBadge.className = "bp-meta-pill bp-rea-pill";
+    reaBadge.textContent =
+      "REA: " +
+      (state.activeReaPackId.includes("investigation") ? "Investigation" : "Reconstruction") +
+      (state.reaInvestigationStage ? " · " + state.reaInvestigationStage : "") +
+      (state.reaEvidenceCount !== undefined ? " (" + state.reaEvidenceCount + " evidence)" : "");
+    topRow.appendChild(reaBadge);
+  }
+
   container.appendChild(topRow);
 
   var provRow = d.createElement("div");

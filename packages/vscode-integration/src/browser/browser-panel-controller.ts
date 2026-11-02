@@ -150,6 +150,9 @@ export class BrowserPanelController {
   #visualBaseline: VisualBaselineArtifact | undefined;
   #visualComparison: BeforeAfterComparison | undefined;
   #visualQaReport: VisualQAReport | undefined;
+  #activeReaPackId: string | undefined;
+  #reaInvestigationStage: string | undefined;
+  #reaEvidenceCount: number | undefined;
   readonly #evidenceJournal = new BoundedObservationJournal();
 
   // Operation & preview backpressure controls
@@ -351,6 +354,9 @@ export class BrowserPanelController {
       ...(visualBaseline ? { visualBaseline } : {}),
       ...(this.#visualComparison ? { visualComparison: this.#visualComparison } : {}),
       ...(this.#visualQaReport ? { visualQaReport: this.#visualQaReport } : {}),
+      ...(this.#activeReaPackId ? { activeReaPackId: this.#activeReaPackId } : {}),
+      ...(this.#reaInvestigationStage ? { reaInvestigationStage: this.#reaInvestigationStage } : {}),
+      ...(this.#reaEvidenceCount !== undefined ? { reaEvidenceCount: this.#reaEvidenceCount } : {}),
       evidence: this.#evidenceJournal.snapshot(),
       timeline: [...this.#timeline],
       ...(this.#navigationError ? { navigationError: this.#navigationError } : {}),
@@ -360,6 +366,13 @@ export class BrowserPanelController {
       ...(this.#pendingApproval ? { pendingApproval: this.#pendingApproval } : {}),
       metrics: this.getPerformanceMetrics(),
     };
+  }
+
+  public setReaWorkflowState(options: { packId?: string; stage?: string; evidenceCount?: number }): void {
+    this.#activeReaPackId = options.packId;
+    this.#reaInvestigationStage = options.stage;
+    this.#reaEvidenceCount = options.evidenceCount;
+    void this.#pushState();
   }
 
   public getPerformanceMetrics(): BrowserPanelPerformanceMetrics {

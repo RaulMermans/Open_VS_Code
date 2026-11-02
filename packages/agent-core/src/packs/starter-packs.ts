@@ -328,6 +328,8 @@ export const BROWSER_QA_INTERACTIVE_PACK: CapabilityPackManifest = createCanonic
 
 export { ADVANCED_DESIGN_MOTION_PACK } from "../design/starter-pack.ts";
 import { ADVANCED_DESIGN_MOTION_PACK } from "../design/starter-pack.ts";
+export { REA_INVESTIGATION_PACK, REA_RECONSTRUCTION_PACK } from "../rea/starter-packs.ts";
+import { REA_INVESTIGATION_PACK, REA_RECONSTRUCTION_PACK } from "../rea/starter-packs.ts";
 
 export function getStarterCapabilityPacks(): readonly CapabilityPackManifest[] {
   return [
@@ -336,5 +338,7 @@ export function getStarterCapabilityPacks(): readonly CapabilityPackManifest[] {
     BROWSER_QA_LOCAL_DEV_PACK,
     BROWSER_QA_INTERACTIVE_PACK,
     ADVANCED_DESIGN_MOTION_PACK,
+    REA_INVESTIGATION_PACK,
+    REA_RECONSTRUCTION_PACK,
   ];
 }

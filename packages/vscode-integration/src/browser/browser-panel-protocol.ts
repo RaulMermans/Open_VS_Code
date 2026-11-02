@@ -174,6 +174,9 @@ export interface BrowserPanelState {
   readonly visualQaReport?: VisualQAReport;
   readonly activeDesignPackId?: string;
   readonly designWorkflowStage?: string;
+  readonly activeReaPackId?: string;
+  readonly reaInvestigationStage?: string;
+  readonly reaEvidenceCount?: number;
   readonly evidence: ObservationEvidenceSnapshot;
   readonly timeline: readonly BrowserTimelineItem[];
   readonly navigationError?: string;

@@ -1,5 +1,5 @@
 import type { McpConfig, McpServerConfig } from "./mcp-config.ts";
-import { StdioMcpTransport, type McpTransport } from "./mcp-transport.ts";
+import { StdioMcpTransport, type McpTransport, type McpPromptDeclaration, type McpPromptResult } from "./mcp-transport.ts";
 import { TestMcpTransport } from "./mcp-test-transport.ts";
 import { StreamableHttpMcpTransport, McpAuthRequiredError, McpSecurityError } from "./mcp-http-transport.ts";
 import type { McpConnectionState, McpServerStatus } from "./mcp-connection-state.ts";
@@ -469,6 +469,20 @@ export class McpCatalog {
       }
     }
     return connected;
+  }
+
+  async listPrompts(serverId: string, signal?: AbortSignal): Promise<McpPromptDeclaration[]> {
+    const transport = this.transports.get(serverId);
+    if (!transport) throw new Error(`Server "${serverId}" is not connected`);
+    if (typeof transport.listPrompts !== "function") return [];
+    return transport.listPrompts(signal);
+  }
+
+  async getPrompt(serverId: string, name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<McpPromptResult> {
+    const transport = this.transports.get(serverId);
+    if (!transport) throw new Error(`Server "${serverId}" is not connected`);
+    if (typeof transport.getPrompt !== "function") throw new Error(`Server "${serverId}" does not support prompts`);
+    return transport.getPrompt(name, args, signal);
   }
 
   async close(): Promise<void> {

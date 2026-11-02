@@ -87,4 +87,7 @@ export * from "./browser/index.ts"
 // Sprint 9C — Advanced Design & Motion Capability Pack
 export * from "./design/index.ts"
 
+// Sprint 9D — Reverse Engineering Anything (REA) Capability Pack & Investigation
+export * from "./rea/index.ts"
+
 

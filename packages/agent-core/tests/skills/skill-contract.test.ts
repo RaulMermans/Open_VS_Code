@@ -244,12 +244,20 @@ test("5A: the curated built-in set is small, valid, and fits its own budgets", a
   assert.deepEqual(registry.diagnostics, [])
   assert.deepEqual(registry.entries.map((entry) => entry.id), [
     "accessibility-review",
+    "browser-behavior-investigation",
     "bug-triage",
     "design-direction",
     "design-polish",
     "design-system-engineering",
+    "evidence-reconciliation",
+    "feature-specification",
     "frontend-composition",
+    "javascript-electron-analysis",
     "motion-engineering",
+    "native-artifact-analysis",
+    "rea-investigation-routing",
+    "reconstruction-planning",
+    "reconstruction-verification",
     "refactor-with-guards",
     "security-review",
     "tdd",
@@ -257,7 +265,7 @@ test("5A: the curated built-in set is small, valid, and fits its own budgets", a
     "verification",
     "visual-qa",
   ])
-  assert.ok(registry.entries.length >= 5 && registry.entries.length <= 15)
+  assert.ok(registry.entries.length >= 5 && registry.entries.length <= 25)
   for (const entry of registry.entries) {
     assert.equal(entry.source, "builtin")
     assert.ok(entry.triggers.length > 0 && entry.triggers.length <= SKILL_LIMITS.maxTriggers, `${entry.id} has a narrow trigger set`)

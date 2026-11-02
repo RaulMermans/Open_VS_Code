@@ -10,7 +10,7 @@ import type { ToolAction } from "../contracts/tools.ts"
 
 export const SKILL_MODES: readonly AgentMode[] = AGENT_MODES
 
-export const SKILL_CATEGORIES = ["debugging", "testing", "refactoring", "security", "verification", "architecture", "documentation", "design"] as const
+export const SKILL_CATEGORIES = ["debugging", "testing", "refactoring", "security", "verification", "architecture", "documentation", "design", "reverse-engineering"] as const
 export type SkillCategory = (typeof SKILL_CATEGORIES)[number]
 
 export const SKILL_CAPABILITIES = ["read", "search", "write", "verify", "terminal"] as const

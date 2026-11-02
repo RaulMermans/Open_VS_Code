@@ -64,13 +64,13 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 
 | Fixture | Path | Expected | Arm | Outcome | Stall | Signals | Class | Recovery | Recovery outcome | Model calls | Tool+check calls | Prompt tokens | Turns |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A | workflow | LOOP | A | BLOCKED:TEST_REPAIR_LIMIT | no | - | - | no | - | 7 | 6 | 2627 | 7 |
+| A | workflow | LOOP | A | BLOCKED:TEST_REPAIR_LIMIT | no | - | - | no | - | 7 | 6 | 2628 | 7 |
 | A | workflow | LOOP | B | BLOCKED:BLOCKED_NON_PROGRESS | yes | TEST_STAGNATION | LOGIC_FAILURE | yes | NOT_RECOVERED | 7 | 6 | 2976 | 7 |
 | B | workflow | PROGRESS | A | COMPLETE | no | - | - | no | - | 8 | 8 | 3276 | 8 |
 | B | workflow | PROGRESS | B | COMPLETE | no | - | - | no | - | 8 | 8 | 3276 | 8 |
 | D | workflow | LOOP | A | BLOCKED:TEST_REPAIR_LIMIT | no | - | - | no | - | 7 | 6 | 2610 | 7 |
 | D | workflow | LOOP | B | BLOCKED:BLOCKED_NON_PROGRESS | yes | TEST_STAGNATION | ENVIRONMENT_FAILURE | no | ESCALATED | 5 | 4 | 1782 | 5 |
-| E | workflow | LOOP | A | COMPLETE | no | - | - | no | - | 8 | 8 | 3256 | 8 |
+| E | workflow | LOOP | A | COMPLETE | no | - | - | no | - | 8 | 8 | 3255 | 8 |
 | E | workflow | LOOP | B | COMPLETE | yes | TEST_STAGNATION | LOGIC_FAILURE | yes | RECOVERED | 8 | 8 | 3604 | 8 |
 | F | workflow | LOOP | A | BLOCKED:BLOCKED_REVIEW | no | - | - | no | - | 10 | 6 | 4454 | 10 |
 | F | workflow | LOOP | B | BLOCKED:BLOCKED_NON_PROGRESS | yes | REVIEW_STAGNATION | LOGIC_FAILURE | yes | NOT_RECOVERED | 10 | 6 | 4706 | 10 |

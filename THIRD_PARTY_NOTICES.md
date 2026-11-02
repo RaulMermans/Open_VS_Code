@@ -127,3 +127,37 @@ limitations under the License.
 - **Audited Snapshot**: `d12e84a`
 - **License**: Commons Clause (Non-Commercial / Restricted)
 - **Classification**: `REFERENCE_ONLY / EXCLUDED`. Zero code or components from React Bits are bundled, distributed, or integrated into Open VS Code.
+
+---
+
+## 6. Reverse Engineer Anything (REA)
+
+- **Project**: [Reverse Engineer Anything (REA)](https://github.com/morluto/rea)
+- **Audited Commit Reference**: `f95bdbce76fa538d9383a36c7dde0468078b42f4` (v6.8.0, 2026-11-02)
+- **License**: MIT License
+- **Classification**: Reverse engineering methodology, MCP contracts, browser scenario capture, reconstruction obligation ledgers (`ADAPT` / `REFERENCE_ONLY`).
+- **Notice**:
+```text
+MIT License
+
+Copyright (c) 2025-2026 morluto
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+

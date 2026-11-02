@@ -1,9 +1,12 @@
-import type { McpTransport, McpToolDeclaration, McpToolCallResult } from "./mcp-transport.ts";
+import type { McpTransport, McpToolDeclaration, McpToolCallResult, McpPromptDeclaration, McpPromptResult } from "./mcp-transport.ts";
 
 export class TestMcpTransport implements McpTransport {
   public tools: McpToolDeclaration[] = [];
+  public prompts: McpPromptDeclaration[] = [];
   public calls: Array<{ name: string; args: unknown }> = [];
+  public promptCalls: Array<{ name: string; args?: Record<string, string> }> = [];
   public results = new Map<string, McpToolCallResult | Error>();
+  public promptResults = new Map<string, McpPromptResult | Error>();
 
   constructor(public serverId: string) {}
 
@@ -16,6 +19,29 @@ export class TestMcpTransport implements McpTransport {
   async listTools(signal?: AbortSignal): Promise<McpToolDeclaration[]> {
     if (signal?.aborted) throw new Error("Aborted");
     return this.tools;
+  }
+
+  async listPrompts(signal?: AbortSignal): Promise<McpPromptDeclaration[]> {
+    if (signal?.aborted) throw new Error("Aborted");
+    return this.prompts;
+  }
+
+  async getPrompt(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<McpPromptResult> {
+    if (signal?.aborted) throw new Error("Aborted");
+    if (args !== undefined) {
+      this.promptCalls.push({ name, args });
+    } else {
+      this.promptCalls.push({ name });
+    }
+    const res = this.promptResults.get(name);
+    if (!res) {
+      return {
+        description: `Mock prompt ${name}`,
+        messages: [{ role: "user", content: { type: "text", text: `Guidance for ${name}` } }],
+      };
+    }
+    if (res instanceof Error) throw res;
+    return res;
   }
 
   public hang = false;

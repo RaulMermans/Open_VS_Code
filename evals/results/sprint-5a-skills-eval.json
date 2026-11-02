@@ -424,21 +424,25 @@
     ]
   },
   "efficiency": {
-    "totalSkills": 13,
-    "totalBodyTokens": 8026,
-    "eagerTokens": 8026,
-    "indexTokens": 394,
+    "totalSkills": 21,
+    "totalBodyTokens": 13009,
+    "eagerTokens": 13009,
+    "indexTokens": 733,
     "averageSelectedSkillTokens": 510.96153846153845,
     "maxSelectedSkillTokens": 559,
     "averageLazyPromptTokens": 332.125,
-    "averageLazyWithIndexTokens": 726.125,
-    "tokensAvoidedPerTask": 7693.875,
-    "reductionPercent": 95.86188636929978,
-    "reductionWithIndexPercent": 90.9528407675056,
+    "averageLazyWithIndexTokens": 1065.125,
+    "tokensAvoidedPerTask": 12676.875,
+    "reductionPercent": 97.44695979706357,
+    "reductionWithIndexPercent": 91.81239910830963,
     "perSkill": [
       {
         "id": "accessibility-review",
         "bodyTokens": 709
+      },
+      {
+        "id": "browser-behavior-investigation",
+        "bodyTokens": 672
       },
       {
         "id": "bug-triage",
@@ -457,12 +461,40 @@
         "bodyTokens": 704
       },
       {
+        "id": "evidence-reconciliation",
+        "bodyTokens": 584
+      },
+      {
+        "id": "feature-specification",
+        "bodyTokens": 594
+      },
+      {
         "id": "frontend-composition",
         "bodyTokens": 649
       },
       {
+        "id": "javascript-electron-analysis",
+        "bodyTokens": 587
+      },
+      {
         "id": "motion-engineering",
         "bodyTokens": 702
+      },
+      {
+        "id": "native-artifact-analysis",
+        "bodyTokens": 596
+      },
+      {
+        "id": "rea-investigation-routing",
+        "bodyTokens": 685
+      },
+      {
+        "id": "reconstruction-planning",
+        "bodyTokens": 643
+      },
+      {
+        "id": "reconstruction-verification",
+        "bodyTokens": 622
       },
       {
         "id": "refactor-with-guards",
