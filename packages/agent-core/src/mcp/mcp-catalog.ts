@@ -485,6 +485,18 @@ export class McpCatalog {
     return transport.getPrompt(name, args, signal);
   }
 
+  getServerInfo(serverId: string): { name: string; version: string } | undefined {
+    const transport = this.transports.get(serverId);
+    if (!transport || typeof transport.getServerInfo !== "function") return undefined;
+    return transport.getServerInfo();
+  }
+
+  getInitializeResult(serverId: string): unknown {
+    const transport = this.transports.get(serverId);
+    if (!transport || typeof transport.getInitializeResult !== "function") return undefined;
+    return transport.getInitializeResult();
+  }
+
   async close(): Promise<void> {
     for (const [serverId, transport] of this.transports.entries()) {
       await transport.close().catch(() => {});

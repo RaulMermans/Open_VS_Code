@@ -32,6 +32,7 @@ import { calculateBudget, estimateTokens } from "../context/budget.ts";
 import { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
 import { EngineeringWorkflow } from "../workflow/engine.ts";
 import { GovernedDesignWorkflow } from "../design/governed-design-workflow.ts";
+import { GovernedReaWorkflow } from "../rea/governed-rea-workflow.ts";
 import { assessWorkflowEligibility } from "../workflow/policy.ts";
 import { CheckpointWorkflowStore, createWorkspaceVerifier } from "../workflow/services.ts";
 import type { WorkflowEligibility, WorkflowStageEvent } from "../workflow/contracts.ts";
@@ -422,12 +423,43 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ? options.resolvedProfile.effectiveWorkflow === "structured" && options.workflow?.enabled === true
     : options.workflow?.enabled === true;
 
-  const workflowEligibility: WorkflowEligibility = assessWorkflowEligibility({
+  const isReaInvestigationWorkflow =
+    options.resolvedProfile?.profileId === "rea-investigation" ||
+    options.resolvedProfile?.profileId === "rea-investigation-pack-mode" ||
+    (options.resolvedProfile?.appliedSkills !== undefined &&
+      (options.resolvedProfile.appliedSkills.includes("rea-investigation-routing") ||
+       options.resolvedProfile.appliedSkills.includes("browser-behavior-investigation") ||
+       options.resolvedProfile.appliedSkills.includes("javascript-electron-analysis") ||
+       options.resolvedProfile.appliedSkills.includes("native-artifact-analysis"))) ||
+    options.instruction.toLowerCase().includes("rea-investigation") ||
+    options.instruction.toLowerCase().includes("investigate-application") ||
+    (options.mode === "REVIEW" &&
+      (options.instruction.toLowerCase().includes("investigate") &&
+       (options.instruction.toLowerCase().includes("http") || options.instruction.toLowerCase().includes("url") || options.instruction.toLowerCase().includes("target"))));
+
+  const isReaReconstructionWorkflow =
+    options.resolvedProfile?.profileId === "rea-reconstruction" ||
+    options.resolvedProfile?.profileId === "rea-reconstruction-pack-mode" ||
+    (options.resolvedProfile?.appliedSkills !== undefined &&
+      (options.resolvedProfile.appliedSkills.includes("reconstruction-planning") ||
+       options.resolvedProfile.appliedSkills.includes("reconstruction-verification"))) ||
+    options.instruction.toLowerCase().includes("rea-reconstruction") ||
+    options.instruction.toLowerCase().includes("clean-room reconstruction");
+
+  const isReaWorkflow = isReaInvestigationWorkflow || isReaReconstructionWorkflow;
+
+  const rawEligibility: WorkflowEligibility = assessWorkflowEligibility({
     enabled: workflowEnabled,
     mode: options.mode,
     instruction: options.instruction,
     isTrusted: options.isTrusted,
   });
+
+  const workflowEligibility: WorkflowEligibility =
+    (isReaWorkflow && workflowEnabled && options.isTrusted)
+      ? { eligible: true, reason: "ELIGIBLE" }
+      : rawEligibility;
+
   const isDesignWorkflow =
     options.resolvedProfile?.profileId === "advanced-design-motion" ||
     (options.resolvedProfile?.appliedSkills !== undefined &&
@@ -435,50 +467,80 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     options.instruction.toLowerCase().includes("advanced design") ||
     options.instruction.toLowerCase().includes("design-workflow");
 
-  const workflow = workflowEligibility.eligible
-    ? isDesignWorkflow
-      ? GovernedDesignWorkflow.start({
+  const workflow = (isReaWorkflow && workflowEnabled && options.isTrusted)
+    ? isReaInvestigationWorkflow
+      ? GovernedReaWorkflow.startInvestigation({
           workspaceRoot: options.workspaceRoot,
           mutationEngine,
           checkpointCoordinator,
           browserSessionManager: options.browserSessionManager,
+          mcpCatalog: options.mcpCatalog,
           provider,
           onStage: options.workflow?.onStage as any,
+          eventSink: options.eventSink,
           signal: options.signal,
           task: options.instruction,
           taskId: runnerInput.task.id,
           skills: skillRegistry,
         })
-      : EngineeringWorkflow.start(
-        {
-          provider,
-          registry,
-          permissionEvaluator: classifyPermission,
-          verifier: createWorkspaceVerifier(options.workspaceRoot, verificationEngine),
+      : GovernedReaWorkflow.startReconstruction({
           workspaceRoot: options.workspaceRoot,
-          contextBudget,
-          store: new CheckpointWorkflowStore(checkpointCoordinator.checkpointStore),
+          mutationEngine,
           checkpointCoordinator,
+          browserSessionManager: options.browserSessionManager,
+          mcpCatalog: options.mcpCatalog,
+          provider,
+          onStage: options.workflow?.onStage as any,
           eventSink: options.eventSink,
-          ...(options.workflow?.onStage ? { onStage: options.workflow.onStage } : {}),
-          ...(skillRegistry ? { skills: { registry: skillRegistry } } : {}),
-          ...(progressMonitorEnabled ? { progress: { enabled: true } } : {}),
-          ...(progressMonitorEnabled && options.progressMonitor?.onProgress ? { onProgress: options.progressMonitor.onProgress } : {}),
-        },
-        {
+          signal: options.signal,
           task: options.instruction,
-          mode: options.mode,
           taskId: runnerInput.task.id,
-          memoryDigest: [
-            ...memory.projectFacts.map((fact) => fact.content),
-            ...memory.decisions.map((decision) => `Decision ${decision.id}: ${decision.summary}`),
-            ...learnedMemory.map((item) => item.content),
-          ].join("\n"),
-          constraints: memory.decisions.map((decision) => `${decision.id}: ${decision.summary}`).join("\n"),
-          ...(options.signal ? { signal: options.signal } : {}),
-        },
-      )
-    : undefined;
+          skills: skillRegistry,
+        })
+    : workflowEligibility.eligible
+      ? isDesignWorkflow
+        ? GovernedDesignWorkflow.start({
+            workspaceRoot: options.workspaceRoot,
+            mutationEngine,
+            checkpointCoordinator,
+            browserSessionManager: options.browserSessionManager,
+            provider,
+            onStage: options.workflow?.onStage as any,
+            signal: options.signal,
+            task: options.instruction,
+            taskId: runnerInput.task.id,
+            skills: skillRegistry,
+          })
+        : EngineeringWorkflow.start(
+          {
+            provider,
+            registry,
+            permissionEvaluator: classifyPermission,
+            verifier: createWorkspaceVerifier(options.workspaceRoot, verificationEngine),
+            workspaceRoot: options.workspaceRoot,
+            contextBudget,
+            store: new CheckpointWorkflowStore(checkpointCoordinator.checkpointStore),
+            checkpointCoordinator,
+            eventSink: options.eventSink,
+            ...(options.workflow?.onStage ? { onStage: options.workflow.onStage } : {}),
+            ...(skillRegistry ? { skills: { registry: skillRegistry } } : {}),
+            ...(progressMonitorEnabled ? { progress: { enabled: true } } : {}),
+            ...(progressMonitorEnabled && options.progressMonitor?.onProgress ? { onProgress: options.progressMonitor.onProgress } : {}),
+          },
+          {
+            task: options.instruction,
+            mode: options.mode,
+            taskId: runnerInput.task.id,
+            memoryDigest: [
+              ...memory.projectFacts.map((fact) => fact.content),
+              ...memory.decisions.map((decision) => `Decision ${decision.id}: ${decision.summary}`),
+              ...learnedMemory.map((item) => item.content),
+            ].join("\n"),
+            constraints: memory.decisions.map((decision) => `${decision.id}: ${decision.summary}`).join("\n"),
+            ...(options.signal ? { signal: options.signal } : {}),
+          },
+        )
+      : undefined;
 
   const repairOrchestrator = new RepairOrchestrator(
     { maxRepairAttempts: 3, maxMutations: 3, maxVerificationRuns: 3, maxTotalAgentTurns: 20 },

@@ -960,38 +960,49 @@ CapabilityPackResolver ("advanced-design-motion-pack@1.0.0")
 
 ---
 
-## REA Reverse Engineering Subsystem (Sprint 9D — ADR-042)
+## REA Reverse Engineering Subsystem (Sprint 9D & 9D.1 — ADR-042)
 
-Sprint 9D integrates the methodology and open-source capabilities of **Reverse Engineer Anything (REA)** (v6.8.0, pinned commit `f95bdbce76fa538d9383a36c7dde0468078b42f4`) into Open VS Code through the existing single `AgentRuntime` lifecycle, declarative Capability Packs, and deterministic evidence ledgers:
+Sprint 9D and 9D.1 integrate the methodology and open-source capabilities of **Reverse Engineer Anything (REA)** (v6.8.0, pinned commit `f95bdbce76fa538d9383a36c7dde0468078b42f4`) into Open VS Code through the authoritative execution pipeline:
 
 ```text
-Software Target (Web URL / Electron ASAR / Native Binary / Source Repo)
-       │
-       ▼
-Deterministic Target Classification (TargetClassifier)
-       │
-       ├───────────────────────────────┐
-       ▼                               ▼
-Investigation Pack (REVIEW Mode)   Reconstruction Pack (BUILD Mode)
-       │                               │
-       ├─ Bounded Exploration          ├─ User Authorization Gate (PermissionGate)
-       ├─ REA / Playwright Evidence    ├─ Clean-Room Implementation
-       ├─ Epistemic Tagging            ├─ Automated Verification Suite
-       ▼                               ▼
-Reconstruction Specification       Reconstruction Obligation Ledger
-(Features, Routes, Rules,          (Status: verified, Cryptographic Closure Digest)
- Unknowns: why unobservable)
+ChatController
+      │
+      ▼
+Custom Mode & Capability Pack (rea-investigation / rea-reconstruction)
+      │
+      ▼
+AgentSessionBridge
+      │
+      ▼
+AgentRuntime
+      │
+      ▼
+GovernedReaWorkflow (InvestigationEngine / ReconstructionEngine)
+      │
+      ▼
+PermissionGate & IdeHost Confirmation
+      │
+      ▼
+Existing Tools, Playwright Browser & McpCatalog
+      │
+      ▼
+Canonical MutationEngine
+      │
+      ▼
+Verified Artifacts & Comparative Parity Proofs (ComparativeWebVerifier)
 ```
 
 ### Core Architecture Components
 
 | Module | Location | Responsibility | Invariants & Security Boundaries |
 | :--- | :--- | :--- | :--- |
-| `contracts.ts` | `@open-vs-code/agent-core/rea/` | Epistemic schemas (`OBSERVED`, `INFERRED`, `UNKNOWN`), `ReaEvidenceRecord`, `ReconstructionSpecification`, `ReconstructionObligationLedger`. | Enforces strict epistemic classification; SHA-256 closure digests; unknown detail risk declarations. |
+| `governed-rea-workflow.ts` | `@open-vs-code/agent-core/rea/` | Authoritative workflow runner integrating investigation and reconstruction into `AgentRuntime`. | Implements `WorkflowRunner`; preserves single-runtime architecture; handles stages, progress events, and cancellation. |
+| `comparative-verifier.ts` | `@open-vs-code/agent-core/rea/` | Dual-application comparative verifier. | Evaluates Reference App A vs Reconstructed App B across routes, negative form validation, positive state changes, and sequential transitions. |
+| `contracts.ts` | `@open-vs-code/agent-core/rea/` | Epistemic schemas (`OBSERVED`, `INFERRED`, `UNKNOWN`), `ReaEvidenceRecord`, `ObligationVerificationRecord`, `ReconstructionSpecification`, `ReconstructionObligationLedger`. | Enforces strict epistemic classification; SHA-256 closure digests; unknown detail risk declarations. |
 | `target-classifier.ts` | `@open-vs-code/agent-core/rea/` | Deterministic target intake and classification into 4 supported investigation workflows. | Enforces browser network policy on URLs (SSRF rejection, allowed port checking); probes binary headers (Mach-O, ELF, PE); blocks directory traversals. |
-| `rea-mcp-service.ts` | `@open-vs-code/agent-core/rea/` | Local REA stdio MCP server connection, tool discovery, guided prompt retrieval, and provider diagnostics. | Zero phantom tools; audits advertised tools (234 tools) and prompts (6 prompts); reports unconfigured disassemblers without assuming installation; clean process teardown. |
-| `investigation-engine.ts` | `@open-vs-code/agent-core/rea/` | Bounded behavioral exploration, state transition recording, specification synthesis, and initial obligation ledger compilation. | Bounded exploration limits; records observable transitions with confidence levels; isolates backend persistence unknowns. |
-| `reconstruction-engine.ts` | `@open-vs-code/agent-core/rea/` | Governed clean-room implementation, test execution against obligations, and cryptographic closure calculation. | Fails closed without explicit human authorization (`ReconstructionAuthorizationError`); writes clean-room files to disk; updates obligation status to `verified` with PASS evidence. |
+| `rea-mcp-service.ts` | `@open-vs-code/agent-core/rea/` | Shared `McpCatalog` integration, tool subsetting by target category, guided prompt retrieval, and dynamic provider diagnostics. | Zero duplicate processes; audits advertised tools and prompts; probes runtime provider status (`ready`, `not_configured`, `unsupported`, `unknown`); portable Node >= 22 discovery. |
+| `investigation-engine.ts` | `@open-vs-code/agent-core/rea/` | Bounded behavioral exploration, state transition recording, specification synthesis, and initial obligation ledger compilation. | Enforces read-only in `REVIEW` mode (0 clicks, 0 fills); requires risk classification and confirmation for interactive actions; automatically rejects destructive controls; revalidates target elements. |
+| `reconstruction-engine.ts` | `@open-vs-code/agent-core/rea/` | Governed clean-room implementation, test execution against obligations, and cryptographic closure calculation. | Writes strictly through `MutationEngine.applyPreparedMutation()` with host confirmation; enforces path containment and rejects escapes/symlinks; unverified without independent test runner; zero fabricated verification. |
 | `starter-packs.ts` & `starter-profiles.ts` | `@open-vs-code/agent-core/rea/` | `rea-investigation-pack` (`REVIEW`) and `rea-reconstruction-pack` (`BUILD`). | Conforms to `open-vs-code/capability-pack@v1`; read-only inspection ceiling for investigation; mutation authorization for reconstruction. |
 | Built-in Skills | `@open-vs-code/agent-core/skills/builtins/` | 8 specialized reverse-engineering skills (`rea-investigation-routing`, `browser-behavior-investigation`, etc.). | Budget $<850$ tokens per skill; progressive disclosure per workflow stage; zero secret leakage. |
 

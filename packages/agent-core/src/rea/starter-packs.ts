@@ -72,6 +72,7 @@ export const REA_INVESTIGATION_PACK: CapabilityPackManifest = createCanonicalMan
       "browser_screenshot",
       "browser_close",
     ],
+    workflowPreference: "structured",
     scope: "builtin",
     enabled: true,
     createdAt: "2026-11-02T00:00:00.000Z",
@@ -93,7 +94,7 @@ export const REA_INVESTIGATION_PACK: CapabilityPackManifest = createCanonicalMan
     capabilities: ["chat", "code_review"],
   },
   workflowRequirements: {
-    workflowPreference: "direct",
+    workflowPreference: "structured",
     requireCheckpoints: false,
   },
   evaluationRequirements: [
@@ -173,6 +174,7 @@ export const REA_RECONSTRUCTION_PACK: CapabilityPackManifest = createCanonicalMa
       "browser_screenshot",
       "browser_close",
     ],
+    workflowPreference: "structured",
     scope: "builtin",
     enabled: true,
     createdAt: "2026-11-02T00:00:00.000Z",
@@ -192,7 +194,7 @@ export const REA_RECONSTRUCTION_PACK: CapabilityPackManifest = createCanonicalMa
     capabilities: ["chat", "code_generation"],
   },
   workflowRequirements: {
-    workflowPreference: "direct",
+    workflowPreference: "structured",
     requireCheckpoints: true,
   },
   evaluationRequirements: [

@@ -10,6 +10,17 @@ export class TestMcpTransport implements McpTransport {
 
   constructor(public serverId: string) {}
 
+  public serverInfo?: { name: string; version: string } = { name: "test-server", version: "1.0.0" };
+  public initResult?: unknown = { serverInfo: { name: "test-server", version: "1.0.0" } };
+
+  getServerInfo(): { name: string; version: string } | undefined {
+    return this.serverInfo;
+  }
+
+  getInitializeResult(): unknown {
+    return this.initResult;
+  }
+
   async connect(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw new Error("Aborted");
     // Simulate connection delay

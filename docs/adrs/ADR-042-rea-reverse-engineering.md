@@ -180,3 +180,31 @@ Comparative Verification (DOM State + Visual Parity)
 ### Negative / Trade-Offs
 - Deep decompilation and binary disassembly require operator-supplied native engines (Ghidra, Hopper, IDA).
 - Black-box web investigation cannot observe server-side databases or backend algorithms; these remain documented as `UNKNOWN`.
+
+---
+
+## 4. Amendment — Sprint 9D.1: Governed Runtime Integration & Evidence Integrity Closure
+
+- **Status**: Accepted
+- **Sprint**: 9D.1
+- **Date**: 2026-11-02
+
+### 4.1 Production Pipeline Integration (`GovernedReaWorkflow`)
+REA workflows are authoritatively integrated into `createAgentRuntime` via `GovernedReaWorkflow`. The pipeline invariant strictly holds:
+`ChatController -> Custom Mode & Capability Pack -> AgentSessionBridge -> AgentRuntime -> GovernedReaWorkflow -> PermissionGate -> Existing Tools & McpCatalog -> MutationEngine -> Verified Artifacts`.
+No secondary agent or alternate planning loop exists. REA tools and skills are routed directly through Open VS Code's canonical model gateways and skill registries.
+
+### 4.2 Browser Action Governance
+`InvestigationEngine` in `REVIEW` mode is strictly read-only: form filling and clicks are forbidden. In interactive mode, actions require risk classification, human confirmation via `IdeHost.requestConfirmation`, automatic rejection of destructive controls (`delete`, `remove`, `destroy`, `drop`, `reset`, `purge`), and target element revalidation prior to execution.
+
+### 4.3 Filesystem Mutation Governance
+`ReconstructionEngine` writes exclusively through `MutationEngine.applyPreparedMutation()`. Direct filesystem writes (`mkdirSync`, `writeFileSync`) are prohibited. Path containment is strictly enforced; adversarial attempts at `../../` directory traversal, absolute path writes outside the workspace root, or symlink workspace escapes are rejected fail closed.
+
+### 4.4 Zero-Fabrication Verification Policy
+Reconstruction verification requires an independent, executing verifier. If no `testRunner` is present, obligations remain marked `UNVERIFIED` and `verifiedObligationCount` remains 0. Fabricated PASS strings and SHA-256 digests of mock confirmations are strictly prohibited. Each verified obligation produces an `ObligationVerificationRecord` with concrete input fixtures, observed outcomes, artifact digests, and verifier identity.
+
+### 4.5 Comparative Web Verification (`ComparativeWebVerifier`)
+Final acceptance of web reconstructions requires dual-application comparative verification. Equivalent controlled scenarios (route exploration, negative form validation, positive state transitions, and sequential mutations) are executed against both Reference App A and Reconstructed App B, reporting exact behavioral parity or concrete discrepancies.
+
+### 4.6 Shared McpCatalog Lifecycle & Portable Toolchain Discovery
+`ReaMcpService` registers with the authoritative `McpCatalog`, preventing duplicate processes and port collisions. Advertised tools are filtered by target category (`web`, `electron`/`javascript`, `native`). Toolchain execution utilizes portable Node >= 22 discovery (`resolveNodeExecutable()`), and provider availability is probed dynamically rather than assumed from static defaults.

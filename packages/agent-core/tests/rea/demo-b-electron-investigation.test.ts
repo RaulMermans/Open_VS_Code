@@ -6,12 +6,13 @@ import { tmpdir } from "node:os";
 import { classifyInvestigationTarget } from "../../src/rea/target-classifier.ts";
 import { ReaMcpService } from "../../src/rea/rea-mcp-service.ts";
 import { REA_PINNED_VERSION } from "../../src/rea/contracts.ts";
+import { McpCatalog } from "../../src/mcp/mcp-catalog.ts";
 
 const REA_CLI_CANDIDATE = "/tmp/rea-upstream/scripts/rea.mjs";
 const hasUpstreamRea = existsSync(REA_CLI_CANDIDATE);
 
 test(
-  "Demo B — JavaScript/Electron Application Static Investigation via Real REA MCP",
+  "Demo B — JavaScript/Electron Application Static Investigation via Shared McpCatalog REA Integration",
   { skip: !hasUpstreamRea },
   async () => {
     const fixtureDir = mkdtempSync(join(tmpdir(), "rea-demo-b-electron-"));
@@ -108,20 +109,34 @@ contextBridge.exposeInMainWorld("notesApi", {
       assert.equal(target.metadata?.packageName, "secure-notes-electron");
       assert.equal(target.metadata?.mainEntry, "main.js");
 
-      // 3. Connect to real REA MCP server
+      // 3. Connect via Authoritative McpCatalog (Zero duplicate processes, portable executable path)
+      const catalog = new McpCatalog({ servers: {} });
       const reaService = new ReaMcpService({
+        mcpCatalog: catalog,
+        serverId: "rea-cli",
         reaCliPath: REA_CLI_CANDIDATE,
-        nodeExecutable: "/Users/raulm/.nvm/versions/node/v22.23.2/bin/node",
         requestTimeoutMs: 30000,
       });
 
       try {
         const identity = await reaService.connect();
         assert.equal(identity.server.version, REA_PINNED_VERSION);
+
+        // Verify registration in authoritative McpCatalog
+        const serverStatus = catalog.getServerStatus("rea-cli");
+        assert.ok(serverStatus, "REA server must be registered in shared McpCatalog");
+        assert.equal(serverStatus.state, "CONNECTED");
+
+        // Tool subsetting by target category
+        const electronTools = reaService.selectToolsForCategory("javascript_electron_app");
+        assert.ok(electronTools.includes("analyze_javascript_application"));
+        assert.ok(!electronTools.includes("analyze_mach_o_binary"), "Targeted tool subsetting must exclude binary tools for electron app");
+
+        // Verify runtime metadata discovery from server
         assert.ok(reaService.hasTool("analyze_javascript_application"));
         assert.ok(reaService.hasPrompt("investigate_feature"));
 
-        // 4. Execute REA tool analyze_javascript_application
+        // 4. Execute REA tool analyze_javascript_application through shared catalog
         const toolResult = await reaService.callTool("analyze_javascript_application", {
           input_path: fixtureDir,
         });
@@ -146,18 +161,28 @@ contextBridge.exposeInMainWorld("notesApi", {
         const promptContent = promptResult.messages.map((m) => m.content.text).join(" ");
         assert.ok(promptContent.length > 50, "Prompt must contain detailed guidance");
 
-        // 6. Safe Native Inspection Checks
+        // 6. Accurate Provider Diagnostics Probing
         const diagnostics = await reaService.queryProviderDiagnostics();
-        const nativeReport = diagnostics.find((d) => d.id === "native-macos");
-        assert.ok(nativeReport);
-        assert.equal(nativeReport.available, process.platform === "darwin");
 
-        // Heavyweight providers report safely unconfigured
+        const macosReport = diagnostics.find((d) => d.id === "native-macos");
+        assert.ok(macosReport);
+        if (process.platform === "darwin") {
+          assert.equal(macosReport.available, true);
+          assert.equal(macosReport.status, "ready");
+        }
+
         const ghidraReport = diagnostics.find((d) => d.id === "ghidra");
-        assert.equal(ghidraReport?.available, false);
+        assert.ok(ghidraReport);
+        assert.equal(ghidraReport.available, false);
+        assert.equal(ghidraReport.status, "not_configured");
+
+        const sqliteReport = diagnostics.find((d) => d.id === "sqlite");
+        assert.ok(sqliteReport);
+        assert.equal(sqliteReport.status, sqliteReport.available ? "ready" : "unsupported");
       } finally {
         await reaService.close();
         assert.equal(reaService.isConnected, false);
+        await catalog.close();
       }
     } finally {
       rmSync(fixtureDir, { recursive: true, force: true });

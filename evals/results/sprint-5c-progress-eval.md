@@ -52,13 +52,13 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 | --- | --- | --- | --- |
 | Model calls | 73 | 60 | -13 |
 | Tool + check calls | 64 | 51 | -13 |
-| Prompt tokens (estimated) | 26311 | 23497 | -2814 |
+| Prompt tokens (estimated) | 26312 | 23497 | -2815 |
 | Average model turns before a blocker | 9.75 | 6.5 | -3.25 |
 
 - Repeated model calls avoided: 13.
 - Repeated tool/check calls avoided: 13.
 - Diagnostic checks added: 6. They are deterministic and read-only; model calls added by diagnostics: 0.
-- Net token difference (B − A): -2814.
+- Net token difference (B − A): -2815.
 
 ## Per fixture
 
@@ -70,7 +70,7 @@ A = progress monitor disabled (Sprint 5B behaviour) · B = enabled.
 | B | workflow | PROGRESS | B | COMPLETE | no | - | - | no | - | 8 | 8 | 3276 | 8 |
 | D | workflow | LOOP | A | BLOCKED:TEST_REPAIR_LIMIT | no | - | - | no | - | 7 | 6 | 2610 | 7 |
 | D | workflow | LOOP | B | BLOCKED:BLOCKED_NON_PROGRESS | yes | TEST_STAGNATION | ENVIRONMENT_FAILURE | no | ESCALATED | 5 | 4 | 1782 | 5 |
-| E | workflow | LOOP | A | COMPLETE | no | - | - | no | - | 8 | 8 | 3255 | 8 |
+| E | workflow | LOOP | A | COMPLETE | no | - | - | no | - | 8 | 8 | 3256 | 8 |
 | E | workflow | LOOP | B | COMPLETE | yes | TEST_STAGNATION | LOGIC_FAILURE | yes | RECOVERED | 8 | 8 | 3604 | 8 |
 | F | workflow | LOOP | A | BLOCKED:BLOCKED_REVIEW | no | - | - | no | - | 10 | 6 | 4454 | 10 |
 | F | workflow | LOOP | B | BLOCKED:BLOCKED_NON_PROGRESS | yes | REVIEW_STAGNATION | LOGIC_FAILURE | yes | NOT_RECOVERED | 10 | 6 | 4706 | 10 |
