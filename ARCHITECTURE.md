@@ -910,9 +910,9 @@ BrowserSessionManager ──▶ BrowserEvent Subscription ──▶ BrowserPanel
 
 ---
 
-## Advanced Design & Motion Architecture (Sprint 9C — ADR-041)
+## Advanced Design & Motion Architecture (Sprint 9C & 9C.1 — ADR-041)
 
-Sprint 9C establishes a specialized frontend visual engineering and motion design subsystem governed by declarative Capability Packs and Progressive Disclosure Skills.
+Sprint 9C and 9C.1 establish a specialized frontend visual engineering and motion design subsystem governed by declarative Capability Packs, Progressive Disclosure Skills, and governed runtime execution:
 
 ```text
 User / Design Request
@@ -924,31 +924,38 @@ ModeResolver ("advanced-design-motion" in BUILD mode)
 CapabilityPackResolver ("advanced-design-motion-pack@1.0.0")
        │
        ├── Progressive Disclosure Skills (Stage-gated token budget: <1,000 tokens/skill)
-       ├── DesignWorkflowEngine (5-Stage Sequential Progression: Stages A -> B -> C -> D -> E)
-       ├── DesignBrief Contract & Token Derivation (CSS variables with reduced-motion)
-       ├── Pure TypeScript Visual Comparison Engine (0 external dependencies, node:zlib PNG diffing)
-       ├── Real Measured Motion Evaluator (Chromium rAF sampling + Web Animations API audit)
-       └── Independent Visual QA Evaluator (WCAG 2.1 AA, DOM overflow, focus rings, accessibility)
+       ├── GovernedDesignWorkflow (Wired into AgentRuntime / AgentSessionBridge)
+       │     ├── Stage A: Discover & Shape (DesignBrief derivation, non-destructive DESIGN.md)
+       │     ├── Stage B: Design System (Tokens, CSS variables with prefers-reduced-motion)
+       │     ├── Stage C: Frontend Implementation (Real file mutations via MutationEngine)
+       │     ├── Stage D: Motion Engineering (Real CSS/JS keyframe mutations & prefers-reduced-motion)
+       │     └── Stage E: Visual QA & Refinement (Bounded 3-iteration review & repair loop)
+       ├── Hardened Zero-Dependency Visual Comparison (Node node:zlib, 25MB/64MB/4096px bounds, CRC32 checks)
+       ├── Objective 5-Verdict Motion Evaluator (Active animation requirement + explicit reduced-motion context)
+       └── Evidence-Backed Visual QA Evaluator (BrowserSessionManager.observeVisualQaState(), safe contrast ratios)
 ```
 
 ### Key Architectural Invariants
-1. **Single Authoritative Runtime Maintained**: No autonomous multi-agent swarms or perpetual background agents are introduced. All code mutations and executions flow through `AgentRuntime`, `PermissionGate`, and `MutationEngine`.
-2. **Zero-Dependency Image Processing**: Visual diffing and PNG encode/decode execute via pure TypeScript with Node's native `node:zlib`. No heavy native C/C++ libraries (`sharp`, `canvas`) are used, eliminating cross-platform binary distribution hazards.
-3. **Progressive Disclosure Token Budgets**: 8 specialized design skills (`design-direction`, `ux-information-architecture`, `design-system-engineering`, `frontend-composition`, `motion-engineering`, `visual-qa`, `accessibility-review`, `design-polish`) are scoped under 1,000 tokens each and disclosed dynamically per workflow stage to prevent context prompt bloat.
-4. **Objective Motion Telemetry**: Subjective claims of motion quality are gated by `motionQualityClaimAllowed`, which requires real in-browser `requestAnimationFrame` sampling showing $\ge 50$ FPS, 0 jank pauses ($>50\text{ ms}$), 0 layout thrashing animated properties (`top`, `left`, `width`, `height`, etc.), and strict `@media (prefers-reduced-motion)` fallback support.
-5. **Bounded Improvement Loop**: Stage E refinement runs for a hard maximum of 3 automated improvement iterations, terminating cleanly with evidence-backed findings if issues remain unresolved.
+1. **Single Authoritative Runtime Maintained**: No autonomous multi-agent swarms or perpetual background agents are introduced. `GovernedDesignWorkflow` conforms to the existing `WorkflowRunner` / `WorkflowResult` interface and is driven directly through `createAgentRuntime` and `AgentSessionBridge`. All code mutations and executions flow through `AgentRuntime`, `PermissionGate`, and `MutationEngine`.
+2. **Genuine File Mutations with Human Confirmation**: Eliminated synthetic returns in Stages C and D. Concrete frontend files (`index.html`, `styles.css`, `app.js`) are created or modified through `MutationEngine.applyPreparedMutation()`, with confirmation requested from `IdeHost.requestConfirmation`.
+3. **Evidence-Backed Browser Observation & Safe Contrast**: Fabricated QA inputs in the browser panel are strictly eliminated. Computed styles, bounds, composited background colors, and metrics are extracted via `BrowserSessionManager.observeVisualQaState()` without exposing arbitrary `page.evaluate` to models. Indeterminate or transparent colors yield `null` contrast ratios and produce warnings rather than fabricating 21:1 passes.
+4. **Objective Motion Telemetry & 5-Verdict Resolution**: Subjective claims of motion quality are prohibited unless active animations ran during the observation window. The evaluator yields one of five discrete verdicts (`measured_passing`, `measured_failing`, `no_animation_detected`, `unsupported_measurement`, `insufficient_evidence`). Reduced motion is verified under explicit `prefers-reduced-motion: reduce` emulation.
+5. **Hardened Pure-TypeScript Image Processing**: The zero-dependency PNG decoder enforces strict bounds: input buffers $\le 25\text{ MB}$, decompressed streams $\le 64\text{ MB}$, image dimensions $\le 4096\times 4096$, and total pixels $\le 8\text{M}$. Per-chunk CRC32 validation, header ordering rules, and filter validation reject corrupt or malicious assets.
+6. **Progressive Disclosure Token Budgets**: 8 specialized design skills (`design-direction`, `ux-information-architecture`, `design-system-engineering`, `frontend-composition`, `motion-engineering`, `visual-qa`, `accessibility-review`, `design-polish`) are scoped under 1,000 tokens each and disclosed dynamically per workflow stage to prevent context prompt bloat.
+7. **Bounded Improvement Loop**: Stage E refinement runs for a hard maximum of 3 automated improvement iterations, terminating cleanly with evidence-backed findings if issues remain unresolved.
 
 ### Module Boundaries
 
 | Component | Package / Path | Responsibility | Invariants |
 | :--- | :--- | :--- | :--- |
-| `contracts.ts` | `@open-vs-code/agent-core/design/` | Type definitions for `DesignBrief`, `DesignTokens`, `VisualComparisonResult`, `MeasuredMotionResult`, and `VisualQAResult`. | Strict schema types, immutable structures, unambiguous quality thresholds. |
+| `contracts.ts` | `@open-vs-code/agent-core/design/` | Type definitions for `DesignBrief`, `DesignTokens`, `VisualComparisonResult`, `MeasuredMotionResult`, `MotionEvaluationVerdict`, and `VisualQAResult`. | Strict schema types, immutable structures, unambiguous quality thresholds. |
 | `design-brief.ts` | `@open-vs-code/agent-core/design/` | Brief parsing, token derivation, CSS variable generation, and non-destructive markdown formatting. | Non-destructive; never overwrites existing `DESIGN.md` or `PRODUCT.md` without confirmation. |
-| `visual-comparison.ts` | `@open-vs-code/agent-core/design/` | Pure TypeScript PNG parser, encoder, diff clustering, and semantic categorization. | 100% native Node.js (`node:zlib`), 0 external dependencies, memory-bounded buffers. |
-| `motion-evaluator.ts` | `@open-vs-code/agent-core/design/` | In-page rAF temporal sampling, frame jitter analysis, Web Animations API audit, layout thrashing detection. | Fails closed on layout thrashing; strictly gates `motionQualityClaimAllowed`. |
-| `visual-qa-evaluator.ts` | `@open-vs-code/agent-core/design/` | Deterministic WCAG AA contrast ratio calculation, DOM overflow detection, focus ring check, typography measure. | Mathematical precision; zero false positives on standard accessible patterns. |
-| `design-workflow.ts` | `@open-vs-code/agent-core/design/` | 5-stage sequential workflow engine with bounded 3-iteration Stage E improvement loop. | Sequential execution; hard cap at 3 iterations; checkpointed stage state. |
-| `starter-pack.ts` | `@open-vs-code/agent-core/design/` | Pack manifest `advanced-design-motion-pack` and custom mode profile `advanced-design-motion`. | Conforms to `open-vs-code/capability-pack@v1`; BUILD base mode; tool allowlist intersection. |
+| `governed-design-workflow.ts` | `@open-vs-code/agent-core/design/` | 5-stage sequential design workflow implementing `WorkflowRunner` with `MutationEngine` execution, checkpoints, and bounded repair. | Conforms to single `AgentRuntime` lifecycle; checkpoints each stage; max 3 repair iterations. |
+| `visual-comparison.ts` | `@open-vs-code/agent-core/design/` | Hardened pure TypeScript PNG parser, encoder, diff clustering, and semantic categorization. | 100% native Node.js (`node:zlib`), CRC32 verification, 25MB input / 64MB output bounds, 0 external deps. |
+| `motion-evaluator.ts` | `@open-vs-code/agent-core/design/` | In-page rAF temporal sampling, frame jitter analysis, Web Animations API audit, layout thrashing detection, 5-verdict resolution. | Requires active animation; evaluates explicit reduced-motion context; strictly gates `motionQualityClaimAllowed`. |
+| `visual-qa-evaluator.ts` | `@open-vs-code/agent-core/design/` | WCAG AA contrast ratio calculation (null for unparseable), DOM overflow detection, focus ring check, typography measure. | Indeterminate colors return null with warnings; does not claim complete WCAG certification. |
+| `browser-observation-contracts.ts` | `@open-vs-code/agent-core/browser/` | Read-only schema for observed visual QA elements, bounds, composited backgrounds, and layout metrics. | Bounded payload; read-only; no arbitrary script execution exposed to model. |
+| `starter-pack.ts` | `@open-vs-code/agent-core/design/` | Pack manifest `advanced-design-motion-pack` and custom mode profile `advanced-design-motion`. | Conforms to `open-vs-code/capability-pack@v1`; BUILD base mode; Apache-2.0 upstream attribution. |
 | Built-in Skills | `@open-vs-code/agent-core/skills/builtins/` | 8 specialized design skills with progressive disclosure. | Budget $<1,000$ tokens per skill; strict markdown schema; zero code execution scripts. |
 
 

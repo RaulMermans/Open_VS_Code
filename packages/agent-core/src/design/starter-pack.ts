@@ -48,6 +48,8 @@ export const ADVANCED_DESIGN_MOTION_MODE_PROFILE: CustomModeProfile = Object.fre
     "browser_open",
     "browser_navigate",
     "browser_snapshot",
+    "browser_click",
+    "browser_fill",
     "browser_screenshot",
     "browser_close",
     "read_file",
@@ -58,7 +60,7 @@ export const ADVANCED_DESIGN_MOTION_MODE_PROFILE: CustomModeProfile = Object.fre
     "create_file",
     "run_verification",
   ],
-  workflowPreference: "direct",
+  workflowPreference: "structured",
   scope: "builtin",
   enabled: true,
   createdAt: "2026-11-01T00:00:00.000Z",
@@ -80,12 +82,12 @@ export const ADVANCED_DESIGN_MOTION_PACK: CapabilityPackManifest = createCanonic
   },
   sourceRepository: {
     url: "https://github.com/RaulMermans/Open_VS_Code",
-    commit: "9a10f3b922d2f3d6aab4bdcb0d0dfe468cef99f2",
+    commit: "dfec7e473056ff9db724a14f432eedd60f7648cd",
     release: "v0.1.0",
   },
   license: "MIT",
   attribution:
-    "Copyright (c) 2026 Open VS Code Contributors. Adapted with attribution from Impeccable (Apache-2.0), Anthropic Frontend Design (MIT), UI UX Pro Max (MIT), Vercel Agent Skills (Apache-2.0), and Motion (MIT).",
+    "Copyright (c) 2026 Open VS Code Contributors. Adapted with attribution from Impeccable (Apache-2.0), Anthropic Frontend Design (Apache-2.0), UI UX Pro Max (MIT), Vercel Agent Skills (Apache-2.0), and Motion (MIT).",
   openVsCodeVersion: "^0.1.0",
   customMode: ADVANCED_DESIGN_MOTION_MODE_PROFILE,
   requiredSkills: [
@@ -107,7 +109,7 @@ export const ADVANCED_DESIGN_MOTION_PACK: CapabilityPackManifest = createCanonic
     capabilities: ["chat", "code_generation"],
   },
   workflowRequirements: {
-    workflowPreference: "direct",
+    workflowPreference: "structured",
     requireCheckpoints: false,
   },
   evaluationRequirements: [

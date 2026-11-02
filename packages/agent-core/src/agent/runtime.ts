@@ -31,6 +31,7 @@ import type { SkillSelectionResult } from "../context/skill-selector.ts";
 import { calculateBudget, estimateTokens } from "../context/budget.ts";
 import { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
 import { EngineeringWorkflow } from "../workflow/engine.ts";
+import { GovernedDesignWorkflow } from "../design/governed-design-workflow.ts";
 import { assessWorkflowEligibility } from "../workflow/policy.ts";
 import { CheckpointWorkflowStore, createWorkspaceVerifier } from "../workflow/services.ts";
 import type { WorkflowEligibility, WorkflowStageEvent } from "../workflow/contracts.ts";
@@ -427,8 +428,28 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     instruction: options.instruction,
     isTrusted: options.isTrusted,
   });
+  const isDesignWorkflow =
+    options.resolvedProfile?.profileId === "advanced-design-motion" ||
+    (options.resolvedProfile?.appliedSkills !== undefined &&
+      options.resolvedProfile.appliedSkills.includes("design-direction")) ||
+    options.instruction.toLowerCase().includes("advanced design") ||
+    options.instruction.toLowerCase().includes("design-workflow");
+
   const workflow = workflowEligibility.eligible
-    ? EngineeringWorkflow.start(
+    ? isDesignWorkflow
+      ? GovernedDesignWorkflow.start({
+          workspaceRoot: options.workspaceRoot,
+          mutationEngine,
+          checkpointCoordinator,
+          browserSessionManager: options.browserSessionManager,
+          provider,
+          onStage: options.workflow?.onStage as any,
+          signal: options.signal,
+          task: options.instruction,
+          taskId: runnerInput.task.id,
+          skills: skillRegistry,
+        })
+      : EngineeringWorkflow.start(
         {
           provider,
           registry,

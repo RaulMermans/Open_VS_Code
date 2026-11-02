@@ -79,12 +79,13 @@ describe("Sprint 9C — Advanced Design & Motion Starter Pack", () => {
     assert.equal(resolved.missingSkills.length, 0);
   });
 
-  it("5. Correctly attributes upstream open-source projects", () => {
+  it("5. Correctly attributes upstream open-source projects and verifies commit provenance", () => {
     const attr = ADVANCED_DESIGN_MOTION_PACK.attribution ?? "";
     assert.ok(attr.includes("Impeccable"));
-    assert.ok(attr.includes("Anthropic Frontend Design"));
+    assert.ok(attr.includes("Anthropic Frontend Design (Apache-2.0)"));
     assert.ok(attr.includes("UI UX Pro Max"));
     assert.ok(attr.includes("Vercel Agent Skills"));
     assert.ok(attr.includes("Motion"));
+    assert.equal(ADVANCED_DESIGN_MOTION_PACK.sourceRepository?.commit, "dfec7e473056ff9db724a14f432eedd60f7648cd");
   });
 });

@@ -25,6 +25,7 @@ import {
   type ElementBoundingBox,
   type ElementDesignMetadata,
   type ElementInteractiveState,
+  type ObservedVisualQaState,
 } from "./browser-observation-contracts.ts";
 import { detectBrowserProvisioning } from "./browser-provisioning.ts";
 import {
@@ -2732,6 +2733,159 @@ export class BrowserSessionManager {
       animations: rawData.activeAnimations,
       layoutShifts: rawData.layoutShifts,
     });
+  }
+
+  /**
+   * Sprint 9C.1 — Bounded Read-Only Visual QA State Observation.
+   * Extracts real computed styles, effective backgrounds, overflow metrics, visible bounds,
+   * focus indicators, and console errors without exposing arbitrary page.evaluate to the model.
+   */
+  public async observeVisualQaState(options?: {
+    signal?: AbortSignal;
+  }): Promise<ObservedVisualQaState> {
+    if (this.#disposed) {
+      throw new BrowserSessionError("DISPOSED", "BrowserSessionManager has already been disposed.");
+    }
+    if (options?.signal?.aborted) {
+      throw new DOMException("Visual QA observation cancelled", "AbortError");
+    }
+    if (
+      !this.#activePage ||
+      this.#unexpectedlyClosed ||
+      (typeof this.#activePage.isClosed === "function" && this.#activePage.isClosed())
+    ) {
+      throw new BrowserSessionError("NO_PAGE", "No active browser page open.");
+    }
+
+    const raw = await this.#activePage.evaluate(() => {
+      const g = globalThis as any;
+      if (typeof g["__name"] === "undefined") {
+        g["__name"] = (f: any) => f;
+      }
+      const win = (globalThis as any).window;
+      const doc = (globalThis as any).document;
+
+      const scrollWidth = Math.max(doc.documentElement.scrollWidth || 0, doc.body ? doc.body.scrollWidth : 0);
+      const clientWidth = doc.documentElement.clientWidth || win.innerWidth || 0;
+      const scrollHeight = Math.max(doc.documentElement.scrollHeight || 0, doc.body ? doc.body.scrollHeight : 0);
+      const clientHeight = doc.documentElement.clientHeight || win.innerHeight || 0;
+
+      const candidateNodes = Array.from(
+        doc.querySelectorAll(
+          "body, header, nav, main, article, section, footer, div, p, h1, h2, h3, h4, h5, h6, button, a, input, select, textarea, img, span, strong, em"
+        ) || []
+      ).slice(0, 300);
+
+      const resolveEffectiveBg = (el: any): { color: string; opacity: number } => {
+        let curr: any = el;
+        let combinedOpacity = 1;
+        while (curr && curr !== doc.documentElement) {
+          const s = win.getComputedStyle(curr);
+          const op = parseFloat(s.opacity || "1");
+          if (!isNaN(op)) combinedOpacity *= op;
+          const bg = s.backgroundColor;
+          if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") {
+            return { color: bg, opacity: combinedOpacity };
+          }
+          curr = curr.parentElement;
+        }
+        const rootStyle = win.getComputedStyle(doc.documentElement);
+        if (rootStyle.backgroundColor && rootStyle.backgroundColor !== "transparent" && rootStyle.backgroundColor !== "rgba(0, 0, 0, 0)") {
+          return { color: rootStyle.backgroundColor, opacity: combinedOpacity };
+        }
+        const bodyStyle = doc.body ? win.getComputedStyle(doc.body) : null;
+        if (bodyStyle?.backgroundColor && bodyStyle.backgroundColor !== "transparent" && bodyStyle.backgroundColor !== "rgba(0, 0, 0, 0)") {
+          return { color: bodyStyle.backgroundColor, opacity: combinedOpacity };
+        }
+        return { color: "rgb(255, 255, 255)", opacity: combinedOpacity };
+      };
+
+      const elements: any[] = [];
+      let seq = 0;
+      for (const node of candidateNodes as any[]) {
+        const s = win.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        const isVisible = rect.width > 0 && rect.height > 0 && s.display !== "none" && s.visibility !== "hidden" && parseFloat(s.opacity || "1") > 0;
+        if (!isVisible) continue;
+
+        const tag = node.tagName.toLowerCase();
+        const role = node.getAttribute("role") || "";
+        const isInteractive =
+          tag === "button" ||
+          tag === "a" ||
+          tag === "input" ||
+          tag === "select" ||
+          tag === "textarea" ||
+          node.hasAttribute("tabindex") ||
+          role === "button" ||
+          role === "link";
+        const textContent = (node.textContent || "").trim().slice(0, 200);
+        const accessibleName = (node.getAttribute("aria-label") || (node as any).alt || (tag === "img" ? "" : textContent)).slice(0, 100);
+
+        const effectiveBg = resolveEffectiveBg(node);
+
+        elements.push({
+          refId: `vqa-${++seq}`,
+          tag,
+          role,
+          accessibleName,
+          textContent,
+          bounds: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+          isVisible: true,
+          isInteractive,
+          computedStyle: {
+            color: s.color,
+            backgroundColor: s.backgroundColor,
+            effectiveBackgroundColor: effectiveBg.color,
+            opacity: s.opacity,
+            fontSize: s.fontSize,
+            fontWeight: s.fontWeight,
+            lineHeight: s.lineHeight,
+            fontFamily: s.fontFamily,
+            display: s.display,
+            position: s.position,
+            overflow: s.overflow,
+            outlineStyle: s.outlineStyle,
+            outlineWidth: s.outlineWidth,
+            outlineColor: s.outlineColor,
+          },
+          hasFocusVisibleStyle: s.outlineStyle !== "none" && s.outlineWidth !== "0px",
+          focusBehavior: isInteractive ? (s.outlineStyle === "none" && s.outlineWidth === "0px" ? "outline_suppressed" : "standard") : undefined,
+        });
+      }
+
+      return {
+        scrollWidth,
+        clientWidth,
+        scrollHeight,
+        clientHeight,
+        elements,
+      };
+    });
+
+    const consoleErrors = this.#consoleBuffer
+      .filter((e) => e.type === "error")
+      .map((e) => e.text);
+
+    const vp = { ...this.#viewport };
+
+    return {
+      targetUrl: sanitizeBrowserUrl(this.#activePage.url()),
+      viewport: vp,
+      presetId: resolveViewportPresetId(vp),
+      clientWidth: raw.clientWidth,
+      scrollWidth: raw.scrollWidth,
+      clientHeight: raw.clientHeight,
+      scrollHeight: raw.scrollHeight,
+      elements: raw.elements,
+      consoleErrors,
+      capturedAt: Date.now(),
+    };
   }
 
   public getConsoleDiagnostics(): readonly BrowserConsoleEntry[] {

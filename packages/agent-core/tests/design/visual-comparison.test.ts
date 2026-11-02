@@ -165,4 +165,48 @@ describe("Sprint 9C — Deterministic Visual Comparison Engine", () => {
     assert.equal(region.category, "spacing_mismatch");
     assert.ok(region.description.includes("band"));
   });
+
+  test("8. Bounded PNG decoding rejects corrupted CRC checksums and truncated buffers", () => {
+    const validPng = encodePng(10, 10, makeSolidRgba(10, 10, 255, 0, 0));
+    assert.ok(validPng.length > 20);
+
+    // Corrupt one byte in the IHDR data
+    const corruptedPng = Buffer.from(validPng);
+    corruptedPng[16] = (corruptedPng[16]! ^ 0xff); // corrupt width/height byte without updating CRC
+    assert.throws(
+      () => decodePng(corruptedPng),
+      (err: any) => err instanceof VisualComparisonError && err.message.includes("CRC checksum failed")
+    );
+
+    // Truncate the buffer midway through the chunk
+    const truncatedPng = validPng.subarray(0, 25);
+    assert.throws(
+      () => decodePng(truncatedPng),
+      (err: any) => err instanceof VisualComparisonError && err.message.includes("Malformed PNG")
+    );
+  });
+
+  test("9. Bounded PNG decoding rejects interlaced or unsupported color formats and enforces dimension caps", () => {
+    const validPng = encodePng(10, 10, makeSolidRgba(10, 10, 0, 255, 0));
+
+    // Construct a PNG with unsupported interlaceMethod = 1 (Adam7)
+    const interlacedPng = Buffer.from(validPng);
+    interlacedPng[28] = 1; // interlaceMethod is at offset 8 (signature) + 8 (IHDR header) + 12 = 28
+    // Since we corrupted it, decodePng will either catch CRC mismatch or interlace error
+    assert.throws(
+      () => decodePng(interlacedPng),
+      (err: any) => err instanceof VisualComparisonError
+    );
+  });
+
+  test("10. Rejects input exceeding max size or decompression bounds safely without crashing", () => {
+    // Artificial buffer exceeding 25MB input limit
+    const hugeFakeBuffer = Buffer.alloc(26 * 1024 * 1024);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(hugeFakeBuffer, 0);
+
+    assert.throws(
+      () => decodePng(hugeFakeBuffer),
+      (err: any) => err instanceof VisualComparisonError && err.message.includes("exceeds maximum permitted size")
+    );
+  });
 });

@@ -58,6 +58,12 @@ export interface DecodedImage {
   readonly data: Buffer; // RGBA 4 bytes per pixel
 }
 
+export const MAX_PNG_INPUT_SIZE = 25 * 1024 * 1024; // 25 MB
+export const MAX_PNG_DECOMPRESSED_SIZE = 64 * 1024 * 1024; // 64 MB
+export const MAX_PNG_WIDTH = 4096;
+export const MAX_PNG_HEIGHT = 4096;
+export const MAX_PNG_TOTAL_PIXELS = 8 * 1024 * 1024; // 8M pixels
+
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 export function decodePng(buf: Buffer): DecodedImage {
@@ -65,54 +71,124 @@ export function decodePng(buf: Buffer): DecodedImage {
     throw new VisualComparisonError("Invalid PNG signature: buffer is not a valid PNG.");
   }
 
+  if (buf.length > MAX_PNG_INPUT_SIZE) {
+    throw new VisualComparisonError(
+      `PNG input exceeds maximum permitted size of ${MAX_PNG_INPUT_SIZE / (1024 * 1024)}MB (got ${(buf.length / (1024 * 1024)).toFixed(1)}MB).`
+    );
+  }
+
   let offset = 8;
   let width = 0;
   let height = 0;
   let bitDepth = 0;
   let colorType = 0;
+  let sawIhdr = false;
+  let sawIend = false;
   const idatParts: Buffer[] = [];
 
   while (offset < buf.length) {
-    if (offset + 8 > buf.length) break;
+    if (offset + 8 > buf.length) {
+      throw new VisualComparisonError("Malformed PNG: truncated chunk header at end of buffer.");
+    }
     const length = buf.readUInt32BE(offset);
     const type = buf.toString("ascii", offset + 4, offset + 8);
     const dataOffset = offset + 8;
     const nextOffset = dataOffset + length + 4; // +4 for CRC
 
+    if (length > MAX_PNG_INPUT_SIZE || nextOffset > buf.length) {
+      throw new VisualComparisonError(
+        `Malformed PNG: chunk '${type}' length ${length} extends beyond input buffer bounds.`
+      );
+    }
+
+    // Verify chunk CRC checksum
+    const chunkTypeAndData = buf.subarray(offset + 4, dataOffset + length);
+    const expectedCrc = buf.readUInt32BE(dataOffset + length);
+    const computedCrc = crc32(chunkTypeAndData);
+    if (expectedCrc !== computedCrc) {
+      throw new VisualComparisonError(
+        `PNG chunk '${type}' CRC checksum failed (expected ${expectedCrc}, computed ${computedCrc}).`
+      );
+    }
+
     if (type === "IHDR") {
+      if (sawIhdr) {
+        throw new VisualComparisonError("Malformed PNG: duplicate IHDR chunk detected.");
+      }
+      if (offset !== 8) {
+        throw new VisualComparisonError("Malformed PNG: IHDR chunk must be the first chunk.");
+      }
+      if (length < 13) {
+        throw new VisualComparisonError("Malformed PNG: IHDR chunk must be at least 13 bytes.");
+      }
+      sawIhdr = true;
       width = buf.readUInt32BE(dataOffset);
       height = buf.readUInt32BE(dataOffset + 4);
       bitDepth = buf.readUInt8(dataOffset + 8);
       colorType = buf.readUInt8(dataOffset + 9);
-      if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
-        throw new VisualComparisonError(`Unsupported PNG dimensions: ${width}x${height}`);
+      const compressionMethod = buf.readUInt8(dataOffset + 10);
+      const filterMethod = buf.readUInt8(dataOffset + 11);
+      const interlaceMethod = buf.readUInt8(dataOffset + 12);
+
+      if (width <= 0 || height <= 0 || width > MAX_PNG_WIDTH || height > MAX_PNG_HEIGHT) {
+        throw new VisualComparisonError(
+          `Unsupported PNG dimensions: ${width}x${height} (maximum allowed: ${MAX_PNG_WIDTH}x${MAX_PNG_HEIGHT}).`
+        );
+      }
+      if (width * height > MAX_PNG_TOTAL_PIXELS) {
+        throw new VisualComparisonError(
+          `PNG total pixel count (${width * height}) exceeds maximum allocation limit of ${MAX_PNG_TOTAL_PIXELS} pixels.`
+        );
       }
       if (bitDepth !== 8 || (colorType !== 6 && colorType !== 2)) {
         throw new VisualComparisonError(
-          `Unsupported PNG color format: bitDepth=${bitDepth}, colorType=${colorType} (requires 8-bit RGBA or RGB)`
+          `Unsupported PNG color format: bitDepth=${bitDepth}, colorType=${colorType} (requires 8-bit RGBA or RGB).`
+        );
+      }
+      if (compressionMethod !== 0) {
+        throw new VisualComparisonError(`Unsupported PNG compression method: ${compressionMethod}.`);
+      }
+      if (filterMethod !== 0) {
+        throw new VisualComparisonError(`Unsupported PNG filter method: ${filterMethod}.`);
+      }
+      if (interlaceMethod !== 0) {
+        throw new VisualComparisonError(
+          `Unsupported PNG interlace method: ${interlaceMethod} (interlaced PNGs are not supported).`
         );
       }
     } else if (type === "IDAT") {
+      if (!sawIhdr) {
+        throw new VisualComparisonError("Malformed PNG: IDAT chunk encountered before IHDR.");
+      }
       idatParts.push(buf.subarray(dataOffset, dataOffset + length));
     } else if (type === "IEND") {
+      sawIend = true;
       break;
     }
 
     offset = nextOffset;
   }
 
-  if (width === 0 || height === 0 || idatParts.length === 0) {
-    throw new VisualComparisonError("Malformed PNG: missing IHDR or IDAT chunks.");
+  if (!sawIhdr || width === 0 || height === 0 || idatParts.length === 0 || !sawIend) {
+    throw new VisualComparisonError("Malformed PNG: missing IHDR, IDAT, or IEND chunk.");
   }
 
   const compressed = Buffer.concat(idatParts);
-  const inflated = zlib.inflateSync(compressed);
+  let inflated: Buffer;
+  try {
+    inflated = zlib.inflateSync(compressed, { maxOutputLength: MAX_PNG_DECOMPRESSED_SIZE });
+  } catch (err: any) {
+    throw new VisualComparisonError(
+      `Failed to decompress PNG IDAT stream: ${err?.message || "zlib decompression error"}`
+    );
+  }
+
   const bytesPerPixel = colorType === 6 ? 4 : 3;
   const scanlineLength = 1 + width * bytesPerPixel;
 
   if (inflated.length < scanlineLength * height) {
     throw new VisualComparisonError(
-      `Malformed PNG scanlines: expected at least ${scanlineLength * height} bytes, got ${inflated.length}`
+      `Malformed PNG scanlines: expected at least ${scanlineLength * height} bytes, got ${inflated.length}.`
     );
   }
 
@@ -124,6 +200,11 @@ export function decodePng(buf: Buffer): DecodedImage {
   for (let y = 0; y < height; y++) {
     const lineStart = y * scanlineLength;
     const filterType = inflated.readUInt8(lineStart);
+    if (filterType < 0 || filterType > 4) {
+      throw new VisualComparisonError(
+        `Unsupported PNG filter type: ${filterType} at scanline ${y}.`
+      );
+    }
     const rawData = inflated.subarray(lineStart + 1, lineStart + 1 + width * bytesPerPixel);
 
     for (let i = 0; i < rawData.length; i++) {

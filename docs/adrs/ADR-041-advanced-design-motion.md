@@ -143,8 +143,9 @@ The design intelligence and motion engineering patterns in Open VS Code synthesi
 1. **Impeccable (`pbakaus/impeccable`) — Apache-2.0**:
    - *Adapted*: Shape-before-build stage progression, design critique checklists, persistent design token structures.
    - *Excluded*: Direct binary installation, non-interactive CLI workflows.
-2. **Anthropic Frontend Design (`anthropics/skills`) — MIT**:
+2. **Anthropic Frontend Design (`anthropics/skills`) — Apache-2.0**:
    - *Adapted*: Art direction guidelines, typographic scales, responsive composition principles.
+   - *Provenance*: Pinned commit `2e4fa71`; licensed under Apache-2.0 per repository root license file.
 3. **UI UX Pro Max (`nextlevelbuilder/ui-ux-pro-max-skill`) — MIT**:
    - *Adapted*: Design system structure, color harmonic pairing, industry-specific aesthetic archetypes.
 4. **Vercel Agent Skills (`vercel-labs/agent-skills`) — Apache-2.0**:
@@ -170,3 +171,36 @@ The design intelligence and motion engineering patterns in Open VS Code synthesi
 - **Governed Browser**: All browser measurements and screenshot captures run through the established, sandboxed `BrowserSessionManager`.
 - **Non-Destructive**: User documentation (`DESIGN.md`, `PRODUCT.md`) is preserved and never overwritten without explicit confirmation.
 - **Strict Reduced-Motion**: Every design token export automatically guarantees zero-duration transitions for users with vestibular sensitivities.
+
+---
+
+## 5. Sprint 9C.1 Addendum: Runtime Integration & Evidence Integrity
+
+Sprint 9C.1 closes critical production gaps identified during the verification of Sprint 9C, transitioning the Advanced Design & Motion architecture from declarative prototypes to an executable, evidence-backed workflow:
+
+### 5.1 Governed Runtime Integration (`GovernedDesignWorkflow`)
+- **Single Runtime Invariant**: `GovernedDesignWorkflow` implements the existing `WorkflowRunner` / `WorkflowResult` interface (`status`, `state`, `confirmation`), directly wired into `createAgentRuntime` and executed by `AgentSessionBridge._runWorkflow()`. No secondary runtime or parallel agent loop is created.
+- **Genuine Mutation & Gates**: Eliminated synthetic echo returns in Stages C and D. The workflow generates concrete files (`src/index.html`, `src/styles.css`, `src/app.js`) and prepares file updates through `MutationEngine`. Stage mutations require explicit developer approval through `IdeHost.requestConfirmation`.
+- **Durable Checkpoints**: State checkpoints are recorded at each stage boundary (`DISCOVER_AND_SHAPE`, `DESIGN_SYSTEM`, `FRONTEND_IMPLEMENTATION`, `MOTION_ENGINEERING`, `VISUAL_QA_REFINEMENT`) via `CheckpointCoordinator`.
+- **Bounded Iterative Repair**: Stage E executes automated review iterations (max 3), producing structured findings, issuing targeted repair instructions, applying approved mutations, and re-verifying until clean or budget exhausted.
+
+### 5.2 Evidence-Backed Browser Observation & Contrast Integrity
+- **Elimination of Fabricated QA Inputs**: `BrowserPanelController.#handleRunVisualQa()` previously substituted static text colors and button backgrounds. All synthetic defaults are eliminated in favor of real runtime telemetry extracted via `BrowserSessionManager.observeVisualQaState()`.
+- **Bounded Safe Observation**: Telemetry captures computed styles, recursive composited background colors with alpha blending, element bounding client rects, client/scroll metrics, focus ring styles, and accessible names without exposing arbitrary `page.evaluate` execution to model prompts.
+- **Indeterminate Contrast Safety**: `calculateContrastRatio()` was modified so unparseable or fully transparent colors return `null` instead of fabricating a 21:1 pass. Unresolved contrast produces `inconclusive_contrast` warning findings.
+- **Realistic Compliance Scope**: Automated checks explicitly report that passing automated visual heuristics does not constitute exhaustive WCAG 2.1 AA certification, preventing false compliance claims.
+
+### 5.3 Objective 5-Verdict Motion Evaluation
+- **Active Animation Requirement**: The motion evaluator strictly disallows claims of animation quality when no animations executed during the observation window.
+- **Five Deterministic Verdicts**:
+  1. `measured_passing`: Active animations detected, average FPS ≥ 50, zero jank frames, and zero layout thrashing properties.
+  2. `measured_failing`: Active animations detected but violated frame-rate, jank, or compositor-friendly property constraints.
+  3. `no_animation_detected`: Zero animations observed; quality claims rejected.
+  4. `insufficient_evidence`: Fewer than 5 animation frames captured; inconclusive.
+  5. `unsupported_measurement`: Browser context does not support high-frequency sampling; inconclusive.
+- **Explicit Reduced-Motion Verification**: Reduced-motion compliance requires testing under an explicit browser context configured with `emulateMedia({ reducedMotion: "reduce" })`, confirming that animations are removed or neutralized.
+
+### 5.4 Hardened Zero-Dependency PNG Decoder
+- **Decompression Bomb Protection**: Input PNG buffers are capped at 25 MB (`MAX_PNG_INPUT_SIZE`), decompressed streams are capped at 64 MB (`MAX_PNG_DECOMPRESSED_SIZE`), image dimensions are restricted to 4096×4096 (`MAX_PNG_WIDTH`, `MAX_PNG_HEIGHT`), and total pixel count is bounded to 8,000,000 (`MAX_PNG_TOTAL_PIXELS`).
+- **Integrity Validation**: Added chunk length bounds checking, per-chunk CRC32 verification, duplicate/misplaced `IHDR` rejection, filter type enforcement (0–4), and rejection of interlaced formats (Adam7) to prevent unbounded memory allocation and buffer overruns from untrusted image assets.
+

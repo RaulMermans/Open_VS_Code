@@ -30,6 +30,8 @@ export interface EvaluatorElementSnapshot {
   readonly computedStyle?: {
     readonly color?: string;
     readonly backgroundColor?: string;
+    readonly effectiveBackgroundColor?: string;
+    readonly opacity?: string;
     readonly fontSize?: string;
     readonly fontWeight?: string;
     readonly lineHeight?: string;
@@ -38,9 +40,13 @@ export interface EvaluatorElementSnapshot {
     readonly position?: string;
     readonly overflow?: string;
     readonly outlineStyle?: string;
+    readonly outlineWidth?: string;
+    readonly outlineColor?: string;
   };
   readonly isInteractive?: boolean;
+  readonly isVisible?: boolean;
   readonly hasFocusVisibleStyle?: boolean;
+  readonly focusBehavior?: string;
 }
 
 export interface VisualQAEvaluationContext {
@@ -58,9 +64,19 @@ export interface VisualQAEvaluationContext {
 // WCAG Contrast Ratio Calculator
 // ---------------------------------------------------------------------------
 
-function parseRgb(colorStr: string): [number, number, number] | null {
+function parseRgb(colorStr?: string): [number, number, number] | null {
   if (!colorStr) return null;
-  const hex = colorStr.trim().replace(/^#/, "");
+  const trimmed = colorStr.trim().toLowerCase();
+  if (
+    trimmed === "transparent" ||
+    trimmed === "inherit" ||
+    trimmed === "initial" ||
+    trimmed === "currentcolor" ||
+    trimmed === "not_evaluated"
+  ) {
+    return null;
+  }
+  const hex = trimmed.replace(/^#/, "");
   if (hex.length === 3) {
     return [
       parseInt(hex[0]! + hex[0]!, 16),
@@ -75,8 +91,10 @@ function parseRgb(colorStr: string): [number, number, number] | null {
       parseInt(hex.slice(4, 6), 16),
     ];
   }
-  const rgbMatch = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  const rgbMatch = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/i);
   if (rgbMatch) {
+    const alpha = rgbMatch[4] !== undefined ? parseFloat(rgbMatch[4]) : 1.0;
+    if (alpha <= 0.05) return null; // Treat fully transparent as indeterminate background
     return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
   }
   return null;
@@ -90,10 +108,11 @@ function relativeLuminance(rgb: [number, number, number]): number {
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
 }
 
-export function calculateContrastRatio(fgStr: string, bgStr: string): number {
+export function calculateContrastRatio(fgStr?: string, bgStr?: string): number | null {
+  if (!fgStr || !bgStr) return null;
   const fg = parseRgb(fgStr);
   const bg = parseRgb(bgStr);
-  if (!fg || !bg) return 21; // Assume high contrast if color is unparseable or transparent
+  if (!fg || !bg) return null; // Never fabricate high contrast for unparseable or transparent colors
   const l1 = relativeLuminance(fg);
   const l2 = relativeLuminance(bg);
   const lighter = Math.max(l1, l2);
@@ -204,24 +223,42 @@ export class VisualQAEvaluator {
       }
 
       // 3d. Color Contrast Ratio
-      if (el.computedStyle?.color && el.computedStyle?.backgroundColor && el.textContent?.trim()) {
-        const ratio = calculateContrastRatio(el.computedStyle.color, el.computedStyle.backgroundColor);
-        const fontSizePx = parseFloat(el.computedStyle.fontSize || "16");
-        const isLargeText = fontSizePx >= 24 || (fontSizePx >= 18.5 && el.computedStyle.fontWeight === "700");
-        const minRatio = isLargeText ? 3.0 : 4.5;
+      if (el.textContent?.trim()) {
+        const fg = el.computedStyle?.color;
+        const bg = el.computedStyle?.effectiveBackgroundColor || el.computedStyle?.backgroundColor;
+        if (fg && bg) {
+          const ratio = calculateContrastRatio(fg, bg);
+          if (ratio === null) {
+            findings.push({
+              findingId: createId(),
+              criterion: "color_contrast_wcag_aa",
+              category: "deterministic",
+              severity: "warning",
+              observedEvidence: `Unable to reliably evaluate text contrast for <${el.tag}> (refId: ${el.refId}): colors could not be determined or are transparent (fg: "${fg}", bg: "${bg}").`,
+              expectedBehavior: "All text elements must have resolvable foreground and background colors to verify contrast compliance.",
+              location: { refId: el.refId, selector: el.tag },
+              suggestedCorrection: "Ensure explicit, non-transparent background colors are set on text containers.",
+              confidence: 0.8,
+            });
+          } else {
+            const fontSizePx = parseFloat(el.computedStyle?.fontSize || "16");
+            const isLargeText = fontSizePx >= 24 || (fontSizePx >= 18.5 && el.computedStyle?.fontWeight === "700");
+            const minRatio = isLargeText ? 3.0 : 4.5;
 
-        if (ratio < minRatio && ratio > 1.05) { // ratio ~ 1.0 indicates transparent/identical background check
-          findings.push({
-            findingId: createId(),
-            criterion: "color_contrast_wcag_aa",
-            category: "deterministic",
-            severity: "critical",
-            observedEvidence: `Text contrast ratio of ${ratio.toFixed(2)}:1 falls below the required ${minRatio}:1 threshold (fg: ${el.computedStyle.color}, bg: ${el.computedStyle.backgroundColor}).`,
-            expectedBehavior: `Text must achieve minimum ${minRatio}:1 contrast ratio against its surface background.`,
-            location: { refId: el.refId, selector: el.tag },
-            suggestedCorrection: "Darken foreground text or lighten the background surface to achieve >= 4.5:1 contrast.",
-            confidence: 1.0,
-          });
+            if (ratio < minRatio) {
+              findings.push({
+                findingId: createId(),
+                criterion: "color_contrast_wcag_aa",
+                category: "deterministic",
+                severity: "critical",
+                observedEvidence: `Text contrast ratio of ${ratio.toFixed(2)}:1 falls below the required ${minRatio}:1 threshold (fg: ${fg}, bg: ${bg}).`,
+                expectedBehavior: `Text must achieve minimum ${minRatio}:1 contrast ratio against its surface background.`,
+                location: { refId: el.refId, selector: el.tag },
+                suggestedCorrection: "Darken foreground text or lighten the background surface to achieve >= 4.5:1 contrast.",
+                confidence: 1.0,
+              });
+            }
+          }
         }
       }
     }
@@ -309,8 +346,8 @@ export class VisualQAEvaluator {
     score = Math.max(0, Math.min(100, score));
 
     const summary = overallPass
-      ? `Visual QA passed (Score: ${score}/100): 0 blockers, 0 critical issues across ${context.elements.length} inspected elements.`
-      : `Visual QA identified ${findings.length} issue(s) (Score: ${score}/100): ${blockerCount} blocker(s), ${criticalCount} critical, ${warningCount} warning(s).`;
+      ? `Visual QA passed automated evaluation (Score: ${score}/100): 0 blockers, 0 critical issues across ${context.elements.length} inspected elements (limited automated checks: contrast, overflow, focus, accessible names; does not guarantee complete manual WCAG AA compliance).`
+      : `Visual QA identified ${findings.length} issue(s) (Score: ${score}/100): ${blockerCount} blocker(s), ${criticalCount} critical, ${warningCount} warning(s) (does not guarantee complete manual WCAG AA compliance).`;
 
     return {
       reportId: `vqa-${Date.now()}`,

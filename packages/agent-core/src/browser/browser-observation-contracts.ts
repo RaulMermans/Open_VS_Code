@@ -56,6 +56,52 @@ export function resolveViewportPresetId(viewport: BrowserViewportDimensions): Vi
   return "custom";
 }
 
+// ---------------------------------------------------------------------------
+// Sprint 9C.1 — Bounded Visual QA In-Browser Observation Contracts
+// ---------------------------------------------------------------------------
+
+export interface ObservedVisualQaElement {
+  readonly refId: string;
+  readonly tag: string;
+  readonly role: string;
+  readonly accessibleName: string;
+  readonly textContent?: string;
+  readonly bounds?: { x: number; y: number; width: number; height: number };
+  readonly isVisible: boolean;
+  readonly isInteractive: boolean;
+  readonly computedStyle: {
+    readonly color?: string;
+    readonly backgroundColor?: string;
+    readonly effectiveBackgroundColor?: string;
+    readonly opacity?: string;
+    readonly fontSize?: string;
+    readonly fontWeight?: string;
+    readonly lineHeight?: string;
+    readonly fontFamily?: string;
+    readonly display?: string;
+    readonly position?: string;
+    readonly overflow?: string;
+    readonly outlineStyle?: string;
+    readonly outlineWidth?: string;
+    readonly outlineColor?: string;
+  };
+  readonly hasFocusVisibleStyle?: boolean;
+  readonly focusBehavior?: string;
+}
+
+export interface ObservedVisualQaState {
+  readonly targetUrl: string;
+  readonly viewport: BrowserViewportDimensions;
+  readonly presetId: ViewportPresetId;
+  readonly clientWidth: number;
+  readonly scrollWidth: number;
+  readonly clientHeight: number;
+  readonly scrollHeight: number;
+  readonly elements: readonly ObservedVisualQaElement[];
+  readonly consoleErrors: readonly string[];
+  readonly capturedAt: number;
+}
+
 /**
  * Bounded element geometry for screenshot overlay highlighting ONLY.
  * Tied to exact `sessionId`, `snapshotId`, `url`, and `viewport`.
