@@ -14,6 +14,7 @@ import type {
   FrameTimingSample,
   LayoutShiftRecord,
   MeasuredMotionObservation,
+  MotionEvaluationVerdict,
   MotionFailure,
   MotionInterruptionSample,
   MotionQualityReport,
@@ -29,6 +30,7 @@ export interface MotionEvaluationInput {
   readonly animations: readonly ActiveAnimationRecord[];
   readonly layoutShifts?: readonly LayoutShiftRecord[];
   readonly interruption?: MotionInterruptionSample;
+  readonly unsupportedMeasurement?: boolean;
 }
 
 // Properties known to cause browser layout recalculation and paint thrashing
@@ -60,8 +62,69 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
   const failures: MotionFailure[] = [];
   const layoutThrashingSet = new Set<string>();
 
-  // 1. Frame Timing & Jank Analysis
-  const frameTimings = input.frameTimings;
+  const limitationNotice =
+    "In-page rAF frame sampling measures main-thread frame intervals over the capture window; it does not reflect GPU hardware compositor scheduling or universal 60 FPS performance across arbitrary client hardware.";
+
+  const frameTimings = input.frameTimings || [];
+  const animations = input.animations || [];
+  const animationCount = animations.length;
+  const reducedMotionTested = Boolean(input.prefersReducedMotion);
+
+  // 0. Unsupported Measurement Check
+  if (input.unsupportedMeasurement) {
+    failures.push({
+      failureCode: "UNSUPPORTED_MEASUREMENT",
+      severity: "blocker",
+      details: "Browser environment does not support requestAnimationFrame temporal sampling or Web Animations API.",
+    });
+    const report: MotionQualityReport = {
+      verdict: "unsupported_measurement",
+      measuredFps: 0,
+      minFps: 0,
+      jankCount: 0,
+      totalFrames: 0,
+      animationCount: 0,
+      layoutThrashingProperties: [],
+      reducedMotionCompliant: false,
+      reducedMotionTested,
+      totalLayoutShift: 0,
+      motionQualityClaimAllowed: false,
+      failures,
+      score: 0,
+      summary: "Motion measurement unsupported in active browser environment.",
+      limitationNotice,
+    };
+    return {
+      sessionId: input.sessionId,
+      url: input.url,
+      viewport: input.viewport,
+      capturedAt: Date.now(),
+      evidenceKind: "multi_frame_sample",
+      prefersReducedMotion: input.prefersReducedMotion,
+      frameTimings: [],
+      animations: [],
+      layoutShifts: [],
+      report,
+    };
+  }
+
+  // 1. Evidence sufficiency & animation presence checks
+  if (frameTimings.length < 5) {
+    failures.push({
+      failureCode: "INSUFFICIENT_EVIDENCE",
+      severity: "blocker",
+      details: `Insufficient frame timing telemetry captured (${frameTimings.length} frame(s)). A minimum of 5 frames is required.`,
+    });
+  } else if (animationCount === 0) {
+    failures.push({
+      failureCode: "NO_ANIMATION_DETECTED",
+      severity: "warning",
+      details:
+        "No active animations, transitions, or keyframe effects were detected during the measurement window. Cannot authorize motion-quality claims without active animation evidence.",
+    });
+  }
+
+  // 2. Frame Timing & Jank Analysis
   let totalDelta = 0;
   let maxDelta = 0;
   let jankCount = 0;
@@ -88,8 +151,8 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
     });
   }
 
-  // 2. Layout Thrashing Properties Audit
-  for (const anim of input.animations) {
+  // 3. Layout Thrashing Properties Audit
+  for (const anim of animations) {
     const prop = anim.propertyName.toLowerCase();
     if (LAYOUT_THRASHING_PROPERTIES.has(prop) && !anim.isComposited) {
       layoutThrashingSet.add(prop);
@@ -101,7 +164,7 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
       });
     }
 
-    // 3. Duration & Easing Bounds
+    // 4. Duration & Easing Bounds
     if (anim.durationMs > 800) {
       failures.push({
         failureCode: "DURATION_TOO_LONG",
@@ -119,12 +182,19 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
     }
   }
 
-  // 4. Reduced-Motion Compliance
+  // 5. Reduced-Motion Compliance
   let reducedMotionCompliant = true;
-  if (input.prefersReducedMotion) {
-    for (const anim of input.animations) {
-      if (anim.durationMs > 10 && (anim.propertyName.includes("translate") || anim.propertyName.includes("rotate") || anim.propertyName.includes("scale"))) {
-        reducedMotionCompliant = false;
+  if (reducedMotionTested) {
+    let hasMotionViolations = false;
+    for (const anim of animations) {
+      if (
+        anim.durationMs > 10 &&
+        (anim.propertyName.includes("transform") ||
+          anim.propertyName.includes("translate") ||
+          anim.propertyName.includes("rotate") ||
+          anim.propertyName.includes("scale"))
+      ) {
+        hasMotionViolations = true;
         failures.push({
           failureCode: "MISSING_REDUCED_MOTION_ALTERNATIVE",
           severity: "blocker",
@@ -133,9 +203,10 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
         });
       }
     }
+    reducedMotionCompliant = !hasMotionViolations;
   }
 
-  // 5. Cumulative Layout Shift (CLS) during Animation
+  // 6. Cumulative Layout Shift (CLS) during Animation
   const layoutShifts = input.layoutShifts || [];
   let totalLayoutShift = 0;
   for (const shift of layoutShifts) {
@@ -149,7 +220,7 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
     });
   }
 
-  // 6. Interruption Handling
+  // 7. Interruption Handling
   if (input.interruption && input.interruption.snapDetected) {
     failures.push({
       failureCode: "INTERRUPTION_SNAP",
@@ -158,7 +229,7 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
     });
   }
 
-  // Determine overall score and claim authorization
+  // Determine overall score, verdict, and claim authorization
   const layoutThrashingProperties = Array.from(layoutThrashingSet);
   const blockerCount = failures.filter((f) => f.severity === "blocker").length;
   const warningCount = failures.filter((f) => f.severity === "warning").length;
@@ -167,35 +238,67 @@ export function evaluateMotionObservations(input: MotionEvaluationInput): Measur
   if (measuredFps < 50) score -= (50 - measuredFps);
   score = Math.max(0, Math.min(100, Math.round(score)));
 
-  const motionQualityClaimAllowed =
-    blockerCount === 0 &&
-    measuredFps >= 55 &&
-    jankCount === 0 &&
-    layoutThrashingProperties.length === 0 &&
-    reducedMotionCompliant;
+  let verdict: MotionEvaluationVerdict;
+  let motionQualityClaimAllowed = false;
 
-  const summary = motionQualityClaimAllowed
-    ? `Smooth motion verified: measured ${measuredFps} FPS (min ${minFps} FPS), zero layout thrashing, and verified reduced-motion compliance.`
-    : `Motion quality issues detected (Score: ${score}/100): ${failures.length} issue(s) identified. ${
-        layoutThrashingProperties.length > 0
-          ? `Layout thrashing on ${layoutThrashingProperties.join(", ")}. `
-          : ""
-      }${jankCount > 0 ? `${jankCount} dropped frame(s). ` : ""}${
-        !reducedMotionCompliant ? "Reduced-motion non-compliant." : ""
+  if (input.unsupportedMeasurement) {
+    verdict = "unsupported_measurement";
+    motionQualityClaimAllowed = false;
+  } else if (frameTimings.length < 5) {
+    verdict = "insufficient_evidence";
+    motionQualityClaimAllowed = false;
+  } else if (animationCount === 0) {
+    verdict = "no_animation_detected";
+    motionQualityClaimAllowed = false;
+  } else if (blockerCount > 0 || measuredFps < 50 || jankCount > 0 || layoutThrashingProperties.length > 0) {
+    verdict = "measured_failing";
+    motionQualityClaimAllowed = false;
+  } else {
+    verdict = "measured_passing";
+    motionQualityClaimAllowed = true;
+  }
+
+  let summary = "";
+  switch (verdict) {
+    case "measured_passing":
+      summary = `Smooth motion verified: measured ${measuredFps} FPS (min ${minFps} FPS), zero layout thrashing across ${animationCount} active animation(s).${
+        reducedMotionTested ? (reducedMotionCompliant ? " Verified reduced-motion compliant." : " Reduced-motion non-compliant.") : " (Reduced-motion preference not tested in this capture)."
       }`;
+      break;
+    case "no_animation_detected":
+      summary = "No active animations detected during measurement window. Cannot authorize motion-quality claims without active animation evidence.";
+      break;
+    case "insufficient_evidence":
+      summary = `Insufficient measurement evidence: captured ${frameTimings.length} frames (minimum 5 required).`;
+      break;
+    case "unsupported_measurement":
+      summary = "Motion measurement unsupported in active browser context.";
+      break;
+    case "measured_failing":
+      summary = `Motion quality defects detected (Score: ${score}/100): ${failures.length} issue(s) identified. ${
+        layoutThrashingProperties.length > 0 ? `Layout thrashing on ${layoutThrashingProperties.join(", ")}. ` : ""
+      }${jankCount > 0 ? `${jankCount} dropped frame(s). ` : ""}${
+        reducedMotionTested && !reducedMotionCompliant ? "Reduced-motion non-compliant. " : ""
+      }`;
+      break;
+  }
 
   const report: MotionQualityReport = {
+    verdict,
     measuredFps,
     minFps,
     jankCount,
     totalFrames: frameTimings.length,
+    animationCount,
     layoutThrashingProperties,
     reducedMotionCompliant,
+    reducedMotionTested,
     totalLayoutShift: Number(totalLayoutShift.toFixed(4)),
     motionQualityClaimAllowed,
     failures,
     score,
     summary,
+    limitationNotice,
   };
 
   return {

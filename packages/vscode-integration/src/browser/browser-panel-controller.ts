@@ -1000,32 +1000,18 @@ export class BrowserPanelController {
       const evaluator = new VisualQAEvaluator();
       const differenceRegions = this.#visualComparison?.diffResult?.regions;
 
-      const elements = this.#latestSnapshot.elements.map((el) => ({
-        refId: el.refId,
-        tag: el.tag,
-        role: el.role,
-        accessibleName: el.name,
-        textContent: el.name,
-        bounds: el.bounds,
-        isInteractive: Boolean(el.interactiveState),
-        computedStyle: {
-          color: el.tag === "button" ? "#ffffff" : "#0f172a",
-          backgroundColor: el.tag === "button" ? "#2563eb" : "#ffffff",
-        },
-      }));
+      // Extract real browser evidence via bounded read-only observation (zero synthetic values)
+      const observed = await manager.observeVisualQaState();
 
-      const vp =
-        this.#latestSnapshot.viewport ??
-        (manager ? manager.getViewport() : this.#pendingViewport);
       const report = evaluator.evaluate({
-        targetUrl: this.#latestSnapshot.url,
-        viewport: vp,
-        presetId: resolveViewportPresetId(vp),
-        elements,
-        consoleErrors: this.#consoleErrors,
+        targetUrl: observed.targetUrl,
+        viewport: observed.viewport,
+        presetId: observed.presetId,
+        elements: observed.elements,
+        consoleErrors: Array.from(new Set([...observed.consoleErrors, ...this.#consoleErrors])),
         differenceRegions,
-        clientWidth: vp.width,
-        scrollWidth: vp.width,
+        clientWidth: observed.clientWidth,
+        scrollWidth: observed.scrollWidth,
       });
 
       this.#visualQaReport = report;

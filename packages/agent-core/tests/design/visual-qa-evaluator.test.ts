@@ -17,23 +17,23 @@ describe("Sprint 9C — Visual QA Evaluator Engine", () => {
   it("1. calculateContrastRatio accurately calculates WCAG contrast ratios", () => {
     // Pure black on pure white -> 21:1
     const blackOnWhite = calculateContrastRatio("#000000", "#ffffff");
-    assert.ok(blackOnWhite >= 20.9 && blackOnWhite <= 21.1, `Expected ~21:1, got ${blackOnWhite}`);
+    assert.ok(blackOnWhite !== null && blackOnWhite >= 20.9 && blackOnWhite <= 21.1, `Expected ~21:1, got ${blackOnWhite}`);
 
     // Pure white on pure black -> 21:1
     const whiteOnBlack = calculateContrastRatio("#ffffff", "#000000");
-    assert.ok(whiteOnBlack >= 20.9 && whiteOnBlack <= 21.1, `Expected ~21:1, got ${whiteOnBlack}`);
+    assert.ok(whiteOnBlack !== null && whiteOnBlack >= 20.9 && whiteOnBlack <= 21.1, `Expected ~21:1, got ${whiteOnBlack}`);
 
     // Mid-gray #767676 on white -> WCAG AA 4.54:1 boundary
     const grayOnWhite = calculateContrastRatio("#767676", "#ffffff");
-    assert.ok(grayOnWhite >= 4.5, `Expected >= 4.5:1 for #767676, got ${grayOnWhite}`);
+    assert.ok(grayOnWhite !== null && grayOnWhite >= 4.5, `Expected >= 4.5:1 for #767676, got ${grayOnWhite}`);
 
     // Light gray #cccccc on white -> Fail (< 2.0:1)
     const lightGrayOnWhite = calculateContrastRatio("#cccccc", "#ffffff");
-    assert.ok(lightGrayOnWhite < 2.0, `Expected < 2.0:1 for #cccccc, got ${lightGrayOnWhite}`);
+    assert.ok(lightGrayOnWhite !== null && lightGrayOnWhite < 2.0, `Expected < 2.0:1 for #cccccc, got ${lightGrayOnWhite}`);
 
     // rgb() format parsing
     const rgbTest = calculateContrastRatio("rgb(0, 0, 0)", "rgb(255, 255, 255)");
-    assert.ok(rgbTest >= 20.9, `Expected ~21:1 from rgb(), got ${rgbTest}`);
+    assert.ok(rgbTest !== null && rgbTest >= 20.9, `Expected ~21:1 from rgb(), got ${rgbTest}`);
   });
 
   it("2. Clean DOM context yields score 100 with deterministicPass and overallPass true", () => {
@@ -263,5 +263,41 @@ describe("Sprint 9C — Visual QA Evaluator Engine", () => {
     assert.ok(finding);
     assert.equal(finding?.severity, "suggestion");
     assert.equal(finding?.category, "judgment_based");
+  });
+
+  it("10. Unparseable, transparent, or indeterminate colors return null and produce inconclusive warnings instead of 21:1", () => {
+    // Unparseable colors return null
+    assert.equal(calculateContrastRatio("not_evaluated", "#ffffff"), null);
+    assert.equal(calculateContrastRatio("transparent", "#ffffff"), null);
+    assert.equal(calculateContrastRatio("invalid-color", "#000000"), null);
+    assert.equal(calculateContrastRatio(undefined, "#ffffff"), null);
+
+    const evaluator = new VisualQAEvaluator();
+    const context: VisualQAEvaluationContext = {
+      targetUrl: "http://localhost:3000",
+      viewport: { width: 1280, height: 800 },
+      presetId: "desktop",
+      elements: [
+        {
+          refId: "el-unparseable",
+          tag: "p",
+          role: "paragraph",
+          accessibleName: "Indeterminate text",
+          textContent: "Some text with unknown background",
+          computedStyle: {
+            color: "#111111",
+            backgroundColor: "transparent",
+            effectiveBackgroundColor: "transparent",
+          },
+        },
+      ],
+    };
+
+    const report = evaluator.evaluate(context);
+    const finding = report.findings.find((f) => f.criterion === "color_contrast_wcag_aa");
+    assert.ok(finding, "Expected finding for indeterminate colors");
+    assert.equal(finding?.severity, "warning");
+    assert.ok(finding?.observedEvidence.includes("could not be determined or are transparent"));
+    assert.ok(report.summary.includes("does not guarantee complete manual WCAG AA compliance"));
   });
 });

@@ -76,3 +76,54 @@ limitations under the License.
 - **Audited Snapshot**: `59d5028` (2026-04-15)
 - **License**: CC0-1.0 Universal
 - **Classification**: Ecosystem discovery radar (`REFERENCE_ONLY`).
+
+---
+
+## 5. Design & Motion Intelligence Upstream Provenance (Sprint 9C / 9C.1)
+
+### 5.1 Anthropic Skills / Frontend Design
+
+- **Project**: [Anthropic Skills](https://github.com/anthropics/skills)
+- **Audited Snapshot**: `2e4fa71`
+- **License**: Apache License, Version 2.0
+- **Classification**: Art direction, composition rules, responsive design heuristics (`ADAPT`).
+- **Notice**: Licensed under the Apache License, Version 2.0. Copyright Anthropic, PBC.
+
+### 5.2 Impeccable
+
+- **Project**: [Impeccable](https://github.com/pbakaus/impeccable)
+- **Audited Snapshot**: `c3bf1e8`
+- **License**: Apache License, Version 2.0
+- **Classification**: Shape-before-build stage progression, design critique checklists, persistent design docs (`ADAPT`).
+- **Notice**: Licensed under the Apache License, Version 2.0. Copyright Paul Bakaus.
+
+### 5.3 UI UX Pro Max
+
+- **Project**: [UI UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)
+- **Audited Snapshot**: `a14d5e9`
+- **License**: MIT License
+- **Classification**: Design token derivation, harmonic color pairings, responsive UX rules (`ADAPT`).
+- **Notice**: Copyright (c) 2026 nextlevelbuilder.
+
+### 5.4 Vercel Agent Skills
+
+- **Project**: [Vercel Agent Skills](https://github.com/vercel-labs/agent-skills)
+- **Audited Snapshot**: `8d4b321`
+- **License**: Apache License, Version 2.0
+- **Classification**: Web design guidelines, semantic structure principles, layout stability checks (`ADAPT`).
+- **Notice**: Licensed under the Apache License, Version 2.0. Copyright (c) Vercel, Inc.
+
+### 5.5 Motion
+
+- **Project**: [Motion](https://github.com/motiondivision/motion)
+- **Audited Snapshot**: `e76f920`
+- **License**: MIT License
+- **Classification**: Composited transform/opacity animation principles, frame rate sampling, reduced-motion patterns (`ADAPT`).
+- **Notice**: Copyright (c) Motion Division.
+
+### 5.6 React Bits (EXCLUDED)
+
+- **Project**: [React Bits](https://github.com/DavidHDev/react-bits)
+- **Audited Snapshot**: `d12e84a`
+- **License**: Commons Clause (Non-Commercial / Restricted)
+- **Classification**: `REFERENCE_ONLY / EXCLUDED`. Zero code or components from React Bits are bundled, distributed, or integrated into Open VS Code.

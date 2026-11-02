@@ -244,6 +244,13 @@ export interface MotionInterruptionSample {
   readonly snapDetected: boolean;
 }
 
+export type MotionEvaluationVerdict =
+  | "measured_passing"
+  | "measured_failing"
+  | "no_animation_detected"
+  | "unsupported_measurement"
+  | "insufficient_evidence";
+
 export interface MotionFailure {
   readonly failureCode:
     | "LAYOUT_THRASHING_PROPERTY"
@@ -252,24 +259,31 @@ export interface MotionFailure {
     | "MISSING_REDUCED_MOTION_ALTERNATIVE"
     | "FRAME_JANK_DETECTED"
     | "UNWANTED_LAYOUT_SHIFT"
-    | "INTERRUPTION_SNAP";
+    | "INTERRUPTION_SNAP"
+    | "NO_ANIMATION_DETECTED"
+    | "INSUFFICIENT_EVIDENCE"
+    | "UNSUPPORTED_MEASUREMENT";
   readonly severity: "blocker" | "warning";
   readonly details: string;
   readonly affectedElement?: string;
 }
 
 export interface MotionQualityReport {
+  readonly verdict: MotionEvaluationVerdict;
   readonly measuredFps: number;
   readonly minFps: number;
   readonly jankCount: number;
   readonly totalFrames: number;
+  readonly animationCount: number;
   readonly layoutThrashingProperties: readonly string[];
   readonly reducedMotionCompliant: boolean;
+  readonly reducedMotionTested: boolean;
   readonly totalLayoutShift: number;
   readonly motionQualityClaimAllowed: boolean;
   readonly failures: readonly MotionFailure[];
   readonly score: number; // 0 - 100
   readonly summary: string;
+  readonly limitationNotice: string;
 }
 
 export interface MeasuredMotionObservation {
@@ -340,6 +354,13 @@ export interface DesignWorkflowConfig {
   readonly maxImprovementIterations?: number | undefined; // default 3
   readonly autoApproveLowRiskEdits?: boolean | undefined;
   readonly targetUrl?: string | undefined;
+  readonly workspaceRoot?: string | undefined;
+  readonly mutationEngine?: any | undefined;
+  readonly browserSessionManager?: any | undefined;
+  readonly componentFilePath?: string | undefined;
+  readonly motionFilePath?: string | undefined;
+  readonly tokensFilePath?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface DesignWorkflowIteration {

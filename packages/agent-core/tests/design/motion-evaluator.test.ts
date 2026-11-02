@@ -206,4 +206,128 @@ describe("Sprint 9C — Real Measured Motion Evaluation Engine", () => {
     assert.equal(result.report.motionQualityClaimAllowed, false);
     assert.ok(result.report.failures.some((f) => f.failureCode === "UNWANTED_LAYOUT_SHIFT"));
   });
+
+  test("7. Returns no_animation_detected and denies claim when 0 animations ran despite smooth 60 FPS frames", () => {
+    const frameTimings = Array.from({ length: 30 }, (_, i) => ({
+      frameIndex: i,
+      timestampMs: i * 16.6,
+      deltaMs: 16.6,
+    }));
+
+    const result = evaluateMotionObservations({
+      sessionId: "sess_no_anim",
+      url: "http://127.0.0.1:3000/static",
+      viewport: defaultViewport,
+      prefersReducedMotion: false,
+      frameTimings,
+      animations: [],
+    });
+
+    assert.equal(result.report.verdict, "no_animation_detected");
+    assert.equal(result.report.motionQualityClaimAllowed, false);
+    assert.ok(result.report.failures.some((f) => f.failureCode === "NO_ANIMATION_DETECTED"));
+    assert.ok(result.report.summary.includes("Cannot authorize motion-quality claims without active animation evidence"));
+  });
+
+  test("8. Returns insufficient_evidence and denies claim when fewer than 5 frame timings captured", () => {
+    const result = evaluateMotionObservations({
+      sessionId: "sess_insufficient",
+      url: "http://127.0.0.1:3000/partial",
+      viewport: defaultViewport,
+      prefersReducedMotion: false,
+      frameTimings: [
+        { frameIndex: 0, timestampMs: 0, deltaMs: 16 },
+        { frameIndex: 1, timestampMs: 16, deltaMs: 16 },
+      ],
+      animations: [
+        {
+          elementTag: "button",
+          elementRole: "button",
+          accessibleName: "Submit",
+          animationName: "fade",
+          propertyName: "opacity",
+          durationMs: 200,
+          easing: "ease",
+          isComposited: true,
+          causesLayoutShift: false,
+        },
+      ],
+    });
+
+    assert.equal(result.report.verdict, "insufficient_evidence");
+    assert.equal(result.report.motionQualityClaimAllowed, false);
+    assert.ok(result.report.failures.some((f) => f.failureCode === "INSUFFICIENT_EVIDENCE"));
+  });
+
+  test("9. Returns unsupported_measurement when browser cannot sample animations or frames", () => {
+    const result = evaluateMotionObservations({
+      sessionId: "sess_unsupported",
+      url: "http://127.0.0.1:3000/legacy",
+      viewport: defaultViewport,
+      prefersReducedMotion: false,
+      frameTimings: [],
+      animations: [],
+      unsupportedMeasurement: true,
+    });
+
+    assert.equal(result.report.verdict, "unsupported_measurement");
+    assert.equal(result.report.motionQualityClaimAllowed, false);
+    assert.ok(result.report.failures.some((f) => f.failureCode === "UNSUPPORTED_MEASUREMENT"));
+  });
+
+  test("10. Distinguishes measured_passing and measured_failing verdicts based on layout thrashing", () => {
+    const frameTimings = Array.from({ length: 25 }, (_, i) => ({
+      frameIndex: i,
+      timestampMs: i * 16.6,
+      deltaMs: 16.6,
+    }));
+
+    // Passing animation
+    const passResult = evaluateMotionObservations({
+      sessionId: "sess_pass",
+      url: "http://127.0.0.1:3000/pass",
+      viewport: defaultViewport,
+      prefersReducedMotion: false,
+      frameTimings,
+      animations: [
+        {
+          elementTag: "div",
+          elementRole: "dialog",
+          accessibleName: "Modal",
+          animationName: "pop",
+          propertyName: "transform",
+          durationMs: 200,
+          easing: "ease-out",
+          isComposited: true,
+          causesLayoutShift: false,
+        },
+      ],
+    });
+    assert.equal(passResult.report.verdict, "measured_passing");
+    assert.equal(passResult.report.motionQualityClaimAllowed, true);
+
+    // Failing animation
+    const failResult = evaluateMotionObservations({
+      sessionId: "sess_fail",
+      url: "http://127.0.0.1:3000/fail",
+      viewport: defaultViewport,
+      prefersReducedMotion: false,
+      frameTimings,
+      animations: [
+        {
+          elementTag: "div",
+          elementRole: "dialog",
+          accessibleName: "Modal",
+          animationName: "pop",
+          propertyName: "height",
+          durationMs: 200,
+          easing: "ease-out",
+          isComposited: false,
+          causesLayoutShift: true,
+        },
+      ],
+    });
+    assert.equal(failResult.report.verdict, "measured_failing");
+    assert.equal(failResult.report.motionQualityClaimAllowed, false);
+  });
 });

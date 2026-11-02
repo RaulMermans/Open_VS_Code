@@ -292,18 +292,20 @@ UI / future Runtime Evals:
   - opening the browser panel never launches Chromium or navigates; cross-workspace and cross-account attachment is rejected fail-closed.
 - **Result**: untrusted web content cannot execute scripts inside the Webview, coordinates cannot bypass `PermissionGate`, opening the panel consumes zero browser resources, and secrets are redacted from view state. Evidence: `packages/vscode-integration/tests/browser-panel-security-9b.test.ts` (12 scenarios) and `packages/vscode-integration/tests/browser-panel-9b.test.ts` (13 scenarios).
 
-### Advanced Design & Motion Security (Sprint 9C, ADR-041)
+### Advanced Design & Motion Security (Sprint 9C & 9C.1, ADR-041)
 - **Input**:
-  - malicious or corrupted PNG images crafted to trigger buffer overflows, native library crashes, or infinite loops in image decompression tools;
+  - malicious, malformed, or corrupted PNG images crafted to trigger buffer overflows, native library crashes, decompression bombs, or infinite loops in image decompression tools;
   - subjective or fabricated claims by language models asserting "smooth, fluid animation" or "accessible UI" without empirical verification;
+  - hardcoded or fabricated QA inputs in browser panels substituting favorable synthetic values for unobserved browser state;
   - animation definitions that cause severe browser layout thrashing, main-thread blocking, frame dropping, or vestibular triggering for users with motion sensitivity;
-  - color combinations violating WCAG 2.1 AA accessibility guidelines or elements lacking accessible names/focus outlines.
+  - color combinations violating WCAG 2.1 AA accessibility guidelines, transparent/indeterminate color calculations, or elements lacking accessible names/focus outlines.
 - **Control**:
-  - `visual-comparison.ts` decodes and encodes PNG chunks using only pure TypeScript and Node's built-in `node:zlib`, rejecting native image bindings (`sharp`, `canvas`) and enforcing byte-level bounding limits;
-  - `motion-evaluator.ts` strictly gates `motionQualityClaimAllowed`, requiring empirical in-browser `requestAnimationFrame` sampling showing $\ge 50$ FPS, 0 jank pauses ($>50\text{ ms}$), and zero layout thrashing properties (`top`, `left`, `width`, `height`, etc.) in `document.getAnimations()`;
-  - `exportCssVariables()` automatically generates zero-duration transitions under `@media (prefers-reduced-motion: reduce)`;
-  - `visual-qa-evaluator.ts` executes deterministic mathematical evaluations of WCAG 2.1 AA contrast ratios (4.5:1 / 3.0:1) and layout bounds, operating as an independent auditor rather than trusting model self-critique.
-- **Result**: zero supply-chain risk from native image bindings, motion claims cannot be fabricated without empirical telemetry, vestibular accessibility is guaranteed, and contrast failures are caught deterministically. Evidence: `packages/agent-core/tests/design/` (36 scenarios) and `packages/agent-core/tests/browser/browser-motion-real-chromium.test.ts`.
+  - `visual-comparison.ts` decodes and encodes PNG chunks using only pure TypeScript and Node's built-in `node:zlib`, rejecting native image bindings (`sharp`, `canvas`) while strictly enforcing input bounds (25 MB), decompressed bounds (64 MB), dimension bounds ($4096 \times 4096$), max pixel allocation (8M pixels), chunk CRC32 checksums, and Adam7 interlacing rejection;
+  - `motion-evaluator.ts` strictly gates `motionQualityClaimAllowed`, requiring active animations under test, empirical in-browser `requestAnimationFrame` sampling showing $\ge 50$ FPS, 0 jank pauses ($>50\text{ ms}$), zero layout thrashing properties (`top`, `left`, `width`, `height`, etc.) in `document.getAnimations()`, and explicit reduced-motion verification under `prefers-reduced-motion: reduce`;
+  - `GovernedDesignWorkflow` executes real file modifications via `MutationEngine.applyPreparedMutation()` gated behind `IdeHost.requestConfirmation` without secondary agent runtimes or autonomous bypasses;
+  - `BrowserSessionManager.observeVisualQaState()` extracts bounded, read-only computed styles, composited background colors, bounds, and layout metrics without exposing arbitrary `page.evaluate` execution to model prompts;
+  - `visual-qa-evaluator.ts` executes deterministic mathematical evaluations of WCAG 2.1 AA contrast ratios, returning `null` with inconclusive warnings for indeterminate or unparseable colors rather than fabricating 21:1 passes.
+- **Result**: zero supply-chain risk from native image bindings, memory-safe PNG processing protected against decompression bombs, motion claims strictly backed by observed animations, visual QA observation grounded in actual browser telemetry, and all mutations governed by explicit human confirmation. Evidence: `packages/agent-core/tests/design/` (61 scenarios), `packages/agent-core/tests/browser/browser-motion-real-chromium.test.ts`, and `packages/vscode-integration/tests/browser-panel-real-chromium-9b.test.ts`.
 
 ---
 
@@ -338,6 +340,8 @@ UI / future Runtime Evals:
 27. **Browser observation strictly separates from execution**: opening or revealing the visual browser panel never starts Chromium or navigates; the panel passively observes the single authoritative session, suspending captures when hidden and evicting older screenshots via an outside-repository ring buffer.
 28. **Webview observation preserves strict DOM isolation**: panel HTML renders untrusted content exclusively through pure DOM `textContent` under a strict Content Security Policy; remote scripts, arbitrary HTML injection, and Webview execution of JavaScript `eval` or CDP commands are strictly prohibited.
 29. **Element inspection overlays are coordinate-free**: element bounding-box overlays use `pointer-events: none` and cannot serve as alternative or unvalidated tool execution targets; manual actions must pass canonical target fingerprinting and `PermissionGate` revalidation.
+30. **Image decompression enforces bounded memory allocation**: PNG decoding strictly rejects inputs exceeding 25 MB, decompressed buffers exceeding 64 MB, dimensions exceeding $4096 \times 4096$, total pixel allocations exceeding 8M pixels, corrupted chunk lengths, invalid filter algorithms, and failed CRC32 checksums.
+31. **Evaluation integrity forbids fabricated or synthetic defaults**: Browser visual QA and motion evaluators strictly reject synthetic positive defaults; unobserved or indeterminate color contrasts yield `null` with explicit warnings rather than fabricated passes; motion claims require verified active animations.
 30. **Zero external native dependencies for image processing**: visual diffing and PNG processing are executed strictly in pure TypeScript with `node:zlib`; no native C/C++ compiled binaries (`sharp`, `canvas`) are permitted.
 31. **Motion quality claims require empirical telemetry**: agents are forbidden from asserting motion quality or fluid performance unless backed by real Chromium `requestAnimationFrame` sampling ($\ge 50$ FPS, 0 jank pauses $>50\text{ ms}$, 0 layout thrashing animated properties).
 32. **Vestibular accessibility is enforced**: design tokens and CSS exports automatically generate zero-duration transitions under `@media (prefers-reduced-motion: reduce)`.
