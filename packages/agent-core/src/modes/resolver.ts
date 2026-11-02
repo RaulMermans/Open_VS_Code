@@ -2,6 +2,7 @@ import type { AgentMode } from "../contracts/agent.ts";
 import type { ToolAction } from "../contracts/tools.ts";
 import { classifyPermission } from "../tools/permissions.ts";
 import type {
+  ModeReadinessStatus,
   ModeResolverInput,
   ResolvedExecutionProfile,
 } from "./contracts.ts";
@@ -224,7 +225,10 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
     if (globalWorkflowEnabled) {
       effectiveWorkflow = "structured";
     } else {
-      diagnostics.push('Structured workflow requested by profile, but global workflow flag is disabled; running in "direct" mode.');
+      isReady = false;
+      diagnostics.push(
+        `Specialized mode "${profile.name}" prefers structured workflow, but global workflow flag is disabled (open-vs-code.workflow.enabled: false). Enable it in Settings or run "Open VS Code: Enable Structured Workflow" to use this mode.`
+      );
       effectiveWorkflow = "direct";
     }
   }
@@ -245,6 +249,21 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
     permissionRestrictions.push(`Mode utilizes base mode ${baseMode}. All mutations are strictly prohibited.`);
   }
 
+  let readinessStatus: ModeReadinessStatus = "READY";
+  if (!workspaceTrusted && MUTATING_MODES.has(baseMode)) {
+    readinessStatus = "UNSUPPORTED";
+  } else if (accountPolicy?.allowedModes && !accountPolicy.allowedModes.includes(profile.id)) {
+    readinessStatus = "UNSUPPORTED";
+  } else if (profile.workflowPreference === "structured" && !globalWorkflowEnabled) {
+    readinessStatus = "DISABLED";
+  } else if (missingRequiredSkills.length > 0 && globalSkillsEnabled === false) {
+    readinessStatus = "DISABLED";
+  } else if (missingRequiredSkills.length > 0 || missingRequiredMcpServers.length > 0) {
+    readinessStatus = "NOT_CONFIGURED";
+  } else if (!isReady) {
+    readinessStatus = "NOT_CONFIGURED";
+  }
+
   const snapshot: ResolvedExecutionProfile = {
     profileId: profile.id,
     profileVersion: profile.version,
@@ -263,6 +282,7 @@ export function resolveExecutionProfile(input: ModeResolverInput): ResolvedExecu
     effectiveModelId,
     modelFallbackNotice,
     effectiveWorkflow,
+    readinessStatus,
     isReady,
     diagnostics: Object.freeze(diagnostics),
     permissionRestrictions: Object.freeze(permissionRestrictions),

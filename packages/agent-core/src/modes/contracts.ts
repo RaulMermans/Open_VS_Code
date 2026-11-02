@@ -44,6 +44,8 @@ export interface ModeValidationResult {
   readonly warnings: readonly string[];
 }
 
+export type ModeReadinessStatus = "READY" | "NOT_CONFIGURED" | "DISABLED" | "UNSUPPORTED";
+
 export interface ResolvedExecutionProfile {
   readonly profileId: string;
   readonly profileVersion: number;
@@ -62,6 +64,7 @@ export interface ResolvedExecutionProfile {
   readonly effectiveModelId?: string | undefined;
   readonly modelFallbackNotice?: string | undefined;
   readonly effectiveWorkflow: "direct" | "structured";
+  readonly readinessStatus: ModeReadinessStatus;
   readonly isReady: boolean;
   readonly diagnostics: readonly string[];
   readonly permissionRestrictions: readonly string[];

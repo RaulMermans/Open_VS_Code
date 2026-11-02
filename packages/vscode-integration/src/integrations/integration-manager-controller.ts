@@ -469,6 +469,7 @@ export class IntegrationManagerController {
           missingOptionalMcpServers: [],
           effectiveWorkflow: "direct",
           isReady: false,
+          readinessStatus: "NOT_CONFIGURED",
           diagnostics: [err?.message || "Failed to resolve mode profile"],
           permissionRestrictions: [],
           timestamp: Date.now(),

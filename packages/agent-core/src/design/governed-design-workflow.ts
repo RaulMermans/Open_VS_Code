@@ -18,6 +18,7 @@
  *   - Checkpoints recorded before/after mutations via CheckpointCoordinator.
  */
 
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
@@ -95,6 +96,12 @@ export class GovernedDesignWorkflow {
   readonly #motionFilePath: string;
   readonly #tokensFilePath: string;
   readonly #autoApprove: boolean;
+  readonly #provider?: any | undefined;
+  readonly #skills?: any | undefined;
+  readonly #stageModelCalls: Record<string, number> = {};
+  readonly #stageTokens: Record<string, number> = {};
+  readonly #stageTools: Record<string, Set<string>> = {};
+  readonly #stageSkillInjected: Record<string, boolean> = {};
 
   #currentStage:
     | "DISCOVER_AND_SHAPE"
@@ -122,6 +129,8 @@ export class GovernedDesignWorkflow {
     this.#mutationEngine = options.mutationEngine;
     this.#checkpointCoordinator = options.checkpointCoordinator;
     this.#browserSessionManager = options.browserSessionManager;
+    this.#provider = options.provider;
+    this.#skills = options.skills;
     this.#onStage = options.onStage;
     this.#signal = options.signal;
     this.#task = options.task;
@@ -279,14 +288,11 @@ export class GovernedDesignWorkflow {
         const directionDoc = formatDesignDirectionDoc(this.#brief, this.#tokens);
         const path = "DESIGN.md";
 
-        const prep = await this.#mutationEngine.prepareCreate({
-          operation: "create",
-          path,
-          content: directionDoc,
-        });
+        const prep = await this.#prepareFileMutation(path, directionDoc);
 
         if (this.#autoApprove) {
           await this.#mutationEngine.applyPreparedMutation(prep);
+          this.#recordStageTool("discover_and_shape", prep.operation === "create" ? "create_file" : "apply_patch");
           this.#recordChange(prep, 1);
           await this.#checkpoint("stage-a-discover");
           this.#recordStageRecord("discover_and_shape", "PASSED", "Stage A complete");
@@ -300,6 +306,7 @@ export class GovernedDesignWorkflow {
           preparedMutation: prep,
           applyFn: async () => {
             await this.#mutationEngine.applyPreparedMutation(prep);
+            this.#recordStageTool("discover_and_shape", prep.operation === "create" ? "create_file" : "apply_patch");
             this.#recordChange(prep, 1);
             await this.#checkpoint("stage-a-discover");
             this.#recordStageRecord("discover_and_shape", "PASSED", "Stage A complete");
@@ -321,14 +328,11 @@ export class GovernedDesignWorkflow {
         const cssContent = formatDesignTokensAsCss(this.#tokens);
         const path = this.#tokensFilePath;
 
-        const prep = await this.#mutationEngine.prepareCreate({
-          operation: "create",
-          path,
-          content: cssContent,
-        });
+        const prep = await this.#prepareFileMutation(path, cssContent);
 
         if (this.#autoApprove) {
           await this.#mutationEngine.applyPreparedMutation(prep);
+          this.#recordStageTool("design_system", prep.operation === "create" ? "create_file" : "apply_patch");
           this.#recordChange(prep, 1);
           await this.#checkpoint("stage-b-tokens");
           this.#recordStageRecord("design_system", "PASSED", "Stage B complete");
@@ -342,6 +346,7 @@ export class GovernedDesignWorkflow {
           preparedMutation: prep,
           applyFn: async () => {
             await this.#mutationEngine.applyPreparedMutation(prep);
+            this.#recordStageTool("design_system", prep.operation === "create" ? "create_file" : "apply_patch");
             this.#recordChange(prep, 1);
             await this.#checkpoint("stage-b-tokens");
             this.#recordStageRecord("design_system", "PASSED", "Stage B complete");
@@ -357,17 +362,14 @@ export class GovernedDesignWorkflow {
         this.#recordStageRecord("frontend_implementation", "RUNNING", "Stage C: Frontend Composition");
         this.#onStage?.({ stage: "frontend_implementation", status: "RUNNING", skill: "frontend-composition" });
 
-        const markup = this.#generateComponentMarkup(this.#brief, this.#tokens!);
+        const markup = await this.#generateComponentWithModel(this.#brief, this.#tokens!);
         const path = this.#componentFilePath;
 
-        const prep = await this.#mutationEngine.prepareCreate({
-          operation: "create",
-          path,
-          content: markup,
-        });
+        const prep = await this.#prepareFileMutation(path, markup);
 
         if (this.#autoApprove) {
           await this.#mutationEngine.applyPreparedMutation(prep);
+          this.#recordStageTool("frontend_implementation", prep.operation === "create" ? "create_file" : "apply_patch");
           this.#recordChange(prep, 1);
           await this.#checkpoint("stage-c-implementation");
           this.#recordStageRecord("frontend_implementation", "PASSED", "Stage C complete");
@@ -381,6 +383,7 @@ export class GovernedDesignWorkflow {
           preparedMutation: prep,
           applyFn: async () => {
             await this.#mutationEngine.applyPreparedMutation(prep);
+            this.#recordStageTool("frontend_implementation", prep.operation === "create" ? "create_file" : "apply_patch");
             this.#recordChange(prep, 1);
             await this.#checkpoint("stage-c-implementation");
             this.#recordStageRecord("frontend_implementation", "PASSED", "Stage C complete");
@@ -396,17 +399,14 @@ export class GovernedDesignWorkflow {
         this.#recordStageRecord("motion_engineering", "RUNNING", "Stage D: Motion Engineering");
         this.#onStage?.({ stage: "motion_engineering", status: "RUNNING", skill: "motion-engineering" });
 
-        const motionCss = this.#generateMotionCss(this.#tokens!);
+        const motionCss = await this.#generateMotionWithModel(this.#brief, this.#tokens!);
         const path = this.#motionFilePath;
 
-        const prep = await this.#mutationEngine.prepareCreate({
-          operation: "create",
-          path,
-          content: motionCss,
-        });
+        const prep = await this.#prepareFileMutation(path, motionCss);
 
         if (this.#autoApprove) {
           await this.#mutationEngine.applyPreparedMutation(prep);
+          this.#recordStageTool("motion_engineering", prep.operation === "create" ? "create_file" : "apply_patch");
           this.#recordChange(prep, 1);
           await this.#checkpoint("stage-d-motion");
           this.#recordStageRecord("motion_engineering", "PASSED", "Stage D complete");
@@ -420,6 +420,7 @@ export class GovernedDesignWorkflow {
           preparedMutation: prep,
           applyFn: async () => {
             await this.#mutationEngine.applyPreparedMutation(prep);
+            this.#recordStageTool("motion_engineering", prep.operation === "create" ? "create_file" : "apply_patch");
             this.#recordChange(prep, 1);
             await this.#checkpoint("stage-d-motion");
             this.#recordStageRecord("motion_engineering", "PASSED", "Stage D complete");
@@ -441,19 +442,38 @@ export class GovernedDesignWorkflow {
         if (evalResult.report.overallPass) {
           // Success: generate and persist final report
           const reportDoc = this.#formatFinalQaReport(evalResult.report);
-          const prep = await this.#mutationEngine.prepareCreate({
-            operation: "create",
-            path: "DESIGN_QA_REPORT.md",
-            content: reportDoc,
-          });
-          await this.#mutationEngine.applyPreparedMutation(prep);
-          this.#recordChange(prep, this.#iteration);
-          await this.#checkpoint("stage-e-qa-verified");
+          const prep = await this.#prepareFileMutation("DESIGN_QA_REPORT.md", reportDoc);
 
-          this.#status = "COMPLETE";
-          this.#currentStage = "COMPLETE";
-          this.#recordStageRecord("visual_qa_refinement", "PASSED", `QA passed on iteration ${this.#iteration}`);
-          this.#onStage?.({ stage: "visual_qa_refinement", status: "PASSED", skill: "visual-qa" });
+          if (this.#autoApprove) {
+            await this.#mutationEngine.applyPreparedMutation(prep);
+            this.#recordStageTool("visual_qa_refinement", prep.operation === "create" ? "create_file" : "apply_patch");
+            this.#recordChange(prep, this.#iteration);
+            await this.#checkpoint("stage-e-qa-verified");
+
+            this.#status = "COMPLETE";
+            this.#currentStage = "COMPLETE";
+            this.#recordStageRecord("visual_qa_refinement", "PASSED", `QA passed on iteration ${this.#iteration}`);
+            this.#onStage?.({ stage: "visual_qa_refinement", status: "PASSED", skill: "visual-qa" });
+            return this.#result();
+          }
+
+          this.#pendingConfirmation = {
+            callId: `call_stage_e_report_${Date.now()}`,
+            stage: "visual_qa_refinement",
+            preparedMutation: prep,
+            applyFn: async () => {
+              await this.#mutationEngine.applyPreparedMutation(prep);
+              this.#recordStageTool("visual_qa_refinement", prep.operation === "create" ? "create_file" : "apply_patch");
+              this.#recordChange(prep, this.#iteration);
+              await this.#checkpoint("stage-e-qa-verified");
+
+              this.#status = "COMPLETE";
+              this.#currentStage = "COMPLETE";
+              this.#recordStageRecord("visual_qa_refinement", "PASSED", `QA passed on iteration ${this.#iteration}`);
+              this.#onStage?.({ stage: "visual_qa_refinement", status: "PASSED", skill: "visual-qa" });
+            },
+          };
+          this.#status = "WAITING_FOR_CONFIRMATION";
           return this.#result();
         }
 
@@ -464,6 +484,7 @@ export class GovernedDesignWorkflow {
           if (repairMutation) {
             if (this.#autoApprove) {
               await this.#mutationEngine.applyPreparedMutation(repairMutation);
+              this.#recordStageTool("visual_qa_refinement", repairMutation.operation === "create" ? "create_file" : "apply_patch");
               this.#recordChange(repairMutation, this.#iteration);
               await this.#checkpoint(`stage-e-repair-iter-${this.#iteration}`);
               return this.#advance();
@@ -475,6 +496,7 @@ export class GovernedDesignWorkflow {
               preparedMutation: repairMutation,
               applyFn: async () => {
                 await this.#mutationEngine.applyPreparedMutation(repairMutation);
+                this.#recordStageTool("visual_qa_refinement", repairMutation.operation === "create" ? "create_file" : "apply_patch");
                 this.#recordChange(repairMutation, this.#iteration);
                 await this.#checkpoint(`stage-e-repair-iter-${this.#iteration}`);
               },
@@ -486,25 +508,53 @@ export class GovernedDesignWorkflow {
 
         // Iteration budget exhausted
         const reportDoc = this.#formatFinalQaReport(evalResult.report);
-        const prep = await this.#mutationEngine.prepareCreate({
-          operation: "create",
-          path: "DESIGN_QA_REPORT.md",
-          content: reportDoc,
-        });
-        await this.#mutationEngine.applyPreparedMutation(prep);
-        this.#recordChange(prep, this.#iteration);
+        const prep = await this.#prepareFileMutation("DESIGN_QA_REPORT.md", reportDoc);
 
         const hasBlockers = evalResult.report.findings.some((f) => f.severity === "blocker" || f.severity === "critical");
-        if (hasBlockers) {
-          this.#status = "BLOCKED";
-          this.#blocker = "BLOCKED_REVIEW";
-          this.#blockerDetail = `Visual QA refinement reached maximum iteration budget (${this.#maxImprovementIterations}) with ${evalResult.report.findings.length} unresolved issue(s).`;
-          this.#recordStageRecord("visual_qa_refinement", "BLOCKED", this.#blockerDetail);
-        } else {
-          this.#status = "COMPLETE";
-          this.#recordStageRecord("visual_qa_refinement", "PASSED", "Pass with minor suggestions");
+        const finalOutcome = hasBlockers
+          ? `Visual QA refinement reached maximum iteration budget (${this.#maxImprovementIterations}) with ${evalResult.report.findings.length} unresolved issue(s).`
+          : "Pass with minor suggestions";
+
+        if (this.#autoApprove) {
+          await this.#mutationEngine.applyPreparedMutation(prep);
+          this.#recordStageTool("visual_qa_refinement", prep.operation === "create" ? "create_file" : "apply_patch");
+          this.#recordChange(prep, this.#iteration);
+
+          if (hasBlockers) {
+            this.#status = "BLOCKED";
+            this.#blocker = "BLOCKED_REVIEW";
+            this.#blockerDetail = finalOutcome;
+            this.#recordStageRecord("visual_qa_refinement", "BLOCKED", this.#blockerDetail);
+          } else {
+            this.#status = "COMPLETE";
+            this.#recordStageRecord("visual_qa_refinement", "PASSED", finalOutcome);
+          }
+          this.#currentStage = "COMPLETE";
+          return this.#result();
         }
-        this.#currentStage = "COMPLETE";
+
+        this.#pendingConfirmation = {
+          callId: `call_stage_e_final_report_${Date.now()}`,
+          stage: "visual_qa_refinement",
+          preparedMutation: prep,
+          applyFn: async () => {
+            await this.#mutationEngine.applyPreparedMutation(prep);
+            this.#recordStageTool("visual_qa_refinement", prep.operation === "create" ? "create_file" : "apply_patch");
+            this.#recordChange(prep, this.#iteration);
+
+            if (hasBlockers) {
+              this.#status = "BLOCKED";
+              this.#blocker = "BLOCKED_REVIEW";
+              this.#blockerDetail = finalOutcome;
+              this.#recordStageRecord("visual_qa_refinement", "BLOCKED", this.#blockerDetail);
+            } else {
+              this.#status = "COMPLETE";
+              this.#recordStageRecord("visual_qa_refinement", "PASSED", finalOutcome);
+            }
+            this.#currentStage = "COMPLETE";
+          },
+        };
+        this.#status = "WAITING_FOR_CONFIRMATION";
         return this.#result();
       }
 
@@ -552,93 +602,53 @@ export class GovernedDesignWorkflow {
     if (this.#browserSessionManager && typeof this.#browserSessionManager.observeVisualQaState === "function") {
       try {
         const observed = await this.#browserSessionManager.observeVisualQaState();
-        const report = evaluator.evaluate({
-          targetUrl: observed.targetUrl,
-          viewport: observed.viewport,
-          presetId: observed.presetId,
-          elements: observed.elements,
-          consoleErrors: observed.consoleErrors,
-          clientWidth: observed.clientWidth,
-          scrollWidth: observed.scrollWidth,
-        });
-        return { report };
+        if (observed && Array.isArray(observed.elements) && observed.elements.length > 0) {
+          const report = evaluator.evaluate({
+            targetUrl: observed.targetUrl,
+            viewport: observed.viewport,
+            presetId: observed.presetId,
+            elements: observed.elements,
+            consoleErrors: observed.consoleErrors,
+            clientWidth: observed.clientWidth,
+            scrollWidth: observed.scrollWidth,
+          });
+          return { report };
+        }
       } catch {
-        // Fall back to workspace file evaluation
+        // Fall through to unverified report
       }
     }
 
-    // Static fallback: read component file and evaluate deterministic checks
-    let htmlContent = "";
-    try {
-      htmlContent = await readFile(join(this.#workspaceRoot, this.#componentFilePath), "utf8");
-    } catch {
-      htmlContent = "";
-    }
-
-    const elements: any[] = [];
-    let seq = 0;
-
-    // Inspect buttons
-    const buttonMatches = htmlContent.matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/gi);
-    for (const match of buttonMatches) {
-      const attrs = match[1] || "";
-      const text = (match[2] || "").replace(/<[^>]+>/g, "").trim();
-      const hasAria = /aria-label=/i.test(attrs);
-      elements.push({
-        refId: `el-btn-${++seq}`,
-        tag: "button",
-        role: "button",
-        accessibleName: hasAria ? "aria-button" : text,
-        textContent: text,
-        isInteractive: true,
-        hasFocusVisibleStyle: !attrs.includes("outline: none") && !attrs.includes("outline:none"),
-        computedStyle: {
-          color: "#ffffff",
-          backgroundColor: "#2563eb",
-          outlineStyle: attrs.includes("outline: none") || attrs.includes("outline:none") ? "none" : "solid",
-        },
-      });
-    }
-
-    // Inspect images
-    const imgMatches = htmlContent.matchAll(/<img([^>]*)>/gi);
-    for (const match of imgMatches) {
-      const attrs = match[1] || "";
-      const hasAlt = /alt=/i.test(attrs);
-      elements.push({
-        refId: `el-img-${++seq}`,
-        tag: "img",
-        role: "img",
-        accessibleName: hasAlt ? "image" : "",
-        isInteractive: false,
-      });
-    }
-
-    // Heading
-    elements.push({
-      refId: `el-h1-${++seq}`,
-      tag: "h1",
-      role: "heading",
-      accessibleName: this.#brief.brandPositioning.voice,
-      textContent: this.#brief.brandPositioning.voice,
-      computedStyle: {
-        color: this.#tokens?.colors.textPrimary.hex || "#0f172a",
-        backgroundColor: this.#tokens?.colors.surface.hex || "#ffffff",
-        fontSize: "28px",
-        fontWeight: "700",
-      },
-    });
-
-    const report = evaluator.evaluate({
+    // Never fabricate CSS styles, contrast, or DOM values when Chromium / browser observations are missing.
+    // Return INSUFFICIENT_EVIDENCE with a blocker finding.
+    const unverifiedReport: VisualQAReport = {
+      reportId: `vqa-unverified-${Date.now()}`,
       targetUrl: this.#targetUrl || `http://localhost:3000/${this.#componentFilePath}`,
       viewport: { width: 1280, height: 800 },
       presetId: "desktop",
-      elements,
-      clientWidth: 1280,
-      scrollWidth: 1280,
-    });
+      evaluatedAt: Date.now(),
+      overallPass: false,
+      deterministicPass: false,
+      judgmentPass: false,
+      score: 0,
+      findings: [
+        {
+          findingId: `finding-no-browser-${Date.now()}`,
+          criterion: "browser_observation",
+          category: "deterministic",
+          severity: "blocker",
+          observedEvidence: "No active Chromium browser session or rendered element observations were available.",
+          expectedBehavior: "Visual verification requires real rendered browser state observations (computed styles, bounds, contrast).",
+          location: {},
+          suggestedCorrection: "Launch browser session and observe live rendered interface (INSUFFICIENT_EVIDENCE).",
+          confidence: 1.0,
+          repairStatus: "unresolved",
+        },
+      ],
+      summary: "Visual QA evaluation inconclusive: Browser session unavailable (INSUFFICIENT_EVIDENCE). No visual pass granted without real rendered evidence.",
+    };
 
-    return { report };
+    return { report: unverifiedReport };
   }
 
   async #prepareRepairs(findings: readonly VisualQAFinding[]): Promise<PreparedMutation | undefined> {
@@ -650,29 +660,62 @@ export class GovernedDesignWorkflow {
       return undefined;
     }
 
+    // Model-assisted repair if provider is configured
+    if (this.#provider && typeof this.#provider.complete === "function") {
+      try {
+        const prompt = `You are a visual design and accessibility engineer.
+Fix the following Visual QA defects in this HTML component:
+Findings:
+${findings.map((f) => `- ${f.criterion} (${f.severity}): ${f.observedEvidence}. Suggestion: ${f.suggestedCorrection}`).join("\n")}
+
+Current HTML:
+${currentHtml}
+
+Requirements:
+- Fix all cited accessibility, contrast, focus visibility, and layout issues.
+- Preserve existing structure and functionality.
+Return ONLY the corrected full HTML.`;
+
+        const resp: any = await this.#provider.complete({
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.1,
+          signal: this.#signal,
+        });
+
+        const tokensUsed = (resp.usage?.inputTokens ?? 0) + (resp.usage?.outputTokens ?? 0);
+        this.#recordStageModelCall("visual_qa_refinement", tokensUsed);
+
+        let content = resp.message?.content?.trim() || "";
+        const match = content.match(/```(?:html)?\s*([\s\S]*?)```/i);
+        if (match) {
+          content = match[1].trim();
+        }
+        if (content.length > 50 && content.includes("<") && content.includes(">")) {
+          return this.#prepareFileMutation(this.#componentFilePath, content);
+        }
+      } catch {
+        // Fall back to rule-based repairs
+      }
+    }
+
     let repaired = currentHtml;
 
     for (const f of findings) {
-      // Fix missing accessible naming on buttons
       if (f.criterion === "accessible_naming") {
         repaired = repaired.replace(/<button(?![^>]*aria-label)([^>]*)>([\s]*)<\/button>/gi, '<button$1 aria-label="Action">$2Action</button>');
       }
-      // Fix missing alt on images
       if (f.criterion === "image_alternative_text") {
         repaired = repaired.replace(/<img(?![^>]*alt)([^>]*)>/gi, '<img$1 alt="Illustrative visual asset">');
       }
-      // Fix focus visibility
       if (f.criterion === "focus_visibility") {
         repaired = repaired.replace(/outline:\s*none;?/gi, "outline: 2px solid var(--color-primary); outline-offset: 2px;");
       }
-      // Fix low contrast
       if (f.criterion === "color_contrast_wcag_aa") {
         repaired = repaired.replace(/color:\s*(?:#[0-9a-f]{3,6}|rgb\([^)]+\));?/gi, "color: var(--color-text-primary);");
       }
     }
 
     if (repaired === currentHtml) {
-      // Add safe head style fixes
       repaired = repaired.replace(
         "</head>",
         `  <style>
@@ -684,11 +727,7 @@ export class GovernedDesignWorkflow {
       );
     }
 
-    return this.#mutationEngine.prepareCreate({
-      operation: "create",
-      path: this.#componentFilePath,
-      content: repaired,
-    });
+    return this.#prepareFileMutation(this.#componentFilePath, repaired);
   }
 
   #generateComponentMarkup(brief: DesignBrief, tokens: DesignTokenSet): string {
@@ -867,6 +906,122 @@ ${
     });
   }
 
+  async #prepareFileMutation(path: string, content: string): Promise<PreparedMutation> {
+    const fullPath = join(this.#workspaceRoot, path);
+    if (existsSync(fullPath)) {
+      const currentContent = await readFile(fullPath, "utf8");
+      return this.#mutationEngine.preparePatch({
+        operation: "patch",
+        path,
+        patch: {
+          search: currentContent,
+          replace: content,
+        },
+      });
+    }
+    return this.#mutationEngine.prepareCreate({
+      operation: "create",
+      path,
+      content,
+    });
+  }
+
+  async #generateComponentWithModel(brief: DesignBrief, tokens: DesignTokenSet): Promise<string> {
+    if (this.#provider && typeof this.#provider.complete === "function") {
+      try {
+        const prompt = `You are a principal design systems engineer.
+Produce a complete, accessible, production-ready HTML document implementing this design brief:
+- Archetype: ${brief.productType}
+- Target Audience: ${brief.intendedAudience}
+- Core Goals: ${brief.userGoals.join("; ")}
+- Brand Voice: ${brief.brandPositioning.voice} (${brief.brandPositioning.tone})
+- Aesthetic Style: ${brief.desiredAestheticDirection.style} (${brief.desiredAestheticDirection.visualMetaphor || "refined technical UI"})
+- Primary Color: ${tokens.colors.primary.hex}
+- Text Color: ${tokens.colors.textPrimary.hex}
+- Background: ${tokens.colors.background.hex}
+- Surface: ${tokens.colors.surface.hex}
+
+Requirements:
+- Valid HTML5 document linking ${this.#tokensFilePath} and ${this.#motionFilePath}.
+- High accessibility: proper semantic elements (<header>, <main>, <article>, <button>), visible text or aria-labels for every interactive control, and alt attributes for all <img> elements.
+- Clean responsive layout and WCAG AA contrast compliance.
+Return ONLY valid HTML code.`;
+
+        const resp: any = await this.#provider.complete({
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          signal: this.#signal,
+        });
+
+        const tokensUsed = (resp.usage?.inputTokens ?? 0) + (resp.usage?.outputTokens ?? 0);
+        this.#recordStageModelCall("frontend_implementation", tokensUsed);
+
+        let content = resp.message?.content?.trim() || "";
+        const match = content.match(/```(?:html)?\s*([\s\S]*?)```/i);
+        if (match) {
+          content = match[1].trim();
+        }
+        if (content.length > 50 && content.includes("<") && content.includes(">")) {
+          return content;
+        }
+      } catch {
+        // Fallback to procedural generation
+      }
+    }
+    return this.#generateComponentMarkup(brief, tokens);
+  }
+
+  async #generateMotionWithModel(brief: DesignBrief, tokens: DesignTokenSet): Promise<string> {
+    if (this.#provider && typeof this.#provider.complete === "function") {
+      try {
+        const prompt = `You are a motion design engineer.
+Generate CSS animations and transitions for this design system:
+- Archetype: ${brief.productType}
+- Motion Intensity: ${brief.motionPreferences.intensity}
+- Engine: ${brief.motionPreferences.preferredEngine || "css"}
+- Reduce Motion Fallback: ${brief.motionPreferences.reduceMotionFallback}
+
+Requirements:
+- CSS transitions and animations animating only performant properties (transform and opacity).
+- Support for @media (prefers-reduced-motion: reduce) disabling transforms and translations.
+Return ONLY valid CSS.`;
+
+        const resp: any = await this.#provider.complete({
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          signal: this.#signal,
+        });
+
+        const tokensUsed = (resp.usage?.inputTokens ?? 0) + (resp.usage?.outputTokens ?? 0);
+        this.#recordStageModelCall("motion_engineering", tokensUsed);
+
+        let content = resp.message?.content?.trim() || "";
+        const match = content.match(/```(?:css)?\s*([\s\S]*?)```/i);
+        if (match) {
+          content = match[1].trim();
+        }
+        if (content.length > 20 && content.includes("{") && content.includes("}")) {
+          return content;
+        }
+      } catch {
+        // Fallback
+      }
+    }
+    return this.#generateMotionCss(tokens);
+  }
+
+  #recordStageTool(stage: string, tool: string): void {
+    if (!this.#stageTools[stage]) {
+      this.#stageTools[stage] = new Set();
+    }
+    this.#stageTools[stage].add(tool);
+  }
+
+  #recordStageModelCall(stage: string, tokens: number = 0): void {
+    this.#stageModelCalls[stage] = (this.#stageModelCalls[stage] ?? 0) + 1;
+    this.#stageTokens[stage] = (this.#stageTokens[stage] ?? 0) + tokens;
+  }
+
   #recordStageRecord(stage: string, status: "RUNNING" | "PASSED" | "BLOCKED" | "CANCELLED", outcome?: string): void {
     const stageMap: Record<string, WorkStage> = {
       discover_and_shape: "PLAN",
@@ -876,17 +1031,22 @@ ${
       visual_qa_refinement: "REVIEW",
     };
     const workStage: WorkStage = stageMap[stage] ?? "PLAN";
+    const toolsUsed = Array.from(this.#stageTools[stage] ?? []);
+    const modelCalls = this.#stageModelCalls[stage] ?? 0;
+    const contextTokens = this.#stageTokens[stage] ?? 0;
+    const skillInjected = Boolean(this.#skills && this.#stageSkillInjected[stage]);
+
     this.#stageRecords.push({
       stage: workStage,
       attempt: 1,
       startedAt: new Date().toISOString(),
       ...(status !== "RUNNING" ? { endedAt: new Date().toISOString() } : {}),
       status,
-      modelCalls: 1,
-      contextTokens: 850,
-      toolsUsed: ["create_file", "apply_patch"],
-      skillInjection: "INJECTED",
-      skillInjected: true,
+      modelCalls,
+      contextTokens,
+      toolsUsed,
+      skillInjection: skillInjected ? "INJECTED" : "NOT_APPLICABLE",
+      skillInjected,
       ...(outcome ? { outcome } : {}),
     });
   }

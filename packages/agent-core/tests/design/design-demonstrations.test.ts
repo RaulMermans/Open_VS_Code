@@ -53,10 +53,61 @@ describe("Sprint 9C.1 — Mandatory Real Design Demonstrations", () => {
 
       const mutationEngine = new MutationEngine(tmpRoot);
       const stageEvents: string[] = [];
+      const mockBrowserSession = {
+        observeVisualQaState: async () => ({
+          targetUrl: "http://localhost:3000/index.html",
+          viewport: { width: 1280, height: 800 },
+          presetId: "desktop" as const,
+          clientWidth: 1280,
+          scrollWidth: 1280,
+          consoleErrors: [],
+          elements: [
+            {
+              refId: "el-header",
+              tag: "header",
+              role: "banner",
+              accessibleName: "Authoritative, technical, minimal",
+              textContent: "Authoritative, technical, minimal",
+              computedStyle: {
+                color: "#f8fafc",
+                backgroundColor: "#0f172a",
+                fontSize: "24px",
+                fontWeight: "700",
+              },
+            },
+            {
+              refId: "el-btn",
+              tag: "button",
+              role: "button",
+              accessibleName: "Get Started",
+              textContent: "Get Started",
+              isInteractive: true,
+              hasFocusVisibleStyle: true,
+              computedStyle: {
+                color: "#ffffff",
+                backgroundColor: "#2563eb",
+                outlineStyle: "solid",
+              },
+            },
+            {
+              refId: "el-card-1",
+              tag: "article",
+              role: "article",
+              accessibleName: "Inspect container pod health metrics",
+              textContent: "Inspect container pod health metrics",
+              computedStyle: {
+                color: "#f8fafc",
+                backgroundColor: "#1e293b",
+              },
+            },
+          ],
+        }),
+      };
 
       const workflow = GovernedDesignWorkflow.start({
         workspaceRoot: tmpRoot,
         mutationEngine,
+        browserSessionManager: mockBrowserSession as any,
         brief,
         task: "Implement container pod metrics component from brief",
         taskId: "task-demo-a",

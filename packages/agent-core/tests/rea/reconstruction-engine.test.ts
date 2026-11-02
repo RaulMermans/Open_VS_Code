@@ -184,6 +184,7 @@ test("ReconstructionEngine - executes governed reconstruction, writes files, ver
 
     const engine = new ReconstructionEngine({
       workspaceRoot: testDir,
+      autoApproveMutations: true,
       onStageChange: (e) => {
         stagesObserved.push({ stage: e.stage, status: e.status });
       },

@@ -14,8 +14,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, mkdirSync, rmSync, realpathSync } from "node:fs";
+import { resolve, isAbsolute, relative, join, dirname } from "node:path";
 import { MutationEngine } from "../tools/mutation-engine.ts";
 import type {
   ReconstructionSpecification,
@@ -102,7 +102,7 @@ export class ReconstructionEngine {
     this.#mutationEngine = options.mutationEngine ?? new MutationEngine(this.#workspaceRoot);
     this.#testRunner = options.testRunner;
     this.#requestConfirmation = options.requestConfirmation;
-    this.#autoApproveMutations = options.autoApproveMutations ?? (options.requestConfirmation === undefined);
+    this.#autoApproveMutations = Boolean(options.autoApproveMutations);
     this.#onStageChange = options.onStageChange;
   }
 
@@ -172,17 +172,44 @@ export class ReconstructionEngine {
     }
 
     // Persist implemented files into workspaceRoot using canonical MutationEngine
+    const canonicalRoot = existsSync(this.#workspaceRoot)
+      ? realpathSync(this.#workspaceRoot)
+      : resolve(this.#workspaceRoot);
+    const createdDirs: string[] = [];
+
     for (const file of implementedFiles) {
       const targetRelPath = file.path.replaceAll("\\", "/");
-      const fullPath = resolve(this.#workspaceRoot, targetRelPath);
-
-      // Ensure parent directory exists within workspaceRoot before preparing mutation
-      const parentDir = resolve(this.#workspaceRoot, targetRelPath.split("/").slice(0, -1).join("/"));
-      if (parentDir.startsWith(this.#workspaceRoot) && !existsSync(parentDir)) {
-        const { mkdirSync } = await import("node:fs");
-        mkdirSync(parentDir, { recursive: true });
+      if (isAbsolute(targetRelPath)) {
+        throw new Error(`Target path escapes outside workspace: ${targetRelPath}`);
+      }
+      const normalizedTarget = resolve(canonicalRoot, targetRelPath);
+      const rel = relative(canonicalRoot, normalizedTarget);
+      if (rel.startsWith("..") || isAbsolute(rel)) {
+        throw new Error(`Target path escapes outside workspace: ${targetRelPath}`);
       }
 
+      // Validate parent directory hierarchy for symlink containment
+      let checkDir = canonicalRoot;
+      const parts = rel.split("/").slice(0, -1);
+      for (const part of parts) {
+        checkDir = join(checkDir, part);
+        if (existsSync(checkDir)) {
+          const real = realpathSync(checkDir);
+          const relReal = relative(canonicalRoot, real);
+          if (relReal.startsWith("..") || isAbsolute(relReal)) {
+            throw new Error(`Parent directory symlink escapes outside workspace: ${targetRelPath}`);
+          }
+        }
+      }
+
+      // Validated confinement before creating directory
+      const parentDir = dirname(normalizedTarget);
+      if (!existsSync(parentDir)) {
+        mkdirSync(parentDir, { recursive: true });
+        createdDirs.push(parentDir);
+      }
+
+      const fullPath = normalizedTarget;
       const fileExists = existsSync(fullPath);
 
       let prep;
@@ -213,8 +240,21 @@ export class ReconstructionEngine {
       }
 
       if (!approved) {
-        this.#emitStage("implementation", "FAILED", `Mutation on ${prep.path} denied by user confirmation.`);
-        throw new Error(`Reconstruction mutation on "${prep.path}" was denied by user confirmation.`);
+        // Denied: clean up any newly created empty directories so zero changes remain
+        for (let d = createdDirs.length - 1; d >= 0; d--) {
+          try {
+            if (existsSync(createdDirs[d]!)) {
+              rmSync(createdDirs[d]!, { recursive: true, force: true });
+            }
+          } catch {
+            // Best-effort cleanup
+          }
+        }
+        const reason = this.#requestConfirmation
+          ? `Mutation on "${prep.path}" was denied by user confirmation.`
+          : `Mutation on "${prep.path}" denied: no approval channel available (default to DENY).`;
+        this.#emitStage("implementation", "FAILED", reason);
+        throw new Error(reason);
       }
 
       const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);

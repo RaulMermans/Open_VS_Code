@@ -797,9 +797,13 @@ test("default budgets are conservative", () => {
 test("mutation engine does not import child_process", async () => {
   const { readFile: rf } = await import("node:fs/promises")
   const { resolve: r } = await import("node:path")
-  const engineSource = await rf(r(process.cwd(), "src/tools/mutation-engine.ts"), "utf8")
-  const contractsSource = await rf(r(process.cwd(), "src/tools/mutation-contracts.ts"), "utf8")
-  const registrySource = await rf(r(process.cwd(), "src/tools/mutation-registry.ts"), "utf8")
+  const { existsSync } = await import("node:fs")
+  const base = existsSync(r(process.cwd(), "packages/agent-core/src/tools/mutation-engine.ts"))
+    ? r(process.cwd(), "packages/agent-core/src/tools")
+    : r(process.cwd(), "src/tools")
+  const engineSource = await rf(r(base, "mutation-engine.ts"), "utf8")
+  const contractsSource = await rf(r(base, "mutation-contracts.ts"), "utf8")
+  const registrySource = await rf(r(base, "mutation-registry.ts"), "utf8")
 
   for (const source of [engineSource, contractsSource, registrySource]) {
     assert.ok(!source.includes("child_process"), "Must not import child_process")
@@ -811,7 +815,11 @@ test("mutation engine does not import child_process", async () => {
 test("mutation engine does not import model/inference dependencies", async () => {
   const { readFile: rf } = await import("node:fs/promises")
   const { resolve: r } = await import("node:path")
-  const engineSource = await rf(r(process.cwd(), "src/tools/mutation-engine.ts"), "utf8")
+  const { existsSync } = await import("node:fs")
+  const base = existsSync(r(process.cwd(), "packages/agent-core/src/tools/mutation-engine.ts"))
+    ? r(process.cwd(), "packages/agent-core/src/tools")
+    : r(process.cwd(), "src/tools")
+  const engineSource = await rf(r(base, "mutation-engine.ts"), "utf8")
 
   assert.ok(!engineSource.includes("ollama"), "Must not reference ollama")
   assert.ok(!engineSource.includes("openai"), "Must not reference openai")

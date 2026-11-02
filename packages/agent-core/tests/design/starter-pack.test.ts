@@ -70,6 +70,7 @@ describe("Sprint 9C — Advanced Design & Motion Starter Pack", () => {
         "create_file",
         "run_verification",
       ],
+      globalWorkflowEnabled: true,
       currentOpenVsCodeVersion: "0.1.0",
     });
 

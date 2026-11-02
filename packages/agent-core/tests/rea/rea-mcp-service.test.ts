@@ -56,7 +56,6 @@ test(
   async () => {
     const service = new ReaMcpService({
       reaCliPath: REA_CLI_CANDIDATE,
-      nodeExecutable: "/Users/raulm/.nvm/versions/node/v22.23.2/bin/node",
       requestTimeoutMs: 15000,
     });
 
