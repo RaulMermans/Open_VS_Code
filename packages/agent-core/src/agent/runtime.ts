@@ -32,7 +32,7 @@ import { calculateBudget, estimateTokens } from "../context/budget.ts";
 import { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
 import { EngineeringWorkflow } from "../workflow/engine.ts";
 import { GovernedDesignWorkflow } from "../design/governed-design-workflow.ts";
-import { GovernedReaWorkflow } from "../rea/governed-rea-workflow.ts";
+import { GovernedReaWorkflow, createReaProductionTestRunner, type ReaEvidenceBundle } from "../rea/index.ts";
 import { assessWorkflowEligibility } from "../workflow/policy.ts";
 import { CheckpointWorkflowStore, createWorkspaceVerifier } from "../workflow/services.ts";
 import type { WorkflowEligibility, WorkflowStageEvent } from "../workflow/contracts.ts";
@@ -115,6 +115,14 @@ export interface CreateAgentRuntimeOptions {
    * When provided, exposes governed browser tools (browser_open, browser_navigate, browser_snapshot, etc.).
    */
   browserSessionManager?: BrowserSessionManager;
+  /**
+   * Optional account scope for authorization and evidence provenance isolation (Sprint 10A.1C).
+   */
+  accountScope?: string;
+  /**
+   * Optional initial evidence bundle for REA reconstruction handoff (Sprint 10A.1C).
+   */
+  initialEvidenceBundle?: ReaEvidenceBundle;
 }
 
 export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
@@ -498,6 +506,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
           task: options.instruction,
           taskId: runnerInput.task.id,
           skills: skillRegistry,
+          accountScope: options.accountScope,
         })
       : GovernedReaWorkflow.startReconstruction({
           workspaceRoot: options.workspaceRoot,
@@ -505,6 +514,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
           checkpointCoordinator,
           browserSessionManager: options.browserSessionManager,
           mcpCatalog: options.mcpCatalog,
+          verificationEngine,
           provider,
           onStage: options.workflow?.onStage as any,
           eventSink: options.eventSink,
@@ -512,6 +522,16 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
           task: options.instruction,
           taskId: runnerInput.task.id,
           skills: skillRegistry,
+          accountScope: options.accountScope,
+          evidenceBundle: options.initialEvidenceBundle,
+          testRunner: options.browserSessionManager
+            ? createReaProductionTestRunner({
+                workspaceRoot: options.workspaceRoot,
+                browserSessionManager: options.browserSessionManager,
+                verificationEngine,
+                signal: options.signal,
+              })
+            : undefined,
         })
     : isDesignWorkflow
       ? GovernedDesignWorkflow.start({

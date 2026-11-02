@@ -372,3 +372,22 @@ export type ReconstructionStageId =
   | "local_execution"
   | "comparative_verification"
   | "closure_reporting";
+
+// ---------------------------------------------------------------------------
+// 8. Evidence Continuity & Bundles
+// ---------------------------------------------------------------------------
+
+export {
+  REA_EVIDENCE_BUNDLE_SCHEMA_VERSION,
+  type ReaEvidenceBundle,
+  type CreateEvidenceBundleOptions,
+  type EvidenceValidationResult,
+  createReaEvidenceBundle,
+  computeEvidenceBundleDigest,
+  saveReaEvidenceBundle,
+  loadReaEvidenceBundle,
+  resolveReaEvidenceBundle,
+  validateReaEvidenceBundle,
+  getReaEvidenceStorageDir,
+} from "./evidence-bundle.ts";
+

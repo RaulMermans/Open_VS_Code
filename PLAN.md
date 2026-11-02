@@ -617,5 +617,14 @@ Sprint 10A.1B — Specialized Workflow Execution, Real Model Synthesis & Product
     - Complete Monorepo Verification: 20/20 specialized closure tests, 934/934 agent-core tests, 0 typecheck errors, 0 lint warnings/errors across monorepo, all evals passing, and 14/14 desktop:smoke + 6/6 desktop:accept.
   - Record: `docs/sprints/SPRINT_10A1B_SPECIALIZED_EXECUTION_CLOSURE.md`.
 
+Sprint 10A.1C — Final Pre-HALO Integration, Evidence Continuity & Production Verification — SPRINT_10A1C_ACCEPTED
+  - Closed the final verified integration gaps before HALO hardware integration:
+    - P0 REA Evidence Continuity: Defined addressable `ReaEvidenceBundle` with SHA-256 digest connecting Investigation to Reconstruction. Enforced workspace/account scope validation and eliminated default synthetic specification fallbacks (fails closed with `INVESTIGATION_REQUIRED`).
+    - P0 Production Verification Wiring: Implemented `createReaProductionTestRunner` adapter wrapping `ComparativeWebVerifier` on disposable `127.0.0.1:0` server. Automated loopback verification closes reconstruction obligations only upon passing execution.
+    - P0 Exact Approval Binding: Enforced strict confirmation token matching on `GovernedReaWorkflow.resume()`, TOCTOU disk file modification checks, directory rollback on rejection/cancellation, and bridged through `AgentSessionBridge`.
+    - P1 Honest Skills & Telemetry: Implemented 4-state skill tracking (requested, available, loaded, injected), injected loaded skill guidance into system prompt during reconstruction model synthesis, and ensured non-model stages report `modelCalls = 0`.
+    - Verification Suite: 21/21 targeted tests in `final-pre-halo-closure.test.ts`, 80/80 REA tests, 955/955 agent-core tests (68 suites), clean typecheck, all monorepo evals passing, and packaged desktop suites passing (14/14 `desktop:smoke` and 6/6 `desktop:accept`).
+  - Record: `docs/sprints/SPRINT_10A1C_FINAL_PRE_HALO_CLOSURE.md`.
+
 Next:
 1. Physical HALO hardware arrival & benchmark execution.

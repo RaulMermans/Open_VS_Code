@@ -30,6 +30,15 @@
 
 ## Current sprint
 
+Sprint 10A.1C — Final Pre-HALO Integration, Evidence Continuity & Production Verification (`docs/sprints/SPRINT_10A1C_FINAL_PRE_HALO_CLOSURE.md`).
+Closes the final verified integration gaps in Open VS Code's specialized workflows before HALO hardware integration:
+- Architectural Invariants Preserved: Exactly one authoritative `AgentRuntime`, `PermissionGate`, and `MutationEngine`. Zero new agents, frameworks, orchestration engines, or databases.
+- Work Package A (P0) — REA Evidence Continuity: Created addressable `ReaEvidenceBundle` connecting REA Investigation to Reconstruction. Bounded evidence bundle carries feature inventory, observed behaviors, state transitions, specifications, obligations, and SHA-256 bundle digest. Fails closed across workspaces (`WORKSPACE_MISMATCH`) and accounts (`ACCOUNT_MISMATCH`). Missing investigation fails closed with `INVESTIGATION_REQUIRED`; eliminated fabricated default specifications.
+- Work Package B (P0) — Production Verification Wiring: Implemented `createReaProductionTestRunner` adapter wrapping `ComparativeWebVerifier` on disposable `127.0.0.1:0` server. Automatically wired into `GovernedReaWorkflow` and `runtime.ts`. Genuine comparative checks (routes, negative form validation, positive state changes, sequential mutations) close obligations only upon real passing execution. Non-loopback URLs and non-web targets fail closed safely.
+- Work Package C (P0) — Approval Integrity: Required exact confirmation token matching in `GovernedReaWorkflow.resume()`. Missing, mismatched, or reused tokens fail closed immediately. Binds approval to workflow, task, workspace, and content digest. Re-checks disk file hash before mutation (TOCTOU guard). Rolled back empty directories on rejection/cancellation. Wired token through `AgentSessionBridge`.
+- Work Package D (P1) — Honest Skills & Telemetry: Implemented 4-state skill tracking (requested, available, loaded, injected). Injected loaded skill guidance into system prompt during reconstruction model synthesis. Non-model stages report `modelCalls = 0` and accurate token telemetry.
+- Complete Verification Suite: 21/21 targeted tests in `final-pre-halo-closure.test.ts`, 80/80 REA tests, 955/955 agent-core tests (68 suites), clean typecheck across all workspaces, all monorepo evals passing (`eval:runtime`, `eval:skills`, `eval:workflow`), and packaged desktop suites passing (14/14 `desktop:smoke` and 6/6 `desktop:accept`).
+
 Sprint 10A.1B — Specialized Workflow Execution, Real Model Synthesis & Production Closure (`docs/sprints/SPRINT_10A1B_SPECIALIZED_EXECUTION_CLOSURE.md`).
 Corrects production defects identified in Sprint 10A.1 audit and establishes reliable end-to-end specialized execution:
 - Architectural Invariants Preserved: Single authoritative `AgentRuntime`, `PermissionGate`, and `MutationEngine`. No new agents, frameworks, orchestration engines, or shadow approval loops.
