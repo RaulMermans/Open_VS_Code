@@ -1,7 +1,8 @@
 import type { CustomModeProfile } from "./contracts.ts";
 import { ADVANCED_DESIGN_MOTION_MODE_PROFILE } from "../design/starter-pack.ts";
+import { REA_INVESTIGATION_MODE_PROFILE, REA_RECONSTRUCTION_MODE_PROFILE } from "../rea/starter-profiles.ts";
 
-export { ADVANCED_DESIGN_MOTION_MODE_PROFILE };
+export { ADVANCED_DESIGN_MOTION_MODE_PROFILE, REA_INVESTIGATION_MODE_PROFILE, REA_RECONSTRUCTION_MODE_PROFILE };
 
 export const STARTER_MODE_PROFILES: readonly CustomModeProfile[] = Object.freeze([
   {
@@ -136,6 +137,8 @@ export const STARTER_MODE_PROFILES: readonly CustomModeProfile[] = Object.freeze
     updatedAt: "2026-10-26T00:00:00.000Z",
   },
   ADVANCED_DESIGN_MOTION_MODE_PROFILE,
+  REA_INVESTIGATION_MODE_PROFILE,
+  REA_RECONSTRUCTION_MODE_PROFILE,
 ]);
 
 export function getStarterModeProfiles(): readonly CustomModeProfile[] {

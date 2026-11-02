@@ -13,10 +13,39 @@ export interface McpToolCallResult {
   isError: boolean;
 }
 
+export interface McpPromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface McpPromptDeclaration {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments?: McpPromptArgument[];
+}
+
+export interface McpPromptMessage {
+  role: "user" | "assistant";
+  content: {
+    type: "text" | "image" | "resource";
+    text?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface McpPromptResult {
+  description?: string;
+  messages: McpPromptMessage[];
+}
+
 export interface McpTransport {
   connect(signal?: AbortSignal): Promise<void>;
   listTools(signal?: AbortSignal): Promise<McpToolDeclaration[]>;
   callTool(name: string, args: unknown, signal?: AbortSignal): Promise<McpToolCallResult>;
+  listPrompts?(signal?: AbortSignal): Promise<McpPromptDeclaration[]>;
+  getPrompt?(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<McpPromptResult>;
   close(): Promise<void>;
 }
 
@@ -160,6 +189,21 @@ export class StdioMcpTransport implements McpTransport {
     return {
       content: result.content || [],
       isError: !!result.isError
+    };
+  }
+
+  async listPrompts(signal?: AbortSignal): Promise<McpPromptDeclaration[]> {
+    if (!this.initialized) throw new Error("Not initialized");
+    const result = await this.sendRequestWithSignal("prompts/list", {}, signal, 10000);
+    return result.prompts || [];
+  }
+
+  async getPrompt(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<McpPromptResult> {
+    if (!this.initialized) throw new Error("Not initialized");
+    const result = await this.sendRequestWithSignal("prompts/get", { name, arguments: args ?? {} }, signal, 15000);
+    return {
+      description: result.description,
+      messages: result.messages || [],
     };
   }
 

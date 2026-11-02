@@ -958,6 +958,44 @@ CapabilityPackResolver ("advanced-design-motion-pack@1.0.0")
 | `starter-pack.ts` | `@open-vs-code/agent-core/design/` | Pack manifest `advanced-design-motion-pack` and custom mode profile `advanced-design-motion`. | Conforms to `open-vs-code/capability-pack@v1`; BUILD base mode; Apache-2.0 upstream attribution. |
 | Built-in Skills | `@open-vs-code/agent-core/skills/builtins/` | 8 specialized design skills with progressive disclosure. | Budget $<1,000$ tokens per skill; strict markdown schema; zero code execution scripts. |
 
+---
+
+## REA Reverse Engineering Subsystem (Sprint 9D — ADR-042)
+
+Sprint 9D integrates the methodology and open-source capabilities of **Reverse Engineer Anything (REA)** (v6.8.0, pinned commit `f95bdbce76fa538d9383a36c7dde0468078b42f4`) into Open VS Code through the existing single `AgentRuntime` lifecycle, declarative Capability Packs, and deterministic evidence ledgers:
+
+```text
+Software Target (Web URL / Electron ASAR / Native Binary / Source Repo)
+       │
+       ▼
+Deterministic Target Classification (TargetClassifier)
+       │
+       ├───────────────────────────────┐
+       ▼                               ▼
+Investigation Pack (REVIEW Mode)   Reconstruction Pack (BUILD Mode)
+       │                               │
+       ├─ Bounded Exploration          ├─ User Authorization Gate (PermissionGate)
+       ├─ REA / Playwright Evidence    ├─ Clean-Room Implementation
+       ├─ Epistemic Tagging            ├─ Automated Verification Suite
+       ▼                               ▼
+Reconstruction Specification       Reconstruction Obligation Ledger
+(Features, Routes, Rules,          (Status: verified, Cryptographic Closure Digest)
+ Unknowns: why unobservable)
+```
+
+### Core Architecture Components
+
+| Module | Location | Responsibility | Invariants & Security Boundaries |
+| :--- | :--- | :--- | :--- |
+| `contracts.ts` | `@open-vs-code/agent-core/rea/` | Epistemic schemas (`OBSERVED`, `INFERRED`, `UNKNOWN`), `ReaEvidenceRecord`, `ReconstructionSpecification`, `ReconstructionObligationLedger`. | Enforces strict epistemic classification; SHA-256 closure digests; unknown detail risk declarations. |
+| `target-classifier.ts` | `@open-vs-code/agent-core/rea/` | Deterministic target intake and classification into 4 supported investigation workflows. | Enforces browser network policy on URLs (SSRF rejection, allowed port checking); probes binary headers (Mach-O, ELF, PE); blocks directory traversals. |
+| `rea-mcp-service.ts` | `@open-vs-code/agent-core/rea/` | Local REA stdio MCP server connection, tool discovery, guided prompt retrieval, and provider diagnostics. | Zero phantom tools; audits advertised tools (234 tools) and prompts (6 prompts); reports unconfigured disassemblers without assuming installation; clean process teardown. |
+| `investigation-engine.ts` | `@open-vs-code/agent-core/rea/` | Bounded behavioral exploration, state transition recording, specification synthesis, and initial obligation ledger compilation. | Bounded exploration limits; records observable transitions with confidence levels; isolates backend persistence unknowns. |
+| `reconstruction-engine.ts` | `@open-vs-code/agent-core/rea/` | Governed clean-room implementation, test execution against obligations, and cryptographic closure calculation. | Fails closed without explicit human authorization (`ReconstructionAuthorizationError`); writes clean-room files to disk; updates obligation status to `verified` with PASS evidence. |
+| `starter-packs.ts` & `starter-profiles.ts` | `@open-vs-code/agent-core/rea/` | `rea-investigation-pack` (`REVIEW`) and `rea-reconstruction-pack` (`BUILD`). | Conforms to `open-vs-code/capability-pack@v1`; read-only inspection ceiling for investigation; mutation authorization for reconstruction. |
+| Built-in Skills | `@open-vs-code/agent-core/skills/builtins/` | 8 specialized reverse-engineering skills (`rea-investigation-routing`, `browser-behavior-investigation`, etc.). | Budget $<850$ tokens per skill; progressive disclosure per workflow stage; zero secret leakage. |
+
+
 
 
 

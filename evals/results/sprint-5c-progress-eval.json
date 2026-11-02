@@ -11,7 +11,7 @@
       "recoveryAttempted": false,
       "diagnosticChecks": 0,
       "modelCalls": 7,
-      "promptTokens": 2627,
+      "promptTokens": 2628,
       "toolCalls": 6,
       "turns": 7
     },
@@ -97,7 +97,7 @@
       "recoveryAttempted": false,
       "diagnosticChecks": 0,
       "modelCalls": 8,
-      "promptTokens": 3256,
+      "promptTokens": 3255,
       "toolCalls": 8,
       "turns": 8
     },

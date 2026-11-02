@@ -368,7 +368,33 @@ All security evaluations (`packages/vscode-integration/tests/security-eval.test.
 
 ---
 
-## 6. Known Non-Goals (V1)
+## 6. Reverse Engineering Security Boundaries (Sprint 9D, ADR-042)
+
+The REA Reverse Engineering integration establishes bounded, safe reverse engineering practices across four distinct target workflows:
+
+1. **Target Ingestion & SSRF Protection**:
+   - `TargetClassifier` validates all software inputs deterministically.
+   - Web targets are checked against `BrowserNetworkPolicy`. Loopback origins (`http://localhost:*`, `http://127.0.0.1:*`) are permitted only when explicitly authorized.
+   - Non-HTTP schemes (`file://`, `gopher://`, `ftp://`), internal cloud metadata addresses (`169.254.169.254`), and private RFC1918 subnets are rejected fail-closed with `UNAUTHORIZED_ORIGIN`.
+   - File path inputs require realpath resolution, workspace boundary validation, and rejection of path traversals (`TARGET_NOT_FOUND` / `UNSAFE_PATH`).
+
+2. **Dual-Pack Role Separation**:
+   - **Investigation Pack** operates strictly under `REVIEW` base mode: read-only tools, no repository mutations, bounded browser navigation, and zero arbitrary shell execution.
+   - **Reconstruction Pack** operates under `BUILD` base mode: clean-room code generation and file creation require explicit human confirmation via `IdeHost.requestConfirmation`. Unapproved reconstruction attempts fail closed immediately with `ReconstructionAuthorizationError`.
+
+3. **External Provider Safety**:
+   - Does not assume heavyweight external disassemblers (Ghidra, Hopper, IDA Pro, JADX) are installed.
+   - When external providers are unconfigured or uninstalled, REA reports diagnostic status without throwing unhandled exceptions or running untrusted fallback binaries.
+   - Binary inspection probes magic byte headers (Mach-O, ELF, PE) safely without executing untrusted foreign executables.
+
+4. **Epistemic Discipline & Unknown Isolation**:
+   - Every evidence record is tagged as `OBSERVED`, `INFERRED`, or `UNKNOWN`.
+   - Client-side behavioral investigation never claims observation of hidden backend persistence, databases, or server-side private keys.
+   - Inferred hypotheses are never promoted to observed facts without tangible runtime evidence.
+
+---
+
+## 7. Known Non-Goals (V1)
 
 - No OS-level MAC sandbox (seccomp, AppArmor, sandbox-exec) around subprocess execution
 - No signed extension distribution (planned Sprint 4F / VSCodium packaging)
