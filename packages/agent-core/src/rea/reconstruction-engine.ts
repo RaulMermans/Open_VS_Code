@@ -45,6 +45,8 @@ export interface ReconstructionEngineOptions {
   }>) | undefined;
   readonly requestConfirmation?: ((prompt: string, payload: unknown) => Promise<"APPROVE" | "REJECT">) | undefined;
   readonly autoApproveMutations?: boolean | undefined;
+  readonly provider?: any;
+  readonly skills?: any;
   readonly onStageChange?: ((event: {
     stage: ReconstructionStageId;
     status: "STARTED" | "COMPLETED" | "FAILED";
@@ -91,6 +93,8 @@ export class ReconstructionEngine {
   }>) | undefined;
   readonly #requestConfirmation?: ((prompt: string, payload: unknown) => Promise<"APPROVE" | "REJECT">) | undefined;
   readonly #autoApproveMutations: boolean;
+  readonly #provider?: any;
+  readonly #skills?: any;
   readonly #onStageChange?: ((event: {
     stage: ReconstructionStageId;
     status: "STARTED" | "COMPLETED" | "FAILED";
@@ -103,6 +107,8 @@ export class ReconstructionEngine {
     this.#testRunner = options.testRunner;
     this.#requestConfirmation = options.requestConfirmation;
     this.#autoApproveMutations = Boolean(options.autoApproveMutations);
+    this.#provider = options.provider;
+    this.#skills = options.skills;
     this.#onStageChange = options.onStageChange;
   }
 
@@ -112,6 +118,14 @@ export class ReconstructionEngine {
 
   get mutationEngine(): MutationEngine {
     return this.#mutationEngine;
+  }
+
+  get provider(): any {
+    return this.#provider;
+  }
+
+  get skills(): any {
+    return this.#skills;
   }
 
   /**
@@ -159,10 +173,13 @@ export class ReconstructionEngine {
       for (const [filePath, content] of Object.entries(options.targetFiles)) {
         implementedFiles.push({ path: filePath, content });
       }
+    } else if (this.#provider && typeof this.#provider.complete === "function") {
+      const synthesized = await this.#synthesizeWithModel(specification, initialLedger, options.signal);
+      implementedFiles.push(...synthesized);
     } else {
-      const cleanRoomHtml = this.#generateCleanRoomHtml(specification);
-      const cleanRoomJs = this.#generateCleanRoomJs(specification);
-      const cleanRoomCss = this.#generateCleanRoomCss();
+      const cleanRoomHtml = "<!-- TEMPLATE_BASED_OUTPUT: Deterministic clean-room baseline (no model provider configured) -->\n" + this.#generateCleanRoomHtml(specification);
+      const cleanRoomJs = "/* TEMPLATE_BASED_OUTPUT: Deterministic clean-room baseline (no model provider configured) */\n" + this.#generateCleanRoomJs(specification);
+      const cleanRoomCss = "/* TEMPLATE_BASED_OUTPUT: Deterministic clean-room baseline (no model provider configured) */\n" + this.#generateCleanRoomCss();
 
       implementedFiles.push(
         { path: "index.html", content: cleanRoomHtml },
@@ -558,6 +575,124 @@ li {
   border-bottom: 1px solid #e2e8f0;
 }
 `;
+  }
+
+  async #synthesizeWithModel(
+    spec: ReconstructionSpecification,
+    initialLedger: ReconstructionObligationLedger,
+    signal?: AbortSignal
+  ): Promise<Array<{ path: string; content: string }>> {
+    const featureDescriptions = spec.featureInventory.map(
+      (f) => `- [${f.epistemicStatus}] ${f.title} (${f.category}): ${f.description}`
+    ).join("\n");
+
+    const stateTransitions = spec.interactionStateGraph.map(
+      (t) => `- [${t.confidence}] ${t.initialState.route} -> ${t.resultingState.route} via ${t.userAction.type} (${t.userAction.targetSelector || "target"}): ${t.visibleChange}`
+    ).join("\n");
+
+    const businessRules = spec.visibleBusinessRules.map(
+      (r) => `- [${r.isHypothesis ? "INFERRED" : "OBSERVED"}] ${r.statement} (trigger: ${r.trigger}; outcome: ${r.outcome})`
+    ).join("\n");
+
+    const formValidation = spec.formAndValidationBehavior.map(
+      (v) => `- Form "${v.formId}": fields [${v.fields.map((fld) => `${fld.name} (${fld.type}${fld.required ? ", required" : ""})`).join(", ")}] -> submission: ${v.submissionAction}`
+    ).join("\n");
+
+    const obligations = initialLedger.obligations.map(
+      (o) => `- Obligation ${o.obligationId} (${o.family}): ${o.title} (positive: ${o.positiveCases.join("; ")}; negative: ${o.negativeCases.join("; ")})`
+    ).join("\n");
+
+    const prompt = `You are a principal clean-room software reverse engineer.
+Reconstruct a clean-room web application implementing all observed features and fulfilling all reconstruction obligations.
+
+Target Information:
+- Category: ${spec.target.category}
+- Target Input: ${spec.target.rawInput || spec.target.normalizedLocation}
+
+Feature Inventory (Observed Evidence):
+${featureDescriptions || "None specified"}
+
+Observed Interaction State Transitions:
+${stateTransitions || "None specified"}
+
+Visible Business Rules:
+${businessRules || "None specified"}
+
+Form and Validation Behavior:
+${formValidation || "None specified"}
+
+Reconstruction Obligations to Fulfill:
+${obligations || "None specified"}
+
+Constraints:
+1. All file paths must be relative within the project root (e.g. "index.html", "src/app.js", "src/styles.css").
+2. Do not use absolute paths or paths containing "../".
+3. Provide complete, functional implementations in clean-room code.
+4. Output MUST be a valid JSON object with a "files" array:
+{
+  "files": [
+    {
+      "path": "index.html",
+      "content": "<!DOCTYPE html>..."
+    },
+    {
+      "path": "src/app.js",
+      "content": "..."
+    },
+    {
+      "path": "src/styles.css",
+      "content": "..."
+    }
+  ]
+}
+Return ONLY valid JSON.`;
+
+    try {
+      const resp = await this.#provider.complete({
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        signal,
+      });
+
+      let raw = resp.message?.content?.trim() || "";
+      const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (jsonMatch) {
+        raw = jsonMatch[1].trim();
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        const firstBrace = raw.indexOf("{");
+        const lastBrace = raw.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          parsed = JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+        } else {
+          throw new Error("Model response did not contain valid JSON files proposal.");
+        }
+      }
+
+      if (!parsed || !Array.isArray(parsed.files) || parsed.files.length === 0) {
+        throw new Error("Model response did not contain a valid files array.");
+      }
+
+      const files: Array<{ path: string; content: string }> = [];
+      for (const f of parsed.files) {
+        if (!f.path || typeof f.path !== "string" || !f.content || typeof f.content !== "string") {
+          throw new Error("Model proposed file missing path or content.");
+        }
+        const normPath = f.path.replaceAll("\\", "/").trim();
+        if (isAbsolute(normPath) || normPath.startsWith("../") || normPath.includes("/../")) {
+          throw new Error(`Model proposed invalid or escaping path: ${normPath}`);
+        }
+        files.push({ path: normPath, content: f.content });
+      }
+
+      return files;
+    } catch (err: any) {
+      throw new Error(`Model reconstruction synthesis failed: ${err?.message || String(err)}`, { cause: err });
+    }
   }
 
   #emitStage(stage: ReconstructionStageId, status: "STARTED" | "COMPLETED" | "FAILED", details?: string) {
