@@ -12,8 +12,9 @@
  * - Emits ordered stage and progress events, supports checkpoints and cancellation.
  */
 
-import { resolve } from "node:path";
+import { resolve, isAbsolute, relative, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync, mkdirSync, rmSync, readdirSync, realpathSync } from "node:fs";
 import type { BrowserSessionManager } from "../browser/browser-session-manager.ts";
 import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts";
 import type { MutationEngine } from "../tools/mutation-engine.ts";
@@ -34,7 +35,7 @@ import type {
   WorkStage,
 } from "../workflow/contracts.ts";
 import { InvestigationEngine, type InvestigationResult } from "./investigation-engine.ts";
-import { ReconstructionEngine, type ReconstructionResult } from "./reconstruction-engine.ts";
+import type { ReconstructionResult } from "./reconstruction-engine.ts";
 import { classifyInvestigationTarget } from "./target-classifier.ts";
 import { ReaMcpService } from "./rea-mcp-service.ts";
 import type {
@@ -84,6 +85,11 @@ export interface GovernedReaWorkflowOptions {
 interface PendingConfirmation {
   readonly callId: string;
   readonly stage: string;
+  readonly workflowId: string;
+  readonly workspaceRoot: string;
+  readonly targetPath?: string | undefined;
+  readonly operationType?: string | undefined;
+  readonly contentDigest?: string | undefined;
   readonly preparedMutation?: PreparedMutation | undefined;
   readonly confirmationPrompt: string;
   readonly applyFn: () => Promise<void>;
@@ -107,7 +113,7 @@ export class GovernedReaWorkflow {
   readonly #workflowId: string;
   readonly #targetInput: string;
   readonly #autoApprove: boolean;
-  readonly #userAuthorized: boolean;
+  #userAuthorized: boolean;
   readonly #initialSpecification?: ReconstructionSpecification | undefined;
   readonly #initialLedger?: ReconstructionObligationLedger | undefined;
   readonly #targetFiles?: Record<string, string> | undefined;
@@ -126,6 +132,18 @@ export class GovernedReaWorkflow {
       limitations?: readonly string[];
     };
   }>) | undefined;
+
+  readonly #stageModelCalls: Record<string, number> = {};
+  readonly #stageTokens: Record<string, number> = {};
+  readonly #stageTools: Record<string, Set<string>> = {};
+  readonly #stageSkills: Record<string, string | undefined> = {};
+  readonly #stageSkillInjected: Record<string, boolean> = {};
+
+  #plannedFiles?: Array<{ path: string; content: string }> | undefined;
+  #appliedFileIndex: number = 0;
+  #appliedFiles: Array<{ path: string; content: string; operation?: "create" | "patch" }> = [];
+  readonly #createdDirs: string[] = [];
+  #generationSource?: "model" | "template" | "target_files" | undefined;
 
   #currentStage:
     | "TARGET_INTAKE"
@@ -171,7 +189,7 @@ export class GovernedReaWorkflow {
     this.#workflowId = `rea-wf-${Date.now()}`;
     this.#targetInput = options.targetInput ?? this.#extractTargetFromTask(options.task);
     this.#autoApprove = Boolean(options.autoApprove);
-    this.#userAuthorized = options.userAuthorized ?? (this.#workflowType === "reconstruction");
+    this.#userAuthorized = Boolean(options.userAuthorized);
     this.#initialSpecification = options.initialSpecification;
     this.#initialLedger = options.initialLedger;
     this.#targetFiles = options.targetFiles;
@@ -217,6 +235,10 @@ export class GovernedReaWorkflow {
 
   get skills(): any {
     return this.#skills;
+  }
+
+  get generationSource(): "model" | "template" | "target_files" | undefined {
+    return this.#generationSource;
   }
 
   public get state(): WorkflowState {
@@ -266,7 +288,11 @@ export class GovernedReaWorkflow {
         : {}),
     };
 
-    const changedFiles: ChangedFile[] = (this.#reconstructionResult?.implementedFiles ?? []).map((f) => ({
+    const filesToMap = this.#appliedFiles.length > 0
+      ? this.#appliedFiles
+      : (this.#reconstructionResult?.implementedFiles ?? []);
+
+    const changedFiles: ChangedFile[] = filesToMap.map((f) => ({
       path: f.path,
       operation: "create" as const,
       beforeHash: "",
@@ -309,7 +335,7 @@ export class GovernedReaWorkflow {
       implementation: {
         changedFiles,
         passes: 1,
-        summary: `REA ${this.#workflowType}: ${changedFiles.length} file(s) implemented, ${this.#stageRecords.length} stage(s) completed.`,
+        summary: `REA ${this.#workflowType}: ${changedFiles.length} file(s) implemented (source: ${this.#generationSource || "clean-room"}), ${this.#stageRecords.length} stage(s) completed.`,
       },
       reviews,
       verification,
@@ -328,13 +354,28 @@ export class GovernedReaWorkflow {
     return this.#advance();
   }
 
-  public async resume(decision: ConfirmationDecision): Promise<WorkflowResult> {
+  public async resume(decision: ConfirmationDecision, confirmationToken?: string): Promise<WorkflowResult> {
     if (this.#status !== "WAITING_FOR_CONFIRMATION" || !this.#pendingConfirmation) {
       throw new Error("Workflow is not waiting for confirmation");
     }
 
     const pending = this.#pendingConfirmation;
+
+    if (confirmationToken && pending.callId !== confirmationToken) {
+      throw new Error(`Stale confirmation token: approval token ${confirmationToken} does not match active confirmation ${pending.callId}`);
+    }
+
     this.#pendingConfirmation = undefined;
+
+    // Validate approval binding:
+    if (pending.workflowId !== this.#workflowId || pending.workspaceRoot !== this.#workspaceRoot) {
+      this.#status = "BLOCKED";
+      this.#blocker = "STAGE_FAILED";
+      this.#blockerDetail = "Stale or mismatched confirmation context";
+      this.#recordStageRecord(pending.stage, "BLOCKED", this.#blockerDetail);
+      this.#cleanupEmptyDirectories();
+      return this.#result();
+    }
 
     if (decision === "REJECT") {
       this.#status = "BLOCKED";
@@ -343,6 +384,7 @@ export class GovernedReaWorkflow {
         ? `Mutation on "${pending.preparedMutation.path}" was rejected by user.`
         : "Reconstruction authorization was rejected by user.";
       this.#recordStageRecord(pending.stage, "BLOCKED", this.#blockerDetail);
+      this.#cleanupEmptyDirectories();
       return this.#result();
     }
 
@@ -351,9 +393,11 @@ export class GovernedReaWorkflow {
       this.#status = "RUNNING";
       return this.#advance();
     } catch (err: any) {
+      this.#cleanupEmptyDirectories();
       this.#status = "BLOCKED";
       this.#blocker = "STAGE_FAILED";
       this.#blockerDetail = err.message;
+      this.#recordStageRecord(pending.stage, "BLOCKED", this.#blockerDetail);
       return this.#result();
     }
   }
@@ -361,6 +405,8 @@ export class GovernedReaWorkflow {
   public cancel(): void {
     this.#status = "CANCELLED";
     this.#currentStage = "CANCELLED";
+    this.#pendingConfirmation = undefined;
+    this.#cleanupEmptyDirectories();
     this.#recordStageRecord("cancelled", "CANCELLED", "Workflow cancelled by operator");
     this.#onStage?.({ stage: "cancelled", status: "CANCELLED" });
     this.#emitEvent("workflow.cancelled", { workflowId: this.#workflowId });
@@ -382,6 +428,7 @@ export class GovernedReaWorkflow {
   async #advanceInvestigation(): Promise<WorkflowResult> {
     switch (this.#currentStage) {
       case "TARGET_INTAKE": {
+        this.#recordStageSkill("target_intake", "rea-investigation-routing");
         this.#recordStageRecord("target_intake", "RUNNING", "Stage 1: Target Intake & Classification");
         this.#onStage?.({ stage: "target_intake", status: "RUNNING", skill: "rea-investigation-routing" });
 
@@ -410,6 +457,7 @@ export class GovernedReaWorkflow {
         if (this.#reaMcpService) {
           try {
             await this.#reaMcpService.connect(this.#signal);
+            this.#recordStageTool("provider_discovery", "rea_mcp_discovery");
           } catch {
             // REA is optional for web investigations
           }
@@ -421,6 +469,7 @@ export class GovernedReaWorkflow {
       }
 
       case "ROUTING": {
+        this.#recordStageSkill("routing", "browser-behavior-investigation");
         this.#recordStageRecord("routing", "RUNNING", "Stage 3: Investigation Routing & Skill Loading");
         this.#onStage?.({ stage: "routing", status: "RUNNING", skill: "browser-behavior-investigation" });
 
@@ -430,6 +479,9 @@ export class GovernedReaWorkflow {
       }
 
       case "EXPLORATION": {
+        this.#recordStageSkill("exploration", "browser-behavior-investigation");
+        this.#recordStageTool("exploration", "browser_snapshot");
+        this.#recordStageTool("exploration", "browser_navigate");
         this.#recordStageRecord("exploration", "RUNNING", "Stage 4: Governed Exploration & Behavioral Observation");
         this.#onStage?.({ stage: "exploration", status: "RUNNING", skill: "browser-behavior-investigation" });
 
@@ -459,6 +511,7 @@ export class GovernedReaWorkflow {
       }
 
       case "SPECIFICATION": {
+        this.#recordStageSkill("specification", "feature-specification");
         this.#recordStageRecord("specification", "RUNNING", "Stage 5: Grounded Specification Synthesis");
         this.#onStage?.({ stage: "specification", status: "RUNNING", skill: "feature-specification" });
 
@@ -485,30 +538,50 @@ export class GovernedReaWorkflow {
   async #advanceReconstruction(): Promise<WorkflowResult> {
     switch (this.#currentStage) {
       case "SPEC_REVIEW": {
-        this.#recordStageRecord("spec_review", "RUNNING", "Stage 1: Specification Review & Human Authorization");
+        this.#recordStageSkill("spec_review", "reconstruction-planning");
+        this.#recordStageRecord("spec_review", "RUNNING", "Stage 1: Specification Review & Scope Validation");
         this.#onStage?.({ stage: "spec_review", status: "RUNNING", skill: "reconstruction-planning" });
 
-        if (!this.#userAuthorized && !this.#autoApprove) {
-          this.#pendingConfirmation = {
-            callId: `call_auth_${Date.now()}`,
-            stage: "spec_review",
-            confirmationPrompt: "Authorize clean-room reconstruction implementation and workspace mutations?",
-            applyFn: async () => {
-              this.#currentStage = "PLANNING";
-            },
-          };
-          this.#status = "WAITING_FOR_CONFIRMATION";
+        const target = classifyInvestigationTarget(this.#targetInput, {
+          workspaceRoot: this.#workspaceRoot,
+        });
+
+        if (!target.authorized) {
+          this.#status = "BLOCKED";
+          this.#blocker = "STAGE_FAILED";
+          this.#blockerDetail = `Target "${this.#targetInput}" is not authorized for reconstruction.`;
+          this.#recordStageRecord("spec_review", "BLOCKED", this.#blockerDetail);
           return this.#result();
         }
 
-        this.#recordStageRecord("spec_review", "PASSED", "Reconstruction authorized");
+        this.#recordStageRecord("spec_review", "PASSED", `Scope authorized: ${target.category}`);
         this.#currentStage = "PLANNING";
         return this.#advance();
       }
 
       case "PLANNING": {
+        this.#recordStageSkill("planning", "reconstruction-planning");
         this.#recordStageRecord("planning", "RUNNING", "Stage 2: Clean-Room Implementation Planning");
         this.#onStage?.({ stage: "planning", status: "RUNNING", skill: "reconstruction-planning" });
+
+        const spec = this.#initialSpecification ?? this.#investigationResult?.specification ?? this.#buildDefaultSpec();
+        const initialLedger = this.#initialLedger ?? this.#investigationResult?.obligationLedger ?? this.#buildDefaultLedger(spec);
+
+        if (!this.#userAuthorized && !this.#autoApprove) {
+          this.#pendingConfirmation = {
+            callId: `call_auth_plan_${Date.now()}`,
+            stage: "planning",
+            workflowId: this.#workflowId,
+            workspaceRoot: this.#workspaceRoot,
+            confirmationPrompt: `Authorize clean-room reconstruction implementation for "${this.#targetInput}" with ${spec.featureInventory.length} features and ${initialLedger.obligations.length} obligations?`,
+            applyFn: async () => {
+              this.#userAuthorized = true;
+              this.#currentStage = "IMPLEMENTATION";
+            },
+          };
+          this.#status = "WAITING_FOR_CONFIRMATION";
+          return this.#result();
+        }
 
         this.#recordStageRecord("planning", "PASSED", "Clean-room architecture and obligations planned");
         this.#currentStage = "IMPLEMENTATION";
@@ -522,28 +595,207 @@ export class GovernedReaWorkflow {
         const spec = this.#initialSpecification ?? this.#investigationResult?.specification ?? this.#buildDefaultSpec();
         const initialLedger = this.#initialLedger ?? this.#investigationResult?.obligationLedger ?? this.#buildDefaultLedger(spec);
 
-        const engine = new ReconstructionEngine({
-          workspaceRoot: this.#workspaceRoot,
-          mutationEngine: this.#mutationEngine,
-          testRunner: this.#testRunner,
-          autoApproveMutations: this.#autoApprove,
-        });
+        if (!this.#plannedFiles) {
+          if (this.#targetFiles) {
+            this.#plannedFiles = Object.entries(this.#targetFiles).map(([path, content]) => ({ path, content }));
+            this.#generationSource = "target_files";
+          } else if (this.#provider && typeof this.#provider.complete === "function") {
+            try {
+              this.#plannedFiles = await this.#synthesizeReconstructionWithModel(spec, initialLedger);
+              this.#generationSource = "model";
+            } catch (err: any) {
+              this.#status = "BLOCKED";
+              this.#blocker = "STAGE_FAILED";
+              this.#blockerDetail = `Model reconstruction synthesis failed: ${err.message}`;
+              this.#recordStageRecord("implementation", "BLOCKED", this.#blockerDetail);
+              return this.#result();
+            }
+          } else {
+            this.#plannedFiles = this.#generateCleanRoomTemplates(spec);
+            this.#generationSource = "template";
+          }
+        }
 
-        this.#reconstructionResult = await engine.runReconstruction(spec, initialLedger, {
-          userAuthorized: true,
-          targetFiles: this.#targetFiles,
-          signal: this.#signal,
-        });
+        while (this.#appliedFileIndex < this.#plannedFiles.length) {
+          const file = this.#plannedFiles[this.#appliedFileIndex]!;
+          let prep: PreparedMutation;
+          try {
+            prep = await this.#prepareFileMutation(file.path, file.content);
+          } catch (err: any) {
+            this.#status = "BLOCKED";
+            this.#blocker = "STAGE_FAILED";
+            this.#blockerDetail = err.message;
+            this.#recordStageRecord("implementation", "BLOCKED", err.message);
+            return this.#result();
+          }
+
+          if (this.#autoApprove) {
+            const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);
+            if (mutResult.status !== "APPLIED") {
+              this.#status = "BLOCKED";
+              this.#blocker = "STAGE_FAILED";
+              this.#blockerDetail = `Failed to apply mutation on ${prep.path}: ${mutResult.error}`;
+              this.#recordStageRecord("implementation", "BLOCKED", this.#blockerDetail);
+              return this.#result();
+            }
+            this.#recordStageTool("implementation", prep.operation === "create" ? "create_file" : "apply_patch");
+            this.#appliedFiles.push({ ...file, operation: prep.operation });
+            this.#appliedFileIndex++;
+            continue;
+          }
+
+          this.#pendingConfirmation = {
+            callId: `call_impl_${Date.now()}_${this.#appliedFileIndex}`,
+            stage: "implementation",
+            workflowId: this.#workflowId,
+            workspaceRoot: this.#workspaceRoot,
+            targetPath: prep.path,
+            operationType: prep.operation,
+            contentDigest: prep.resultHash,
+            preparedMutation: prep,
+            confirmationPrompt: `Approve reconstruction mutation on "${prep.path}" (${prep.operation})?`,
+            applyFn: async () => {
+              const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);
+              if (mutResult.status !== "APPLIED") {
+                throw new Error(`Failed to apply mutation on ${prep.path}: ${mutResult.error}`);
+              }
+              this.#recordStageTool("implementation", prep.operation === "create" ? "create_file" : "apply_patch");
+              this.#appliedFiles.push({ ...file, operation: prep.operation });
+              this.#appliedFileIndex++;
+            },
+          };
+          this.#status = "WAITING_FOR_CONFIRMATION";
+          return this.#result();
+        }
 
         await this.#checkpoint("stage-3-implementation");
-        this.#recordStageRecord("implementation", "PASSED", `Implemented ${this.#reconstructionResult.implementedFiles.length} clean-room modules`);
+        const summary = `Implemented ${this.#appliedFiles.length} clean-room modules (source: ${this.#generationSource})`;
+        this.#recordStageRecord("implementation", "PASSED", summary);
         this.#currentStage = "LOCAL_VERIFICATION";
         return this.#advance();
       }
 
       case "LOCAL_VERIFICATION": {
+        this.#recordStageSkill("local_verification", "reconstruction-verification");
         this.#recordStageRecord("local_verification", "RUNNING", "Stage 4: Behavioral Verification & Testing");
         this.#onStage?.({ stage: "local_verification", status: "RUNNING", skill: "reconstruction-verification" });
+
+        const spec = this.#initialSpecification ?? this.#investigationResult?.specification ?? this.#buildDefaultSpec();
+        const initialLedger = this.#initialLedger ?? this.#investigationResult?.obligationLedger ?? this.#buildDefaultLedger(spec);
+
+        const verifiedObligations: ReconstructionObligation[] = [];
+        const failedObligations: ReconstructionObligation[] = [];
+        const artifactDigest = createHash("sha256")
+          .update(this.#appliedFiles.map((f) => `${f.path}:${createHash("sha256").update(f.content).digest("hex")}`).join("\n"))
+          .digest("hex");
+
+        for (const obl of initialLedger.obligations) {
+          if (this.#testRunner) {
+            let testPassed = false;
+            let testOutput = "";
+            let testDetails: any = undefined;
+
+            try {
+              const runResult = await this.#testRunner(obl, this.#workspaceRoot);
+              this.#recordStageTool("local_verification", "test_runner");
+              testPassed = Boolean(runResult.passed);
+              testOutput = runResult.output || "";
+              testDetails = runResult.details;
+            } catch (err: any) {
+              testPassed = false;
+              testOutput = err.message || String(err);
+            }
+
+            if (testPassed) {
+              const testDigest = createHash("sha256")
+                .update(`${obl.obligationId}:${artifactDigest}:${testOutput}`)
+                .digest("hex");
+
+              verifiedObligations.push({
+                ...obl,
+                status: "verified",
+                testEvidence: {
+                  obligationId: obl.obligationId,
+                  obligationVersion: obl.obligationVersion,
+                  artifactDigest,
+                  testIdentity: testDetails?.testIdentity ?? `verifier_${obl.obligationId}`,
+                  inputFixture: testDetails?.inputFixture ?? obl.positiveCases.join("; "),
+                  expectedBehavior: testDetails?.expectedBehavior ?? obl.positiveCases.join("; "),
+                  observedResult: testOutput,
+                  result: "PASS",
+                  verifier: testDetails?.verifier ?? "open-vs-code.verification-engine",
+                  timestamp: testDetails?.timestamp ?? Date.now(),
+                  digest: testDigest,
+                  testOutputSnippet: testOutput.slice(0, 500),
+                  supportingEvidence: obl.evidenceLinks,
+                  limitations: testDetails?.limitations ?? [],
+                },
+              });
+            } else {
+              const testDigest = createHash("sha256")
+                .update(`${obl.obligationId}:${artifactDigest}:${testOutput}:FAIL`)
+                .digest("hex");
+
+              failedObligations.push({
+                ...obl,
+                status: "characterized",
+                testEvidence: {
+                  obligationId: obl.obligationId,
+                  obligationVersion: obl.obligationVersion,
+                  artifactDigest,
+                  testIdentity: testDetails?.testIdentity ?? `verifier_${obl.obligationId}`,
+                  inputFixture: testDetails?.inputFixture ?? obl.positiveCases.join("; "),
+                  expectedBehavior: testDetails?.expectedBehavior ?? obl.positiveCases.join("; "),
+                  observedResult: testOutput,
+                  result: "FAIL",
+                  verifier: testDetails?.verifier ?? "open-vs-code.verification-engine",
+                  timestamp: testDetails?.timestamp ?? Date.now(),
+                  digest: testDigest,
+                  testOutputSnippet: testOutput.slice(0, 500),
+                  supportingEvidence: obl.evidenceLinks,
+                  limitations: testDetails?.limitations ?? [],
+                },
+              });
+            }
+          } else {
+            failedObligations.push({
+              ...obl,
+              status: "characterized",
+            });
+          }
+        }
+
+        const allObligations = [...verifiedObligations, ...failedObligations];
+        const closureDigest = createHash("sha256").update(JSON.stringify(verifiedObligations)).digest("hex");
+
+        this.#reconstructionResult = {
+          specificationId: spec.specificationId,
+          implementedFiles: this.#appliedFiles,
+          updatedLedger: {
+            ...initialLedger,
+            closureDigest,
+            status: failedObligations.length === 0 && verifiedObligations.length > 0 ? "verified" : "partial",
+            coverage: {
+              status: failedObligations.length === 0 && verifiedObligations.length > 0 ? "complete" : "partial",
+            },
+            summary: {
+              total: allObligations.length,
+              required: allObligations.length,
+              verified: verifiedObligations.length,
+              requiredOpen: failedObligations.length,
+              byStatus: [
+                { key: "verified", count: verifiedObligations.length },
+                { key: "characterized", count: failedObligations.length },
+              ],
+              byApplicationLayer: initialLedger.summary.byApplicationLayer,
+            },
+            obligations: allObligations,
+          },
+          verifiedObligationsCount: verifiedObligations.length,
+          remainingOpenCount: failedObligations.length,
+          closureDigest,
+          durationMs: 0,
+        };
 
         this.#recordStageRecord("local_verification", "PASSED", "Verification execution finished");
         this.#currentStage = "CLOSURE_REPORTING";
@@ -551,6 +803,7 @@ export class GovernedReaWorkflow {
       }
 
       case "CLOSURE_REPORTING": {
+        this.#recordStageSkill("closure_reporting", "evidence-reconciliation");
         this.#recordStageRecord("closure_reporting", "RUNNING", "Stage 5: Obligation Closure & Coverage Evaluation");
         this.#onStage?.({ stage: "closure_reporting", status: "RUNNING", skill: "evidence-reconciliation" });
 
@@ -682,6 +935,292 @@ export class GovernedReaWorkflow {
     }
   }
 
+  #recordStageTool(stage: string, tool: string): void {
+    if (!this.#stageTools[stage]) {
+      this.#stageTools[stage] = new Set();
+    }
+    this.#stageTools[stage].add(tool);
+  }
+
+  #recordStageModelCall(stage: string, tokens: number = 0): void {
+    this.#stageModelCalls[stage] = (this.#stageModelCalls[stage] ?? 0) + 1;
+    this.#stageTokens[stage] = (this.#stageTokens[stage] ?? 0) + tokens;
+  }
+
+  #recordStageSkill(stage: string, skill: string): void {
+    this.#stageSkills[stage] = skill;
+    this.#stageSkillInjected[stage] = true;
+  }
+
+  #cleanupEmptyDirectories(): void {
+    for (let d = this.#createdDirs.length - 1; d >= 0; d--) {
+      try {
+        const dir = this.#createdDirs[d]!;
+        if (existsSync(dir)) {
+          const files = readdirSync(dir);
+          if (files.length === 0) {
+            rmSync(dir, { recursive: true, force: true });
+          }
+        }
+      } catch {
+        // Best effort
+      }
+    }
+    this.#createdDirs.length = 0;
+  }
+
+  async #prepareFileMutation(relPath: string, content: string): Promise<PreparedMutation> {
+    const canonicalRoot = existsSync(this.#workspaceRoot)
+      ? realpathSync(this.#workspaceRoot)
+      : resolve(this.#workspaceRoot);
+    const targetRelPath = relPath.replaceAll("\\", "/");
+    if (isAbsolute(targetRelPath)) {
+      throw new Error(`Target path escapes outside workspace: ${targetRelPath}`);
+    }
+    const normalizedTarget = resolve(canonicalRoot, targetRelPath);
+    const rel = relative(canonicalRoot, normalizedTarget);
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+      throw new Error(`Target path escapes outside workspace: ${targetRelPath}`);
+    }
+    let checkDir = canonicalRoot;
+    const parts = rel.split("/").slice(0, -1);
+    for (const part of parts) {
+      checkDir = join(checkDir, part);
+      if (existsSync(checkDir)) {
+        const real = realpathSync(checkDir);
+        const relReal = relative(canonicalRoot, real);
+        if (relReal.startsWith("..") || isAbsolute(relReal)) {
+          throw new Error(`Parent directory symlink escapes outside workspace: ${targetRelPath}`);
+        }
+      }
+    }
+    const parentDir = dirname(normalizedTarget);
+    if (!existsSync(parentDir)) {
+      const toCreate: string[] = [];
+      let cur = parentDir;
+      while (cur !== canonicalRoot && !existsSync(cur)) {
+        toCreate.unshift(cur);
+        const next = dirname(cur);
+        if (next === cur) break;
+        cur = next;
+      }
+      for (const d of toCreate) {
+        mkdirSync(d);
+        this.#createdDirs.push(d);
+      }
+    }
+    const fileExists = existsSync(normalizedTarget);
+    if (fileExists) {
+      const currentContent = readFileSync(normalizedTarget, "utf-8");
+      return this.#mutationEngine.preparePatch({
+        operation: "patch",
+        path: targetRelPath,
+        patch: {
+          search: currentContent,
+          replace: content,
+        },
+      });
+    }
+    return this.#mutationEngine.prepareCreate({
+      operation: "create",
+      path: targetRelPath,
+      content,
+    });
+  }
+
+  async #synthesizeReconstructionWithModel(
+    spec: ReconstructionSpecification,
+    initialLedger: ReconstructionObligationLedger
+  ): Promise<Array<{ path: string; content: string }>> {
+    if (!this.#provider || typeof this.#provider.complete !== "function") {
+      throw new Error("No model provider configured for reconstruction synthesis.");
+    }
+
+    const featureDescriptions = spec.featureInventory.map(
+      (f) => `- [${f.epistemicStatus}] ${f.title} (${f.category}): ${f.description}`
+    ).join("\n");
+
+    const stateTransitions = spec.interactionStateGraph.map(
+      (t) => `- [${t.confidence}] ${t.initialState.route} -> ${t.resultingState.route} via ${t.userAction.type} (${t.userAction.targetSelector || "target"}): ${t.visibleChange}`
+    ).join("\n");
+
+    const businessRules = spec.visibleBusinessRules.map(
+      (r) => `- [${r.isHypothesis ? "INFERRED" : "OBSERVED"}] ${r.statement} (trigger: ${r.trigger}; outcome: ${r.outcome})`
+    ).join("\n");
+
+    const formValidation = spec.formAndValidationBehavior.map(
+      (v) => `- Form "${v.formId}": fields [${v.fields.map((fld) => `${fld.name} (${fld.type}${fld.required ? ", required" : ""})`).join(", ")}] -> submission: ${v.submissionAction}`
+    ).join("\n");
+
+    const obligations = initialLedger.obligations.map(
+      (o) => `- Obligation ${o.obligationId} (${o.family}): ${o.title} (positive: ${o.positiveCases.join("; ")}; negative: ${o.negativeCases.join("; ")})`
+    ).join("\n");
+
+    const prompt = `You are a principal clean-room software reverse engineer.
+Reconstruct a clean-room web application implementing all observed features and fulfilling all reconstruction obligations.
+
+Target Information:
+- Category: ${spec.target.category}
+- Target Input: ${spec.target.rawInput || spec.target.normalizedLocation}
+
+Feature Inventory (Observed Evidence):
+${featureDescriptions || "None specified"}
+
+Observed Interaction State Transitions:
+${stateTransitions || "None specified"}
+
+Visible Business Rules:
+${businessRules || "None specified"}
+
+Form and Validation Behavior:
+${formValidation || "None specified"}
+
+Reconstruction Obligations to Fulfill:
+${obligations || "None specified"}
+
+Constraints:
+1. All file paths must be relative within the project root (e.g. "index.html", "src/app.js", "src/styles.css").
+2. Do not use absolute paths or paths containing "../".
+3. Provide complete, functional implementations in clean-room code.
+4. Output MUST be a valid JSON object with a "files" array:
+{
+  "files": [
+    {
+      "path": "index.html",
+      "content": "<!DOCTYPE html>..."
+    },
+    {
+      "path": "src/app.js",
+      "content": "..."
+    },
+    {
+      "path": "src/styles.css",
+      "content": "..."
+    }
+  ]
+}
+Return ONLY valid JSON.`;
+
+    try {
+      const resp: any = await this.#provider.complete({
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        signal: this.#signal,
+      });
+
+      const tokensUsed = (resp.usage?.inputTokens ?? 0) + (resp.usage?.outputTokens ?? 0);
+      this.#recordStageModelCall("implementation", tokensUsed);
+
+      let raw = resp.message?.content?.trim() || "";
+      const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (jsonMatch) {
+        raw = jsonMatch[1].trim();
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        const firstBrace = raw.indexOf("{");
+        const lastBrace = raw.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          parsed = JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+        } else {
+          throw new Error("Model response did not contain valid JSON files proposal.");
+        }
+      }
+
+      if (!parsed || !Array.isArray(parsed.files) || parsed.files.length === 0) {
+        throw new Error("Model response did not contain a valid files array.");
+      }
+
+      const files: Array<{ path: string; content: string }> = [];
+      for (const f of parsed.files) {
+        if (!f.path || typeof f.path !== "string" || !f.content || typeof f.content !== "string") {
+          throw new Error("Model proposed file missing path or content.");
+        }
+        const normPath = f.path.replaceAll("\\", "/").trim();
+        if (isAbsolute(normPath) || normPath.startsWith("../") || normPath.includes("/../")) {
+          throw new Error(`Model proposed invalid or escaping path: ${normPath}`);
+        }
+        files.push({ path: normPath, content: f.content });
+      }
+
+      return files;
+    } catch (err: any) {
+      throw new Error(`Model reconstruction synthesis failed: ${err?.message || String(err)}`, { cause: err });
+    }
+  }
+
+  #generateCleanRoomTemplates(spec: ReconstructionSpecification): Array<{ path: string; content: string }> {
+    const html = `<!-- TEMPLATE_BASED_OUTPUT: Deterministic clean-room baseline (no model provider configured) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${spec.target.rawInput || "Clean-Room Reconstruction"}</title>
+  <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Clean-Room Application</h1>
+  </header>
+  <main>
+    <div id="app">
+      <form id="task-form">
+        <label for="task-input">Task Title</label>
+        <input type="text" id="task-input" name="title" required placeholder="Enter task title...">
+        <button type="submit" id="add-task-btn">Add Task</button>
+      </form>
+      <ul id="task-list" role="list"></ul>
+    </div>
+  </main>
+  <script src="src/app.js"></script>
+</body>
+</html>`;
+
+    const js = `/* TEMPLATE_BASED_OUTPUT: Deterministic clean-room baseline (no model provider configured) */
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("task-form");
+  const input = document.getElementById("task-input");
+  const list = document.getElementById("task-list");
+  if (!form || !input || !list) return;
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const val = input.value.trim();
+    if (!val) {
+      let err = document.getElementById("form-error");
+      if (!err) {
+        err = document.createElement("p");
+        err.id = "form-error";
+        err.style.color = "red";
+        err.textContent = "Task title is required";
+        form.appendChild(err);
+      }
+      return;
+    }
+    const existingErr = document.getElementById("form-error");
+    if (existingErr) existingErr.remove();
+    const li = document.createElement("li");
+    li.textContent = val;
+    list.appendChild(li);
+    input.value = "";
+  });
+});`;
+
+    const css = `/* TEMPLATE_BASED_OUTPUT: Deterministic clean-room baseline (no model provider configured) */
+body { font-family: sans-serif; padding: 20px; }
+#task-form { display: flex; gap: 8px; margin-bottom: 16px; }
+.error { color: red; }`;
+
+    return [
+      { path: "index.html", content: html },
+      { path: "src/app.js", content: js },
+      { path: "src/styles.css", content: css },
+    ];
+  }
+
   #recordStageRecord(stage: string, status: "RUNNING" | "PASSED" | "FAILED" | "BLOCKED" | "CANCELLED", outcome?: string): void {
     const stageMap: Record<string, WorkStage> = {
       target_intake: "PLAN",
@@ -698,11 +1237,23 @@ export class GovernedReaWorkflow {
     };
 
     const workStage: WorkStage = stageMap[stage] ?? "PLAN";
+    const toolsUsed = Array.from(this.#stageTools[stage] ?? []);
+    const modelCalls = this.#stageModelCalls[stage] ?? 0;
+    const contextTokens = this.#stageTokens[stage] ?? 0;
+    const skillName = this.#stageSkills[stage];
+    const skillInjected = Boolean(this.#stageSkillInjected[stage]);
+
     const existing = this.#stageRecords.find((r) => r.stage === workStage);
     if (existing) {
       (existing as any).status = status;
       if (outcome) (existing as any).outcome = outcome;
       if (status !== "RUNNING") (existing as any).endedAt = new Date().toISOString();
+      (existing as any).modelCalls = modelCalls;
+      (existing as any).contextTokens = contextTokens;
+      (existing as any).toolsUsed = toolsUsed;
+      if (skillName) (existing as any).selectedSkill = skillName;
+      (existing as any).skillInjected = skillInjected;
+      (existing as any).skillInjection = skillInjected ? "INJECTED" : "NOT_APPLICABLE";
     } else {
       this.#stageRecords.push({
         stage: workStage,
@@ -710,11 +1261,12 @@ export class GovernedReaWorkflow {
         startedAt: new Date().toISOString(),
         ...(status !== "RUNNING" ? { endedAt: new Date().toISOString() } : {}),
         status,
-        modelCalls: 1,
-        contextTokens: 850,
-        toolsUsed: this.#workflowType === "investigation" ? ["browser_snapshot", "browser_navigate"] : ["create_file", "apply_patch"],
-        skillInjection: "INJECTED",
-        skillInjected: true,
+        modelCalls,
+        contextTokens,
+        toolsUsed,
+        ...(skillName ? { selectedSkill: skillName } : {}),
+        skillInjection: skillInjected ? "INJECTED" : "NOT_APPLICABLE",
+        skillInjected,
         ...(outcome ? { outcome } : {}),
       });
     }

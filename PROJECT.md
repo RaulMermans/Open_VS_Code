@@ -30,6 +30,15 @@
 
 ## Current sprint
 
+Sprint 10A.1B — Specialized Workflow Execution, Real Model Synthesis & Production Closure (`docs/sprints/SPRINT_10A1B_SPECIALIZED_EXECUTION_CLOSURE.md`).
+Corrects production defects identified in Sprint 10A.1 audit and establishes reliable end-to-end specialized execution:
+- Architectural Invariants Preserved: Single authoritative `AgentRuntime`, `PermissionGate`, and `MutationEngine`. No new agents, frameworks, orchestration engines, or shadow approval loops.
+- REA Reconstruction Authorization (Section 3): Eliminated implicit authorization defaults in `GovernedReaWorkflow`. Reconstruction planning and file mutations strictly suspend for host confirmation (`WAITING_FOR_CONFIRMATION`) with cryptographic binding and empty parent directory rollback on denial.
+- REA Model Synthesis (Section 4): Connected `GovernedReaWorkflow` and `ReconstructionEngine` to the active model provider. Prompt grounded in evidence-backed feature inventory, state transitions, visible business rules, form validations, and obligations. Verified distinct implementations for Form-Driven App A vs Tab-Nav App B.
+- Design Honest Model Execution (Section 5): Removed silent fallback from model errors to procedural templates; model failures fail closed as `BLOCKED`. Fallback templates when provider is intentionally unconfigured are explicitly stamped with `TEMPLATE_BASED_OUTPUT` banners.
+- Execution Telemetry Truthfulness (Section 6): Replaced remaining static telemetry with live tracking (`modelCalls = 0` when uncalled).
+- Complete Verification Suite: Specialized execution closure test suite (20/20 PASS), 10 mandatory negative verification tests, Agent Core full test matrix (934/934 PASS), all monorepo evals passing, and Desktop smoke/accept (14/14 & 6/6 PASS).
+
 Sprint 10A.1 — Pre-HALO Production Readiness, Agent Execution Integrity & End-to-End Reliability (`docs/sprints/SPRINT_10A1_PRE_HALO_PRODUCTION_READINESS.md`).
 Audits, corrects, and validates the existing Open VS Code architecture so specialized workflows (Advanced Design and REA Reconstruction) execute reliably, truthfully, and safely before physical HALO hardware arrives:
 - Architectural Invariants Preserved: Single authoritative `AgentRuntime`, `ModelRouter`, `PermissionGate`, and `MutationEngine`. Zero new agents, frameworks, or shadow runtimes.

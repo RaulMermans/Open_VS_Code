@@ -96,6 +96,7 @@ export class GovernedDesignWorkflow {
   readonly #motionFilePath: string;
   readonly #tokensFilePath: string;
   readonly #autoApprove: boolean;
+  #generationSource?: "model" | "template" | undefined;
   readonly #provider?: any | undefined;
   readonly #skills?: any | undefined;
   readonly #stageModelCalls: Record<string, number> = {};
@@ -147,6 +148,10 @@ export class GovernedDesignWorkflow {
 
   public static start(options: GovernedDesignWorkflowOptions): GovernedDesignWorkflow {
     return new GovernedDesignWorkflow(options);
+  }
+
+  public get generationSource(): "model" | "template" | undefined {
+    return this.#generationSource;
   }
 
   public get state(): WorkflowState {
@@ -217,7 +222,7 @@ export class GovernedDesignWorkflow {
       implementation: {
         changedFiles: [...this.#changedFiles],
         passes: this.#iteration,
-        summary: `Advanced Design Workflow: ${this.#changedFiles.length} file(s) modified across ${this.#stageRecords.length} stage(s).`,
+        summary: `Advanced Design Workflow: ${this.#changedFiles.length} file(s) modified across ${this.#stageRecords.length} stage(s) (source: ${this.#generationSource || "template"}).`,
       },
       reviews,
       verification,
@@ -362,7 +367,16 @@ export class GovernedDesignWorkflow {
         this.#recordStageRecord("frontend_implementation", "RUNNING", "Stage C: Frontend Composition");
         this.#onStage?.({ stage: "frontend_implementation", status: "RUNNING", skill: "frontend-composition" });
 
-        const markup = await this.#generateComponentWithModel(this.#brief, this.#tokens!);
+        let markup: string;
+        try {
+          markup = await this.#generateComponentWithModel(this.#brief, this.#tokens!);
+        } catch (err: any) {
+          this.#status = "BLOCKED";
+          this.#blocker = "STAGE_FAILED";
+          this.#blockerDetail = err.message || "Model component generation failed";
+          this.#recordStageRecord("frontend_implementation", "BLOCKED", this.#blockerDetail);
+          return this.#result();
+        }
         const path = this.#componentFilePath;
 
         const prep = await this.#prepareFileMutation(path, markup);
@@ -399,7 +413,16 @@ export class GovernedDesignWorkflow {
         this.#recordStageRecord("motion_engineering", "RUNNING", "Stage D: Motion Engineering");
         this.#onStage?.({ stage: "motion_engineering", status: "RUNNING", skill: "motion-engineering" });
 
-        const motionCss = await this.#generateMotionWithModel(this.#brief, this.#tokens!);
+        let motionCss: string;
+        try {
+          motionCss = await this.#generateMotionWithModel(this.#brief, this.#tokens!);
+        } catch (err: any) {
+          this.#status = "BLOCKED";
+          this.#blocker = "STAGE_FAILED";
+          this.#blockerDetail = err.message || "Model motion generation failed";
+          this.#recordStageRecord("motion_engineering", "BLOCKED", this.#blockerDetail);
+          return this.#result();
+        }
         const path = this.#motionFilePath;
 
         const prep = await this.#prepareFileMutation(path, motionCss);
@@ -512,7 +535,7 @@ export class GovernedDesignWorkflow {
 
         const hasBlockers = evalResult.report.findings.some((f) => f.severity === "blocker" || f.severity === "critical");
         const finalOutcome = hasBlockers
-          ? `Visual QA refinement reached maximum iteration budget (${this.#maxImprovementIterations}) with ${evalResult.report.findings.length} unresolved issue(s).`
+          ? `Visual QA refinement reached maximum iteration budget (${this.#maxImprovementIterations}) with ${evalResult.report.findings.length} unresolved issue(s): ${evalResult.report.summary}`
           : "Pass with minor suggestions";
 
         if (this.#autoApprove) {
@@ -962,13 +985,19 @@ Return ONLY valid HTML code.`;
           content = match[1].trim();
         }
         if (content.length > 50 && content.includes("<") && content.includes(">")) {
+          this.#generationSource = "model";
           return content;
         }
-      } catch {
-        // Fallback to procedural generation
+        throw new Error("Model response was empty or did not contain valid HTML");
+      } catch (err: any) {
+        throw new Error(`Model component generation failed: ${err?.message || String(err)}`, { cause: err });
       }
     }
-    return this.#generateComponentMarkup(brief, tokens);
+    this.#generationSource = "template";
+    return (
+      "<!-- TEMPLATE_BASED_OUTPUT: Deterministic procedural layout (no model provider configured) -->\n" +
+      this.#generateComponentMarkup(brief, tokens)
+    );
   }
 
   async #generateMotionWithModel(brief: DesignBrief, tokens: DesignTokenSet): Promise<string> {
@@ -1003,11 +1032,15 @@ Return ONLY valid CSS.`;
         if (content.length > 20 && content.includes("{") && content.includes("}")) {
           return content;
         }
-      } catch {
-        // Fallback
+        throw new Error("Model response was empty or did not contain valid CSS");
+      } catch (err: any) {
+        throw new Error(`Model motion generation failed: ${err?.message || String(err)}`, { cause: err });
       }
     }
-    return this.#generateMotionCss(tokens);
+    return (
+      "/* TEMPLATE_BASED_OUTPUT: Deterministic procedural motion (no model provider configured) */\n" +
+      this.#generateMotionCss(tokens)
+    );
   }
 
   #recordStageTool(stage: string, tool: string): void {

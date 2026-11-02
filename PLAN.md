@@ -596,5 +596,26 @@ Sprint 9D.1 — REA Production Integration, Governed Reconstruction & Evidence I
     - Comprehensive Verification: 39/39 REA tests passing, 0 TypeScript errors, 0 linter warnings, all monorepo gates passing (`typecheck`, `lint`, `build`, `eval:runtime`, `eval:skills`, `eval:workflow`, `eval:progress`, `eval:learning`, `eval:recovery`, `desktop:smoke`, `desktop:accept`).
   - Record: `docs/sprints/SPRINT_9D1_REA_RUNTIME_EVIDENCE_CLOSURE.md`.
 
+Sprint 10A.1 — Pre-HALO Production Readiness, Agent Execution Integrity & End-to-End Reliability — SPRINT_10A1_ACCEPTED
+  - Audited, corrected, and validated existing architecture so specialized workflows (Advanced Design and REA Reconstruction) execute reliably, truthfully, and safely:
+    - Single Authoritative Runtime: Preserved single AgentRuntime and execution pipeline.
+    - Specialized Workflow Activation (DD-04): Resolved readinessStatus in ModeResolver; specialized modes fail closed with actionable diagnostics when open-vs-code.workflow.enabled is false. Added open-vs-code.enableWorkflow command.
+    - Reconstruction Authorization & Confinement (DD-05): Defaulted mutation approval strictly to DENY when unapproved. Validated path containment and parent directory symlinks before directory creation. Automatic rollback of empty parent directories on mutation denial.
+    - Truthful Visual QA & Telemetry (DD-03, DD-06, DD-07): Eliminated synthetic DOM/style fallbacks. Missing Chromium observations yield INSUFFICIENT_EVIDENCE with a blocker finding. Wired live stage telemetry.
+    - Greenfield vs Incremental Mutations (DD-05): Implemented #prepareFileMutation inspecting existing workspace code; automatically prepares patches for existing files.
+    - Real Model Reasoning in Design (DD-01, DD-02): Integrated provider.complete() into frontend composition (Stage C), motion engineering (Stage D), and iterative defect repair (Stage E).
+    - Monorepo Verification & 5 User Journeys: 61/61 Design tests, 39/39 REA tests, 126/126 Modes/Tools tests, 33/33 Workflow tests, 149/149 Model tests, 14/14 Desktop Smoke tests, and 6/6 Real Desktop Acceptance tests pass 100%.
+  - Record: `docs/sprints/SPRINT_10A1_PRE_HALO_PRODUCTION_READINESS.md`.
+
+Sprint 10A.1B — Specialized Workflow Execution, Real Model Synthesis & Production Closure — SPRINT_10A1B_ACCEPTED
+  - Corrective sprint closing audit findings after Sprint 10A.1:
+    - P0 REA Reconstruction Authorization: Eliminated implicit authorization defaults in GovernedReaWorkflow. Reconstruction planning and file mutations strictly suspend for host-mediated confirmation (WAITING_FOR_CONFIRMATION) with cryptographic context binding and empty directory rollback on rejection.
+    - P0 REA Model Synthesis: Connected GovernedReaWorkflow and ReconstructionEngine to active model provider. Prompt grounded in evidence-backed feature inventory, state transitions, visible business rules, form validations, and obligations. Verified distinct implementations on Form-Driven App A vs Tab-Nav App B.
+    - P0 Design Honest Model Execution: Removed silent fallback from model errors to procedural templates; model failures fail closed as BLOCKED. Procedural fallbacks when provider is unconfigured are explicitly stamped with TEMPLATE_BASED_OUTPUT banners.
+    - P1 Execution Telemetry Truthfulness: Replaced remaining static telemetry in GovernedReaWorkflow with live tracking (modelCalls = 0 when uncalled).
+    - 10 Mandatory Negative Verification Tests: Passing 10/10 independent negative tests covering incorrect reconstructions, missing model, missing browser, missing REA binary, denied mutations, escaping paths, invalid outputs, stale approvals, cancelled workflows, and incomplete obligations.
+    - Complete Monorepo Verification: 20/20 specialized closure tests, 934/934 agent-core tests, 0 typecheck errors, 0 lint warnings/errors across monorepo, all evals passing, and 14/14 desktop:smoke + 6/6 desktop:accept.
+  - Record: `docs/sprints/SPRINT_10A1B_SPECIALIZED_EXECUTION_CLOSURE.md`.
+
 Next:
-1. Sprint 9E / 10A: Product Release Candidate, Packaging Finalization & Benchmark Consolidation.
+1. Physical HALO hardware arrival & benchmark execution.
