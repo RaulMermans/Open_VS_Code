@@ -335,7 +335,8 @@ export class AgentSessionBridge {
         } else if (confirmation.runner) {
           approved = (await this.host.requestConfirmation(`Approve ${confirmation.runner.toolName}? (${confirmation.runner.action})`, confirmation.runner)) === "APPROVE";
         }
-        result = await workflow.resume(approved ? "APPROVE" : "REJECT");
+        const confirmationToken = confirmation.runner?.callId;
+        result = await workflow.resume(approved ? "APPROVE" : "REJECT", confirmationToken);
       }
       const state = result.state;
       this.lastWorkflowState = state;

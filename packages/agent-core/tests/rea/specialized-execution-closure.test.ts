@@ -285,7 +285,7 @@ test("Section 3: REA Authorization — Approved reconstruction suspends for conf
     assert.equal(res.confirmation.stage, "PLAN");
 
     // Step 2: Approve the implementation plan
-    res = await workflow.resume("APPROVE");
+    res = await workflow.resume("APPROVE", workflow.pendingConfirmation?.callId);
     assert.equal(res.status, "WAITING_FOR_CONFIRMATION", "Workflow must suspend for first file mutation");
     assert.equal(res.confirmation?.stage, "IMPLEMENT");
     assert.equal(res.confirmation?.runner?.preparedMutation?.path, "index.html");
@@ -294,7 +294,7 @@ test("Section 3: REA Authorization — Approved reconstruction suspends for conf
     assert.equal(existsSync(join(ws, "index.html")), false, "File must not be created before confirmation");
 
     // Step 3: Approve index.html mutation
-    res = await workflow.resume("APPROVE");
+    res = await workflow.resume("APPROVE", workflow.pendingConfirmation?.callId);
     assert.equal(existsSync(join(ws, "index.html")), true, "Approved index.html must be written to disk");
 
     // Step 4: Next file (src/app.js) confirmation
@@ -302,7 +302,7 @@ test("Section 3: REA Authorization — Approved reconstruction suspends for conf
     assert.equal(res.confirmation?.runner?.preparedMutation?.path, "src/app.js");
 
     // Step 5: Approve src/app.js mutation
-    res = await workflow.resume("APPROVE");
+    res = await workflow.resume("APPROVE", workflow.pendingConfirmation?.callId);
     assert.equal(existsSync(join(ws, "src/app.js")), true, "Approved src/app.js must be written to disk");
 
     // All files approved, test runner verifies obligations, workflow finishes COMPLETE
@@ -338,13 +338,13 @@ test("Section 3: REA Authorization — Rejected reconstruction makes zero change
     let res = await workflow.run();
     assert.equal(res.status, "WAITING_FOR_CONFIRMATION");
     // Approve plan
-    res = await workflow.resume("APPROVE");
+    res = await workflow.resume("APPROVE", workflow.pendingConfirmation?.callId);
 
     assert.equal(res.status, "WAITING_FOR_CONFIRMATION");
     assert.equal(res.confirmation?.runner?.preparedMutation?.path, "nested/sub/module.js");
 
     // REJECT the mutation
-    res = await workflow.resume("REJECT");
+    res = await workflow.resume("REJECT", workflow.pendingConfirmation?.callId);
     assert.equal(res.status, "BLOCKED");
     assert.equal(res.state.blocker, "VERIFICATION_REJECTED");
 

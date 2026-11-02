@@ -43,6 +43,17 @@ import type {
   ReconstructionObligationLedger,
   ReconstructionObligation,
 } from "./contracts.ts";
+import {
+  createReaEvidenceBundle,
+  saveReaEvidenceBundle,
+  resolveReaEvidenceBundle,
+  validateReaEvidenceBundle,
+  type ReaEvidenceBundle,
+} from "./evidence-bundle.ts";
+import { createReaProductionTestRunner } from "./production-verifier.ts";
+import { fitSkillGuidance } from "../skills/runtime.ts";
+import type { SkillGuidance, SkillInjectionStatus } from "../skills/contracts.ts";
+import type { VerificationEngine } from "../tools/verification-engine.ts";
 
 export interface GovernedReaWorkflowOptions {
   readonly workflowType: "investigation" | "reconstruction";
@@ -52,6 +63,7 @@ export interface GovernedReaWorkflowOptions {
   readonly browserSessionManager?: BrowserSessionManager | undefined;
   readonly reaMcpService?: ReaMcpService | undefined;
   readonly mcpCatalog?: McpCatalog | undefined;
+  readonly verificationEngine?: VerificationEngine | undefined;
   readonly provider?: any;
   readonly skills?: any | undefined;
   readonly onStage?: ((event: { stage: string; status: string; skill?: string }) => void) | undefined;
@@ -65,6 +77,8 @@ export interface GovernedReaWorkflowOptions {
   readonly initialSpecification?: ReconstructionSpecification | undefined;
   readonly initialLedger?: ReconstructionObligationLedger | undefined;
   readonly targetFiles?: Record<string, string> | undefined;
+  readonly evidenceBundle?: ReaEvidenceBundle | undefined;
+  readonly accountScope?: string | undefined;
   readonly testRunner?: ((
     obligation: ReconstructionObligation,
     workspaceRoot: string
@@ -82,16 +96,29 @@ export interface GovernedReaWorkflowOptions {
   }>) | undefined;
 }
 
-interface PendingConfirmation {
+export interface StageSkillTracker {
+  requestedSkill?: string | undefined;
+  available: boolean;
+  loaded: boolean;
+  injected: boolean;
+  guidance?: SkillGuidance | undefined;
+  status: SkillInjectionStatus;
+  rejectionReason?: string | undefined;
+}
+
+export interface PendingConfirmation {
   readonly callId: string;
   readonly stage: string;
   readonly workflowId: string;
+  readonly taskId: string;
   readonly workspaceRoot: string;
+  readonly accountScope?: string | undefined;
   readonly targetPath?: string | undefined;
   readonly operationType?: string | undefined;
   readonly contentDigest?: string | undefined;
   readonly preparedMutation?: PreparedMutation | undefined;
   readonly confirmationPrompt: string;
+  readonly suspensionInstanceId: string;
   readonly applyFn: () => Promise<void>;
 }
 
@@ -117,7 +144,13 @@ export class GovernedReaWorkflow {
   readonly #initialSpecification?: ReconstructionSpecification | undefined;
   readonly #initialLedger?: ReconstructionObligationLedger | undefined;
   readonly #targetFiles?: Record<string, string> | undefined;
-  readonly #testRunner?: ((
+  readonly #accountScope?: string | undefined;
+  readonly #verificationEngine?: VerificationEngine | undefined;
+  #evidenceBundle?: ReaEvidenceBundle | undefined;
+  #loadedSpecification?: ReconstructionSpecification | undefined;
+  #loadedLedger?: ReconstructionObligationLedger | undefined;
+  #evidenceProvenance?: "investigation_evidence" | "user_provided_spec" | undefined;
+  #testRunner?: ((
     obligation: ReconstructionObligation,
     workspaceRoot: string
   ) => Promise<{
@@ -138,6 +171,7 @@ export class GovernedReaWorkflow {
   readonly #stageTools: Record<string, Set<string>> = {};
   readonly #stageSkills: Record<string, string | undefined> = {};
   readonly #stageSkillInjected: Record<string, boolean> = {};
+  readonly #stageSkillTracker: Record<string, StageSkillTracker> = {};
 
   #plannedFiles?: Array<{ path: string; content: string }> | undefined;
   #appliedFileIndex: number = 0;
@@ -194,6 +228,16 @@ export class GovernedReaWorkflow {
     this.#initialLedger = options.initialLedger;
     this.#targetFiles = options.targetFiles;
     this.#testRunner = options.testRunner;
+    this.#accountScope = options.accountScope;
+    this.#verificationEngine = options.verificationEngine;
+    this.#evidenceBundle = options.evidenceBundle;
+    this.#loadedSpecification = options.initialSpecification;
+    this.#loadedLedger = options.initialLedger;
+    this.#evidenceProvenance = options.evidenceBundle
+      ? "investigation_evidence"
+      : options.initialSpecification
+      ? "user_provided_spec"
+      : undefined;
 
     this.#currentStage =
       this.#workflowType === "investigation" ? "TARGET_INTAKE" : "SPEC_REVIEW";
@@ -237,8 +281,28 @@ export class GovernedReaWorkflow {
     return this.#skills;
   }
 
+  get evidenceBundle(): ReaEvidenceBundle | undefined {
+    return this.#evidenceBundle;
+  }
+
+  get evidenceProvenance(): "investigation_evidence" | "user_provided_spec" | undefined {
+    return this.#evidenceProvenance;
+  }
+
+  get stageSkillTracker(): Readonly<Record<string, StageSkillTracker>> {
+    return this.#stageSkillTracker;
+  }
+
+  get pendingConfirmation(): PendingConfirmation | undefined {
+    return this.#pendingConfirmation;
+  }
+
   get generationSource(): "model" | "template" | "target_files" | undefined {
     return this.#generationSource;
+  }
+
+  get stageRecords(): readonly StageRecord[] {
+    return [...this.#stageRecords];
   }
 
   public get state(): WorkflowState {
@@ -361,17 +425,40 @@ export class GovernedReaWorkflow {
 
     const pending = this.#pendingConfirmation;
 
-    if (confirmationToken && pending.callId !== confirmationToken) {
-      throw new Error(`Stale confirmation token: approval token ${confirmationToken} does not match active confirmation ${pending.callId}`);
+    // Strict confirmation token enforcement for reconstruction decisions
+    if (this.#workflowType === "reconstruction") {
+      if (!confirmationToken || typeof confirmationToken !== "string" || !confirmationToken.trim()) {
+        throw new Error(
+          "Missing confirmation token: REA reconstruction approval requires exact approval token matching active confirmation"
+        );
+      }
+      if (pending.callId !== confirmationToken) {
+        throw new Error(
+          `Stale confirmation token: approval token ${confirmationToken} does not match active confirmation ${pending.callId}`
+        );
+      }
+    } else {
+      if (confirmationToken && pending.callId !== confirmationToken) {
+        throw new Error(
+          `Stale confirmation token: approval token ${confirmationToken} does not match active confirmation ${pending.callId}`
+        );
+      }
     }
 
+    // Immediately consume the pending confirmation so it cannot be reused
     this.#pendingConfirmation = undefined;
 
     // Validate approval binding:
-    if (pending.workflowId !== this.#workflowId || pending.workspaceRoot !== this.#workspaceRoot) {
+    if (
+      pending.workflowId !== this.#workflowId ||
+      pending.workspaceRoot !== this.#workspaceRoot ||
+      pending.taskId !== this.#taskId ||
+      (pending.accountScope && this.#accountScope && pending.accountScope !== this.#accountScope)
+    ) {
       this.#status = "BLOCKED";
       this.#blocker = "STAGE_FAILED";
-      this.#blockerDetail = "Stale or mismatched confirmation context";
+      this.#blockerDetail =
+        "Stale or mismatched confirmation context: approval identity binds to a different workflow, task, workspace, or account scope.";
       this.#recordStageRecord(pending.stage, "BLOCKED", this.#blockerDetail);
       this.#cleanupEmptyDirectories();
       return this.#result();
@@ -428,7 +515,7 @@ export class GovernedReaWorkflow {
   async #advanceInvestigation(): Promise<WorkflowResult> {
     switch (this.#currentStage) {
       case "TARGET_INTAKE": {
-        this.#recordStageSkill("target_intake", "rea-investigation-routing");
+        await this.#recordStageSkill("target_intake", "rea-investigation-routing");
         this.#recordStageRecord("target_intake", "RUNNING", "Stage 1: Target Intake & Classification");
         this.#onStage?.({ stage: "target_intake", status: "RUNNING", skill: "rea-investigation-routing" });
 
@@ -469,7 +556,7 @@ export class GovernedReaWorkflow {
       }
 
       case "ROUTING": {
-        this.#recordStageSkill("routing", "browser-behavior-investigation");
+        await this.#recordStageSkill("routing", "browser-behavior-investigation");
         this.#recordStageRecord("routing", "RUNNING", "Stage 3: Investigation Routing & Skill Loading");
         this.#onStage?.({ stage: "routing", status: "RUNNING", skill: "browser-behavior-investigation" });
 
@@ -479,7 +566,7 @@ export class GovernedReaWorkflow {
       }
 
       case "EXPLORATION": {
-        this.#recordStageSkill("exploration", "browser-behavior-investigation");
+        await this.#recordStageSkill("exploration", "browser-behavior-investigation");
         this.#recordStageTool("exploration", "browser_snapshot");
         this.#recordStageTool("exploration", "browser_navigate");
         this.#recordStageRecord("exploration", "RUNNING", "Stage 4: Governed Exploration & Behavioral Observation");
@@ -511,7 +598,7 @@ export class GovernedReaWorkflow {
       }
 
       case "SPECIFICATION": {
-        this.#recordStageSkill("specification", "feature-specification");
+        await this.#recordStageSkill("specification", "feature-specification");
         this.#recordStageRecord("specification", "RUNNING", "Stage 5: Grounded Specification Synthesis");
         this.#onStage?.({ stage: "specification", status: "RUNNING", skill: "feature-specification" });
 
@@ -519,11 +606,24 @@ export class GovernedReaWorkflow {
           throw new Error("Missing investigation result for specification synthesis.");
         }
 
+        // Create and persist addressable, bounded evidence bundle
+        const bundle = createReaEvidenceBundle({
+          investigationId: this.#investigationResult.specification.specificationId,
+          workspaceRoot: this.#workspaceRoot,
+          accountScope: this.#accountScope,
+          specification: this.#investigationResult.specification,
+          obligationLedger: this.#investigationResult.obligationLedger,
+          stateTransitions: this.#investigationResult.stateTransitions,
+          timestamp: Date.now(),
+        });
+        saveReaEvidenceBundle(bundle);
+        this.#evidenceBundle = bundle;
+
         await this.#checkpoint("stage-5-specification");
         this.#recordStageRecord(
           "specification",
           "PASSED",
-          `Specification synthesized: ${this.#investigationResult.specification.specificationId}`
+          `Specification synthesized: ${this.#investigationResult.specification.specificationId} (bundle: ${bundle.bundleDigest.slice(0, 16)})`
         );
         this.#currentStage = "COMPLETE";
         this.#status = "COMPLETE";
@@ -538,13 +638,49 @@ export class GovernedReaWorkflow {
   async #advanceReconstruction(): Promise<WorkflowResult> {
     switch (this.#currentStage) {
       case "SPEC_REVIEW": {
-        this.#recordStageSkill("spec_review", "reconstruction-planning");
+        await this.#recordStageSkill("spec_review", "reconstruction-planning");
         this.#recordStageRecord("spec_review", "RUNNING", "Stage 1: Specification Review & Scope Validation");
         this.#onStage?.({ stage: "spec_review", status: "RUNNING", skill: "reconstruction-planning" });
 
-        const target = classifyInvestigationTarget(this.#targetInput, {
-          workspaceRoot: this.#workspaceRoot,
-        });
+        // Resolve Evidence Bundle or User-Provided Specification
+        if (!this.#loadedSpecification) {
+          if (this.#evidenceBundle) {
+            const validation = validateReaEvidenceBundle(this.#evidenceBundle, this.#workspaceRoot, this.#accountScope);
+            if (!validation.valid) {
+              this.#status = "BLOCKED";
+              this.#blocker = "STAGE_FAILED";
+              this.#blockerDetail = `Invalid evidence bundle: ${validation.reason}`;
+              this.#recordStageRecord("spec_review", "BLOCKED", this.#blockerDetail);
+              return this.#result();
+            }
+            this.#loadedSpecification = validation.bundle.specification;
+            this.#loadedLedger = validation.bundle.obligationLedger;
+            this.#evidenceProvenance = "investigation_evidence";
+          } else {
+            const resolved = resolveReaEvidenceBundle(this.#workspaceRoot, this.#task, this.#accountScope);
+            if (resolved.valid) {
+              this.#evidenceBundle = resolved.bundle;
+              this.#loadedSpecification = resolved.bundle.specification;
+              this.#loadedLedger = resolved.bundle.obligationLedger;
+              this.#evidenceProvenance = "investigation_evidence";
+            } else if (this.#initialSpecification) {
+              this.#loadedSpecification = this.#initialSpecification;
+              this.#loadedLedger = this.#initialLedger ?? this.#buildDefaultLedger(this.#initialSpecification);
+              this.#evidenceProvenance = "user_provided_spec";
+            } else {
+              this.#status = "BLOCKED";
+              this.#blocker = "STAGE_FAILED";
+              this.#blockerDetail = `INVESTIGATION_REQUIRED: No valid investigation evidence bundle found for workspace "${this.#workspaceRoot}". Run REA investigation first before reconstruction.`;
+              this.#recordStageRecord("spec_review", "BLOCKED", this.#blockerDetail);
+              return this.#result();
+            }
+          }
+        }
+
+        const target = classifyInvestigationTarget(
+          this.#loadedSpecification.target.rawInput || this.#targetInput,
+          { workspaceRoot: this.#workspaceRoot }
+        );
 
         if (!target.authorized) {
           this.#status = "BLOCKED";
@@ -554,26 +690,34 @@ export class GovernedReaWorkflow {
           return this.#result();
         }
 
-        this.#recordStageRecord("spec_review", "PASSED", `Scope authorized: ${target.category}`);
+        this.#recordStageRecord("spec_review", "PASSED", `Scope authorized: ${target.category} [provenance: ${this.#evidenceProvenance}]`);
         this.#currentStage = "PLANNING";
         return this.#advance();
       }
 
       case "PLANNING": {
-        this.#recordStageSkill("planning", "reconstruction-planning");
+        await this.#recordStageSkill("planning", "reconstruction-planning");
         this.#recordStageRecord("planning", "RUNNING", "Stage 2: Clean-Room Implementation Planning");
         this.#onStage?.({ stage: "planning", status: "RUNNING", skill: "reconstruction-planning" });
 
-        const spec = this.#initialSpecification ?? this.#investigationResult?.specification ?? this.#buildDefaultSpec();
-        const initialLedger = this.#initialLedger ?? this.#investigationResult?.obligationLedger ?? this.#buildDefaultLedger(spec);
+        const spec = this.#loadedSpecification!;
+        const initialLedger = this.#loadedLedger!;
 
         if (!this.#userAuthorized && !this.#autoApprove) {
+          const planDigest = createHash("sha256")
+            .update(`${this.#workflowId}:${this.#taskId}:${spec.specificationId}:${initialLedger.ledgerId}`)
+            .digest("hex");
           this.#pendingConfirmation = {
             callId: `call_auth_plan_${Date.now()}`,
             stage: "planning",
             workflowId: this.#workflowId,
+            taskId: this.#taskId,
             workspaceRoot: this.#workspaceRoot,
-            confirmationPrompt: `Authorize clean-room reconstruction implementation for "${this.#targetInput}" with ${spec.featureInventory.length} features and ${initialLedger.obligations.length} obligations?`,
+            accountScope: this.#accountScope,
+            operationType: "authorize_reconstruction",
+            contentDigest: planDigest,
+            suspensionInstanceId: `susp_${Date.now()}_plan`,
+            confirmationPrompt: `Authorize clean-room reconstruction implementation for "${this.#targetInput}" [provenance: ${this.#evidenceProvenance}] with ${spec.featureInventory.length} features and ${initialLedger.obligations.length} obligations?`,
             applyFn: async () => {
               this.#userAuthorized = true;
               this.#currentStage = "IMPLEMENTATION";
@@ -589,11 +733,12 @@ export class GovernedReaWorkflow {
       }
 
       case "IMPLEMENTATION": {
+        await this.#recordStageSkill("implementation", "reconstruction-planning");
         this.#recordStageRecord("implementation", "RUNNING", "Stage 3: Governed Clean-Room Mutation");
-        this.#onStage?.({ stage: "implementation", status: "RUNNING" });
+        this.#onStage?.({ stage: "implementation", status: "RUNNING", skill: "reconstruction-planning" });
 
-        const spec = this.#initialSpecification ?? this.#investigationResult?.specification ?? this.#buildDefaultSpec();
-        const initialLedger = this.#initialLedger ?? this.#investigationResult?.obligationLedger ?? this.#buildDefaultLedger(spec);
+        const spec = this.#loadedSpecification!;
+        const initialLedger = this.#loadedLedger!;
 
         if (!this.#plannedFiles) {
           if (this.#targetFiles) {
@@ -648,13 +793,28 @@ export class GovernedReaWorkflow {
             callId: `call_impl_${Date.now()}_${this.#appliedFileIndex}`,
             stage: "implementation",
             workflowId: this.#workflowId,
+            taskId: this.#taskId,
             workspaceRoot: this.#workspaceRoot,
+            accountScope: this.#accountScope,
             targetPath: prep.path,
             operationType: prep.operation,
             contentDigest: prep.resultHash,
             preparedMutation: prep,
+            suspensionInstanceId: `susp_${Date.now()}_${this.#appliedFileIndex}`,
             confirmationPrompt: `Approve reconstruction mutation on "${prep.path}" (${prep.operation})?`,
             applyFn: async () => {
+              // TOCTOU check: verify disk file matches baseHash
+              const canonicalRoot = existsSync(this.#workspaceRoot) ? realpathSync(this.#workspaceRoot) : resolve(this.#workspaceRoot);
+              const absPath = resolve(canonicalRoot, prep.path);
+              if (existsSync(absPath)) {
+                const currentDiskContent = readFileSync(absPath, "utf-8");
+                const currentDiskHash = createHash("sha256").update(currentDiskContent).digest("hex");
+                if (prep.operation === "patch" && currentDiskHash !== prep.baseHash) {
+                  throw new Error(
+                    `Stale mutation approval: target file "${prep.path}" was modified on disk (current hash ${currentDiskHash.slice(0, 8)} vs expected base ${prep.baseHash.slice(0, 8)}).`
+                  );
+                }
+              }
               const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);
               if (mutResult.status !== "APPLIED") {
                 throw new Error(`Failed to apply mutation on ${prep.path}: ${mutResult.error}`);
@@ -676,12 +836,24 @@ export class GovernedReaWorkflow {
       }
 
       case "LOCAL_VERIFICATION": {
-        this.#recordStageSkill("local_verification", "reconstruction-verification");
+        await this.#recordStageSkill("local_verification", "reconstruction-verification");
         this.#recordStageRecord("local_verification", "RUNNING", "Stage 4: Behavioral Verification & Testing");
         this.#onStage?.({ stage: "local_verification", status: "RUNNING", skill: "reconstruction-verification" });
 
-        const spec = this.#initialSpecification ?? this.#investigationResult?.specification ?? this.#buildDefaultSpec();
-        const initialLedger = this.#initialLedger ?? this.#investigationResult?.obligationLedger ?? this.#buildDefaultLedger(spec);
+        const spec = this.#loadedSpecification!;
+        const initialLedger = this.#loadedLedger!;
+
+        // Automatically initialize production test runner if not explicitly provided
+        if (!this.#testRunner && this.#browserSessionManager) {
+          this.#testRunner = createReaProductionTestRunner({
+            workspaceRoot: this.#workspaceRoot,
+            browserSessionManager: this.#browserSessionManager,
+            verificationEngine: this.#verificationEngine,
+            referenceUrl: spec.target.rawInput || spec.target.normalizedLocation || this.#evidenceBundle?.targetIdentity,
+            targetCategory: spec.target.category || this.#evidenceBundle?.targetType,
+            signal: this.#signal,
+          });
+        }
 
         const verifiedObligations: ReconstructionObligation[] = [];
         const failedObligations: ReconstructionObligation[] = [];
@@ -947,9 +1119,71 @@ export class GovernedReaWorkflow {
     this.#stageTokens[stage] = (this.#stageTokens[stage] ?? 0) + tokens;
   }
 
-  #recordStageSkill(stage: string, skill: string): void {
+  async #recordStageSkill(stage: string, skill: string): Promise<void> {
     this.#stageSkills[stage] = skill;
-    this.#stageSkillInjected[stage] = true;
+
+    if (!this.#skills || typeof this.#skills.get !== "function") {
+      this.#stageSkillTracker[stage] = {
+        requestedSkill: skill,
+        available: false,
+        loaded: false,
+        injected: false,
+        status: "NOT_APPLICABLE",
+        rejectionReason: "SKILL_REGISTRY_UNAVAILABLE",
+      };
+      this.#stageSkillInjected[stage] = false;
+      return;
+    }
+
+    const entry = this.#skills.get(skill);
+    if (!entry) {
+      this.#stageSkillTracker[stage] = {
+        requestedSkill: skill,
+        available: false,
+        loaded: false,
+        injected: false,
+        status: "NOT_APPLICABLE",
+        rejectionReason: "SKILL_NOT_FOUND",
+      };
+      this.#stageSkillInjected[stage] = false;
+      return;
+    }
+
+    try {
+      const body = await this.#skills.loadBody(skill);
+      const fitted = fitSkillGuidance(body, 1000);
+      if (!fitted.guidance) {
+        this.#stageSkillTracker[stage] = {
+          requestedSkill: skill,
+          available: true,
+          loaded: true,
+          injected: false,
+          status: "OMITTED_BY_FINAL_BUDGET",
+          rejectionReason: "EXCLUDED_BY_BUDGET",
+        };
+        this.#stageSkillInjected[stage] = false;
+      } else {
+        this.#stageSkillTracker[stage] = {
+          requestedSkill: skill,
+          available: true,
+          loaded: true,
+          injected: false,
+          guidance: fitted.guidance,
+          status: "PENDING",
+        };
+        this.#stageSkillInjected[stage] = false;
+      }
+    } catch (err: any) {
+      this.#stageSkillTracker[stage] = {
+        requestedSkill: skill,
+        available: true,
+        loaded: false,
+        injected: false,
+        status: "NOT_APPLICABLE",
+        rejectionReason: `LOAD_FAILED: ${err.message}`,
+      };
+      this.#stageSkillInjected[stage] = false;
+    }
   }
 
   #cleanupEmptyDirectories(): void {
@@ -1101,9 +1335,22 @@ Constraints:
 }
 Return ONLY valid JSON.`;
 
+    const skillTracker = this.#stageSkillTracker["implementation"];
+    let skillInstruction = "";
+    if (skillTracker && skillTracker.guidance) {
+      skillInstruction = `[Active Specialized Skill: ${skillTracker.guidance.id} v${skillTracker.guidance.version}]\n${skillTracker.guidance.content}`;
+      skillTracker.injected = true;
+      skillTracker.status = "INJECTED";
+      this.#stageSkillInjected["implementation"] = true;
+    }
+
     try {
+      const messages = [
+        ...(skillInstruction ? [{ role: "system", content: skillInstruction }] : []),
+        { role: "user", content: prompt },
+      ];
       const resp: any = await this.#provider.complete({
-        messages: [{ role: "user", content: prompt }],
+        messages,
         temperature: 0.2,
         signal: this.#signal,
       });
@@ -1240,8 +1487,10 @@ body { font-family: sans-serif; padding: 20px; }
     const toolsUsed = Array.from(this.#stageTools[stage] ?? []);
     const modelCalls = this.#stageModelCalls[stage] ?? 0;
     const contextTokens = this.#stageTokens[stage] ?? 0;
-    const skillName = this.#stageSkills[stage];
-    const skillInjected = Boolean(this.#stageSkillInjected[stage]);
+    const tracker = this.#stageSkillTracker[stage];
+    const skillName = tracker?.requestedSkill ?? this.#stageSkills[stage];
+    const skillInjected = Boolean(tracker?.injected ?? this.#stageSkillInjected[stage]);
+    const skillInjection = tracker?.status ?? (skillInjected ? "INJECTED" : "NOT_APPLICABLE");
 
     const existing = this.#stageRecords.find((r) => r.stage === workStage);
     if (existing) {
@@ -1253,7 +1502,7 @@ body { font-family: sans-serif; padding: 20px; }
       (existing as any).toolsUsed = toolsUsed;
       if (skillName) (existing as any).selectedSkill = skillName;
       (existing as any).skillInjected = skillInjected;
-      (existing as any).skillInjection = skillInjected ? "INJECTED" : "NOT_APPLICABLE";
+      (existing as any).skillInjection = skillInjection;
     } else {
       this.#stageRecords.push({
         stage: workStage,
@@ -1265,7 +1514,7 @@ body { font-family: sans-serif; padding: 20px; }
         contextTokens,
         toolsUsed,
         ...(skillName ? { selectedSkill: skillName } : {}),
-        skillInjection: skillInjected ? "INJECTED" : "NOT_APPLICABLE",
+        skillInjection,
         skillInjected,
         ...(outcome ? { outcome } : {}),
       });

@@ -17,6 +17,9 @@ In accordance with Sprint 9D architectural directives, Sprint 9D reverse enginee
 | **DD-05** | Stage path create-only restriction (no edit) | High | `governed-design-workflow.ts` | Closed (Sprint 10A.1) | Resolved: prepareFileMutation creates patches for existing files |
 | **DD-06** | Hardcoded model-call and token metrics | Low | `GovernedDesignWorkflow.#recordStageRecord` | Closed (Sprint 10A.1) | Resolved: Live tracked stage model calls, tokens & tools |
 | **DD-07** | QA report file writes bypass confirmation | Medium | `GovernedDesignWorkflow` Stage E | Closed (Sprint 10A.1) | Resolved: All QA report mutations gated on confirmation |
+| **DD-08** | REA Investigation to Reconstruction handoff gap | High | `GovernedReaWorkflow.startReconstruction` | Closed (Sprint 10A.1C) | Resolved with ReaEvidenceBundle and fail-closed INVESTIGATION_REQUIRED |
+| **DD-09** | Production verification wiring in REA reconstruction | High | `GovernedReaWorkflow` Stage 4 | Closed (Sprint 10A.1C) | Resolved: Wired createReaProductionTestRunner and loopback verifier |
+| **DD-10** | Unbound confirmation tokens in reconstruction resume | High | `GovernedReaWorkflow.resume` | Closed (Sprint 10A.1C) | Resolved: Required exact active confirmation token and TOCTOU hash check |
 
 ---
 
