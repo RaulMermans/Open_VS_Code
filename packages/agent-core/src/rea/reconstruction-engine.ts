@@ -1,14 +1,22 @@
 /**
- * Sprint 9D — REA Reconstruction Engine.
+ * Sprint 9D.1 — REA Reconstruction Engine.
  *
  * Consumes an approved investigation specification and obligation ledger,
  * enforces human authorization gates, synthesizes independent clean-room code,
  * executes verification tests, and deterministically closes obligations with evidence.
+ *
+ * Guarantees:
+ * - All filesystem modifications execute through canonical MutationEngine with path validation.
+ * - Rejects directory traversals (../../), absolute paths, and symlink escapes.
+ * - Preserves existing-file updates and mutation provenance.
+ * - Eliminates fabricated verification success: missing verifiers yield unverified obligations.
+ * - Complete coverage and verified status require genuine passing test evidence.
  */
 
 import { createHash } from "node:crypto";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { MutationEngine } from "../tools/mutation-engine.ts";
 import type {
   ReconstructionSpecification,
   ReconstructionObligationLedger,
@@ -18,8 +26,30 @@ import type {
 
 export interface ReconstructionEngineOptions {
   readonly workspaceRoot: string;
-  readonly testRunner?: (obligation: ReconstructionObligation) => Promise<{ passed: boolean; output: string }>;
-  readonly onStageChange?: (event: { stage: ReconstructionStageId; status: "STARTED" | "COMPLETED" | "FAILED"; details?: string }) => void;
+  readonly mutationEngine?: MutationEngine | undefined;
+  readonly testRunner?: ((
+    obligation: ReconstructionObligation,
+    workspaceRoot: string
+  ) => Promise<{
+    passed: boolean;
+    output: string;
+    details?: {
+      verifier?: string;
+      testIdentity?: string;
+      inputFixture?: string;
+      expectedBehavior?: string;
+      observedResult?: string;
+      timestamp?: number | undefined;
+      limitations?: readonly string[];
+    };
+  }>) | undefined;
+  readonly requestConfirmation?: ((prompt: string, payload: unknown) => Promise<"APPROVE" | "REJECT">) | undefined;
+  readonly autoApproveMutations?: boolean | undefined;
+  readonly onStageChange?: ((event: {
+    stage: ReconstructionStageId;
+    status: "STARTED" | "COMPLETED" | "FAILED";
+    details?: string;
+  }) => void) | undefined;
 }
 
 export interface ReconstructionResult {
@@ -42,17 +72,46 @@ export class ReconstructionAuthorizationError extends Error {
 
 export class ReconstructionEngine {
   readonly #workspaceRoot: string;
-  readonly #testRunner?: ((obligation: ReconstructionObligation) => Promise<{ passed: boolean; output: string }>) | undefined;
-  readonly #onStageChange?: ((event: { stage: ReconstructionStageId; status: "STARTED" | "COMPLETED" | "FAILED"; details?: string }) => void) | undefined;
+  readonly #mutationEngine: MutationEngine;
+  readonly #testRunner?: ((
+    obligation: ReconstructionObligation,
+    workspaceRoot: string
+  ) => Promise<{
+    passed: boolean;
+    output: string;
+    details?: {
+      verifier?: string;
+      testIdentity?: string;
+      inputFixture?: string;
+      expectedBehavior?: string;
+      observedResult?: string;
+      timestamp?: number | undefined;
+      limitations?: readonly string[];
+    };
+  }>) | undefined;
+  readonly #requestConfirmation?: ((prompt: string, payload: unknown) => Promise<"APPROVE" | "REJECT">) | undefined;
+  readonly #autoApproveMutations: boolean;
+  readonly #onStageChange?: ((event: {
+    stage: ReconstructionStageId;
+    status: "STARTED" | "COMPLETED" | "FAILED";
+    details?: string;
+  }) => void) | undefined;
 
   constructor(options: ReconstructionEngineOptions) {
-    this.#workspaceRoot = options.workspaceRoot;
+    this.#workspaceRoot = resolve(options.workspaceRoot);
+    this.#mutationEngine = options.mutationEngine ?? new MutationEngine(this.#workspaceRoot);
     this.#testRunner = options.testRunner;
+    this.#requestConfirmation = options.requestConfirmation;
+    this.#autoApproveMutations = options.autoApproveMutations ?? (options.requestConfirmation === undefined);
     this.#onStageChange = options.onStageChange;
   }
 
   get workspaceRoot(): string {
     return this.#workspaceRoot;
+  }
+
+  get mutationEngine(): MutationEngine {
+    return this.#mutationEngine;
   }
 
   /**
@@ -64,8 +123,8 @@ export class ReconstructionEngine {
     initialLedger: ReconstructionObligationLedger,
     options: {
       userAuthorized: boolean;
-      targetFiles?: Record<string, string>;
-      signal?: AbortSignal;
+      targetFiles?: Record<string, string> | undefined;
+      signal?: AbortSignal | undefined;
     }
   ): Promise<ReconstructionResult> {
     const startTime = Date.now();
@@ -83,27 +142,24 @@ export class ReconstructionEngine {
     // Stage 2: Planning & Obligation Ownership Mapping
     this.#emitStage("planning", "STARTED");
     const updatedObligations: ReconstructionObligation[] = initialLedger.obligations.map((obl) => {
-      // Assign ownership to planned clean-room module
       const ownerPath = obl.family === "input-validation" ? "src/forms.js" : "src/app.js";
       return {
         ...obl,
         owner: ownerPath,
-        status: "implemented", // Mark as implemented once ownership is planned
+        status: "implemented",
       };
     });
     this.#emitStage("planning", "COMPLETED", `Mapped ${updatedObligations.length} obligations`);
 
-    // Stage 3: Clean-Room Code Implementation
+    // Stage 3: Clean-Room Code Implementation via Governed MutationEngine
     this.#emitStage("implementation", "STARTED");
     const implementedFiles: Array<{ path: string; content: string }> = [];
 
-    // Synthesize independent clean-room implementation files based on the specification
     if (options.targetFiles) {
       for (const [filePath, content] of Object.entries(options.targetFiles)) {
         implementedFiles.push({ path: filePath, content });
       }
     } else {
-      // Default clean-room synthesis
       const cleanRoomHtml = this.#generateCleanRoomHtml(specification);
       const cleanRoomJs = this.#generateCleanRoomJs(specification);
       const cleanRoomCss = this.#generateCleanRoomCss();
@@ -115,72 +171,153 @@ export class ReconstructionEngine {
       );
     }
 
-    // Persist implemented files into workspaceRoot
+    // Persist implemented files into workspaceRoot using canonical MutationEngine
     for (const file of implementedFiles) {
-      const fullPath = join(this.#workspaceRoot, file.path);
-      mkdirSync(dirname(fullPath), { recursive: true });
-      writeFileSync(fullPath, file.content, "utf-8");
+      const targetRelPath = file.path.replaceAll("\\", "/");
+      const fullPath = resolve(this.#workspaceRoot, targetRelPath);
+
+      // Ensure parent directory exists within workspaceRoot before preparing mutation
+      const parentDir = resolve(this.#workspaceRoot, targetRelPath.split("/").slice(0, -1).join("/"));
+      if (parentDir.startsWith(this.#workspaceRoot) && !existsSync(parentDir)) {
+        const { mkdirSync } = await import("node:fs");
+        mkdirSync(parentDir, { recursive: true });
+      }
+
+      const fileExists = existsSync(fullPath);
+
+      let prep;
+      if (fileExists) {
+        const currentContent = readFileSync(fullPath, "utf-8");
+        prep = await this.#mutationEngine.preparePatch({
+          operation: "patch",
+          path: targetRelPath,
+          patch: {
+            search: currentContent,
+            replace: file.content,
+          },
+        });
+      } else {
+        prep = await this.#mutationEngine.prepareCreate({
+          operation: "create",
+          path: targetRelPath,
+          content: file.content,
+        });
+      }
+
+      // Enforce host approval if not autoApproved
+      let approved = this.#autoApproveMutations;
+      if (!approved && this.#requestConfirmation) {
+        const prompt = `Approve reconstruction mutation on "${prep.path}" (${prep.operation})?`;
+        const decision = await this.#requestConfirmation(prompt, prep);
+        approved = decision === "APPROVE";
+      }
+
+      if (!approved) {
+        this.#emitStage("implementation", "FAILED", `Mutation on ${prep.path} denied by user confirmation.`);
+        throw new Error(`Reconstruction mutation on "${prep.path}" was denied by user confirmation.`);
+      }
+
+      const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);
+      if (mutResult.status !== "APPLIED") {
+        this.#emitStage("implementation", "FAILED", `Failed to apply mutation on ${prep.path}: ${mutResult.error}`);
+        throw new Error(`Failed to apply mutation on "${prep.path}": ${mutResult.error}`);
+      }
     }
 
-    this.#emitStage("implementation", "COMPLETED", `Generated ${implementedFiles.length} modules`);
+    this.#emitStage("implementation", "COMPLETED", `Applied ${implementedFiles.length} governed mutations`);
 
     // Stage 4: Local Application & Test Execution
     this.#emitStage("local_execution", "STARTED");
     let verifiedCount = 0;
+    const artifactDigest = this.#computeArtifactDigest(implementedFiles);
 
     for (let i = 0; i < updatedObligations.length; i++) {
       const obl = updatedObligations[i]!;
 
-      // Run independent test verifier if provided
+      if (!this.#testRunner) {
+        // No independent verifier available: mark unverified, never fabricate PASS!
+        updatedObligations[i] = {
+          ...obl,
+          status: obl.status === "unowned" ? "unowned" : "implemented",
+        };
+        continue;
+      }
+
       let testPassed = false;
       let testOutput = "";
+      let testDetails: any = undefined;
 
-      if (this.#testRunner) {
-        try {
-          const testRes = await this.#testRunner(obl);
-          testPassed = testRes.passed;
-          testOutput = testRes.output;
-        } catch (err: any) {
-          testPassed = false;
-          testOutput = err.message;
-        }
-      } else {
-        // Deterministic internal verification against specification cases
-        testPassed = true;
-        testOutput = `PASS: All ${obl.positiveCases.length} positive cases and ${obl.negativeCases.length} negative cases verified against clean-room implementation.`;
+      try {
+        const testRes = await this.#testRunner(obl, this.#workspaceRoot);
+        testPassed = Boolean(testRes.passed);
+        testOutput = testRes.output || "";
+        testDetails = testRes.details;
+      } catch (err: any) {
+        testPassed = false;
+        testOutput = err.message || String(err);
       }
 
       if (testPassed) {
         verifiedCount++;
-        const testDigest = createHash("sha256").update(obl.obligationId + testOutput).digest("hex");
+        const testDigest = createHash("sha256")
+          .update(`${obl.obligationId}:${artifactDigest}:${testOutput}`)
+          .digest("hex");
+
         updatedObligations[i] = {
           ...obl,
           status: "verified",
           testEvidence: {
-            verifier: "open-vs-code.verification-engine",
+            obligationId: obl.obligationId,
+            obligationVersion: obl.obligationVersion,
+            artifactDigest,
+            testIdentity: testDetails?.testIdentity ?? `verifier_${obl.obligationId}`,
+            inputFixture: testDetails?.inputFixture ?? obl.positiveCases.join("; "),
+            expectedBehavior: testDetails?.expectedBehavior ?? obl.positiveCases.join("; "),
+            observedResult: testOutput,
             result: "PASS",
-            testOutputSnippet: testOutput.slice(0, 300),
+            verifier: testDetails?.verifier ?? "open-vs-code.verification-engine",
+            timestamp: testDetails?.timestamp ?? Date.now(),
             digest: testDigest,
+            testOutputSnippet: testOutput.slice(0, 500),
+            supportingEvidence: obl.evidenceLinks,
+            limitations: testDetails?.limitations ?? [],
           },
         };
       } else {
+        const failDigest = createHash("sha256")
+          .update(`${obl.obligationId}:${artifactDigest}:FAIL:${testOutput}`)
+          .digest("hex");
+
         updatedObligations[i] = {
           ...obl,
-          status: "blocked",
+          status: "contradicted",
           testEvidence: {
-            verifier: "open-vs-code.verification-engine",
+            obligationId: obl.obligationId,
+            obligationVersion: obl.obligationVersion,
+            artifactDigest,
+            testIdentity: testDetails?.testIdentity ?? `verifier_${obl.obligationId}`,
+            inputFixture: testDetails?.inputFixture ?? obl.positiveCases.join("; "),
+            expectedBehavior: testDetails?.expectedBehavior ?? obl.positiveCases.join("; "),
+            observedResult: testOutput,
             result: "FAIL",
-            testOutputSnippet: testOutput.slice(0, 300),
-            digest: createHash("sha256").update(obl.obligationId + "FAIL").digest("hex"),
+            verifier: testDetails?.verifier ?? "open-vs-code.verification-engine",
+            timestamp: testDetails?.timestamp ?? Date.now(),
+            digest: failDigest,
+            testOutputSnippet: testOutput.slice(0, 500),
+            supportingEvidence: obl.evidenceLinks,
+            limitations: testDetails?.limitations ?? ["Verification test failed to demonstrate behavioral parity."],
           },
         };
       }
     }
-    this.#emitStage("local_execution", "COMPLETED", `Verified ${verifiedCount}/${updatedObligations.length} obligations`);
+    this.#emitStage(
+      "local_execution",
+      "COMPLETED",
+      `Verified ${verifiedCount}/${updatedObligations.length} obligations`
+    );
 
     // Stage 5: Comparative Verification against Reference Evidence
     this.#emitStage("comparative_verification", "STARTED");
-    // Verify that every state transition in the specification has corresponding clean-room handlers
     const remainingOpen = updatedObligations.length - verifiedCount;
     this.#emitStage("comparative_verification", "COMPLETED", `Remaining open: ${remainingOpen}`);
 
@@ -190,13 +327,18 @@ export class ReconstructionEngine {
       .update(initialLedger.ledgerId + JSON.stringify(updatedObligations))
       .digest("hex");
 
+    const isFullyVerified = verifiedCount === updatedObligations.length && updatedObligations.length > 0;
+    const missingVerifierIds = updatedObligations
+      .filter((o) => !o.testEvidence || o.testEvidence.result !== "PASS")
+      .map((o) => o.obligationId);
+
     const updatedLedger: ReconstructionObligationLedger = {
       schema: "ReconstructionObligationLedger",
       ledgerId: initialLedger.ledgerId,
       closureDigest: updatedClosureDigest,
-      status: remainingOpen === 0 ? "verified" : (verifiedCount > 0 ? "partial" : "unknown"),
+      status: isFullyVerified ? "verified" : (verifiedCount > 0 ? "partial" : "unknown"),
       coverage: {
-        status: remainingOpen === 0 ? "complete" : "partial",
+        status: isFullyVerified ? "complete" : (verifiedCount > 0 ? "partial" : "unknown"),
       },
       summary: {
         total: updatedObligations.length,
@@ -204,30 +346,37 @@ export class ReconstructionEngine {
         verified: verifiedCount,
         requiredOpen: remainingOpen,
         byStatus: [
-          { key: "unowned", count: 0 },
-          { key: "characterized", count: 0 },
-          { key: "implemented", count: remainingOpen },
+          { key: "unowned", count: updatedObligations.filter((o) => o.status === "unowned").length },
+          { key: "characterized", count: updatedObligations.filter((o) => o.status === "characterized").length },
+          { key: "implemented", count: updatedObligations.filter((o) => o.status === "implemented").length },
           { key: "verified", count: verifiedCount },
-          { key: "contradicted", count: 0 },
-          { key: "blocked", count: remainingOpen },
+          { key: "contradicted", count: updatedObligations.filter((o) => o.status === "contradicted").length },
+          { key: "blocked", count: updatedObligations.filter((o) => o.status === "blocked").length },
           { key: "out-of-scope", count: 0 },
           { key: "unknown", count: 0 },
         ],
-        byApplicationLayer: initialLedger.summary.byApplicationLayer,
+        byApplicationLayer: [
+          { key: "application", count: updatedObligations.length },
+        ],
       },
       reports: {
-        missingOwnerObligationIds: [],
-        missingVerifierObligationIds: remainingOpen > 0 ? updatedObligations.filter((o) => o.status !== "verified").map((o) => o.obligationId) : [],
-        contradictedObligationIds: [],
-        residualUnknownIds: initialLedger.reports.residualUnknownIds,
+        missingOwnerObligationIds: updatedObligations.filter((o) => !o.owner).map((o) => o.obligationId),
+        missingVerifierObligationIds: missingVerifierIds,
+        contradictedObligationIds: updatedObligations.filter((o) => o.status === "contradicted").map((o) => o.obligationId),
+        residualUnknownIds: specification.unknowns.map((u) => u.unknownId),
       },
       obligations: updatedObligations,
       evidenceLinks: initialLedger.evidenceLinks,
-      limitations: remainingOpen === 0
-        ? ["All finite reconstruction obligations verified by passing test evidence."]
-        : [`${remainingOpen} obligations remain unverified or blocked.`],
+      limitations: isFullyVerified
+        ? []
+        : [`${remainingOpen} obligation(s) unverified or contradicted. Missing independent test evidence.`],
     };
-    this.#emitStage("closure_reporting", "COMPLETED", `Ledger status: ${updatedLedger.status}`);
+
+    this.#emitStage(
+      "closure_reporting",
+      "COMPLETED",
+      `Ledger status: ${updatedLedger.status}, Coverage: ${updatedLedger.coverage.status}`
+    );
 
     return {
       specificationId: specification.specificationId,
@@ -240,171 +389,133 @@ export class ReconstructionEngine {
     };
   }
 
-  #generateCleanRoomHtml(spec: ReconstructionSpecification): string {
-    const title = spec.featureInventory[0]?.title ?? "Reconstructed Application";
-    const forms = spec.formAndValidationBehavior;
+  #computeArtifactDigest(files: Array<{ path: string; content: string }>): string {
+    const sorted = files.toSorted((a, b) => a.path.localeCompare(b.path));
+    const combined = sorted.map((f) => `${f.path}:${createHash("sha256").update(f.content).digest("hex")}`).join("\n");
+    return createHash("sha256").update(combined).digest("hex");
+  }
 
-    let formsHtml = "";
-    for (const form of forms) {
-      const fieldsHtml = form.fields
-        .map(
-          (f) => `
-        <div class="form-group">
-          <label for="${f.name}">${f.name}</label>
-          <input id="${f.name}" name="${f.name}" type="${f.type}" ${f.required ? "required" : ""} />
-          <span class="error-msg" id="err-${f.name}"></span>
-        </div>`
-        )
-        .join("\n");
-
-      formsHtml += `
-      <form id="${form.formId}" class="reconstructed-form">
-        ${fieldsHtml}
-        <button type="submit" id="btn-submit">Submit</button>
-      </form>`;
-    }
+  #generateCleanRoomHtml(specification: ReconstructionSpecification): string {
+    const route = specification.pageAndRouteMap[0];
+    const title = route?.title ?? "Clean-Room Reconstructed Application";
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
-  <link rel="stylesheet" href="src/styles.css" />
+  <link rel="stylesheet" href="src/styles.css">
 </head>
 <body>
   <header>
     <h1>${title}</h1>
   </header>
   <main>
-    <section id="content-area">
-      ${formsHtml}
-      <div id="results-display" role="status"></div>
-    </section>
+    <div id="app">
+      <form id="task-form">
+        <label for="task-input">Task Title</label>
+        <input type="text" id="task-input" name="title" required placeholder="Enter task title...">
+        <button type="submit" id="add-task-btn">Add Task</button>
+      </form>
+      <ul id="task-list" role="list"></ul>
+    </div>
   </main>
-  <script type="module" src="src/app.js"></script>
+  <footer>
+    <p>Open VS Code Clean-Room Reconstruction</p>
+  </footer>
+  <script src="src/app.js"></script>
 </body>
-</html>`;
+</html>
+`;
   }
 
-  #generateCleanRoomJs(spec: ReconstructionSpecification): string {
-    return `// Clean-Room Reconstructed Application Logic
-// Grounded in specification: ${spec.specificationId}
+  #generateCleanRoomJs(specification: ReconstructionSpecification): string {
+    return `/**
+ * Clean-Room Functional Implementation.
+ * Synthesized from Grounded Reconstruction Specification: ${specification.specificationId}
+ */
 
-export class ReconstructedApp {
-  constructor() {
-    this.state = {
-      items: [],
-      errors: {}
-    };
-  }
+(function() {
+  const form = document.getElementById("task-form");
+  const input = document.getElementById("task-input");
+  const list = document.getElementById("task-list");
 
-  init() {
-    const form = document.querySelector(".reconstructed-form");
-    if (form) {
-      form.addEventListener("submit", (e) => this.handleSubmit(e));
-    }
-  }
+  if (!form || !input || !list) return;
 
-  handleSubmit(e) {
+  form.addEventListener("submit", function(e) {
     e.preventDefault();
-    const formData = new FormData(e.target);
-    const data = Object.fromEntries(formData.entries());
-
-    // Validation
-    let hasError = false;
-    for (const [key, val] of Object.entries(data)) {
-      if (!val || !val.toString().trim()) {
-        this.showError(key, "Field is required");
-        hasError = true;
-      } else {
-        this.clearError(key);
+    const val = input.value.trim();
+    if (!val) {
+      let err = document.getElementById("form-error");
+      if (!err) {
+        err = document.createElement("p");
+        err.id = "form-error";
+        err.style.color = "red";
+        err.textContent = "Task title is required";
+        form.appendChild(err);
       }
+      return;
     }
 
-    if (!hasError) {
-      this.state.items.push(data);
-      this.render();
-      e.target.reset();
-    }
-  }
+    const existingErr = document.getElementById("form-error");
+    if (existingErr) existingErr.remove();
 
-  showError(field, message) {
-    const el = document.getElementById(\`err-\${field}\`);
-    if (el) el.textContent = message;
-  }
+    const li = document.createElement("li");
+    li.role = "listitem";
+    li.textContent = val;
 
-  clearError(field) {
-    const el = document.getElementById(\`err-\${field}\`);
-    if (el) el.textContent = "";
-  }
-
-  render() {
-    const display = document.getElementById("results-display");
-    if (display) {
-      display.innerHTML = \`<p>Total items: \${this.state.items.length}</p>\`;
-    }
-  }
-}
-
-if (typeof window !== "undefined") {
-  window.addEventListener("DOMContentLoaded", () => {
-    const app = new ReconstructedApp();
-    app.init();
+    list.appendChild(li);
+    input.value = "";
   });
-}
+})();
 `;
   }
 
   #generateCleanRoomCss(): string {
     return `/* Clean-Room Reconstructed Styles */
-:root {
-  --font-sans: system-ui, -apple-system, sans-serif;
-  --bg-color: #f8fafc;
-  --text-color: #0f172a;
-  --primary-color: #2563eb;
-  --error-color: #dc2626;
-}
-
 body {
-  font-family: var(--font-sans);
-  background-color: var(--bg-color);
-  color: var(--text-color);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   margin: 0;
   padding: 2rem;
+  background-color: #f8fafc;
+  color: #0f172a;
 }
 
-.reconstructed-form {
+header {
+  margin-bottom: 2rem;
+}
+
+#task-form {
   display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  max-width: 480px;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-input {
+#task-input {
   padding: 0.5rem;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
+  flex: 1;
 }
 
 button {
-  background-color: var(--primary-color);
-  color: white;
   padding: 0.5rem 1rem;
+  background-color: #2563eb;
+  color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
 }
 
-.error-msg {
-  color: var(--error-color);
-  font-size: 0.875rem;
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+li {
+  padding: 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
 }
 `;
   }

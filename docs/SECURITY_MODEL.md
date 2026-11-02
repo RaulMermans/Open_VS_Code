@@ -368,28 +368,47 @@ All security evaluations (`packages/vscode-integration/tests/security-eval.test.
 
 ---
 
-## 6. Reverse Engineering Security Boundaries (Sprint 9D, ADR-042)
+## 6. Reverse Engineering Security Boundaries (Sprint 9D & 9D.1, ADR-042)
 
 The REA Reverse Engineering integration establishes bounded, safe reverse engineering practices across four distinct target workflows:
 
-1. **Target Ingestion & SSRF Protection**:
+1. **Authoritative Execution Pipeline**:
+   - Workflows execute strictly through `GovernedReaWorkflow` wired directly to `createAgentRuntime`.
+   - The authoritative execution pipeline invariant strictly holds:
+     `ChatController -> Custom Mode & Capability Pack -> AgentSessionBridge -> AgentRuntime -> GovernedReaWorkflow -> PermissionGate -> Existing Tools & McpCatalog -> MutationEngine -> Verified Artifacts`.
+   - No secondary agent or alternate planning loop may bypass these boundaries.
+
+2. **Target Ingestion & SSRF Protection**:
    - `TargetClassifier` validates all software inputs deterministically.
    - Web targets are checked against `BrowserNetworkPolicy`. Loopback origins (`http://localhost:*`, `http://127.0.0.1:*`) are permitted only when explicitly authorized.
    - Non-HTTP schemes (`file://`, `gopher://`, `ftp://`), internal cloud metadata addresses (`169.254.169.254`), and private RFC1918 subnets are rejected fail-closed with `UNAUTHORIZED_ORIGIN`.
    - File path inputs require realpath resolution, workspace boundary validation, and rejection of path traversals (`TARGET_NOT_FOUND` / `UNSAFE_PATH`).
 
-2. **Dual-Pack Role Separation**:
-   - **Investigation Pack** operates strictly under `REVIEW` base mode: read-only tools, no repository mutations, bounded browser navigation, and zero arbitrary shell execution.
-   - **Reconstruction Pack** operates under `BUILD` base mode: clean-room code generation and file creation require explicit human confirmation via `IdeHost.requestConfirmation`. Unapproved reconstruction attempts fail closed immediately with `ReconstructionAuthorizationError`.
+3. **Governed Browser Investigation**:
+   - **Investigation Pack** operates strictly under `REVIEW` base mode: read-only inspection ceiling, zero repository mutations, and zero arbitrary shell execution.
+   - Form fills and clicks are completely prohibited in `REVIEW` mode (0 clicks, 0 fills).
+   - In interactive mode, interactions require risk classification, human confirmation via `IdeHost.requestConfirmation`, and pre-execution target revalidation.
+   - Destructive elements (`delete`, `remove`, `destroy`, `drop`, `reset`, `purge`) are automatically rejected.
 
-3. **External Provider Safety**:
-   - Does not assume heavyweight external disassemblers (Ghidra, Hopper, IDA Pro, JADX) are installed.
-   - When external providers are unconfigured or uninstalled, REA reports diagnostic status without throwing unhandled exceptions or running untrusted fallback binaries.
+4. **Governed Filesystem Mutations**:
+   - **Reconstruction Pack** operates under `BUILD` base mode: clean-room code generation and file creation require explicit human confirmation via `IdeHost.requestConfirmation`.
+   - Reconstruction writes route exclusively through canonical `MutationEngine.applyPreparedMutation()`. Direct `fs.mkdirSync` and `fs.writeFileSync` are prohibited.
+   - Adversarial path containment rejects `../../` directory traversals, absolute destination paths outside the workspace root, and symlink workspace escapes.
+
+5. **Zero-Fabrication Verification & Comparative Parity**:
+   - Reconstruction verification requires an independent, executing verifier. If no `testRunner` is present, obligations remain marked `UNVERIFIED` (`verifiedObligationCount = 0`).
+   - Fabricated PASS strings and SHA-256 digests of mock confirmations are eliminated.
+   - Each verified obligation produces an `ObligationVerificationRecord` with concrete input fixtures, observed outcomes, artifact digests, and verifier identity.
+   - Web reconstructions require dual-application comparative verification via `ComparativeWebVerifier` asserting route parity, negative form validation, positive state transitions, and sequential mutations against reference observations.
+
+6. **Shared McpCatalog & Dynamic Provider Safety**:
+   - `ReaMcpService` connects via shared `McpCatalog`, preventing duplicate processes and port conflicts. Advertised tools are subsetted by target category (`web`, `electron`/`javascript`, `native`).
+   - Does not assume heavyweight external disassemblers (Ghidra, Hopper, IDA Pro, JADX) are installed. Reports dynamic provider diagnostics (`ready`, `not_configured`, `unsupported`, `unknown`) without unhandled exceptions or untrusted fallback binaries.
    - Binary inspection probes magic byte headers (Mach-O, ELF, PE) safely without executing untrusted foreign executables.
 
-4. **Epistemic Discipline & Unknown Isolation**:
+7. **Epistemic Discipline & Unknown Isolation**:
    - Every evidence record is tagged as `OBSERVED`, `INFERRED`, or `UNKNOWN`.
-   - Client-side behavioral investigation never claims observation of hidden backend persistence, databases, or server-side private keys.
+   - Client-side behavioral investigation never claims observation of hidden backend persistence, databases, or server-side private keys. All synthesized unknowns include an explicit `whyUnobservable` explanation.
    - Inferred hypotheses are never promoted to observed facts without tangible runtime evidence.
 
 ---

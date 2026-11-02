@@ -46,6 +46,8 @@ export interface McpTransport {
   callTool(name: string, args: unknown, signal?: AbortSignal): Promise<McpToolCallResult>;
   listPrompts?(signal?: AbortSignal): Promise<McpPromptDeclaration[]>;
   getPrompt?(name: string, args?: Record<string, string>, signal?: AbortSignal): Promise<McpPromptResult>;
+  getServerInfo?(): { name: string; version: string } | undefined;
+  getInitializeResult?(): unknown;
   close(): Promise<void>;
 }
 
@@ -65,6 +67,7 @@ export class StdioMcpTransport implements McpTransport {
   private messageId = 1;
   private pendingRequests = new Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>();
   private initialized = false;
+  private initResult?: any;
 
   constructor(
     private command: string,
@@ -75,6 +78,20 @@ export class StdioMcpTransport implements McpTransport {
 
   getPendingRequestCountForDiagnostics(): number {
     return this.pendingRequests.size;
+  }
+
+  getInitializeResult(): unknown {
+    return this.initResult;
+  }
+
+  getServerInfo(): { name: string; version: string } | undefined {
+    if (this.initResult?.serverInfo?.name && this.initResult?.serverInfo?.version) {
+      return {
+        name: String(this.initResult.serverInfo.name),
+        version: String(this.initResult.serverInfo.version),
+      };
+    }
+    return undefined;
   }
 
 
@@ -162,10 +179,11 @@ export class StdioMcpTransport implements McpTransport {
         protocolVersion: "2024-11-05",
         capabilities: {},
         clientInfo: { name: "agent-core", version: "0.1.0" }
-      }).then((_result) => {
+      }).then((result) => {
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);
         this.initialized = true;
+        this.initResult = result;
         this.sendNotification("notifications/initialized", {});
         resolve();
       }).catch((err) => {

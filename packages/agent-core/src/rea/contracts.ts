@@ -236,6 +236,23 @@ export type ObligationStatus =
   | "out-of-scope"
   | "unknown";
 
+export interface ObligationVerificationRecord {
+  readonly obligationId: string;
+  readonly obligationVersion: number;
+  readonly artifactDigest: string;
+  readonly testIdentity: string;
+  readonly inputFixture: string;
+  readonly expectedBehavior: string;
+  readonly observedResult: string;
+  readonly result: "PASS" | "FAIL";
+  readonly verifier: string;
+  readonly timestamp: number;
+  readonly digest: string;
+  readonly testOutputSnippet?: string;
+  readonly supportingEvidence?: readonly string[];
+  readonly limitations?: readonly string[];
+}
+
 export interface ReconstructionObligation {
   readonly obligationId: string;
   readonly obligationVersion: number;
@@ -255,12 +272,7 @@ export interface ReconstructionObligation {
   readonly evidenceLinks: readonly string[];
   readonly owner: string | null;
   readonly status: ObligationStatus;
-  readonly testEvidence?: {
-    readonly verifier: string;
-    readonly result: "PASS" | "FAIL";
-    readonly testOutputSnippet?: string;
-    readonly digest: string;
-  };
+  readonly testEvidence?: ObligationVerificationRecord;
 }
 
 export interface ReconstructionObligationLedgerSummary {
@@ -310,10 +322,13 @@ export type KnownReaProviderId =
   | "tshark"
   | "wabt";
 
+export type ReaProviderStatus = "installed" | "connected" | "ready" | "not_configured" | "unsupported" | "unknown";
+
 export interface ReaProviderReport {
   readonly id: KnownReaProviderId | string;
   readonly name: string;
   readonly available: boolean;
+  readonly status?: ReaProviderStatus;
   readonly reason?: string | null;
   readonly availabilityCode?: string | null;
   readonly remediation?: string | null;

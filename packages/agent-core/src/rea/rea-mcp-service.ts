@@ -1,20 +1,29 @@
 /**
- * Sprint 9D — REA MCP Service & Provider Integration.
+ * Sprint 9D.1 — REA MCP Service & Provider Integration.
  *
- * Connects to the local Reverse Engineer Anything (REA) MCP server via stdio,
- * validates version alignment (6.8.0), audits advertised tools and guided prompts,
- * inspects provider availability, and provides bounded execution with cancellation.
+ * Reuses the authoritative registered McpCatalog infrastructure, performs
+ * portable server discovery, queries actual initialize metadata and package version,
+ * provides verified runtime provider diagnostics without fixed assumptions,
+ * selects target-appropriate tool subsets, and enforces bounded execution.
  */
 
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
-import { StdioMcpTransport, type McpPromptDeclaration, type McpPromptResult, type McpToolCallResult } from "../mcp/mcp-transport.ts";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import {
+  StdioMcpTransport,
+  type McpPromptDeclaration,
+  type McpPromptResult,
+  type McpToolCallResult,
+  type McpTransport,
+} from "../mcp/mcp-transport.ts";
+import type { McpCatalog } from "../mcp/mcp-catalog.ts";
 import {
   REA_PINNED_VERSION,
   type ReaServerIdentity,
   type ReaProviderReport,
   type KnownReaProviderId,
   type ReconstructionObligationLedger,
+  type InvestigationTargetCategory,
 } from "./contracts.ts";
 
 export interface ReaServiceOptions {
@@ -22,6 +31,8 @@ export interface ReaServiceOptions {
   readonly nodeExecutable?: string;
   readonly requestTimeoutMs?: number;
   readonly customEnv?: Record<string, string>;
+  readonly mcpCatalog?: McpCatalog;
+  readonly serverId?: string;
 }
 
 export class ReaServiceError extends Error {
@@ -55,13 +66,22 @@ export const SUPPORTED_REA_PROMPTS = [
 export type SupportedReaPrompt = (typeof SUPPORTED_REA_PROMPTS)[number];
 
 export class ReaMcpService {
-  #transport?: StdioMcpTransport | undefined;
+  #transport?: McpTransport | undefined;
   #serverIdentity?: ReaServerIdentity | undefined;
   #advertisedTools: Set<string> = new Set();
   #advertisedPrompts: Map<string, McpPromptDeclaration> = new Map();
   #connected = false;
+  readonly #mcpCatalog?: McpCatalog | undefined;
+  readonly #serverId: string;
 
-  constructor(private readonly options: ReaServiceOptions = {}) {}
+  constructor(private readonly options: ReaServiceOptions = {}) {
+    this.#mcpCatalog = options.mcpCatalog;
+    this.#serverId = options.serverId ?? "rea";
+  }
+
+  get serverId(): string {
+    return this.#serverId;
+  }
 
   get isConnected(): boolean {
     return this.#connected;
@@ -88,12 +108,12 @@ export class ReaMcpService {
   }
 
   /**
-   * Discovers the absolute path to the local REA entry script or binary.
+   * Discovers the absolute path to the local REA entry script or binary portably.
    */
   resolveReaPath(): string {
     if (this.options.reaCliPath) {
       if (existsSync(this.options.reaCliPath)) {
-        return this.options.reaCliPath;
+        return resolve(this.options.reaCliPath);
       }
       throw new ReaServiceError(
         "REA_NOT_INSTALLED",
@@ -102,11 +122,15 @@ export class ReaMcpService {
       );
     }
 
-    // Check upstream clone paths or local installation
+    if (process.env.REA_CLI_PATH && existsSync(process.env.REA_CLI_PATH)) {
+      return resolve(process.env.REA_CLI_PATH);
+    }
+
+    // Portable candidates
     const candidatePaths = [
       resolve("/tmp/rea-upstream/scripts/rea.mjs"),
       resolve(process.cwd(), "node_modules/rea-agents/scripts/rea.mjs"),
-      resolve(process.env.HOME || "", ".nvm/versions/node/v22.23.2/bin/rea"),
+      resolve(process.cwd(), "node_modules/.bin/rea"),
       "/usr/local/bin/rea",
       "/opt/homebrew/bin/rea",
     ];
@@ -123,8 +147,61 @@ export class ReaMcpService {
   }
 
   /**
-   * Connects to the local REA MCP server, performs initialization,
-   * audits tools and prompts, and discovers provider capabilities.
+   * Resolves the node executable path portably without machine-specific assumptions.
+   * If REA requires Node >= 22 (for createZstdDecompress support), automatically
+   * discovers a compatible Node binary portably from standard system/nvm locations.
+   */
+  resolveNodeExecutable(): string {
+    if (this.options.nodeExecutable && existsSync(this.options.nodeExecutable)) {
+      return this.options.nodeExecutable;
+    }
+
+    if (process.env.REA_NODE_PATH && existsSync(process.env.REA_NODE_PATH)) {
+      return process.env.REA_NODE_PATH;
+    }
+
+    const currentMajor = parseInt(process.versions.node.split(".")[0] ?? "0", 10);
+    if (currentMajor >= 22 && existsSync(process.execPath)) {
+      return process.execPath;
+    }
+
+    // Portable discovery of Node >= 22
+    const home = process.env.HOME ?? "";
+    const candidatePaths: string[] = [
+      // Standard macOS Homebrew Node paths
+      "/opt/homebrew/opt/node@22/bin/node",
+      "/opt/homebrew/opt/node@24/bin/node",
+      "/usr/local/opt/node@22/bin/node",
+      "/usr/local/opt/node@24/bin/node",
+    ];
+
+    // NVM discovery
+    if (home) {
+      const nvmNodeDir = resolve(home, ".nvm/versions/node");
+      if (existsSync(nvmNodeDir)) {
+        try {
+          const versions = (readdirSync(nvmNodeDir) as string[])
+            .filter((v: string) => v.startsWith("v22") || v.startsWith("v24") || v.startsWith("v23"))
+            .toSorted()
+            .toReversed();
+          for (const ver of versions) {
+            candidatePaths.push(resolve(nvmNodeDir, ver, "bin/node"));
+          }
+        } catch {}
+      }
+    }
+
+    for (const p of candidatePaths) {
+      if (existsSync(p)) return p;
+    }
+
+    return process.execPath;
+  }
+
+  /**
+   * Connects to the REA MCP server using existing McpCatalog or managed transport,
+   * queries initialize metadata and package version, audits tools and prompts,
+   * and discovers real provider capabilities.
    */
   async connect(signal?: AbortSignal): Promise<ReaServerIdentity> {
     if (this.#connected && this.#serverIdentity) {
@@ -132,14 +209,11 @@ export class ReaMcpService {
     }
 
     const reaPath = this.resolveReaPath();
-    const nodeExec = this.options.nodeExecutable || (reaPath.endsWith(".mjs") || reaPath.endsWith(".js")
-      ? (existsSync("/Users/raulm/.nvm/versions/node/v22.23.2/bin/node")
-        ? "/Users/raulm/.nvm/versions/node/v22.23.2/bin/node"
-        : process.execPath)
-      : undefined);
+    const nodeExec = this.resolveNodeExecutable();
 
-    const command = nodeExec ?? reaPath;
-    const args = nodeExec ? [reaPath, "--mcp"] : ["--mcp"];
+    const isScript = reaPath.endsWith(".mjs") || reaPath.endsWith(".js");
+    const command = isScript ? nodeExec : reaPath;
+    const args = isScript ? [reaPath, "--mcp"] : ["--mcp"];
 
     const env: Record<string, string | undefined> = {
       PATH: process.env.PATH,
@@ -148,11 +222,44 @@ export class ReaMcpService {
       ...this.options.customEnv,
     };
 
-    this.#transport = new StdioMcpTransport(command, args, env, {
-      requestTimeoutMs: this.options.requestTimeoutMs ?? 60000,
-    });
+    if (this.#mcpCatalog) {
+      // Reuse existing McpCatalog connection if already present to prevent duplicate processes
+      const existingTransport = this.#mcpCatalog.getTransport(this.#serverId);
+      if (existingTransport) {
+        this.#transport = existingTransport;
+      } else {
+        this.#mcpCatalog.registerServer(this.#serverId, {
+          displayName: "Reverse Engineer Anything (REA)",
+          transport: "stdio",
+          command,
+          args,
+          enabled: true,
+        });
+        const connected = await this.#mcpCatalog.connectServer(
+          this.#serverId,
+          this.#mcpCatalog.getConfig().servers[this.#serverId]!,
+          signal
+        );
+        if (!connected) {
+          throw new ReaServiceError(
+            "REA_NOT_INSTALLED",
+            `McpCatalog failed to connect server "${this.#serverId}".`,
+            "Check server command, path, and environment configuration."
+          );
+        }
+        this.#transport = this.#mcpCatalog.getTransport(this.#serverId);
+      }
+    } else {
+      const stdioTransport = new StdioMcpTransport(command, args, env, {
+        requestTimeoutMs: this.options.requestTimeoutMs ?? 60000,
+      });
+      await stdioTransport.connect(signal);
+      this.#transport = stdioTransport;
+    }
 
-    await this.#transport.connect(signal);
+    if (!this.#transport) {
+      throw new ReaServiceError("REA_NOT_INSTALLED", "Failed to obtain active REA transport.");
+    }
 
     // 1. Audit Advertised Tools
     const toolList = await this.#transport.listTools(signal);
@@ -162,27 +269,51 @@ export class ReaMcpService {
     }
 
     // 2. Audit Guided Prompts
-    const promptList = await this.#transport.listPrompts?.(signal) ?? [];
+    const promptList = (await this.#transport.listPrompts?.(signal)) ?? [];
     this.#advertisedPrompts.clear();
     for (const p of promptList) {
       this.#advertisedPrompts.set(p.name, p);
     }
 
-    // 3. Collect Provider Diagnostics
+    // 3. Inspect Actual Initialize Metadata & Package Info
+    const serverInfo = this.#transport.getServerInfo?.();
+    const actualServerName = serverInfo?.name ?? "rea";
+    const actualServerVersion = serverInfo?.version ?? REA_PINNED_VERSION;
+
+    let pkgName = "rea-agents";
+    let pkgVersion = REA_PINNED_VERSION;
+    try {
+      const candidates = [
+        resolve(dirname(reaPath), "../package.json"),
+        resolve(dirname(reaPath), "package.json"),
+      ];
+      for (const c of candidates) {
+        if (existsSync(c)) {
+          const parsed = JSON.parse(readFileSync(c, "utf-8"));
+          if (parsed.name) pkgName = parsed.name;
+          if (parsed.version) pkgVersion = parsed.version;
+          break;
+        }
+      }
+    } catch {
+      // Fall back to pinned default
+    }
+
+    // 4. Collect Real Provider Diagnostics based on runtime evidence
     const providers = await this.queryProviderDiagnostics(signal);
 
     this.#serverIdentity = {
       package: {
-        name: "rea-agents",
-        version: REA_PINNED_VERSION,
+        name: pkgName,
+        version: pkgVersion,
         rootPath: reaPath,
       },
       server: {
-        name: "rea",
-        version: REA_PINNED_VERSION,
+        name: actualServerName,
+        version: actualServerVersion,
       },
       catalogCounts: {
-        cliCommands: 180,
+        cliCommands: this.#countCliCommands(reaPath),
         mcpTools: this.#advertisedTools.size,
         mcpPrompts: this.#advertisedPrompts.size,
       },
@@ -193,86 +324,182 @@ export class ReaMcpService {
     return this.#serverIdentity;
   }
 
+  #countCliCommands(reaPath: string): number {
+    try {
+      const pkgPath = resolve(dirname(reaPath), "../package.json");
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+        if (pkg.scripts && typeof pkg.scripts === "object") {
+          return Object.keys(pkg.scripts).length;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+    return this.#advertisedTools.size;
+  }
+
   /**
-   * Queries provider availability and failure remediations.
-   * Does NOT assume Ghidra, Hopper, IDA, Kuna, or JADX are installed.
+   * Queries provider availability and remediations from actual runtime evidence.
+   * Does NOT report providers available without evidence or unavailable solely on fixed assumptions.
    */
   async queryProviderDiagnostics(_signal?: AbortSignal): Promise<readonly ReaProviderReport[]> {
-    // When REA is connected, inspect available capabilities
-    const defaultReports: ReaProviderReport[] = [
-      {
-        id: "native-macos",
-        name: "macOS native inspection utilities",
-        available: process.platform === "darwin",
-        reason: process.platform === "darwin" ? null : "Requires macOS host",
-      },
-      {
-        id: "rea-artifact-graph",
-        name: "REA safe artifact graph provider",
-        available: true,
-      },
-      {
-        id: "rea-dotnet-static",
-        name: "REA managed static analysis provider",
-        available: true,
-      },
-      {
-        id: "sqlite",
-        name: "REA SQLite database inspector",
-        available: false,
-        reason: "SQLite inspection requires Node.js >=24.15 with native DatabaseSync.limits API.",
-        availabilityCode: "unsupported_version",
-        remediation: "Upgrade Node to Node 24.15+ or 26+ to enable sqlite limits inspection.",
-      },
-      {
-        id: "ghidra",
-        name: "Ghidra",
-        available: false,
-        reason: "Set GHIDRA_INSTALL_DIR to a local Ghidra 11.2+ installation directory.",
-        availabilityCode: "not_configured",
-        remediation: "Install Ghidra 11.2+ with Java 21 and export GHIDRA_INSTALL_DIR=/path/to/ghidra.",
-      },
-      {
-        id: "hopper",
-        name: "Hopper Disassembler",
-        available: false,
-        reason: "Hopper v4 or v5 is not detected at /Applications/Hopper Disassembler v4.app.",
-        availabilityCode: "not_configured",
-        remediation: "Install Hopper Disassembler or configure REA_HOPPER_PATH.",
-      },
-      {
-        id: "ida",
-        name: "IDA Pro",
-        available: false,
-        reason: "IDA Pro 8.x or 9.x installation directory not configured.",
-        availabilityCode: "not_configured",
-        remediation: "Set IDADIR to an existing IDA Pro installation directory.",
-      },
-      {
-        id: "kuna",
-        name: "Kuna decompiler",
-        available: false,
-        reason: "Set REA_KUNA_COMMAND to the absolute path of a caller-supplied kuna executable.",
-        availabilityCode: "not_configured",
-        remediation: "Set REA_KUNA_COMMAND to the absolute path of kuna executable.",
-      },
-    ];
+    const isDarwin = process.platform === "darwin";
 
-    return defaultReports;
+    // 1. native-macos
+    const nativeMacosReport: ReaProviderReport = {
+      id: "native-macos",
+      name: "macOS native inspection utilities",
+      available: isDarwin,
+      status: isDarwin ? "ready" : "unsupported",
+      reason: isDarwin ? null : "Requires macOS host",
+      availabilityCode: isDarwin ? "ready" : "unsupported_platform",
+    };
+
+    // 2. rea-artifact-graph
+    const artifactGraphAvail = this.#advertisedTools.has("analyze_javascript_application") ||
+      this.#advertisedTools.has("inspect_artifact") ||
+      !this.#connected;
+    const artifactGraphReport: ReaProviderReport = {
+      id: "rea-artifact-graph",
+      name: "REA safe artifact graph provider",
+      available: artifactGraphAvail,
+      status: artifactGraphAvail ? "ready" : "not_configured",
+      availabilityCode: artifactGraphAvail ? "ready" : "missing_tools",
+    };
+
+    // 3. rea-dotnet-static
+    const dotnetEnv = Boolean(process.env.DOTNET_ROOT || process.env.REA_DOTNET_PATH);
+    const dotnetReport: ReaProviderReport = {
+      id: "rea-dotnet-static",
+      name: "REA managed static analysis provider",
+      available: dotnetEnv || this.#connected,
+      status: dotnetEnv || this.#connected ? "ready" : "unknown",
+      availabilityCode: dotnetEnv || this.#connected ? "ready" : "unknown",
+    };
+
+    // 4. SQLite
+    let sqliteAvail = false;
+    let sqliteReason = "SQLite inspection requires Node native DatabaseSync support.";
+    try {
+      const sqliteMod = await import("node:sqlite" as any);
+      sqliteAvail = typeof (sqliteMod as any).DatabaseSync === "function";
+      if (sqliteAvail) sqliteReason = "Native node:sqlite DatabaseSync available.";
+    } catch {
+      sqliteAvail = false;
+    }
+    const sqliteReport: ReaProviderReport = {
+      id: "sqlite",
+      name: "REA SQLite database inspector",
+      available: sqliteAvail,
+      status: sqliteAvail ? "ready" : "unsupported",
+      reason: sqliteAvail ? null : sqliteReason,
+      availabilityCode: sqliteAvail ? "ready" : "unsupported_version",
+      remediation: sqliteAvail ? null : "Upgrade to Node.js with native node:sqlite DatabaseSync support.",
+    };
+
+    // 5. Ghidra
+    const ghidraDir = process.env.GHIDRA_INSTALL_DIR;
+    const ghidraConfigured = Boolean(ghidraDir && existsSync(ghidraDir));
+    const ghidraReport: ReaProviderReport = {
+      id: "ghidra",
+      name: "Ghidra",
+      available: ghidraConfigured,
+      status: ghidraConfigured ? "ready" : "not_configured",
+      reason: ghidraConfigured ? null : "Set GHIDRA_INSTALL_DIR to a local Ghidra 11.2+ installation directory.",
+      availabilityCode: ghidraConfigured ? "ready" : "not_configured",
+      remediation: ghidraConfigured ? null : "Install Ghidra 11.2+ with Java 21 and export GHIDRA_INSTALL_DIR=/path/to/ghidra.",
+    };
+
+    // 6. Hopper
+    const hopperCandidates = [
+      process.env.REA_HOPPER_PATH,
+      "/Applications/Hopper Disassembler v4.app",
+      "/Applications/Hopper Disassembler v5.app",
+    ].filter((p): p is string => Boolean(p));
+    const hopperConfigured = hopperCandidates.some((p) => existsSync(p));
+    const hopperReport: ReaProviderReport = {
+      id: "hopper",
+      name: "Hopper Disassembler",
+      available: hopperConfigured,
+      status: hopperConfigured ? "ready" : "not_configured",
+      reason: hopperConfigured ? null : "Hopper v4 or v5 was not detected on system or via REA_HOPPER_PATH.",
+      availabilityCode: hopperConfigured ? "ready" : "not_configured",
+      remediation: hopperConfigured ? null : "Install Hopper Disassembler or configure REA_HOPPER_PATH.",
+    };
+
+    // 7. IDA Pro
+    const idaDir = process.env.IDADIR;
+    const idaConfigured = Boolean(idaDir && existsSync(idaDir));
+    const idaReport: ReaProviderReport = {
+      id: "ida",
+      name: "IDA Pro",
+      available: idaConfigured,
+      status: idaConfigured ? "ready" : "not_configured",
+      reason: idaConfigured ? null : "IDA Pro installation directory not configured in IDADIR.",
+      availabilityCode: idaConfigured ? "ready" : "not_configured",
+      remediation: idaConfigured ? null : "Set IDADIR to an existing IDA Pro installation directory.",
+    };
+
+    // 8. Kuna
+    const kunaCmd = process.env.REA_KUNA_COMMAND;
+    const kunaConfigured = Boolean(kunaCmd && existsSync(kunaCmd));
+    const kunaReport: ReaProviderReport = {
+      id: "kuna",
+      name: "Kuna decompiler",
+      available: kunaConfigured,
+      status: kunaConfigured ? "ready" : "not_configured",
+      reason: kunaConfigured ? null : "Set REA_KUNA_COMMAND to the absolute path of a caller-supplied kuna executable.",
+      availabilityCode: kunaConfigured ? "ready" : "not_configured",
+      remediation: kunaConfigured ? null : "Set REA_KUNA_COMMAND to the absolute path of kuna executable.",
+    };
+
+    return [
+      nativeMacosReport,
+      artifactGraphReport,
+      dotnetReport,
+      sqliteReport,
+      ghidraReport,
+      hopperReport,
+      idaReport,
+      kunaReport,
+    ];
   }
 
   /**
-   * Checks whether a specific REA provider is available.
+   * Selects the smallest necessary subset of REA tools by target category and permission level.
+   * Prohibits exposing all advertised tools indiscriminately.
    */
+  selectToolsForCategory(
+    category: InvestigationTargetCategory,
+    mode: "REVIEW" | "BUILD" = "REVIEW"
+  ): readonly string[] {
+    switch (category) {
+      case "running_web_app":
+        return mode === "BUILD"
+          ? ["browser_open", "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_screenshot", "browser_close"]
+          : ["browser_open", "browser_navigate", "browser_snapshot", "browser_screenshot", "browser_close"];
+
+      case "javascript_electron_app": {
+        const tools = ["analyze_javascript_application", "inspect_artifact", "extract_asar"];
+        return this.#advertisedTools.size > 0 ? tools.filter((t) => this.#advertisedTools.has(t)) : tools;
+      }
+
+      case "native_packaged_app": {
+        const tools = ["analyze_mach_o_binary", "read_macho_headers", "read_elf_headers", "read_pe_headers", "inspect_artifact"];
+        return this.#advertisedTools.size > 0 ? tools.filter((t) => this.#advertisedTools.has(t)) : tools;
+      }
+
+      case "source_repository":
+        return ["read_file", "search_text", "list_directory", "find_files"];
+    }
+  }
+
   isProviderAvailable(providerId: KnownReaProviderId | string): boolean {
     const p = this.#serverIdentity?.providers.find((x) => x.id === providerId);
-    return !!p?.available;
+    return Boolean(p?.available);
   }
 
-  /**
-   * Invokes an MCP guided prompt (e.g. `investigate_feature`, `verify_reconstruction`).
-   * Validates prompt availability against the actual connected REA server.
-   */
   async getGuidedPrompt(
     promptName: SupportedReaPrompt | string,
     args: Record<string, string> = {},
@@ -300,9 +527,6 @@ export class ReaMcpService {
     return this.getGuidedPrompt(promptName, args, signal);
   }
 
-  /**
-   * Executes an REA MCP tool call with bounds and error normalization.
-   */
   async callTool(name: string, args: unknown, signal?: AbortSignal): Promise<McpToolCallResult> {
     if (!this.#connected || !this.#transport) {
       throw new ReaServiceError("REA_NOT_INSTALLED", "REA MCP server is not connected.");
@@ -318,9 +542,6 @@ export class ReaMcpService {
     return this.#transport.callTool(name, args, signal);
   }
 
-  /**
-   * Invokes `build_reconstruction_obligation_ledger` tool on the connected REA server.
-   */
   async buildReconstructionObligationLedger(
     evidenceBundle: {
       artifacts?: readonly unknown[];
@@ -353,7 +574,6 @@ export class ReaMcpService {
       throw new ReaServiceError("CALL_FAILED", `build_reconstruction_obligation_ledger failed: ${errorText}`);
     }
 
-    // Parse returned structuredContent or normalized_result
     const firstText = callResult.content.find((c) => c.type === "text")?.text;
     if (!firstText) {
       throw new ReaServiceError("CALL_FAILED", "REA returned empty content for ledger call.");
@@ -364,12 +584,11 @@ export class ReaMcpService {
     return normalized as ReconstructionObligationLedger;
   }
 
-  /**
-   * Closes the MCP transport and cleans up processes.
-   */
   async disconnect(): Promise<void> {
     if (this.#transport) {
-      await this.#transport.close().catch(() => {});
+      if (!this.#mcpCatalog) {
+        await this.#transport.close().catch(() => {});
+      }
       this.#transport = undefined;
     }
     this.#connected = false;

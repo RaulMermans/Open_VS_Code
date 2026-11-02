@@ -97,7 +97,7 @@
       "recoveryAttempted": false,
       "diagnosticChecks": 0,
       "modelCalls": 8,
-      "promptTokens": 3255,
+      "promptTokens": 3256,
       "toolCalls": 8,
       "turns": 8
     },
@@ -320,7 +320,7 @@
       "B": 51
     },
     "promptTokens": {
-      "A": 26311,
+      "A": 26312,
       "B": 23497
     },
     "repeatedModelCallsAvoided": 13,
@@ -331,6 +331,6 @@
     },
     "diagnosticCallsAdded": 6,
     "diagnosticModelCallsAdded": 0,
-    "netTokenDifference": -2814
+    "netTokenDifference": -2815
   }
 }

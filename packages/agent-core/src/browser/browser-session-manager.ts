@@ -1340,6 +1340,7 @@ export class BrowserSessionManager {
             "input",
             "select",
             "textarea",
+            "li",
             "[role='button']",
             "[role='link']",
             "[role='checkbox']",
@@ -1347,6 +1348,9 @@ export class BrowserSessionManager {
             "[role='combobox']",
             "[role='menuitem']",
             "[role='heading']",
+            "[role='listitem']",
+            "[role='alert']",
+            "[role='status']",
           ];
           const found: {
             tag: string;
@@ -1398,6 +1402,8 @@ export class BrowserSessionManager {
                 ? "textbox"
                 : tag.startsWith("h") && !isNaN(Number(tag[1]))
                 ? "heading"
+                : tag === "li"
+                ? "listitem"
                 : tag);
 
             // Never fall back to el.value for accessible name to prevent leaking secret input values

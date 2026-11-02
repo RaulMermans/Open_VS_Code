@@ -82,6 +82,9 @@ test("InvestigationEngine - web behavioral exploration records state transitions
 
   const engine = new InvestigationEngine({
     browserSessionManager: mockBrowserManager,
+    mode: "BUILD",
+    interactiveModeAllowed: true,
+    autoApproveInteractions: true,
     maxInteractions: 5,
   });
 
@@ -116,4 +119,49 @@ test("InvestigationEngine - web behavioral exploration records state transitions
     assert.ok(obl.title);
     assert.ok(obl.applicationLayer);
   }
+});
+
+test("InvestigationEngine - read-only REVIEW mode strictly prohibits clicks and fills", async () => {
+  const target = classifyInvestigationTarget("http://localhost:3000/app");
+
+  let clickCalled = false;
+  let fillCalled = false;
+
+  const mockBrowserManager: any = {
+    open: async () => ({ sessionId: "mock-session-ro" }),
+    snapshot: async () => ({
+      url: "http://localhost:3000/app",
+      title: "Task Management App",
+      elements: [
+        { refId: "ref_1", role: "textbox", name: "New Task Title", tag: "input", inputType: "text" },
+        { refId: "ref_2", role: "button", name: "Add Task", tag: "button" },
+      ],
+      interactiveCount: 2,
+    }),
+    fill: async () => {
+      fillCalled = true;
+    },
+    click: async () => {
+      clickCalled = true;
+    },
+    close: async () => {},
+  };
+
+  const engine = new InvestigationEngine({
+    browserSessionManager: mockBrowserManager,
+    mode: "REVIEW",
+    maxInteractions: 5,
+  });
+
+  const result = await engine.runInvestigation(target);
+
+  // Read-only invariant: no clicks or fills allowed
+  assert.equal(fillCalled, false);
+  assert.equal(clickCalled, false);
+  assert.equal(result.stateTransitions.length, 0);
+
+  // Evidence must record read-only boundary enforcement
+  const boundaryRecord = result.evidenceLedger.find((e) => e.predicateType === "rea.read-only-boundary");
+  assert.ok(boundaryRecord);
+  assert.equal((boundaryRecord.observation as any).enforced, true);
 });
