@@ -759,6 +759,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
     }),
+    vscode.commands.registerCommand('open-vs-code.enableWorkflow', async () => {
+      const config = vscode.workspace.getConfiguration('open-vs-code');
+      await config.update('workflow.enabled', true, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage('Open VS Code: Structured Engineering Workflow has been enabled.');
+    }),
     { dispose: () => host?.dispose() }
   );
 

@@ -467,7 +467,23 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     options.instruction.toLowerCase().includes("advanced design") ||
     options.instruction.toLowerCase().includes("design-workflow");
 
-  const workflow = (isReaWorkflow && workflowEnabled && options.isTrusted)
+  if (isReaWorkflow || isDesignWorkflow) {
+    const specializationName = isReaWorkflow
+      ? (isReaInvestigationWorkflow ? "REA Investigation" : "REA Reconstruction")
+      : "Advanced Design & Motion";
+
+    if (!options.isTrusted && (isReaReconstructionWorkflow || isDesignWorkflow)) {
+      throw new Error(`Specialized workflow "${specializationName}" requires a trusted workspace (UNSUPPORTED).`);
+    }
+
+    if (!workflowEnabled) {
+      throw new Error(
+        `Specialized workflow "${specializationName}" is currently disabled. Enable structured engineering workflow in Settings (open-vs-code.workflow.enabled: true) or run "Open VS Code: Enable Structured Workflow" to use this specialization.`
+      );
+    }
+  }
+
+  const workflow = isReaWorkflow
     ? isReaInvestigationWorkflow
       ? GovernedReaWorkflow.startInvestigation({
           workspaceRoot: options.workspaceRoot,
@@ -497,21 +513,21 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
           taskId: runnerInput.task.id,
           skills: skillRegistry,
         })
-    : workflowEligibility.eligible
-      ? isDesignWorkflow
-        ? GovernedDesignWorkflow.start({
-            workspaceRoot: options.workspaceRoot,
-            mutationEngine,
-            checkpointCoordinator,
-            browserSessionManager: options.browserSessionManager,
-            provider,
-            onStage: options.workflow?.onStage as any,
-            signal: options.signal,
-            task: options.instruction,
-            taskId: runnerInput.task.id,
-            skills: skillRegistry,
-          })
-        : EngineeringWorkflow.start(
+    : isDesignWorkflow
+      ? GovernedDesignWorkflow.start({
+          workspaceRoot: options.workspaceRoot,
+          mutationEngine,
+          checkpointCoordinator,
+          browserSessionManager: options.browserSessionManager,
+          provider,
+          onStage: options.workflow?.onStage as any,
+          signal: options.signal,
+          task: options.instruction,
+          taskId: runnerInput.task.id,
+          skills: skillRegistry,
+        })
+      : workflowEligibility.eligible
+        ? EngineeringWorkflow.start(
           {
             provider,
             registry,

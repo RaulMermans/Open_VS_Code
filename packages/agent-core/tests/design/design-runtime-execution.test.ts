@@ -56,6 +56,7 @@ describe("Sprint 9C.1 — Design Runtime Execution & Evidence Integrity", () => 
         missingRequiredMcpServers: [],
         missingOptionalMcpServers: [],
         effectiveWorkflow: "structured",
+        readinessStatus: "READY",
         isReady: true,
         diagnostics: [],
         permissionRestrictions: [],

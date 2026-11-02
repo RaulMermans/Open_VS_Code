@@ -51,10 +51,34 @@ export class ComparativeWebVerifier {
   readonly #signal?: AbortSignal | undefined;
 
   constructor(options: ComparativeVerificationOptions) {
+    this.#validateLocalUrl(options.referenceUrl, "reference");
+    this.#validateLocalUrl(options.reconstructedUrl, "reconstructed");
     this.#referenceUrl = options.referenceUrl;
     this.#reconstructedUrl = options.reconstructedUrl;
     this.#browser = options.browserSessionManager;
     this.#signal = options.signal;
+  }
+
+  #validateLocalUrl(urlStr: string, label: string): URL {
+    let parsed: URL;
+    try {
+      parsed = new URL(urlStr);
+    } catch {
+      throw new Error(`Invalid ${label} URL: "${urlStr}". Must be a valid local URL.`);
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`Invalid protocol for ${label}: "${parsed.protocol}". Only http/https supported.`);
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const isLoopback = host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+    if (!isLoopback) {
+      throw new Error(
+        `Comparative verification is restricted to explicit, disposable local fixtures (127.0.0.1/localhost). Remote target "${urlStr}" is rejected to prevent automated side-effects on third-party applications.`
+      );
+    }
+    return parsed;
   }
 
   /**
@@ -66,24 +90,76 @@ export class ComparativeWebVerifier {
     const mismatches: string[] = [];
 
     // --- Scenario 1: Routes and Accessibility Landmarks ---
-    const s1 = await this.#verifyRoutesAndLandmarks();
-    comparisons.push(s1);
-    if (!s1.match) mismatches.push(s1.details);
+    try {
+      const s1 = await this.#verifyRoutesAndLandmarks();
+      comparisons.push(s1);
+      if (!s1.match) mismatches.push(s1.details);
+    } catch (err: any) {
+      const s1Error: ScenarioComparison = {
+        name: "route_and_landmarks_parity",
+        category: "error_behavior",
+        referenceObserved: {},
+        reconstructedObserved: {},
+        match: false,
+        details: `Observation error: ${err?.message || "Failed to observe applications"} (UNVERIFIED)`,
+      };
+      comparisons.push(s1Error);
+      mismatches.push(s1Error.details);
+    }
 
     // --- Scenario 2: Negative Form Validation Case ---
-    const s2 = await this.#verifyNegativeFormValidation();
-    comparisons.push(s2);
-    if (!s2.match) mismatches.push(s2.details);
+    try {
+      const s2 = await this.#verifyNegativeFormValidation();
+      comparisons.push(s2);
+      if (!s2.match) mismatches.push(s2.details);
+    } catch (err: any) {
+      const s2Error: ScenarioComparison = {
+        name: "negative_form_validation",
+        category: "error_behavior",
+        referenceObserved: {},
+        reconstructedObserved: {},
+        match: false,
+        details: `Observation error: ${err?.message || "Failed to evaluate form validation"} (UNVERIFIED)`,
+      };
+      comparisons.push(s2Error);
+      mismatches.push(s2Error.details);
+    }
 
     // --- Scenario 3: Positive State Change & Visible Output ---
-    const s3 = await this.#verifyPositiveStateChange();
-    comparisons.push(s3);
-    if (!s3.match) mismatches.push(s3.details);
+    try {
+      const s3 = await this.#verifyPositiveStateChange();
+      comparisons.push(s3);
+      if (!s3.match) mismatches.push(s3.details);
+    } catch (err: any) {
+      const s3Error: ScenarioComparison = {
+        name: "positive_state_change_parity",
+        category: "error_behavior",
+        referenceObserved: {},
+        reconstructedObserved: {},
+        match: false,
+        details: `Observation error: ${err?.message || "Failed to evaluate state change"} (UNVERIFIED)`,
+      };
+      comparisons.push(s3Error);
+      mismatches.push(s3Error.details);
+    }
 
     // --- Scenario 4: Sequential Multiple Item Mutation ---
-    const s4 = await this.#verifySequentialStateTransitions();
-    comparisons.push(s4);
-    if (!s4.match) mismatches.push(s4.details);
+    try {
+      const s4 = await this.#verifySequentialStateTransitions();
+      comparisons.push(s4);
+      if (!s4.match) mismatches.push(s4.details);
+    } catch (err: any) {
+      const s4Error: ScenarioComparison = {
+        name: "sequential_mutation_parity",
+        category: "error_behavior",
+        referenceObserved: {},
+        reconstructedObserved: {},
+        match: false,
+        details: `Observation error: ${err?.message || "Failed to evaluate sequential transitions"} (UNVERIFIED)`,
+      };
+      comparisons.push(s4Error);
+      mismatches.push(s4Error.details);
+    }
 
     const passed = mismatches.length === 0;
     const matchedCount = comparisons.filter((c) => c.match).length;

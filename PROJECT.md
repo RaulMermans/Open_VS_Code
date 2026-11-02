@@ -30,6 +30,16 @@
 
 ## Current sprint
 
+Sprint 10A.1 — Pre-HALO Production Readiness, Agent Execution Integrity & End-to-End Reliability (`docs/sprints/SPRINT_10A1_PRE_HALO_PRODUCTION_READINESS.md`).
+Audits, corrects, and validates the existing Open VS Code architecture so specialized workflows (Advanced Design and REA Reconstruction) execute reliably, truthfully, and safely before physical HALO hardware arrives:
+- Architectural Invariants Preserved: Single authoritative `AgentRuntime`, `ModelRouter`, `PermissionGate`, and `MutationEngine`. Zero new agents, frameworks, or shadow runtimes.
+- Specialized Workflow Activation (DD-04): Resolved `readinessStatus` ("READY" | "NOT_CONFIGURED" | "DISABLED" | "UNSUPPORTED") in `ModeResolver`. Specialized modes fail closed with actionable diagnostics when `open-vs-code.workflow.enabled` is false. Added `open-vs-code.enableWorkflow` command.
+- Reconstruction Authorization & Confinement (Section 4): Defaulted mutation approval strictly to DENY when unapproved. Validated path containment and parent directory symlinks against canonical `realpathSync(workspaceRoot)` BEFORE directory creation. Automatic rollback of empty parent directories on mutation denial.
+- Truthful Visual QA & Telemetry (DD-03, DD-06, DD-07): Eliminated synthetic DOM/style fallbacks. Missing Chromium observations yield `INSUFFICIENT_EVIDENCE` with a blocker finding (no browser observation = no visual PASS). Wired live stage telemetry (actual model calls, provider tokens, and tools used). All QA report mutations gated on human confirmation.
+- Greenfield vs Incremental Mutations (DD-05): Implemented `#prepareFileMutation` inspecting existing workspace code; automatically prepares patches for existing files, preserving unrelated code.
+- Real Model Reasoning in Design (DD-01, DD-02): Integrated `provider.complete()` into frontend composition (Stage C), motion engineering (Stage D), and iterative defect repair (Stage E).
+- Monorepo Verification & 5 User Journeys: 61/61 Design tests, 39/39 REA tests, 126/126 Modes/Tools tests, 33/33 Workflow tests, 149/149 Model tests, 14/14 Desktop Smoke tests, and 6/6 Real Desktop Acceptance tests pass 100%.
+
 Sprint 9D.1 — REA Production Integration, Governed Reconstruction & Evidence Integrity (`docs/sprints/SPRINT_9D1_REA_RUNTIME_EVIDENCE_CLOSURE.md`; ADR-042 Amendment).
 Closes all production, security, and verification defects identified in Sprint 9D review:
 - Authoritative Execution Pipeline (`GovernedReaWorkflow`): Integrated directly into `createAgentRuntime` and `AgentSessionBridge` without secondary agents or parallel loops. Preserves the strict pipeline: `ChatController -> Custom Mode & Capability Pack -> AgentSessionBridge -> AgentRuntime -> GovernedReaWorkflow -> PermissionGate -> Existing Tools & McpCatalog -> MutationEngine -> Verified Artifacts`.

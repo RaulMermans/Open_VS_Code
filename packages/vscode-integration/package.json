@@ -73,6 +73,10 @@
         "title": "Open VS Code: Open Model Configuration"
       },
       {
+        "command": "open-vs-code.enableWorkflow",
+        "title": "Open VS Code: Enable Structured Workflow"
+      },
+      {
         "command": "open-vs-code.listSkills",
         "title": "Open VS Code: List Available Skills"
       },
