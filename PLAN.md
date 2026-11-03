@@ -626,5 +626,15 @@ Sprint 10A.1C — Final Pre-HALO Integration, Evidence Continuity & Production V
     - Verification Suite: 21/21 targeted tests in `final-pre-halo-closure.test.ts`, 80/80 REA tests, 955/955 agent-core tests (68 suites), clean typecheck, all monorepo evals passing, and packaged desktop suites passing (14/14 `desktop:smoke` and 6/6 `desktop:accept`).
   - Record: `docs/sprints/SPRINT_10A1C_FINAL_PRE_HALO_CLOSURE.md`.
 
+Sprint 10A.1D — Final Pre-HALO Readiness, Security Closure & Release Freeze — SPRINT_10A1D_ACCEPTED
+  - Brought Open VS Code to a verifiable pre-HALO-ready state and froze core software architecture:
+    - P0 Production REA Verifier Initialization: Evidence is resolved and validated before constructing the production test runner. Verifier receives validated reference URL, target category, and account scope; missing reference URL blocks verification fail-closed (`MISSING_REFERENCE_EVIDENCE`).
+    - P0 False-Positive Obligation Closure Eliminated: Strict scenario-to-obligation category mapping. Unsupported categories report `UNSUPPORTED_VERIFIER`, unmapped scenarios report `UNVERIFIED`, failed scenarios report `FAILED`, aborted runs report `INCOMPLETE`. Zero empty-mismatch false passes.
+    - P0 Verification Server Security & Isolation: Isolated fixture staging in `tmpdir()` (permissions `0o700`) serving allowlisted web assets only. Rejects `.env`, `.git/`, credentials, directory traversals, and symlinks. Restricts HTTP to GET/HEAD and cleans up on close.
+    - P1 Account-Scoped Evidence Ownership: Traced account scope through desktop account manager, chat controller, bridge, agent runtime, workflow, and evidence bundle. Cross-account access is strictly rejected (`ACCOUNT_MISMATCH`). Account logout or switching immediately revokes active bridges and turns.
+    - Demonstrations & Verification: 23/23 targeted tests in `final-pre-halo-readiness.test.ts`, 103/103 REA tests, 0 typecheck errors across all 5 workspaces, 0 linter warnings, clean build, all monorepo evals passing, and 14/14 `desktop:smoke` + 6/6 `desktop:accept`.
+  - Record: `docs/sprints/SPRINT_10A1D_FINAL_PRE_HALO_READINESS.md`.
+  - Release Freeze Spec: `docs/releases/PRE_HALO_READINESS.md`.
+
 Next:
 1. Physical HALO hardware arrival & benchmark execution.

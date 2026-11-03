@@ -14,7 +14,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { redactRuntimeEvalSecrets } from "../runtime-evals/evidence.ts";
 import type {
   FeatureSpecItem,
@@ -149,7 +149,7 @@ export function createReaEvidenceBundle(options: CreateEvidenceBundleOptions): R
     schemaVersion: REA_EVIDENCE_BUNDLE_SCHEMA_VERSION,
     investigationId: options.investigationId,
     workspaceRoot: canonicalRoot,
-    accountScope: options.accountScope,
+    accountScope: options.accountScope ?? LOCAL_UNAUTHENTICATED_ACCOUNT_SCOPE,
     targetIdentity: spec.target.rawInput || spec.target.normalizedLocation || spec.target.targetId,
     targetType: spec.target.category,
     timestamp: options.timestamp ?? spec.createdAt ?? Date.now(),
@@ -199,6 +199,8 @@ export function saveReaEvidenceBundle(bundle: ReaEvidenceBundle): string {
   return bundlePath;
 }
 
+export const LOCAL_UNAUTHENTICATED_ACCOUNT_SCOPE = "local:unauthenticated";
+
 export type EvidenceValidationResult =
   | { readonly valid: true; readonly bundle: ReaEvidenceBundle }
   | { readonly valid: false; readonly reason: string; readonly code: "WORKSPACE_MISMATCH" | "ACCOUNT_MISMATCH" | "SCHEMA_INCOMPATIBLE" | "INTEGRITY_COMPROMISED" | "CORRUPTED" | "NOT_FOUND" };
@@ -246,13 +248,29 @@ export function validateReaEvidenceBundle(
     };
   }
 
-  // Scope check: account
-  if (expectedAccountScope && b.accountScope && b.accountScope !== expectedAccountScope) {
-    return {
-      valid: false,
-      reason: `Evidence bundle account "${b.accountScope}" does not match active account "${expectedAccountScope}". Cross-account evidence is rejected.`,
-      code: "ACCOUNT_MISMATCH",
-    };
+  // Scope check: account ownership
+  const effectiveExpectedScope = expectedAccountScope || LOCAL_UNAUTHENTICATED_ACCOUNT_SCOPE;
+  const bundleScope = b.accountScope;
+
+  if (bundleScope) {
+    if (bundleScope !== effectiveExpectedScope) {
+      return {
+        valid: false,
+        reason: `Evidence bundle account scope "${bundleScope}" does not match active account scope "${effectiveExpectedScope}". Cross-account evidence is rejected.`,
+        code: "ACCOUNT_MISMATCH",
+      };
+    }
+  } else {
+    // Legacy unscoped bundle policy:
+    // Only accessible in local:unauthenticated mode.
+    // Authenticated users cannot claim legacy unscoped bundles without explicit migration.
+    if (effectiveExpectedScope !== LOCAL_UNAUTHENTICATED_ACCOUNT_SCOPE) {
+      return {
+        valid: false,
+        reason: `Evidence bundle is unscoped (legacy) and cannot be claimed by authenticated account "${effectiveExpectedScope}" without explicit migration.`,
+        code: "ACCOUNT_MISMATCH",
+      };
+    }
   }
 
   // Cryptographic integrity check
@@ -325,23 +343,30 @@ export function resolveReaEvidenceBundle(
     if (invMatch && invMatch[1]) {
       const res = loadReaEvidenceBundle(invMatch[1], workspaceRoot, accountScope);
       if (res.valid) return res;
+      if (res.code === "ACCOUNT_MISMATCH" || res.code === "WORKSPACE_MISMATCH" || res.code === "INTEGRITY_COMPROMISED") {
+        return res;
+      }
     }
   }
 
   // Check latest.json pointer
+  let latestMismatchResult: EvidenceValidationResult | undefined;
   const latestPath = join(storageDir, "latest.json");
   if (existsSync(latestPath)) {
     const res = loadReaEvidenceBundle(latestPath, workspaceRoot, accountScope);
     if (res.valid) return res;
+    if (res.code === "ACCOUNT_MISMATCH") {
+      latestMismatchResult = res;
+    }
   }
 
-  // Scan storage dir for newest valid bundle
+  // Scan storage dir for newest valid bundle for this account
   if (existsSync(storageDir)) {
     try {
       const files = readdirSync(storageDir)
         .filter((f) => f.endsWith(".json") && f !== "latest.json")
-        .sort()
-        .reverse();
+        .toSorted()
+        .toReversed();
 
       for (const file of files) {
         const res = loadReaEvidenceBundle(join(storageDir, file), workspaceRoot, accountScope);
@@ -350,6 +375,10 @@ export function resolveReaEvidenceBundle(
     } catch {
       // Ignore read errors
     }
+  }
+
+  if (latestMismatchResult) {
+    return latestMismatchResult;
   }
 
   return {
