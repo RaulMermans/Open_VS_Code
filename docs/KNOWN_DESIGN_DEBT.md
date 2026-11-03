@@ -69,3 +69,23 @@ Sprint 10A.1B audited and closed the remaining production defects across Design 
 2. **REA Reconstruction Authorization**: Closed the implicit authorization bug in `GovernedReaWorkflow`; reconstruction planning and file mutations now strictly suspend for host-mediated human approval (`WAITING_FOR_CONFIRMATION`) with cryptographic binding and empty directory rollback on rejection.
 3. **REA Model Synthesis**: Connected `GovernedReaWorkflow` and `ReconstructionEngine` to the active model provider gateway, grounding synthesis in feature inventories, observed state transitions, and obligations.
 4. **Execution Telemetry Truthfulness**: Replaced remaining static telemetry in `GovernedReaWorkflow` with live model call, token, and tool metrics (`modelCalls = 0` when uncalled).
+
+---
+
+## Sprint 10A.1C Final Pre-HALO Integration Addendum
+
+Sprint 10A.1C closed the verified integration gaps across evidence continuity and verification wiring:
+1. **DD-08: REA Evidence Continuity**: Implemented `ReaEvidenceBundle` connecting investigation to reconstruction. Missing investigation fails closed with `INVESTIGATION_REQUIRED`.
+2. **DD-09: Production Verification Wiring**: Implemented `createReaProductionTestRunner` automatically wrapping `ComparativeWebVerifier` on loopback fixtures.
+3. **DD-10: Exact Approval Binding**: Enforced strict confirmation token matching on `GovernedReaWorkflow.resume()`, with TOCTOU disk file modification checks.
+
+---
+
+## Sprint 10A.1D Final Pre-HALO Readiness Closure Addendum
+
+Sprint 10A.1D audited, corrected, and verified the final pre-HALO readiness state:
+1. **Production REA Verifier Initialization**: Resolved and validated evidence before constructing the production test runner. Ensured reference URL, target category, and account scope are derived strictly from validated evidence; missing reference URL blocks verification fail-closed (`MISSING_REFERENCE_EVIDENCE`).
+2. **Elimination of False-Positive Obligation Closure**: Replaced empty-mismatch passing with strict scenario-to-obligation category mapping. Unmatched/unexecuted scenarios report `UNVERIFIED`; failures report `FAILED`; interrupted runs report `INCOMPLETE`; unsupported capabilities report `UNSUPPORTED_VERIFIER`. Zero unverified passes.
+3. **Temporary Verification Server Security**: Overhauled `startEphemeralWorkspaceServer` and `stageVerificationFixture`. Served content is strictly staged in an isolated temporary directory in `tmpdir()` (permissions `0o700`) containing allowlisted web assets only. Rejects `.env`, `.git/`, credentials, traversals, and symlink escapes.
+4. **Account-Scoped Evidence Ownership**: Traced account scope from `DesktopAccountManager` through to `ReaEvidenceBundle`. Cross-account access is strictly rejected (`ACCOUNT_MISMATCH`). Account logout or switching immediately clears the active bridge and revokes active scoped turns.
+5. **Final Architecture Freeze**: All 10 design debt items (DD-01 through DD-10) are verified closed. Core software architecture is **FROZEN** for physical HALO hardware integration. Status: **`PRE_HALO_READY`**.

@@ -19,6 +19,8 @@ export interface BridgeOptions {
   mcpCatalog?: McpCatalog;
   /** Governed BrowserSessionManager (Sprint 9A) */
   browserSessionManager?: BrowserSessionManager;
+  /** Authenticated account identity scope for evidence and session isolation */
+  accountScope?: string;
 }
 
 export class AgentSessionBridge {
@@ -34,6 +36,7 @@ export class AgentSessionBridge {
   private mcpCatalog?: BridgeOptions["mcpCatalog"];
   private browserSessionManager?: BrowserSessionManager;
   private lastWorkflowState?: WorkflowState;
+  private accountScope?: string;
   
   constructor(options: BridgeOptions) {
     this.host = options.host;
@@ -45,6 +48,7 @@ export class AgentSessionBridge {
     this.learning = options.learning;
     this.mcpCatalog = options.mcpCatalog;
     this.browserSessionManager = options.browserSessionManager;
+    this.accountScope = options.accountScope;
   }
 
   /** Bounded workflow state of the most recent structured task, if one ran. */
@@ -160,6 +164,7 @@ export class AgentSessionBridge {
         isTrusted,
         eventSink: sink,
         providerOverride: this.providerOverride,
+        ...(this.accountScope ? { accountScope: this.accountScope } : {}),
         ...(resolvedProfile ? { resolvedProfile } : {}),
         ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),
         ...(this.browserSessionManager ? { browserSessionManager: this.browserSessionManager } : {}),

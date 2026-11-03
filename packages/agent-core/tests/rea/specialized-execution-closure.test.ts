@@ -1050,7 +1050,11 @@ test("Section 8: Negative Test 10 — Incomplete reconstruction obligations rema
     const res = await workflow.run();
     assert.equal(res.status, "BLOCKED");
     assert.equal(res.state.verification?.verdict, "BLOCKED");
-    assert.ok(res.state.blockerDetail?.includes("unverified"), "Missing verifier must leave obligations unverified");
+    assert.ok(
+      res.state.blockerDetail?.includes("unverified") ||
+        res.state.blockerDetail?.includes("MISSING_REFERENCE_EVIDENCE"),
+      "Missing verifier or reference evidence must block verification without fabricating pass"
+    );
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }

@@ -30,6 +30,15 @@
 
 ## Current sprint
 
+Sprint 10A.1D — Final Pre-HALO Readiness, Security Closure & Release Freeze (`docs/sprints/SPRINT_10A1D_FINAL_PRE_HALO_READINESS.md`).
+Final planned corrective sprint before physical HALO hardware integration:
+- Architectural Invariants Preserved: Single authoritative `AgentRuntime`, `PermissionGate`, and `MutationEngine`. Zero new agents, frameworks, or databases. Core architecture is **FROZEN**.
+- Production REA Verifier Initialization (P0): Resolved and validated evidence before constructing the production test runner. Verifier receives validated reference URL, target category, and account scope; missing reference URL blocks verification fail-closed (`MISSING_REFERENCE_EVIDENCE`).
+- False-Positive Obligation Closure Eliminated (P0): Replaced empty-mismatch passing with strict scenario-to-obligation category mapping. Unmatched/unexecuted scenarios report `UNVERIFIED`; failures report `FAILED`; interrupted runs report `INCOMPLETE`; unsupported capabilities report `UNSUPPORTED_VERIFIER`. Zero false passes.
+- Verification Server Security & Isolation (P0): Overhauled `startEphemeralWorkspaceServer` and `stageVerificationFixture`. Served content is strictly staged in an isolated temporary directory in `tmpdir()` (permissions `0o700`) containing allowlisted web assets only. Rejects `.env`, `.git/`, credentials, traversals, and symlink escapes.
+- Account-Scoped Evidence Ownership (P1): Traced account scope from `DesktopAccountManager` through to `ReaEvidenceBundle`. Cross-account access is strictly rejected (`ACCOUNT_MISMATCH`). Account logout or switching immediately clears the active bridge and revokes active scoped turns.
+- Complete Monorepo Verification & Demonstrations: 23/23 targeted tests in `final-pre-halo-readiness.test.ts`, 103/103 REA tests, clean typecheck across all 5 workspaces, clean lint across all packages, clean build, all monorepo evals passing (`eval:runtime`, `eval:skills`, `eval:workflow`, `eval:progress`, `eval:learning`, `eval:performance`, `eval:recovery`), and packaged desktop suites passing (14/14 `desktop:smoke` and 6/6 `desktop:accept`). System verdict: `PRE_HALO_READY`.
+
 Sprint 10A.1C — Final Pre-HALO Integration, Evidence Continuity & Production Verification (`docs/sprints/SPRINT_10A1C_FINAL_PRE_HALO_CLOSURE.md`).
 Closes the final verified integration gaps in Open VS Code's specialized workflows before HALO hardware integration:
 - Architectural Invariants Preserved: Exactly one authoritative `AgentRuntime`, `PermissionGate`, and `MutationEngine`. Zero new agents, frameworks, orchestration engines, or databases.

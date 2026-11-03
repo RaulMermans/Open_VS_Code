@@ -289,6 +289,10 @@ export class GovernedReaWorkflow {
     return this.#evidenceProvenance;
   }
 
+  get reconstructionResult(): ReconstructionResult | undefined {
+    return this.#reconstructionResult;
+  }
+
   get stageSkillTracker(): Readonly<Record<string, StageSkillTracker>> {
     return this.#stageSkillTracker;
   }
@@ -843,14 +847,47 @@ export class GovernedReaWorkflow {
         const spec = this.#loadedSpecification!;
         const initialLedger = this.#loadedLedger!;
 
+        // 7. Recovered workflows revalidate source evidence before continuing
+        if (this.#evidenceBundle) {
+          const evidenceValidation = validateReaEvidenceBundle(this.#evidenceBundle, this.#workspaceRoot, this.#accountScope);
+          if (!evidenceValidation.valid) {
+            this.#status = "BLOCKED";
+            this.#blocker = "STAGE_FAILED";
+            this.#blockerDetail = `Source evidence revalidation failed: ${evidenceValidation.reason}`;
+            this.#recordStageRecord("local_verification", "BLOCKED", this.#blockerDetail);
+            return this.#result();
+          }
+        }
+
+        const rawRef = spec.target.rawInput || spec.target.normalizedLocation;
+        const isTargetUrl = typeof rawRef === "string" && (rawRef.startsWith("http://") || rawRef.startsWith("https://"));
+        const isBundleUrl =
+          typeof this.#evidenceBundle?.targetIdentity === "string" &&
+          (this.#evidenceBundle.targetIdentity.startsWith("http://") ||
+            this.#evidenceBundle.targetIdentity.startsWith("https://"));
+        const referenceUrl = isTargetUrl ? rawRef : isBundleUrl ? this.#evidenceBundle!.targetIdentity : undefined;
+        const targetCategory = spec.target.category || this.#evidenceBundle?.targetType;
+
+        // 5. Missing reference evidence blocks verification; 6. No fabricated URL or default target
+        if (!this.#testRunner && !referenceUrl) {
+          this.#status = "BLOCKED";
+          this.#blocker = "STAGE_FAILED";
+          this.#blockerDetail = "MISSING_REFERENCE_EVIDENCE: Reference application URL is missing from validated evidence. Verification cannot proceed without valid reference evidence.";
+          this.#recordStageRecord("local_verification", "BLOCKED", this.#blockerDetail);
+          return this.#result();
+        }
+
         // Automatically initialize production test runner if not explicitly provided
         if (!this.#testRunner && this.#browserSessionManager) {
           this.#testRunner = createReaProductionTestRunner({
             workspaceRoot: this.#workspaceRoot,
             browserSessionManager: this.#browserSessionManager,
             verificationEngine: this.#verificationEngine,
-            referenceUrl: spec.target.rawInput || spec.target.normalizedLocation || this.#evidenceBundle?.targetIdentity,
-            targetCategory: spec.target.category || this.#evidenceBundle?.targetType,
+            referenceUrl,
+            targetCategory,
+            investigationId: this.#evidenceBundle?.investigationId,
+            obligationLedger: initialLedger,
+            accountScope: this.#accountScope,
             signal: this.#signal,
           });
         }
@@ -959,7 +996,7 @@ export class GovernedReaWorkflow {
                 { key: "verified", count: verifiedObligations.length },
                 { key: "characterized", count: failedObligations.length },
               ],
-              byApplicationLayer: initialLedger.summary.byApplicationLayer,
+              byApplicationLayer: initialLedger.summary?.byApplicationLayer ?? [],
             },
             obligations: allObligations,
           },
@@ -1002,43 +1039,6 @@ export class GovernedReaWorkflow {
       default:
         return this.#result();
     }
-  }
-
-  #buildDefaultSpec(): ReconstructionSpecification {
-    return {
-      specificationId: `spec_default_${Date.now()}`,
-      target: classifyInvestigationTarget(this.#targetInput, { workspaceRoot: this.#workspaceRoot }),
-      createdAt: Date.now(),
-      featureInventory: [
-        {
-          featureId: "feat_default",
-          title: "Default Feature Specification",
-          description: "Clean-room reconstruction baseline feature",
-          category: "core",
-          supportingEvidenceIds: ["ev_default_1"],
-          epistemicStatus: "OBSERVED",
-        },
-      ],
-      pageAndRouteMap: [],
-      interactionStateGraph: [],
-      visibleBusinessRules: [],
-      formAndValidationBehavior: [],
-      componentInventory: [],
-      observableDataContracts: [],
-      responsiveUiRequirements: [],
-      errorHandling: [],
-      knownConstraints: ["Offline first"],
-      evidenceLinks: ["ev_default_1"],
-      unknowns: [],
-      inferredArchitecture: {
-        summary: "Clean-Room SPA",
-        suspectedTechStack: ["JavaScript"],
-        stateManagementModel: "Local",
-        dataPersistenceModel: "In-memory",
-        explicitlyInferred: true,
-        supportingEvidenceIds: ["ev_default_1"],
-      },
-    };
   }
 
   #buildDefaultLedger(_spec: ReconstructionSpecification): ReconstructionObligationLedger {
@@ -1287,7 +1287,7 @@ export class GovernedReaWorkflow {
     ).join("\n");
 
     const obligations = initialLedger.obligations.map(
-      (o) => `- Obligation ${o.obligationId} (${o.family}): ${o.title} (positive: ${o.positiveCases.join("; ")}; negative: ${o.negativeCases.join("; ")})`
+      (o) => `- Obligation ${o.obligationId} (${o.family}): ${o.title} (positive: ${(o.positiveCases ?? []).join("; ")}; negative: ${(o.negativeCases ?? []).join("; ")})`
     ).join("\n");
 
     const prompt = `You are a principal clean-room software reverse engineer.

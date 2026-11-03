@@ -71,7 +71,7 @@ function emptyUiMetrics(): ChatUiMetrics {
 
 export class ChatController {
   private state: WebviewState;
-  private bridgeFactory: (options: { host: any, workspaceRoot: string, mode: ChatMode }) => AgentSessionBridge;
+  private bridgeFactory: (options: { host: any, workspaceRoot: string, mode: ChatMode, mcpCatalog?: any, accountScope?: string }) => AgentSessionBridge;
   private host: any; // VSCodeIdeHost
   private diffReviewController: DiffReviewController;
   private terminalReviewController: TerminalReviewController;
@@ -1244,8 +1244,18 @@ export class ChatController {
       }
     }
     
+    const acctState = this._integrationManager?.getAccountManager()?.getState();
+    const isAuthenticated = Boolean(acctState?.user && acctState.status !== "UNAUTHENTICATED");
+    const accountScope = isAuthenticated && acctState?.user?.id ? acctState.user.id : undefined;
+
     this._activeAbortController = new AbortController();
-    this._activeSessionBridge = this.bridgeFactory({ host: this.host, workspaceRoot: resolvedRoot, mode, mcpCatalog } as any);
+    this._activeSessionBridge = this.bridgeFactory({
+      host: this.host,
+      workspaceRoot: resolvedRoot,
+      mode,
+      mcpCatalog,
+      ...(accountScope ? { accountScope } : {}),
+    } as any);
     
     // Bind current turn for isolation
     const currentConversationId = this.state.conversationId;

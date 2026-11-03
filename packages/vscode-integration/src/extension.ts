@@ -583,8 +583,13 @@ export function activate(context: vscode.ExtensionContext) {
         })
         : undefined;
       const browserManager = getGovernedBrowserSessionManager(options.workspaceRoot);
+      const acctState = accountManager?.getState();
+      const isAuthenticated = Boolean(acctState?.user && acctState.status !== "UNAUTHENTICATED");
+      const effectiveAccountScope = (options as any).accountScope || (isAuthenticated && acctState?.user?.id ? acctState.user.id : undefined);
+
       activeBridge = new AgentSessionBridge({
         ...options,
+        ...(effectiveAccountScope ? { accountScope: effectiveAccountScope } : {}),
         ...(providerOverride ? { providerOverride } : {}),
         mcpCatalog: options.mcpCatalog,
         ...(browserManager ? { browserSessionManager: browserManager } : {}),
@@ -895,6 +900,14 @@ export function activate(context: vscode.ExtensionContext) {
       browserPanelController?.openOrRevealPanel();
     }),
     accountManager.onStateChange((state) => {
+      // Invalidate active session bridge and in-flight tasks on account identity changes
+      activeBridge = null;
+      try {
+        chatController?.cancelTurn?.();
+      } catch {
+        // Safe containment
+      }
+
       if (activeScopedBrowserSession) {
         const currentUserId = state.user?.id || "anonymous";
         const loggedOutAuthenticated =
