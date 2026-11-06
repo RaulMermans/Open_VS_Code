@@ -221,6 +221,7 @@ export class RuntimeEvidenceCollector {
     path: string
     status: "PREPARED" | "APPLIED" | "FAILED" | "STALE"
     diffSummary?: string
+    operation?: "create" | "patch" | "delete"
   }): void {
     this.#mutationCount++
     if (mutation.status === "APPLIED") {
@@ -233,6 +234,7 @@ export class RuntimeEvidenceCollector {
       status: mutation.status,
       diffSummary: truncateBounded(mutation.diffSummary ?? "", 300),
       timestamp: new Date().toISOString(),
+      ...(mutation.operation ? { operation: mutation.operation } : {}),
     }
 
     this.#appendBounded(this.#mutationOutcomes, record, MAX_MUTATION_OUTCOMES)

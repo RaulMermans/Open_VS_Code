@@ -5,11 +5,17 @@ import type { PreparedVerification, VerificationResult } from "../tools/verifica
 const VERIFICATION_ACTIONS = new Set(["TEST", "TYPECHECK", "LINT", "BUILD"])
 
 export function appliedPathsFromAgentResult(result: AgentResult): string[] {
-  const answer = result.finalAnswer ?? ""
-  const match = answer.match(/Changed: ([^.]+)\./)
-  if (!match || match[1] === undefined) return []
-  if (match[1].startsWith("unrelated")) return []
-  return match[1].split(",").map((path) => path.trim()).filter((path) => path.length > 0 && !path.includes(" "))
+  const structured = result.appliedMutations
+    ?.filter((mutation) => mutation.status === "APPLIED" && mutation.path.trim().length > 0)
+    .map((mutation) => mutation.path)
+  if (structured && structured.length > 0) return uniquePaths(structured)
+  const fromEvents: string[] = []
+  for (const event of result.events) {
+    if (event.type !== "mutation.applied") continue
+    const path = eventPath(event.payload)
+    if (path) fromEvents.push(path)
+  }
+  return uniquePaths(fromEvents)
 }
 
 export function lastFailedVerification(result: AgentResult): VerificationResult | undefined {
@@ -58,6 +64,7 @@ export function integrateRepairOutcome(original: AgentResult, repair: RepairResu
       ? "The repair was cancelled."
       : `Incomplete: repair ended as ${repair.status}.`
   const task = original.finalState.task
+  const appliedMutations = changed.map((path) => ({ path, status: "APPLIED" as const }))
   const finalState: AgentState = {
     status: mapped.state,
     ...(task ? { task } : {}),
@@ -73,6 +80,7 @@ export function integrateRepairOutcome(original: AgentResult, repair: RepairResu
     events: original.events,
     contextDiagnostics: original.contextDiagnostics,
     toolCalls: original.toolCalls,
+    ...(appliedMutations.length > 0 ? { appliedMutations } : {}),
     ...(original.observations ? { observations: original.observations } : {}),
     ...(original.terminationSource ? { terminationSource: original.terminationSource } : {}),
   }
@@ -127,6 +135,25 @@ function asVerificationResult(value: unknown): VerificationResult | undefined {
     stderr: record.stderr,
     durationMs: record.durationMs,
   }
+}
+
+function uniquePaths(paths: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const path of paths) {
+    if (seen.has(path)) continue
+    seen.add(path)
+    unique.push(path)
+  }
+  return unique
+}
+
+function eventPath(payload: unknown): string | undefined {
+  const record = asRecord(payload)
+  const path = record?.path
+  if (typeof path !== "string") return undefined
+  const trimmed = path.trim()
+  return trimmed.length > 0 ? trimmed : undefined
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

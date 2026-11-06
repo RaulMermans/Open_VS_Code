@@ -71,10 +71,33 @@ export function pathsReferToSameFile(left: string, right: string): boolean {
   return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`)
 }
 
+/** Test files and test directories. Implementation files stay outside this set. */
+export function isTestArtifactPath(path: string): boolean {
+  const normalized = normalizeWorkspacePath(path)
+  const lower = normalized.toLowerCase()
+  if (/(^|\/)(test|tests|__tests__|spec|specs)\//.test(lower)) return true
+  const base = lower.split("/").pop() ?? lower
+  if (base === "test" || base === "tests" || base === "spec" || base === "specs") return true
+  return /(?:^|\/)[^/]+\.(?:test|spec)\.[a-z0-9]+$/i.test(normalized)
+}
+
+/**
+ * A behavior change needs an implementation edit.
+ * An explicit request that names only test files can be satisfied by those tests.
+ */
+export function implementationChangeRequired(instruction: string, explicitPaths: readonly string[]): boolean {
+  if (explicitPaths.length > 0 && explicitPaths.every((path) => isTestArtifactPath(path))) return false
+  if (explicitPaths.some((path) => !isTestArtifactPath(path))) return true
+  const mentionsBehavior = /\b(?:implement|implementation|function|method|bug|failing|fix|src\/|return|behavior|behaviour|body|title|export|rename|replace)\b/i.test(instruction)
+  const testOnly = /\b(?:test|tests|spec|specs)\b/i.test(instruction) && !mentionsBehavior
+  return !testOnly
+}
+
 export interface MutationFact {
   readonly path: string
   readonly status: string
   readonly at: string
+  readonly operation?: "create" | "patch" | "delete" | undefined
 }
 
 export interface VerificationFact {
@@ -84,6 +107,8 @@ export interface VerificationFact {
 
 export interface CodingCompletion {
   readonly accept: boolean
+  readonly editsSatisfied: boolean
+  readonly verificationSatisfied: boolean
   readonly failureReason?: AgentFailureReason
   readonly summary: string
 }
@@ -97,6 +122,9 @@ export function relevantAppliedPaths(mutations: readonly MutationFact[], explici
 export function assessCodingCompletion(input: {
   readonly requiresCodeChange: boolean
   readonly explicitPaths: readonly string[]
+  readonly requireImplementationChange?: boolean
+  /** When true, creating a new file does not satisfy the requested behavior change. */
+  readonly requireExistingFileEdit?: boolean
   readonly mutations: readonly MutationFact[]
   readonly verifications: readonly VerificationFact[]
   readonly verificationRequired: boolean
@@ -119,26 +147,38 @@ export function assessCodingCompletion(input: {
     : applied.length > 0
       ? "Approval was granted for the applied edit."
       : "No edit was approved."
+  const requireImplementation = input.requireImplementationChange
+    ?? (input.explicitPaths.length === 0 || input.explicitPaths.some((path) => !isTestArtifactPath(path)))
+  const implementationApplied = applied.some((path) => implementationEditCounts(path, input))
 
   if (!input.requiresCodeChange) {
     return {
       accept: true,
+      editsSatisfied: true,
+      verificationSatisfied: true,
       summary: `${changed} ${approval} ${tests} Read-only task completed from the gathered evidence.`,
     }
   }
 
   const missingPaths = input.explicitPaths.filter((wanted) => !applied.some((path) => pathsReferToSameFile(path, wanted)))
-  if (applied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0)) {
+  const testOnly = applied.length > 0 && requireImplementation && !implementationApplied
+  if (applied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0) || testOnly) {
     const failureReason: AgentFailureReason = input.userRejectedMutation && applied.length === 0 ? "REJECTED" : "INCOMPLETE"
     const why = input.userRejectedMutation && applied.length === 0
       ? "The requested edit was not applied because the mutation was rejected."
-      : missingPaths.length > 0 && applied.length > 0
-        ? `The edit did not include ${missingPaths.join(", ")}.`
-        : unrelated.length > 0
-          ? "The applied edit does not match the requested file."
-          : "The requested edit was not applied."
+      : testOnly && applied.some((path) => !isTestArtifactPath(path))
+        ? "A new file was created. The existing implementation was not modified."
+        : testOnly
+          ? "Only test files changed. The implementation was not modified."
+        : missingPaths.length > 0 && applied.length > 0
+          ? `The edit did not include ${missingPaths.join(", ")}.`
+          : unrelated.length > 0
+            ? "The applied edit does not match the requested file."
+            : "The requested edit was not applied."
     return {
       accept: false,
+      editsSatisfied: false,
+      verificationSatisfied: false,
       failureReason,
       summary: `${changed} ${approval} ${tests} Incomplete: ${why}`,
     }
@@ -148,6 +188,8 @@ export function assessCodingCompletion(input: {
     if (input.scheduledVerification === "UNAVAILABLE") {
       return {
         accept: false,
+        editsSatisfied: true,
+        verificationSatisfied: false,
         failureReason: "VERIFICATION_UNAVAILABLE",
         summary: `${changed} ${approval} Tests did not run because verification is unavailable. Incomplete: the edit is unverified.`,
       }
@@ -157,6 +199,8 @@ export function assessCodingCompletion(input: {
       const failed = followed === "FAIL" || lastVerification?.status === "FAIL"
       return {
         accept: false,
+        editsSatisfied: true,
+        verificationSatisfied: false,
         failureReason: failed ? "VERIFICATION_FAILED" : "INCOMPLETE",
         summary: failed
           ? `${changed} ${approval} Tests failed. The edit is not complete.`
@@ -167,8 +211,26 @@ export function assessCodingCompletion(input: {
 
   return {
     accept: true,
+    editsSatisfied: true,
+    verificationSatisfied: true,
     summary: `${changed} ${approval} ${tests} The requested edit was applied.`,
   }
+}
+
+function implementationEditCounts(path: string, input: {
+  readonly mutations: readonly MutationFact[]
+  readonly requireExistingFileEdit?: boolean
+}): boolean {
+  if (isTestArtifactPath(path)) return false
+  if (!input.requireExistingFileEdit) return true
+  const facts = input.mutations.filter((mutation) => mutation.status === "APPLIED" && pathsReferToSameFile(mutation.path, path))
+  if (facts.length === 0) return true
+  return facts.some((mutation) => mutation.operation !== "create")
+}
+
+export function requestsExistingFileEdit(instruction: string): boolean {
+  if (/\b(?:create|add|write)\b/i.test(instruction) && /\b(?:file|module)\b/i.test(instruction)) return false
+  return true
 }
 
 function describeTests(scheduled: "PASSED" | "UNAVAILABLE" | "NOT_RUN" | undefined, lastStatus: string | undefined): string {

@@ -154,4 +154,6 @@ export interface AgentResult {
   readonly recoveryPlan?: import("../recovery/contracts.ts").RecoveryPlan
   /** Sprint 5C: bounded non-progress evidence, present only when the progress monitor is enabled. */
   readonly nonProgress?: import("../progress/direct-guard.ts").DirectNonProgressEvidence
+  /** Applied file mutations recorded by the runner or repair integration. Not parsed from the final answer. */
+  readonly appliedMutations?: readonly { readonly path: string; readonly status: "APPLIED" }[]
 }
