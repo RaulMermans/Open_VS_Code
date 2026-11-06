@@ -50,6 +50,25 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
     return this.#buildResult("AWAITING_VERIFICATION_APPROVAL", preparedVerification)
   }
 
+  /**
+   * Continue a coding task whose verification already ran and failed on the original runner.
+   * The failed verification is not prepared or approved again.
+   */
+  async repairFromFailedVerification(
+    originalInput: AgentRunnerInput,
+    priorAppliedPaths: readonly string[],
+    failure: FailureClassification,
+    verification: VerificationResult,
+  ): Promise<RepairResult> {
+    this.#input = originalInput
+    for (const path of priorAppliedPaths) this.#changedFiles.add(path)
+    this.#verificationRuns = 1
+    this.#fingerprints.add(`${failure.category}:${failure.details}`)
+    this.#emitEvent("repair.continued", { task: originalInput.task.id, priorAppliedPaths: [...priorAppliedPaths] })
+    this.#state = { type: "INVESTIGATING", failure }
+    return this.#startInvestigation(failure, verification)
+  }
+
   async resume(decision: RepairDecision): Promise<RepairResult> {
     if (this.#state.type === "AWAITING_VERIFICATION_APPROVAL") {
       if (decision === "REJECT") {
@@ -98,7 +117,7 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
     }
     
     if (result.status === "EXECUTION_ERROR" || result.status === "CANCELLED" || result.status === "STALE_VERIFICATION") {
-      return this.#terminate(result.status as any, result.stderr || "Verification failed to execute", result)
+      return this.#terminate(result.status, result.stderr || "Verification failed to execute", result)
     }
     
     const failure = classifyFailure(prepared.action, result)
@@ -227,14 +246,15 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
     this.#events.push({ type, timestamp: Date.now(), ...payload })
   }
 
-  #terminate(status: any, reason?: string, verif?: VerificationResult): RepairResult {
-    this.#state = { type: "TERMINATED", result: this.#buildResult(status, undefined, reason, verif) }
+  #terminate(status: RepairResult["status"], reason?: string, verif?: VerificationResult): RepairResult {
+    const result = this.#buildResult(status, undefined, reason, verif)
+    this.#state = { type: "TERMINATED", result }
     this.#emitEvent(status === "COMPLETED" ? "repair.completed" : "repair.failed", { reason })
-    return (this.#state as any).result
+    return result
   }
 
-  #buildResult(status: any, pendingReview?: any, failureReason?: string, verif?: VerificationResult): RepairResult {
-    const res: RepairResult = {
+  #buildResult(status: RepairResult["status"], pendingReview?: unknown, failureReason?: string, verif?: VerificationResult): RepairResult {
+    return {
       status,
       task: this.#input?.task.id || "unknown",
       repairAttempts: this.#attempts,
@@ -244,16 +264,9 @@ export class RepairOrchestrator implements BoundedRepairLifecycle {
       totalAgentTurns: this.#totalTurns,
       changedFiles: Array.from(this.#changedFiles),
       events: [...this.#events],
+      ...(verif !== undefined ? { finalVerification: verif } : {}),
+      ...(failureReason !== undefined ? { failureReason } : {}),
+      ...(pendingReview !== undefined ? { pendingReview } : {}),
     }
-    if (verif !== undefined) {
-      (res as any).finalVerification = verif
-    }
-    if (failureReason !== undefined) {
-      (res as any).failureReason = failureReason
-    }
-    if (pendingReview !== undefined) {
-      (res as any).pendingReview = pendingReview
-    }
-    return res
   }
 }

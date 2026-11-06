@@ -1,5 +1,5 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity } from "@open-vs-code/agent-core";
-import { createAgentRuntime, calculateBudget, isSkillApplied } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity, type RepairOrchestrator, type RepairResult } from "@open-vs-code/agent-core";
+import { createAgentRuntime, calculateBudget, isSkillApplied, classifyFailure, appliedPathsFromAgentResult, integrateRepairOutcome, lastFailedVerification, readMutationReview, readVerificationReview } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
 
@@ -38,6 +38,8 @@ export class AgentSessionBridge {
   private lastWorkflowState?: WorkflowState;
   private accountScope?: string;
   private lastRouteIdentity?: ConfiguredRouteIdentity;
+  private lastRuntime?: Awaited<ReturnType<typeof createAgentRuntime>>;
+  private repairHandoffCount = 0;
   
   constructor(options: BridgeOptions) {
     this.host = options.host;
@@ -196,7 +198,7 @@ export class AgentSessionBridge {
           },
         } : {}),
       });
-      (this as any)._lastRuntime = runtime;
+      this.lastRuntime = runtime;
       
       if (runtime.workflow) {
         const workflowResult = await this._runWorkflow(runtime.workflow, signal);
@@ -206,7 +208,7 @@ export class AgentSessionBridge {
 
       const { runner, repairOrchestrator, runnerInput } = runtime;
       
-      let runnerResult = await runner.run(runnerInput as any);
+      let runnerResult: AgentResult = await runner.run(runnerInput);
       
       while (runnerResult.status === "PAUSED") {
         if (signal.aborted) {
@@ -254,40 +256,25 @@ export class AgentSessionBridge {
         }
         
         if (approved) {
-          if (conf.action === "run_known_test" && (mode === "DEBUG" || mode === "BUILD")) {
-            let repairResult = await repairOrchestrator.run(runnerInput as any, (conf.preparedCommand || conf.preparedMutation) as any);
-            while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
-              if (signal.aborted) {
-                repairResult = await repairOrchestrator.resume("REJECT");
-                break;
-              }
-              let repApproved = false;
-              if (repairResult.status === "AWAITING_MUTATION_APPROVAL") {
-                const pm = repairResult.pendingReview as any;
-                const prompt = `Approve mutation on ${pm.path}? (${pm.operation})`;
-                const res = await this.host.requestConfirmation(prompt, pm);
-                repApproved = (res === "APPROVE");
-              } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
-                const pv = repairResult.pendingReview as any;
-                const actionName = pv?.action || pv?.arguments?.action || "TEST";
-                const prompt = `Run verification ${actionName}?`;
-                const payload = {
-                  action: "run_known_test",
-                  arguments: pv?.arguments || { action: actionName },
-                  preparedCommand: pv,
-                };
-                const res = await this.host.requestConfirmation(prompt, payload);
-                repApproved = (res === "APPROVE");
-              }
-              repairResult = await repairOrchestrator.resume(repApproved ? "APPROVE" : "REJECT");
-            }
-            runnerResult = repairResult as any;
-            break;
-          } else {
-            runnerResult = await runner.resume("APPROVE");
-          }
+          runnerResult = await runner.resume("APPROVE");
         } else {
           runnerResult = await runner.resume("REJECT");
+        }
+      }
+
+      if ((mode === "BUILD" || mode === "DEBUG") && runnerResult.failureReason === "VERIFICATION_FAILED" && !signal.aborted) {
+        const verification = lastFailedVerification(runnerResult);
+        if (verification) {
+          this.repairHandoffCount += 1;
+          const priorPaths = appliedPathsFromAgentResult(runnerResult);
+          let repairResult = await repairOrchestrator.repairFromFailedVerification(
+            runnerInput,
+            priorPaths,
+            classifyFailure("TEST", verification),
+            verification,
+          );
+          repairResult = await this.driveRepair(repairOrchestrator, repairResult, signal);
+          runnerResult = integrateRepairOutcome(runnerResult, repairResult);
         }
       }
       // Final-context truth: report the skill only if its guidance reached a model request.
@@ -320,6 +307,43 @@ export class AgentSessionBridge {
     }
   }
   
+  get repairHandoffs(): number {
+    return this.repairHandoffCount;
+  }
+
+  get debugRuntime(): Awaited<ReturnType<typeof createAgentRuntime>> | undefined {
+    return this.lastRuntime;
+  }
+
+  /** Repair approvals are only for a new edit or a new test after the original verification failed. */
+  private async driveRepair(orchestrator: RepairOrchestrator, initial: RepairResult, signal: AbortSignal): Promise<RepairResult> {
+    let repairResult = initial;
+    while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
+      if (signal.aborted) {
+        repairResult = await orchestrator.resume("REJECT");
+        break;
+      }
+      const mutation = readMutationReview(repairResult.pendingReview);
+      const verification = readVerificationReview(repairResult.pendingReview);
+      let approved = false;
+      if (repairResult.status === "AWAITING_MUTATION_APPROVAL" && mutation) {
+        const decision = await this.host.requestConfirmation(
+          `Approve mutation on ${mutation.path}? (${mutation.operation})`,
+          repairResult.pendingReview,
+        );
+        approved = decision === "APPROVE";
+      } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL" && verification) {
+        const decision = await this.host.requestConfirmation(
+          `Run verification ${verification.action}?`,
+          repairResult.pendingReview,
+        );
+        approved = decision === "APPROVE";
+      }
+      repairResult = await orchestrator.resume(approved ? "APPROVE" : "REJECT");
+    }
+    return repairResult;
+  }
+
   /** Runs after the task is finished; learning never changes or fails the task (ADR-032). */
   private async _learn(runtime: any, input: unknown): Promise<void> {
     if (!this.learning?.enabled || typeof runtime?.learnAfter !== "function") return;

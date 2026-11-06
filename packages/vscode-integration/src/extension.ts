@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
+import { applyChatModelSelection, localProviderBaseUrl, parseOllamaTags } from './local-model-selection.js';
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
@@ -745,6 +746,85 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(
         `Skill: ${evidence.selectedSkill} v${evidence.skillVersion} (${evidence.skillSource}) · ${evidence.skillLoadStatus} · ${evidence.injectionStatus} · ${evidence.injectedSkillTokens} tokens injected`,
       );
+    }),
+    vscode.commands.registerCommand('open-vs-code.selectLocalModel', async () => {
+      if (chatController?.getState().activeTurn) {
+        vscode.window.showWarningMessage('A task is running. Choose a model before the next request. The running task keeps its current model.');
+        return;
+      }
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!root) {
+        vscode.window.showWarningMessage('Open a folder before choosing a model.');
+        return;
+      }
+      let config = null;
+      try {
+        config = loadRoutingConfigSync(root);
+      } catch {
+        vscode.window.showErrorMessage('Model configuration is invalid. Open it and correct it before choosing a model.');
+        return;
+      }
+      if (!config) {
+        const choice = await vscode.window.showInformationMessage(
+          'No local model configuration yet. Create one for Ollama on this machine?',
+          'Create Starter Config',
+          'Cancel',
+        );
+        if (choice === 'Create Starter Config') {
+          await vscode.commands.executeCommand('open-vs-code.createStarterConfig');
+        }
+        return;
+      }
+      const baseUrl = localProviderBaseUrl(config);
+      if (!baseUrl) {
+        vscode.window.showErrorMessage('No local inference endpoint is configured. Cloud models are not used.');
+        return;
+      }
+      let models: { name: string }[] = [];
+      try {
+        const response = await fetch(new URL('/api/tags', baseUrl), { signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error(`The local endpoint returned HTTP ${response.status}.`);
+        models = parseOllamaTags(await response.json());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'The local endpoint is unreachable.';
+        vscode.window.showErrorMessage(`Cannot list local models at ${baseUrl}. ${message}`);
+        return;
+      }
+      if (models.length === 0) {
+        vscode.window.showWarningMessage(`Connected to ${baseUrl}, but no models are installed.`);
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        [
+          { label: '$(plug) Test connection', description: baseUrl, id: '__test__' },
+          ...models.map((model) => ({ label: model.name, description: 'Use for chat and coding', id: model.name })),
+        ],
+        { title: 'Local model', placeHolder: 'Chat and coding use this model. Autocomplete keeps its own model.' },
+      );
+      if (!picked) return;
+      if (picked.id === '__test__') {
+        vscode.window.showInformationMessage(`Connected to ${baseUrl}. ${models.length} local model${models.length === 1 ? '' : 's'} available.`);
+        return;
+      }
+      const next = applyChatModelSelection(config, picked.id);
+      const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
+      const previous = await vscode.workspace.fs.readFile(filePath);
+      const encoder = new TextEncoder();
+      await vscode.workspace.fs.writeFile(filePath, encoder.encode(JSON.stringify(next, null, 2) + '\n'));
+      try {
+        const loaded = loadRoutingConfigSync(root);
+        if (!loaded) throw new Error('The model configuration could not be read back.');
+        const identity = await describeConfiguredRoute(loaded, 'BUILD');
+        if (identity?.servedModelName !== picked.id) {
+          throw new Error('The coding route did not select the chosen model.');
+        }
+        await chatController?.refreshConnection();
+        vscode.window.showInformationMessage(`Chat and coding will use ${identity.servedModelName}.`);
+      } catch (error) {
+        await vscode.workspace.fs.writeFile(filePath, previous);
+        const message = error instanceof Error ? error.message : 'The selection was rejected.';
+        vscode.window.showErrorMessage(`Model selection was not saved. ${message}`);
+      }
     }),
     vscode.commands.registerCommand('open-vs-code.openModelConfig', async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;

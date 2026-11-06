@@ -736,6 +736,9 @@ export class ChatController {
       case 'ui.openFile':
         await this.openWorkspaceFile(message.path);
         break;
+      case 'ui.selectModel':
+        await vscode.commands.executeCommand('open-vs-code.selectLocalModel');
+        break;
       case 'ui.openModelConfig':
         if (typeof this.host.openModelConfig === 'function') {
           await this.host.openModelConfig();

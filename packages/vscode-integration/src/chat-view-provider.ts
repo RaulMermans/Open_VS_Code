@@ -934,6 +934,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         </div>
         <button id="browser-panel-btn" class="secondary" type="button" aria-label="Open visual browser panel">Browser</button>
         <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Integrations</button>
+        <button id="model-btn" class="secondary" type="button" aria-label="Select local model">Model</button>
         <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
         <button id="new-chat-btn" class="secondary" aria-label="Start a new conversation">New</button>
     </div>
@@ -1005,6 +1006,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         let integrationsOpen = false;
         let lastIntegrationsState = null;
 
+        const modelBtn = document.getElementById('model-btn');
         const historyBtn = document.getElementById('history-btn');
         const historyPanel = document.getElementById('history-panel');
         const historyList = document.getElementById('history-list');
@@ -1224,6 +1226,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
+        modelBtn.addEventListener('click', function () { vscode.postMessage({ type: 'ui.selectModel' }); });
         historyBtn.addEventListener('click', function () { setHistoryOpen(!historyOpen, true); });
         historyFilter.addEventListener('input', function () { renderHistory(); });
         historyFilter.addEventListener('keydown', function (e) {

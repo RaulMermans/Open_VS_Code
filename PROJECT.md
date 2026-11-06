@@ -30,6 +30,9 @@
 
 ## Current sprint
 
+Personal V1 production completion (`docs/releases/PERSONAL_V1_ACCEPTANCE.md`).
+Status: `PERSONAL_V1_BLOCKED`. The coding runner keeps verification on the original task, repair starts only after a failed test, and the chat can select a local Ollama model without editing JSON. On this machine `qwen2.5-coder:7b` completed 4 of 10 unseen bridge tasks and failed both original regressions. One original task reported completion after editing only the test. The new Debian package is not built or installed, and the GUI journeys are not verified.
+
 Sprint 11A.1 — Real-Model Coding Reliability (`docs/sprints/SPRINT_11A1_REAL_CODING_RELIABILITY.md`).
 Status: `SPRINT_11A1_PARTIALLY_VERIFIED`. Editing tasks can no longer be marked complete when no relevant mutation was applied. Invalid tool calls get one corrective observation and then stop. Local `qwen2.5-coder:7b` completed two unseen edits through `apply_patch` and still failed the two original Sprint 11A edit tasks. The new Debian package is not installed, so the GUI journey is not verified.
 

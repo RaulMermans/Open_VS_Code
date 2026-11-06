@@ -39,7 +39,7 @@ export interface TaskProfile {
   readonly requiresCodeChange: boolean
 }
 
-const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
+const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|mjs|cjs|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
 
 export function extractExplicitFilePaths(instruction: string): string[] {
   const matches = instruction.match(FILE_PATH_REGEX) ?? []
@@ -53,10 +53,10 @@ export function extractExplicitFilePaths(instruction: string): string[] {
 }
 
 export function requestsCodeEdit(instruction: string): boolean {
-  if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch)\b/i.test(instruction)) return true
-  if (/\b(?:edit|change)\s+(?:the\s+)?(?:code|file|implementation|function|test|tests|source)\b/i.test(instruction)) return true
+  if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch|change|edit|rename|replace)\b/i.test(instruction)) return true
+  if (/\b(?:make|ensure)\b/i.test(instruction) && /\b(?:test|tests|function|file|return|keep|export)\b/i.test(instruction)) return true
   return /\b(?:add|reject|remove|delete|create|write)\b/i.test(instruction)
-    && /\b(?:file|test|tests|function|implementation|code|method|body|title)\b/i.test(instruction)
+    && /\b(?:file|test|tests|function|implementation|code|method|body|title|export)\b/i.test(instruction)
 }
 
 export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"): TaskProfile {

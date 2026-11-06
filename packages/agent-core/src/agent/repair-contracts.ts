@@ -54,7 +54,7 @@ export interface RepairResult {
   readonly finalVerification?: VerificationResult
   readonly failureReason?: string
   readonly events: any[]
-  readonly pendingReview?: any
+  readonly pendingReview?: unknown
 }
 
 export type RepairDecision = "APPROVE" | "REJECT"
