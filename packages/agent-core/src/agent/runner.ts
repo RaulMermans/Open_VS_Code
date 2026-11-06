@@ -24,6 +24,7 @@ import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
+import { assessCodingCompletion, describeToolContractFault, mutationToolGuidance, relevantAppliedPaths } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -129,6 +130,8 @@ interface Session {
   progressGuard?: DirectProgressGuard | undefined
   nonProgress?: DirectNonProgressEvidence | undefined
   timeoutOccurred?: boolean | undefined
+  contractFaults?: Map<string, number>
+  mutationRejectedByUser?: boolean
 }
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
@@ -160,6 +163,18 @@ function stableValue(value: unknown): string {
     return `{${Object.entries(value as Record<string, unknown>).toSorted(([left], [right]) => left.localeCompare(right)).map(([key, nested]) => `${JSON.stringify(key)}:${stableValue(nested)}`).join(",")}}`
   }
   return JSON.stringify(value)
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined
+  const code = (error as { code: unknown }).code
+  return typeof code === "string" ? code : undefined
+}
+
+function argumentPath(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const path = (value as Record<string, unknown>).path
+  return typeof path === "string" ? path : undefined
 }
 
 function renderContext(context: CompiledContext): string {
@@ -306,6 +321,7 @@ export class AgentRunner {
         this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
       }
       this.#addErrorObservation(pending.prepared, "PERMISSION_REJECTED", "Caller rejected this tool request", "REJECTED")
+      if (pending.prepared.definition.action === "write_file") session.mutationRejectedByUser = true
     } else {
       if (pending.reviewable) {
         const reviewable = pending.reviewable
@@ -520,6 +536,7 @@ export class AgentRunner {
               status: result.status === "APPLIED" ? "APPLIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
               diffSummary: (reviewable.reviewPayload as any)?.summary || "",
             })
+            if (result.status === "APPLIED") session.evidenceCollector.resolveRecoveredToolContractFailures()
           }
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
@@ -862,16 +879,42 @@ export class AgentRunner {
       ).satisfied
 
       const isTurnBudgetTight = session.turns >= session.input.maxTurns - 1
+      const allowedToolNames = new Set(session.taskProfile.allowedTools)
+      const isStandardToolsOnly = this.#registry
+        .listDefinitions()
+        .every((definition) => ["read_file", "list_directory", "find_files", "search_text"].includes(definition.name))
+      const tools = this.#registry
+        .listDefinitions()
+        .filter((definition) => !isStandardToolsOnly || allowedToolNames.has(definition.name))
+        .filter((definition) => this.#permission(definition.action) !== "DENY")
+      const appliedPaths = relevantAppliedPaths(
+        session.evidenceCollector.getEvidence().mutationOutcomes.map((mutation) => ({
+          path: mutation.path,
+          status: mutation.status,
+          at: mutation.timestamp,
+        })),
+        session.taskProfile.explicitFilePaths,
+      )
+      const mutationPending = session.taskProfile.requiresCodeChange && appliedPaths.length === 0
+      const fileChangeGuidance = mutationToolGuidance(tools.map((tool) => tool.name))
 
-      const dynamicBanner = isEvidenceSatisfied
-        ? "\n\n[STATUS: EVIDENCE READY]\nYou have gathered the necessary repository evidence. DO NOT call any more tools. Provide your final concise, grounded answer directly now."
-        : isTurnBudgetTight
-          ? "\n\n[TURN BUDGET WARNING]\nYou are approaching your turn limit. Provide your grounded answer now without calling any further tools."
-          : ""
+      const dynamicBanner = mutationPending
+        ? `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. Use apply_patch for an existing file and create_file only for a new file.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
+        : isEvidenceSatisfied
+          ? "\n\n[STATUS: EVIDENCE READY]\nYou have gathered the necessary repository evidence. DO NOT call any more tools. Provide your final concise, grounded answer directly now."
+          : isTurnBudgetTight
+            ? "\n\n[TURN BUDGET WARNING]\nYou are approaching your turn limit. Provide your grounded answer now without calling any further tools."
+            : ""
 
-      const phaseInstruction = isEvidenceSatisfied
-        ? `Phase 2 - Answer: You have gathered sufficient repository evidence below. Analyze the observations and provide your final grounded answer directly now with exact names, strings, constants, and paths from the observations. Do not call any further tools.`
-        : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`
+      const phaseInstruction = mutationPending
+        ? `Apply the requested edit. Inspect the repository when needed, then call apply_patch or create_file. Strategy: ${session.taskProfile.toolGuidance}`
+        : isEvidenceSatisfied
+          ? `Phase 2 - Answer: You have gathered sufficient repository evidence below. Analyze the observations and provide your final grounded answer directly now with exact names, strings, constants, and paths from the observations. Do not call any further tools.`
+          : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`
+
+      const completionLine = mutationPending
+        ? "Completion: Do not finish until the requested edit is prepared for approval. A test run alone does not apply an edit."
+        : "Completion: When you have sufficient evidence from the observations to answer, output your answer directly without calling more tools."
 
       const guidanceInstruction: ProjectInstruction = {
         id: "investigation-guidance",
@@ -879,7 +922,7 @@ export class AgentRunner {
         content: `Operating Guidelines:
 - ${phaseInstruction}
 - Grounding: Always include the exact function names, literals, values, ports, and file paths found in the observations.
-- Completion: When you have sufficient evidence from the observations to answer, output your answer directly without calling more tools.${dynamicBanner}`,
+- ${completionLine}${fileChangeGuidance ? `\n${fileChangeGuidance}` : ""}${dynamicBanner}`,
       }
 
       let compiled: CompiledContext
@@ -906,18 +949,8 @@ export class AgentRunner {
       session.diagnostics.push({ turn, totalEstimatedTokens: compiled.totalEstimatedTokens, omittedItemIds: compiled.omittedItemIds })
       this.#emit("context.compiled", { turn, estimatedTokens: compiled.totalEstimatedTokens, omittedCount: compiled.omittedItemIds.length })
 
-      const allowedToolNames = new Set(session.taskProfile.allowedTools)
-      const isStandardToolsOnly = this.#registry
-        .listDefinitions()
-        .every((d) => ["read_file", "list_directory", "find_files", "search_text"].includes(d.name))
-
-      const tools = this.#registry
-        .listDefinitions()
-        .filter((definition) => !isStandardToolsOnly || allowedToolNames.has(definition.name))
-        .filter((definition) => this.#permission(definition.action) !== "DENY")
-
       let promptContent = renderContext(compiled)
-      if (isStandardToolsOnly && (isEvidenceSatisfied || isTurnBudgetTight)) {
+      if (!mutationPending && isStandardToolsOnly && (isEvidenceSatisfied || isTurnBudgetTight)) {
         promptContent += "\n\n---\n**Instruction**: Repository evidence has been collected above. DO NOT emit any tool calls. Provide your final grounded answer directly now."
       }
 
@@ -1023,7 +1056,7 @@ export class AgentRunner {
                 this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })
                 break
               }
-              await this.#completeTask(response.message.content)
+              await this.#acceptCompletion(response.message.content, "UNAVAILABLE")
               break
             }
 
@@ -1034,7 +1067,7 @@ export class AgentRunner {
                 if (handled) return this.#result()
                 continue
               }
-              await this.#completeTask(response.message.content)
+              await this.#acceptCompletion(response.message.content, "PASSED")
               break
             }
 
@@ -1063,7 +1096,7 @@ export class AgentRunner {
           }
         }
 
-        await this.#completeTask(response.message.content)
+        await this.#acceptCompletion(response.message.content, "NOT_RUN")
         break
       }
 
@@ -1117,16 +1150,18 @@ export class AgentRunner {
       const candidate = call && typeof call === "object" && !Array.isArray(call) ? call as Record<string, unknown> : {}
       const callId = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `malformed-call-${session.toolCalls.length + 1}`
       const name = typeof candidate.name === "string" && candidate.name.trim() ? candidate.name : "unknown"
-      this.#emit("tool.rejected", { callId, name, category })
-      const observation = createToolObservation({ toolName: name, callId, error: { category, message }, maxContentBytes: this.#observationMaxBytes })
+      const contract = this.#applyContractFault(name, message, category, argumentPath(candidate.arguments))
+      this.#emit("tool.rejected", { callId, name, category: contract.category ?? category })
+      const observation = createToolObservation({ toolName: name, callId, error: { category: contract.category ?? category, message: contract.message }, maxContentBytes: this.#observationMaxBytes })
       session.observations.push(observation)
       session.toolCalls.push({ id: callId, name, outcome: "REJECTED", truncated: observation.truncated })
       session.evidenceCollector.recordToolAction({
         id: callId,
         toolName: name,
         outcome: "REJECTED",
-        error: message,
+        error: contract.message,
       })
+      if (contract.stop) return this.#stopRepeatedContract(contract.message)
       if (await this.#observeProgress({ name, arguments: (candidate.arguments ?? {}) as Readonly<Record<string, unknown>> }, observation)) return true
       const { evalResult: rejEval, directive: rejDirective } = await this.#runEval("TOOL_FAILURE")
       if (this.#adaptiveInterventions && rejDirective.decision !== "CONTINUE") {
@@ -1203,14 +1238,16 @@ export class AgentRunner {
           return true
         } catch (error) {
           const message = error instanceof Error ? error.message : "Tool preparation failed"
-          this.#addErrorObservation(prepared, "TOOL_PREPARATION_ERROR", message, "FAILED")
-          this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+          const contract = this.#applyContractFault(prepared.name, message, errorCode(error), argumentPath(prepared.arguments))
+          this.#addErrorObservation(prepared, contract.category ?? "TOOL_PREPARATION_ERROR", contract.message, "FAILED")
+          this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message: contract.message })
           session.evidenceCollector.recordToolAction({
             id: prepared.id,
             toolName: prepared.name,
             outcome: "FAILED",
-            error: message,
+            error: contract.message,
           })
+          if (contract.stop) return this.#stopRepeatedContract(contract.message)
           const { evalResult: prepEval, directive: prepDirective } = await this.#runEval("TOOL_FAILURE")
           if (this.#adaptiveInterventions && prepDirective.decision !== "CONTINUE") {
             const handled = await this.#dispatchDirective(prepEval, prepDirective, "TOOL_FAILURE")
@@ -1373,6 +1410,7 @@ export class AgentRunner {
           path: (prepared.arguments as any)?.targetFile || (prepared.arguments as any)?.path || "",
           status: "APPLIED",
         })
+        session.evidenceCollector.resolveRecoveredToolContractFailures()
         const { evalResult: mutEval, directive: mutDirective } = await this.#runEval("MUTATION_RESULT")
         if (this.#adaptiveInterventions && mutDirective.decision !== "CONTINUE") {
           const handled = await this.#dispatchDirective(mutEval, mutDirective, "MUTATION_RESULT")
@@ -1402,6 +1440,7 @@ export class AgentRunner {
         return true
       }
       const message = error instanceof Error ? error.message : "Tool execution failed"
+      const contract = this.#applyContractFault(prepared.name, message, errorCode(error), argumentPath(prepared.arguments))
       if (this.#checkpointCoordinator && opId) {
         try {
           await this.#checkpointCoordinator.operationJournal.recordFailed(opId, session.input.task.id, message)
@@ -1415,7 +1454,7 @@ export class AgentRunner {
       observation = createToolObservation({
         toolName: prepared.name,
         callId: prepared.id,
-        error: { category: "TOOL_RUNTIME_ERROR", message },
+        error: { category: contract.category ?? "TOOL_RUNTIME_ERROR", message: contract.message },
         maxContentBytes: this.#observationMaxBytes,
       })
       session.observations.push(observation)
@@ -1425,9 +1464,10 @@ export class AgentRunner {
         toolName: prepared.name,
         outcome: "FAILED",
         args: prepared.arguments as Record<string, unknown>,
-        error: message,
+        error: contract.message,
       })
-      this.#emit("tool.failed", { callId: prepared.id, name: prepared.name, message })
+      this.#emit("tool.failed", { callId: prepared.id, name: prepared.name, message: contract.message })
+      if (contract.stop) return this.#stopRepeatedContract(contract.message)
 
       const { evalResult: failEval, directive: failDirective } = await this.#runEval("TOOL_FAILURE")
       if (this.#adaptiveInterventions && failDirective.decision !== "CONTINUE") {
@@ -2326,6 +2366,50 @@ export class AgentRunner {
     return { outcome: "UNAVAILABLE" }
   }
 
+  #stopRepeatedContract(message: string): boolean {
+    const session = this.#requiredSession()
+    session.failureReason = "INCOMPLETE"
+    session.finalAnswer = `Stopped after a repeated tool-contract error. ${message}`
+    this.#emit("task.failed", { message: session.finalAnswer })
+    return true
+  }
+
+  #applyContractFault(toolName: string, message: string, code: string | undefined, path: string | undefined): { message: string; category?: string; stop: boolean } {
+    const fault = describeToolContractFault({ toolName, message, code, path })
+    if (!fault) return { message, stop: false }
+    const session = this.#requiredSession()
+    const seen = session.contractFaults ?? (session.contractFaults = new Map())
+    const count = seen.get(fault.signature) ?? 0
+    if (count >= 1) return { message: fault.message, category: fault.category, stop: true }
+    seen.set(fault.signature, count + 1)
+    return { message: fault.message, category: fault.category, stop: false }
+  }
+
+  async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {
+    const session = this.#requiredSession()
+    const evidence = session.evidenceCollector.getEvidence()
+    const verdict = assessCodingCompletion({
+      requiresCodeChange: session.taskProfile.requiresCodeChange,
+      explicitPaths: session.taskProfile.explicitFilePaths,
+      mutations: evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp })),
+      verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
+      verificationRequired: this.#verificationRequired(),
+      userRejectedMutation: session.mutationRejectedByUser === true,
+      scheduledVerification,
+    })
+    if (session.input.task.metadata?.verificationOwner === "workflow") {
+      await this.#completeTask(content.trim() ? content : verdict.summary)
+      return
+    }
+    if (!verdict.accept) {
+      session.failureReason = verdict.failureReason ?? "INCOMPLETE"
+      session.finalAnswer = verdict.summary
+      this.#emit("task.failed", { message: verdict.summary })
+      return
+    }
+    await this.#completeTask(content.trim() ? content : verdict.summary)
+  }
+
   async #completeTask(responseContent: string): Promise<void> {
     const session = this.#requiredSession()
     session.finalAnswer = responseContent
@@ -2354,6 +2438,26 @@ export class AgentRunner {
     const isTerminal = session.state.status === "COMPLETED" ||
       session.state.status === "FAILED" ||
       session.state.status === "CANCELLED"
+
+    if (isTerminal && !session.finalAnswer?.trim()) {
+      const evidence = session.evidenceCollector.getEvidence()
+      const verdict = assessCodingCompletion({
+        requiresCodeChange: session.taskProfile.requiresCodeChange,
+        explicitPaths: session.taskProfile.explicitFilePaths,
+        mutations: evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp })),
+        verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
+        verificationRequired: this.#verificationRequired(),
+        userRejectedMutation: session.mutationRejectedByUser === true,
+        scheduledVerification: "NOT_RUN",
+      })
+      if (session.state.status === "CANCELLED" || session.failureReason === "CANCELLED") {
+        session.finalAnswer = `Task cancelled. ${verdict.summary}`
+      } else if (session.failureReason === "MAX_TURNS_EXCEEDED") {
+        session.finalAnswer = `${verdict.summary} Stopped because the turn budget was exhausted.`
+      } else {
+        session.finalAnswer = verdict.summary
+      }
+    }
 
     const resolvedDeploymentId = session.lastDeploymentId ?? (this.#provider as any).lastDecision?.deploymentId ?? (this.#provider as any).model
 

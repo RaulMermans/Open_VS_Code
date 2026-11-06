@@ -239,6 +239,15 @@ export class RuntimeEvidenceCollector {
     this.#markUpdated()
   }
 
+  /** A later successful edit recovers an earlier tool-contract mistake. Test failures stay unresolved. */
+  resolveRecoveredToolContractFailures(): void {
+    for (const [key, failure] of this.#unresolvedFailures) {
+      if (/UNKNOWN_TOOL|FILE_ALREADY_EXISTS|INVALID_PATH|FILE_NOT_FOUND|already exists|Unknown tool:|outside workspace|path traversal/i.test(failure.summary)) {
+        this.#unresolvedFailures.delete(key)
+      }
+    }
+  }
+
   recordVerificationOutcome(verification: {
     executionId: string
     action: string

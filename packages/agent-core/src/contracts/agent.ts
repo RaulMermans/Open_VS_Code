@@ -35,6 +35,10 @@ export type AgentFailureReason =
   | "NON_PROGRESS"
   | "CANCELLED"
   | "INTERNAL_ERROR"
+  | "INCOMPLETE"
+  | "REJECTED"
+  | "VERIFICATION_FAILED"
+  | "VERIFICATION_UNAVAILABLE"
 
 export interface AgentContextDiagnostic {
   readonly turn: number

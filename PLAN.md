@@ -636,12 +636,17 @@ Sprint 10A.1D — Final Pre-HALO Readiness, Security Closure & Release Freeze �
   - Record: `docs/sprints/SPRINT_10A1D_FINAL_PRE_HALO_READINESS.md`.
   - Release Freeze Spec: `docs/releases/PRE_HALO_READINESS.md`.
 
+Sprint 11A.1 — Real-Model Coding Reliability — SPRINT_11A1_PARTIALLY_VERIFIED
+  - Tool-contract corrections and truthful edit completion on the existing AgentRunner.
+  - Local `qwen2.5-coder:7b` completed two unseen edits and failed the original two. GUI install is not verified.
+  - Record: `docs/sprints/SPRINT_11A1_REAL_CODING_RELIABILITY.md`.
+
 Sprint 11A — Linux Daily Driver & Real Local Inference — SPRINT_11A_PARTIALLY_VERIFIED
   - Standalone Linux x64 package, setuid sandbox fail-closed behavior, and routed local-model identity.
   - Real Ollama `qwen2.5-coder:7b` through the existing model gateway. One grounded explanation task passed. Two code-editing tasks failed honestly.
   - Record: `docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md`.
 
 Next:
-1. Install the Sprint 11A Debian package as root and re-check the applications-menu launch.
-2. Sprint 11B model picker, after a stronger local coding model can apply an approved patch.
+1. Rebuild the Debian package with the 11A.1 runner, install it as root, and complete one approved edit plus test in the installed GUI.
+2. Sprint 11B model picker only after that installed session. `qwen2.5-coder:7b` is not reliable on the original edit tasks.
 3. Physical HALO hardware arrival and benchmark execution remain optional.
