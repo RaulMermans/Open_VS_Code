@@ -244,7 +244,8 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       }
       if (ev.type === "mutation.applied") {
         mutations++;
-        if (mutationId) {
+        if (mutationPath) changedFiles.add(mutationPath);
+        else if (mutationId) {
            const path = mutationPaths.get(mutationId);
            if (path) changedFiles.add(path);
         }

@@ -7,7 +7,7 @@ import test from "node:test"
 import { AgentRunner } from "../../src/agent/runner.ts"
 import type { AgentResult } from "../../src/contracts/agent.ts"
 import { classifyTaskProfile } from "../../src/agent/task-profile.ts"
-import { assessCodingCompletion, describeToolContractFault } from "../../src/agent/tool-contract.ts"
+import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired } from "../../src/agent/tool-contract.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
@@ -91,6 +91,57 @@ test("tool contract messages name the canonical edit tools", () => {
   assert.match(exists?.message ?? "", /FILE_ALREADY_EXISTS: create_file cannot overwrite test\/example\.test\.ts/)
   const path = describeToolContractFault({ toolName: "read_file", code: "OUTSIDE_WORKSPACE", message: "Path is outside workspace: /etc/passwd", path: "/etc/passwd" })
   assert.match(path?.message ?? "", /INVALID_PATH: use a workspace-relative path such as src\/add\.ts/)
+})
+
+test("a test-only mutation is not a behavior change", () => {
+  assert.equal(implementationChangeRequired("Reject empty title or body in formatNote, update the unit tests, and run the tests.", []), true)
+  const verdict = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: [],
+    requireImplementationChange: true,
+    mutations: [{ path: "test/format-note.test.mjs", status: "APPLIED", at: "2026-11-06T00:00:01.000Z" }],
+    verifications: [{ status: "PASS", at: "2026-11-06T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verdict.accept, false)
+  assert.equal(verdict.editsSatisfied, false)
+  assert.equal(verdict.failureReason, "INCOMPLETE")
+  assert.match(verdict.summary, /implementation was not modified/)
+  assert.match(verdict.summary, /test\/format-note\.test\.mjs/)
+})
+
+test("a created test-named file is not the implementation change", () => {
+  const verdict = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: [],
+    requireImplementationChange: true,
+    requireExistingFileEdit: true,
+    mutations: [{ path: "src/tests", status: "APPLIED", at: "2026-11-06T00:00:01.000Z", operation: "create" }],
+    verifications: [{ status: "PASS", at: "2026-11-06T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verdict.accept, false)
+  assert.match(verdict.summary, /implementation was not modified/)
+})
+
+test("creating an unrelated file does not change the existing implementation", () => {
+  const verdict = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: [],
+    requireImplementationChange: true,
+    requireExistingFileEdit: true,
+    mutations: [{ path: "src/helper.mjs", status: "APPLIED", at: "2026-11-06T00:00:01.000Z", operation: "create" }],
+    verifications: [{ status: "PASS", at: "2026-11-06T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verdict.accept, false)
+  assert.match(verdict.summary, /existing implementation was not modified/)
 })
 
 test("an edit with no applied change cannot report success", () => {
@@ -462,6 +513,59 @@ test("ask mode denies a write and leaves the file unchanged", async () => {
     assert.equal(result.toolCalls[0]?.outcome, "DENIED")
     assert.equal(await readFile(join(root, "src/add.ts"), "utf8"), before)
     assert.notEqual(result.status, "PAUSED")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a test-only edit does not complete a behavior change", async () => {
+  const root = await workspace()
+  const before = await readFile(join(root, "src/format-note.ts"), "utf8")
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "test/format-note.test.ts", search: "import test from \"node:test\"", replace: "import test from \"node:test\"\n// empty title is ignored" } }]),
+    (request) => {
+      assert.match(request.messages[0]!.content, /EDIT REQUIRED/)
+      assert.doesNotMatch(request.messages[0]!.content, /DO NOT call any more tools/)
+      return response("", [{ id: "verify", name: "run_verification", arguments: {} }])
+    },
+    response("The tests pass."),
+  ])
+  try {
+    const { result } = await runTask(
+      provider,
+      root,
+      "Reject empty title or body in formatNote, update the unit tests, and run the tests.",
+      "BUILD",
+      6,
+      [verificationTool("PASS")],
+    )
+    assert.equal(result.status, "FAILED")
+    assert.equal(result.failureReason, "INCOMPLETE")
+    assert.match(result.finalAnswer ?? "", /implementation was not modified/)
+    assert.equal(await readFile(join(root, "src/format-note.ts"), "utf8"), before)
+    assert.deepEqual(result.appliedMutations?.map((mutation) => mutation.path), ["test/format-note.test.ts"])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("verification stays available after the implementation edit", async () => {
+  const root = await workspace()
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }]),
+    (request) => {
+      const content = request.messages[0]!.content
+      assert.match(content, /\[VERIFICATION REQUIRED\]/)
+      assert.doesNotMatch(content, /\[STATUS: EVIDENCE READY\]/)
+      return response("", [{ id: "verify", name: "run_verification", arguments: {} }])
+    },
+    response("add now returns the sum."),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 6, [verificationTool("PASS")])
+    assert.equal(result.status, "COMPLETED", `${result.failureReason ?? ""} ${result.finalAnswer ?? ""}`)
+    assert.equal(result.toolCalls.filter((call) => call.name === "run_verification").length, 1)
+    assert.deepEqual(result.appliedMutations?.map((mutation) => mutation.path), ["src/add.ts"])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

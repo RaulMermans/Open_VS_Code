@@ -103,6 +103,7 @@ export interface BoundedMutationOutcome {
   readonly status: "PREPARED" | "APPLIED" | "FAILED" | "STALE"
   readonly diffSummary: string
   readonly timestamp: string
+  readonly operation?: "create" | "patch" | "delete" | undefined
 }
 
 export interface BoundedVerificationOutcome {

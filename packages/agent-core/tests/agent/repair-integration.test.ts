@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { integrateRepairOutcome } from "../../src/agent/repair-integration.ts"
+import { appliedPathsFromAgentResult, integrateRepairOutcome } from "../../src/agent/repair-integration.ts"
 import type { AgentResult } from "../../src/contracts/agent.ts"
 import type { RepairResult } from "../../src/agent/repair-contracts.ts"
 
@@ -16,6 +16,28 @@ function originalResult(): AgentResult {
     toolCalls: [{ id: "c1", name: "apply_patch", outcome: "COMPLETED" }],
   }
 }
+
+test("applied paths come from mutation records, not the final answer", () => {
+  const proseOnly = originalResult()
+  const fromEvents = appliedPathsFromAgentResult({
+    ...proseOnly,
+    finalAnswer: "Changed: not-a-file, src/other.ts.",
+  })
+  assert.deepEqual(fromEvents, ["src/add.ts"])
+  const spaced = appliedPathsFromAgentResult({
+    ...proseOnly,
+    events: [],
+    finalAnswer: "Changed: src/my file.ts.",
+    appliedMutations: [{ path: "src/my file.ts", status: "APPLIED" }, { path: "src/second.ts", status: "APPLIED" }],
+  })
+  assert.deepEqual(spaced, ["src/my file.ts", "src/second.ts"])
+  const unanswered = appliedPathsFromAgentResult({
+    ...proseOnly,
+    events: [],
+    finalAnswer: "Changed: src/add.ts.",
+  })
+  assert.deepEqual(unanswered, [])
+})
 
 test("repair completion keeps the original applied edit", () => {
   const repair: RepairResult = {

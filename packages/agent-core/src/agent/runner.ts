@@ -24,7 +24,7 @@ import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
-import { assessCodingCompletion, describeToolContractFault, mutationToolGuidance, relevantAppliedPaths, type CodingCompletion } from "./tool-contract.ts"
+import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, mutationToolGuidance, requestsExistingFileEdit, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -525,7 +525,12 @@ export class AgentRunner {
           } else if (isBrowserReview) {
             reviewSucceeded = Boolean(result && typeof result === "object" && result.ok === true)
             if (reviewSucceeded) {
-              this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
+              this.#emit("mutation.applied", {
+                callId: pending.prepared.id,
+                name: pending.prepared.name,
+                mutationId: reviewable.id,
+                ...mutationPathPayload(pending.prepared.arguments, reviewable.reviewPayload),
+              })
             } else {
               this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, error: result?.error })
             }
@@ -539,7 +544,12 @@ export class AgentRunner {
           } else {
             reviewSucceeded = result.status === "APPLIED"
             if (reviewSucceeded) {
-              this.#emit("mutation.applied", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id })
+              this.#emit("mutation.applied", {
+                callId: pending.prepared.id,
+                name: pending.prepared.name,
+                mutationId: reviewable.id,
+                ...mutationPathPayload(pending.prepared.arguments, reviewable.reviewPayload),
+              })
             } else {
               this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, error: result.error })
             }
@@ -548,6 +558,7 @@ export class AgentRunner {
               path: (pending.prepared.arguments as any)?.targetFile || (pending.prepared.arguments as any)?.path || "",
               status: result.status === "APPLIED" ? "APPLIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
               diffSummary: (reviewable.reviewPayload as any)?.summary || "",
+              operation: mutationOperation(pending.prepared.name),
             })
             if (result.status === "APPLIED") session.evidenceCollector.resolveRecoveredToolContractFailures()
           }
@@ -905,34 +916,34 @@ export class AgentRunner {
         .listDefinitions()
         .filter((definition) => !isStandardToolsOnly || allowedToolNames.has(definition.name))
         .filter((definition) => this.#permission(definition.action) !== "DENY")
-      const appliedPaths = relevantAppliedPaths(
-        session.evidenceCollector.getEvidence().mutationOutcomes.map((mutation) => ({
-          path: mutation.path,
-          status: mutation.status,
-          at: mutation.timestamp,
-        })),
-        session.taskProfile.explicitFilePaths,
-      )
-      const mutationPending = session.taskProfile.requiresCodeChange && appliedPaths.length === 0
+      const codingAssessment = session.taskProfile.requiresCodeChange ? this.#assessCoding("NOT_RUN") : undefined
+      const editOutstanding = Boolean(codingAssessment && !codingAssessment.editsSatisfied)
+      const verificationOutstanding = Boolean(codingAssessment?.editsSatisfied && !codingAssessment.verificationSatisfied)
       const fileChangeGuidance = mutationToolGuidance(tools.map((tool) => tool.name))
 
-      const dynamicBanner = mutationPending
-        ? `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. Use apply_patch for an existing file and create_file only for a new file.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
-        : isEvidenceSatisfied
-          ? "\n\n[STATUS: EVIDENCE READY]\nYou have gathered the necessary repository evidence. DO NOT call any more tools. Provide your final concise, grounded answer directly now."
-          : isTurnBudgetTight
-            ? "\n\n[TURN BUDGET WARNING]\nYou are approaching your turn limit. Provide your grounded answer now without calling any further tools."
-            : ""
+      const dynamicBanner = editOutstanding
+        ? `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. A test-only edit does not finish a behavior change. Use apply_patch for an existing file and create_file only for a new file.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
+        : verificationOutstanding
+          ? "\n\n[VERIFICATION REQUIRED]\nThe requested edit is applied. Run the tests before answering. Do not finish while verification is outstanding."
+          : isEvidenceSatisfied
+            ? "\n\n[STATUS: EVIDENCE READY]\nYou have gathered the necessary repository evidence. DO NOT call any more tools. Provide your final concise, grounded answer directly now."
+            : isTurnBudgetTight
+              ? "\n\n[TURN BUDGET WARNING]\nYou are approaching your turn limit. Provide your grounded answer now without calling any further tools."
+              : ""
 
-      const phaseInstruction = mutationPending
+      const phaseInstruction = editOutstanding
         ? `Apply the requested edit. Inspect the repository when needed, then call apply_patch or create_file. Strategy: ${session.taskProfile.toolGuidance}`
-        : isEvidenceSatisfied
-          ? `Phase 2 - Answer: You have gathered sufficient repository evidence below. Analyze the observations and provide your final grounded answer directly now with exact names, strings, constants, and paths from the observations. Do not call any further tools.`
-          : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`
+        : verificationOutstanding
+          ? "Run the project tests now. Inspection alone is not completion, and the edit is not complete until verification has run."
+          : isEvidenceSatisfied
+            ? `Phase 2 - Answer: You have gathered sufficient repository evidence below. Analyze the observations and provide your final grounded answer directly now with exact names, strings, constants, and paths from the observations. Do not call any further tools.`
+            : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`
 
-      const completionLine = mutationPending
-        ? "Completion: Do not finish until the requested edit is prepared for approval. A test run alone does not apply an edit."
-        : "Completion: When you have sufficient evidence from the observations to answer, output your answer directly without calling more tools."
+      const completionLine = editOutstanding
+        ? "Completion: Do not finish until the requested implementation edit is prepared for approval. A test run or a test-file edit alone does not apply the requested behavior change."
+        : verificationOutstanding
+          ? "Completion: Do not finish until the tests have run after the edit."
+          : "Completion: When you have sufficient evidence from the observations to answer, output your answer directly without calling more tools."
 
       const guidanceInstruction: ProjectInstruction = {
         id: "investigation-guidance",
@@ -968,7 +979,7 @@ export class AgentRunner {
       this.#emit("context.compiled", { turn, estimatedTokens: compiled.totalEstimatedTokens, omittedCount: compiled.omittedItemIds.length })
 
       let promptContent = renderContext(compiled)
-      if (!mutationPending && isStandardToolsOnly && (isEvidenceSatisfied || isTurnBudgetTight)) {
+      if (!editOutstanding && !verificationOutstanding && isStandardToolsOnly && (isEvidenceSatisfied || isTurnBudgetTight)) {
         promptContent += "\n\n---\n**Instruction**: Repository evidence has been collected above. DO NOT emit any tool calls. Provide your final grounded answer directly now."
       }
 
@@ -1043,7 +1054,12 @@ export class AgentRunner {
         }
       }
       if (calls.length === 0) {
-        if (this.#evidenceGate) {
+        const codingVerdict = this.#codingGoalVerdict()
+        if (codingVerdict?.accept) {
+          await this.#completeTask(response.message.content.trim() || codingVerdict.summary)
+          break
+        }
+        if (this.#evidenceGate && !codingVerdict) {
           const evalResult = session.evidenceLedger.evaluate(
             session.taskProfile.evidenceRequirements,
             session.taskProfile.explicitFilePaths,
@@ -1434,6 +1450,7 @@ export class AgentRunner {
           mutationId: prepared.id,
           path: (prepared.arguments as any)?.targetFile || (prepared.arguments as any)?.path || "",
           status: "APPLIED",
+          operation: mutationOperation(prepared.name),
         })
         session.evidenceCollector.resolveRecoveredToolContractFailures()
         const { evalResult: mutEval, directive: mutDirective } = await this.#runEval("MUTATION_RESULT")
@@ -2414,30 +2431,33 @@ export class AgentRunner {
     const session = this.#requiredSession()
     if (!session.taskProfile.requiresCodeChange) return undefined
     if (session.input.task.metadata?.verificationOwner === "workflow") return undefined
-    const evidence = session.evidenceCollector.getEvidence()
-    return assessCodingCompletion({
-      requiresCodeChange: true,
-      explicitPaths: session.taskProfile.explicitFilePaths,
-      mutations: evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp })),
-      verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
-      verificationRequired: this.#verificationRequired(),
-      userRejectedMutation: session.mutationRejectedByUser === true,
-      scheduledVerification: "NOT_RUN",
-    })
+    return this.#assessCoding("NOT_RUN")
   }
 
-  async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {
+  #assessCoding(scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): CodingCompletion {
     const session = this.#requiredSession()
     const evidence = session.evidenceCollector.getEvidence()
-    const verdict = assessCodingCompletion({
+    return assessCodingCompletion({
       requiresCodeChange: session.taskProfile.requiresCodeChange,
       explicitPaths: session.taskProfile.explicitFilePaths,
-      mutations: evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp })),
+      requireImplementationChange: implementationChangeRequired(session.input.task.instruction, session.taskProfile.explicitFilePaths),
+      requireExistingFileEdit: requestsExistingFileEdit(session.input.task.instruction),
+      mutations: evidence.mutationOutcomes.map((mutation) => ({
+        path: mutation.path,
+        status: mutation.status,
+        at: mutation.timestamp,
+        ...(mutation.operation ? { operation: mutation.operation } : {}),
+      })),
       verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
       verificationRequired: this.#verificationRequired(),
       userRejectedMutation: session.mutationRejectedByUser === true,
       scheduledVerification,
     })
+  }
+
+  async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {
+    const session = this.#requiredSession()
+    const verdict = this.#assessCoding(scheduledVerification)
     if (session.input.task.metadata?.verificationOwner === "workflow") {
       await this.#completeTask(content.trim() ? content : verdict.summary)
       return
@@ -2471,6 +2491,7 @@ export class AgentRunner {
         return
       }
     }
+    delete session.failureReason
     this.#emit("task.completed", { turns: session.turns })
   }
 
@@ -2480,17 +2501,12 @@ export class AgentRunner {
       session.state.status === "FAILED" ||
       session.state.status === "CANCELLED"
 
+    const appliedMutations = session.evidenceCollector.getEvidence().mutationOutcomes
+      .filter((mutation) => mutation.status === "APPLIED" && mutation.path.trim().length > 0)
+      .map((mutation) => ({ path: mutation.path, status: "APPLIED" as const }))
+
     if (isTerminal && !session.finalAnswer?.trim()) {
-      const evidence = session.evidenceCollector.getEvidence()
-      const verdict = assessCodingCompletion({
-        requiresCodeChange: session.taskProfile.requiresCodeChange,
-        explicitPaths: session.taskProfile.explicitFilePaths,
-        mutations: evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp })),
-        verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
-        verificationRequired: this.#verificationRequired(),
-        userRejectedMutation: session.mutationRejectedByUser === true,
-        scheduledVerification: "NOT_RUN",
-      })
+      const verdict = this.#assessCoding("NOT_RUN")
       if (session.state.status === "CANCELLED" || session.failureReason === "CANCELLED") {
         session.finalAnswer = `Task cancelled. ${verdict.summary}`
       } else if (session.failureReason === "MAX_TURNS_EXCEEDED") {
@@ -2561,6 +2577,7 @@ export class AgentRunner {
       evalResults: session.evalResults,
       evalSummary: session.evalAnalytics?.formatDeveloperSummary(session.input.task.id),
       observations: session.observations,
+      ...(appliedMutations.length > 0 ? { appliedMutations } : {}),
       ...(session.nonProgress ? { nonProgress: session.nonProgress } : {}),
       ...(session.pending ? {
         confirmation: {
@@ -2584,4 +2601,26 @@ export class AgentRunner {
     if (!this.#session) throw new AgentRunnerError("NO_PENDING_CONFIRMATION", "No task has been started")
     return this.#session
   }
+}
+
+function mutationOperation(toolName: string): "create" | "patch" | "delete" {
+  if (toolName === "create_file") return "create"
+  if (toolName === "delete_file") return "delete"
+  return "patch"
+}
+
+function mutationPathPayload(args: unknown, reviewPayload: unknown): { path?: string } {
+  const path = stringField(args, "path")
+    ?? stringField(args, "targetFile")
+    ?? stringField(args, "file")
+    ?? stringField(reviewPayload, "path")
+  return path ? { path } : {}
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const field = (value as Record<string, unknown>)[key]
+  if (typeof field !== "string") return undefined
+  const trimmed = field.trim()
+  return trimmed.length > 0 ? trimmed : undefined
 }
