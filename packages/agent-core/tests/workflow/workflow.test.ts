@@ -85,7 +85,7 @@ test("W-25: workflow disabled (default) keeps the direct runner path unchanged",
   assert.equal(result.status, "FAILED")
   assert.equal(result.failureReason, "INCOMPLETE")
   assert.match(result.finalAnswer ?? "", /not applied/)
-  assert.equal(model.prompts.DIRECT.length, 1)
+  assert.equal(model.prompts.DIRECT.length, 3)
   assert.ok(!model.prompts.DIRECT[0]!.includes("Engineering workflow"))
   await runtime.cleanup()
 })

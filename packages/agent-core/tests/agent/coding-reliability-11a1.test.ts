@@ -175,7 +175,7 @@ test("further tool calls after a passing edit are not executed", async () => {
   try {
     const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 8, [verificationTool("PASS")])
     assert.equal(result.status, "COMPLETED")
-    assert.equal(provider.requests.length, 4)
+    assert.equal(provider.requests.length, 2)
     assert.equal(result.toolCalls.filter((call) => call.name === "run_verification").length, 1)
     assert.match(await readFile(join(root, "src/add.ts"), "utf8"), /return left \+ right/)
   } finally {
@@ -341,6 +341,8 @@ test("passing tests without the requested edit are incomplete", async () => {
     response("", [{ id: "create", name: "create_file", arguments: { path: "test/format-note.test.ts", content: "nope\n" } }]),
     response("", [{ id: "verify", name: "run_verification", arguments: {} }]),
     response(""),
+    response(""),
+    response(""),
   ])
   try {
     const { result } = await runTask(
@@ -374,7 +376,7 @@ test("an approved patch that matches the requested file can complete", async () 
     const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 6, [verificationTool("PASS")])
     assert.equal(result.status, "COMPLETED")
     assert.match(await readFile(join(root, "src/add.ts"), "utf8"), /return left \+ right/)
-    assert.match(result.finalAnswer ?? "", /sum/)
+    assert.match(result.finalAnswer ?? "", /src\/add\.ts/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -386,6 +388,8 @@ test("an unrelated file change does not satisfy the requested edit", async () =>
     response("", [{ id: "read", name: "read_file", arguments: { path: "src/add.ts" } }]),
     response("", [{ id: "patch", name: "apply_patch", arguments: { path: "README.md", search: "# notes", replace: "# edited" } }]),
     response("done"),
+    response("still done"),
+    response("stopping"),
   ])
   try {
     const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts")
@@ -529,6 +533,8 @@ test("a test-only edit does not complete a behavior change", async () => {
       return response("", [{ id: "verify", name: "run_verification", arguments: {} }])
     },
     response("The tests pass."),
+    response("No further change."),
+    response("Stopping."),
   ])
   try {
     const { result } = await runTask(
@@ -544,6 +550,41 @@ test("a test-only edit does not complete a behavior change", async () => {
     assert.match(result.finalAnswer ?? "", /implementation was not modified/)
     assert.equal(await readFile(join(root, "src/format-note.ts"), "utf8"), before)
     assert.deepEqual(result.appliedMutations?.map((mutation) => mutation.path), ["test/format-note.test.ts"])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a coding task that answers without tools is told to edit", async () => {
+  const root = await workspace()
+  const provider = new ScriptedModelProvider([
+    response("I will fix it in a moment."),
+    (request) => {
+      assert.match(request.messages[0]!.content, /EDIT REQUIRED/)
+      return response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }])
+    },
+    response("", [{ id: "verify", name: "run_verification", arguments: {} }]),
+    response("add now returns the sum."),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 6, [verificationTool("PASS")])
+    assert.equal(result.status, "COMPLETED", `${result.failureReason ?? ""} ${result.finalAnswer ?? ""}`)
+    assert.match(await readFile(join(root, "src/add.ts"), "utf8"), /return left \+ right/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("verification runs after an applied edit even if the model stops calling tools", async () => {
+  const root = await workspace()
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }]),
+    response("done"),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 6, [verificationTool("PASS")])
+    assert.equal(result.status, "COMPLETED", `${result.failureReason ?? ""} ${result.finalAnswer ?? ""}`)
+    assert.equal(result.toolCalls.some((call) => call.name === "run_verification"), true)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

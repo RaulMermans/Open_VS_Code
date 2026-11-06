@@ -17,7 +17,9 @@ import { resolveExecutionProfile } from "../../src/modes/resolver.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { classifyPermission } from "../../src/tools/permissions.ts";
 
-describe("Sprint 9A — Governed Browser Runtime End-to-End & Pack Governance", () => {
+import { skipWithoutChromiumSandbox } from "./chromium-host.ts";
+
+describe("Sprint 9A — Governed Browser Runtime End-to-End & Pack Governance", { skip: skipWithoutChromiumSandbox }, () => {
   let tmpRoot: string;
   let workspaceRootA: string;
   let workspaceRootB: string;

@@ -12,8 +12,9 @@ import { classifyInvestigationTarget } from "../../src/rea/target-classifier.ts"
 import { InvestigationEngine } from "../../src/rea/investigation-engine.ts";
 import { ReconstructionEngine } from "../../src/rea/reconstruction-engine.ts";
 import { ComparativeWebVerifier } from "../../src/rea/comparative-verifier.ts";
+import { skipWithoutChromiumSandbox } from "../browser/chromium-host.ts";
 
-test("Demo A — Black-Box Software Investigation, Governed Reconstruction & Comparative Verification", async () => {
+test("Demo A — Black-Box Software Investigation, Governed Reconstruction & Comparative Verification", { skip: skipWithoutChromiumSandbox }, async () => {
   const browserProvisioning = detectBrowserProvisioning();
   assert.equal(browserProvisioning.status, "READY", "Playwright Chromium must be provisioned and ready");
 

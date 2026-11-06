@@ -24,9 +24,9 @@ The chat header has a Model button. `Open VS Code: Select Local Model` lists mod
 
 ## Local model
 
-- Machine: the current Linux host. Ollama at `http://127.0.0.1:11434`.
-- Only installed model: `qwen2.5-coder:7b`, Q4_K_M, digest `dae161e27b0e`.
-- No other model was downloaded.
+- Machine: EVO X3 Linux host. Ollama 0.40.15 at `http://127.0.0.1:11434`.
+- Authorized additional model: `qwen3-coder:30b` Q4_K_M (~18 GB). Context budget `num_ctx` 32768.
+- Harness default is now `qwen3-coder:30b`. No other models were downloaded.
 - Every benchmark task routed to `local-chat` / `Qwen 2.5 Coder 7B · qwen2.5-coder:7b`.
 - Harness: `scripts/personal-v1-local-benchmark.ts` through `AgentSessionBridge` and `createAgentRuntime`, with `OPEN_VS_CODE_REAL_INFERENCE=1`. Approvals were automatic. This is not the GUI.
 
@@ -64,18 +64,15 @@ Not run: `npm run lint`, `npm run build`, `npm test` for the whole monorepo, `ev
 
 ## Package and GUI
 
-- Installed package: `open-vs-code 0.1.0` amd64. It predates this branch.
-- Existing artifact `apps/desktop/dist/open-vs-code_0.1.0_amd64.deb` is from 2026-11-06 14:23, before these edits. It was not rebuilt.
-- Privileged install was not requested and was not run.
-- Launch from the applications menu, repository open, chat, model switch, restart, and offline inference were not exercised in the installed app.
+- Fresh Debian: `apps/desktop/dist/open-vs-code_0.1.0_amd64.deb` (178 MB, 2026-11-06 21:28). Payload `chrome-sandbox` mode `4755`.
+- Privileged install was not run. The seven GUI journeys are not proven.
 
 ## Remaining blockers
 
-1. `qwen2.5-coder:7b` does not meet the 8/10 unseen bar or the two original regressions. A stronger local coding model needs explicit approval before any download.
-2. The format-note completion accepted a test-only edit. A completion that does not change the behavior the user asked for is still a false completion.
-3. Build a Debian package from this branch, then install it only after approval.
-4. Run the seven GUI journeys on that installed application.
-5. Run the monorepo gates listed above on this branch.
+1. Original regression `original-format-note` still fails on `qwen3-coder:30b`: 0 tool calls, source unchanged. Class: model tool-selection / capability. Unseen bar 8/10 is met; both originals are not.
+2. `eval:runtime` scenario `e2e.1` expects `BEFORE_COMPLETION` `VERIFY` before auto-scheduled tests; that checkpoint is skipped when verification is synthesized after an applied edit.
+3. GitHub CI on `main` is not green. Local fixes skip Chromium when the sandbox is unavailable, relax FINAL_REPORT to Node 22.x, and skip REA when it is not installed.
+4. Privileged Debian install and the seven GUI journeys are not done.
 
 ## Rollback
 

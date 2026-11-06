@@ -662,6 +662,28 @@ export class AgentRunner {
         if (await this.#execute(pending.prepared, pending.signature)) return this.#result()
       }
     }
+    const afterApproval = this.#codingGoalVerdict()
+    if (afterApproval?.accept) {
+      await this.#completeTask(afterApproval.summary)
+      return this.#result()
+    }
+    if (
+      afterApproval?.editsSatisfied
+      && !afterApproval.verificationSatisfied
+      && this.#verificationRequired()
+    ) {
+      const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
+      if (verifyName) {
+        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: {} })) {
+          return this.#result()
+        }
+        const verified = this.#codingGoalVerdict()
+        if (verified?.accept) {
+          await this.#completeTask(verified.summary)
+          return this.#result()
+        }
+      }
+    }
     return this.#continue()
   }
 
@@ -1044,7 +1066,7 @@ export class AgentRunner {
       if (newDeploymentId || response.model) {
         session.lastDeploymentId = newDeploymentId ?? response.model
       }
-      const calls = response.toolCalls ?? []
+      let calls = [...(response.toolCalls ?? [])]
       this.#emit("model.completed", { turn, toolCallCount: calls.length, hasAnswer: response.message.content.length > 0 })
       if (calls.length > 0) {
         const verdict = this.#codingGoalVerdict()
@@ -1059,7 +1081,20 @@ export class AgentRunner {
           await this.#completeTask(response.message.content.trim() || codingVerdict.summary)
           break
         }
-        if (this.#evidenceGate && !codingVerdict) {
+        if (codingVerdict && !codingVerdict.editsSatisfied && session.continuationAttempts < this.#maxContinuations) {
+          session.continuationAttempts += 1
+          session.observations.push(createToolObservation({
+            toolName: "coding_gate",
+            callId: `edit-gate-${session.continuationAttempts}`,
+            error: {
+              category: "EDIT_REQUIRED",
+              message: "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+            },
+            maxContentBytes: this.#observationMaxBytes,
+          }))
+          continue
+        }
+        if (calls.length === 0 && this.#evidenceGate && !codingVerdict) {
           const evalResult = session.evidenceLedger.evaluate(
             session.taskProfile.evidenceRequirements,
             session.taskProfile.explicitFilePaths,
@@ -1078,6 +1113,21 @@ export class AgentRunner {
           }
         }
 
+        if (
+          calls.length === 0
+          && codingVerdict?.editsSatisfied
+          && !codingVerdict.verificationSatisfied
+          && this.#verificationRequired()
+        ) {
+          const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
+          if (verifyName) {
+            calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: {} }]
+          }
+        }
+
+        if (calls.length > 0) {
+          // Fall through to execute tool calls from this model turn.
+        } else {
         // T-4404 / T-4417: BEFORE_COMPLETION evaluation checkpoint
         const { evalResult: beforeCompEval, directive } = await this.#runEval("BEFORE_COMPLETION")
 
@@ -1137,14 +1187,24 @@ export class AgentRunner {
           }
         }
 
-        await this.#acceptCompletion(response.message.content, "NOT_RUN")
-        break
+        if (calls.length === 0) {
+          await this.#acceptCompletion(response.message.content, "NOT_RUN")
+          break
+        }
+        }
       }
 
       let stopped = false
       for (const call of calls) {
         if (await this.#handleCall(call)) {
           stopped = true
+          break
+        }
+      }
+      if (!stopped) {
+        const afterTools = this.#codingGoalVerdict()
+        if (afterTools?.accept) {
+          await this.#completeTask(response.message.content.trim() || afterTools.summary)
           break
         }
       }
@@ -1521,7 +1581,13 @@ export class AgentRunner {
     const progressKey = `${signature}\0${observation.ok}\0${observation.content}`
     session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
     session.lastProgressKey = progressKey
-    if (session.repeatedProgress >= this.#nonProgressThreshold) {
+    const mutatingRepeat = prepared.definition.action === "write_file"
+      || prepared.definition.action === "delete_file"
+      || prepared.definition.action === "run_known_test"
+      || prepared.definition.action === "terminal_command"
+    const codingProgress = this.#codingGoalVerdict()
+    const waitingOnVerification = codingProgress?.editsSatisfied === true && codingProgress.verificationSatisfied === false
+    if (mutatingRepeat && session.repeatedProgress >= this.#nonProgressThreshold && !waitingOnVerification) {
       session.failureReason = "NON_PROGRESS"
       session.terminationSource = "NON_PROGRESS_GUARD"
       this.#emit("task.non_progress", { message: `Repeated ${prepared.name} call made no progress`, threshold: this.#nonProgressThreshold, terminationSource: "NON_PROGRESS_GUARD" })
@@ -2466,6 +2532,13 @@ export class AgentRunner {
       session.failureReason = verdict.failureReason ?? "INCOMPLETE"
       session.finalAnswer = verdict.summary
       this.#emit("task.failed", { message: verdict.summary })
+      return
+    }
+    const lastVerification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
+    if (lastVerification && lastVerification.status !== "PASS") {
+      session.failureReason = lastVerification.status === "FAIL" ? "VERIFICATION_FAILED" : "INCOMPLETE"
+      session.finalAnswer = `${verdict.summary} Verification ended with ${lastVerification.status}.`
+      this.#emit("task.failed", { message: session.finalAnswer })
       return
     }
     await this.#completeTask(content.trim() ? content : verdict.summary)

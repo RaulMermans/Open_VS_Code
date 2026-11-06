@@ -223,7 +223,11 @@ export class AgentSessionBridge {
           const prompt = `Approve mutation on ${pm.path}? (${pm.operation})`;
           const res = await this.host.requestConfirmation(prompt, pm);
           approved = (res === "APPROVE");
-        } else if (conf.action === "run_known_test") {
+        } else if (
+          conf.action === "run_known_test"
+          || conf.toolName === "run_verification"
+          || conf.toolName === "run_known_test"
+        ) {
           const pv = conf.preparedCommand;
           const actionName = pv?.action || (conf.arguments as any)?.action || "TEST";
           const prompt = `Run verification ${actionName}?`;
@@ -252,6 +256,9 @@ export class AgentSessionBridge {
               : "";
           const prompt = `Approve ${conf.toolName}${targetDesc}? (${conf.action})`;
           const res = await this.host.requestConfirmation(prompt, conf);
+          approved = (res === "APPROVE");
+        } else {
+          const res = await this.host.requestConfirmation(`Approve ${conf.toolName}? (${conf.action})`, conf);
           approved = (res === "APPROVE");
         }
         

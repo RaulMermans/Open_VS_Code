@@ -684,11 +684,18 @@ test("REA Governance — InvestigationEngine enforces timeoutMs cancellation", a
 // 8. Epistemic Discipline & Version Closure
 // ============================================================================
 
-test("REA Governance — Version mismatch is detected and rejected against pinned 6.8.0", async () => {
+test("REA Governance — Version mismatch is detected and rejected against pinned 6.8.0", (t) => {
   const reaService = new ReaMcpService();
-  // Pinned version constant check
   assert.equal(REA_PINNED_VERSION, "6.8.0");
-  assert.equal(typeof reaService.resolveReaPath(), "string");
+  try {
+    assert.equal(typeof reaService.resolveReaPath(), "string");
+  } catch (error) {
+    if ((error as { code?: string }).code === "REA_NOT_INSTALLED") {
+      t.skip("REA is not installed on this host");
+      return;
+    }
+    throw error;
+  }
 });
 
 test("REA Governance — Epistemic discipline requires whyUnobservable on all synthesized unknowns", async () => {

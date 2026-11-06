@@ -18,6 +18,7 @@ import {
 import { createAgentRuntime } from "../../src/agent/runtime.ts";
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts";
 import type { AgentEvent } from "../../src/contracts/agent.ts";
+import { skipWithoutChromiumSandbox } from "./chromium-host.ts";
 
 function acceptWebSocketHandshake(req: http.IncomingMessage, socket: any): void {
   const key = req.headers["sec-websocket-key"];
@@ -54,7 +55,7 @@ function closeHttpServer(srv?: http.Server): Promise<void> {
     : Promise.resolve();
 }
 
-describe("Sprint 9A.2 — Real Chromium Security Proof, Network Isolation & Runtime Reliability", () => {
+describe("Sprint 9A.2 — Real Chromium Security Proof, Network Isolation & Runtime Reliability", { skip: skipWithoutChromiumSandbox }, () => {
   let tmpRoot: string;
   let workspaceRootA: string;
   let workspaceRootB: string;

@@ -180,6 +180,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
           baseUrl: ep,
           model: wireModel,
           contextWindow: d.contextWindow ?? modelConfig?.contextWindow,
+          timeoutMs: 180_000,
           ...(headers ? { headers } : {}),
         }));
       }
