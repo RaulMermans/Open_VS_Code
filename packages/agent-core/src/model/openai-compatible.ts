@@ -52,7 +52,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.#endpoint = new URL(this.#canonical.chatEndpoint)
     this.model = config.model.trim()
     if (!this.model) throw new TypeError("Model ID must not be empty")
-    this.#timeoutMs = config.timeoutMs ?? 30_000
+    this.#timeoutMs = config.timeoutMs ?? 180_000
     if (!Number.isInteger(this.#timeoutMs) || this.#timeoutMs <= 0) throw new TypeError("Model timeout must be a positive integer")
     if (config.contextWindow !== undefined && (!Number.isInteger(config.contextWindow) || config.contextWindow <= 0)) {
       throw new TypeError("Context window must be a positive integer")
@@ -93,6 +93,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...(request.maxOutputTokens !== undefined ? { max_tokens: request.maxOutputTokens } : {}),
       ...(wireTools ? { tools: wireTools } : {}),
+      ...(this.contextWindow ? { options: { num_ctx: this.contextWindow } } : {}),
     }
 
     let response: Response

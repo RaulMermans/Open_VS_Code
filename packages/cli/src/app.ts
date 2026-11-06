@@ -264,7 +264,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
       decisions: [],
       unresolvedIssues: runnerResult.failureReason ? [runnerResult.failureReason] : [],
     };
-    if (memory && memory.sessionSummaries && options.mode !== "ASK" && runnerResult.status === "COMPLETED") {
+    if (memory && memory.sessionSummaries && options.mode !== "ASK" && (runnerResult.status === "COMPLETED" || runnerResult.status === "FAILED")) {
       memory.sessionSummaries.push(summary);
     }
     // We are no longer saving to sessionStorage in this CLI snippet as we moved memory off of here. Wait, actually we can just skip sessionStorage appending in CLI, or use memory.
@@ -332,13 +332,14 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
 
     return { exitCode, memorySelection: memory, skillDiagnostics, skillEvidence, routeDiagnostics: routedGateway?.lastDiagnostics, learningStep, ...runnerResult };
   } catch (err: any) {
+    const aborted = err?.name === "AbortError" || /aborted/i.test(String(err?.message ?? ""))
     if (options.json) {
-      console.log(JSON.stringify({ status: "ERROR", error: err.message }, null, 2));
+      console.log(JSON.stringify({ status: aborted ? "CANCELLED" : "ERROR", error: err.message }, null, 2));
     } else {
       console.error(`\nError: ${err.message}`);
     }
     rl.close();
-    return { exitCode: 3, mcpDiagnostics: {} };
+    return { exitCode: aborted ? 2 : 3, status: aborted ? "CANCELLED" : "ERROR", mcpDiagnostics: {} };
   } finally {
     if (runtime && runtime.cleanup) {
       await runtime.cleanup();

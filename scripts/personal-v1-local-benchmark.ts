@@ -10,11 +10,13 @@ import { spawn } from "node:child_process"
 import { AgentSessionBridge } from "../packages/ide-adapter/src/bridge.ts"
 import { TestIdeHost } from "../packages/ide-adapter/tests/test-host.ts"
 
+const MODEL_NAME = process.env.OPEN_VS_CODE_BENCHMARK_MODEL?.trim() || "qwen3-coder:30b"
+
 const MODEL_CONFIG = JSON.stringify({
   providers: [{ id: "local-inference", kind: "openai_compatible_local", baseUrl: "http://127.0.0.1:11434" }],
   models: [{
-    id: "qwen2.5-coder-7b",
-    displayName: "Qwen 2.5 Coder 7B",
+    id: "local-coder",
+    displayName: MODEL_NAME,
     family: "qwen",
     contextWindow: 32768,
     capabilities: ["toolUse", "coding"],
@@ -23,8 +25,8 @@ const MODEL_CONFIG = JSON.stringify({
   deployments: [{
     id: "local-chat",
     providerId: "local-inference",
-    modelId: "qwen2.5-coder-7b",
-    modelName: "qwen2.5-coder:7b",
+    modelId: "local-coder",
+    modelName: MODEL_NAME,
     enabled: true,
     priority: 10,
   }],
@@ -244,7 +246,7 @@ async function runOne(task: Task) {
   const bridge = new AgentSessionBridge({ host, workspaceRoot: root })
   const started = Date.now()
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 100000)
+  const timer = setTimeout(() => controller.abort(), 240000)
   let status = "ERROR"
   let failureReason = ""
   let finalAnswer = ""
@@ -302,7 +304,7 @@ for (const task of chosen) {
 }
 const unseen = results.filter((result) => result.group !== "original" && result.group !== "reject")
 const summary = {
-  model: "qwen2.5-coder:7b",
+  model: MODEL_NAME,
   provider: "ollama http://127.0.0.1:11434",
   unseenPassed: unseen.filter((result) => result.predicate && result.status === "COMPLETED" && !result.falsePositive).length,
   unseenTotal: unseen.length,

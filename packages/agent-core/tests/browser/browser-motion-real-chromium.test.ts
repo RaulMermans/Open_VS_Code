@@ -17,6 +17,7 @@ import {
   detectBrowserProvisioning,
   verifyEffectiveSandboxSupport,
 } from "../../src/browser/index.ts";
+import { skipWithoutChromiumSandbox } from "./chromium-host.ts";
 
 function closeHttpServer(srv?: http.Server): Promise<void> {
   return srv
@@ -27,7 +28,7 @@ function closeHttpServer(srv?: http.Server): Promise<void> {
     : Promise.resolve();
 }
 
-describe("Sprint 9C — Real Chromium Measured Motion Verification", () => {
+describe("Sprint 9C — Real Chromium Measured Motion Verification", { skip: skipWithoutChromiumSandbox }, () => {
   let tmpRoot: string;
   let appServer: http.Server;
   let appOrigin: string;

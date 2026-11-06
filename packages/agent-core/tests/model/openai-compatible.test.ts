@@ -41,6 +41,7 @@ test("constructs a configurable chat completion request and parses the response"
       messages: [{ role: "user", content: "hello" }],
       temperature: 0.2,
       max_tokens: 64,
+      options: { num_ctx: 32768 },
     })
     response.setHeader("content-type", "application/json")
     response.end(JSON.stringify({
@@ -53,6 +54,7 @@ test("constructs a configurable chat completion request and parses the response"
       baseUrl,
       model: "local-model",
       headers: { "x-local-test": "enabled" },
+      contextWindow: 32768,
     })
     const result = await provider.complete({
       messages: [{ role: "user", content: "hello" }],
