@@ -30,6 +30,9 @@
 
 ## Current sprint
 
+Sprint 11A — Linux Daily Driver & Real Local Inference (`docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md`).
+Status: `SPRINT_11A_PARTIALLY_VERIFIED`. The Linux desktop package launches with the Electron sandbox, fails closed when `chrome-sandbox` is not root setuid, and the production model gateway talks to a local Ollama `qwen2.5-coder:7b`. Chat shows the routed deployment rather than the first `models.json` entry. A grounded repository-explanation task succeeded. Two code-editing tasks with the same 7B model did not apply a correct patch. Installing the new package still requires root. HALO is not required.
+
 Sprint 10A.1D — Final Pre-HALO Readiness, Security Closure & Release Freeze (`docs/sprints/SPRINT_10A1D_FINAL_PRE_HALO_READINESS.md`).
 Final planned corrective sprint before physical HALO hardware integration:
 - Architectural Invariants Preserved: Single authoritative `AgentRuntime`, `PermissionGate`, and `MutationEngine`. Zero new agents, frameworks, or databases. Core architecture is **FROZEN**.

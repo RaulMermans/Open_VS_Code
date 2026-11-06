@@ -155,11 +155,75 @@ function extractToolCallsFromContent(rawContent: string): { readonly toolCalls: 
         }
       }
     } catch {
-      // Not valid JSON, keep content as plain prose
+      const concatenated = parseConcatenatedToolCallObjects(candidateJson)
+      if (concatenated) return { toolCalls: concatenated, remainingContent: "" }
     }
   }
 
   return { toolCalls: [], remainingContent: rawContent }
+}
+
+/** Local models sometimes emit several tool-call objects back to back instead of one JSON value. */
+function parseConcatenatedToolCallObjects(source: string): ToolCall[] | null {
+  const text = source.trim()
+  if (!text.startsWith("{")) return null
+  const calls: ToolCall[] = []
+  let index = 0
+  while (index < text.length) {
+    while (index < text.length && /\s/.test(text[index] ?? "")) index += 1
+    if (index >= text.length) break
+    if (text[index] !== "{") return null
+    const end = scanJsonObjectEnd(text, index)
+    if (end === null) return null
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text.slice(index, end))
+    } catch {
+      return null
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    const item = parsed as Record<string, unknown>
+    if (typeof item.name !== "string" || !item.name.trim()) return null
+    const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : `call_${calls.length + 1}`
+    calls.push({
+      id,
+      name: item.name.trim(),
+      arguments: parseToolArguments(item.arguments ?? item.parameters ?? item.input),
+    })
+    index = end
+  }
+  return calls.length > 1 ? calls : null
+}
+
+function scanJsonObjectEnd(text: string, start: number): number | null {
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i] ?? ""
+    if (inString) {
+      if (escape) {
+        escape = false
+        continue
+      }
+      if (ch === "\\") {
+        escape = true
+        continue
+      }
+      if (ch === "\"") inString = false
+      continue
+    }
+    if (ch === "\"") {
+      inString = true
+      continue
+    }
+    if (ch === "{") depth += 1
+    else if (ch === "}") {
+      depth -= 1
+      if (depth === 0) return i + 1
+    }
+  }
+  return null
 }
 
 export function normalizeWireResponse(payload: unknown, fallbackModel = "unknown"): ModelResponse {

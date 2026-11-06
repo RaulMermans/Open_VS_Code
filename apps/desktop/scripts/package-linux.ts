@@ -28,6 +28,12 @@ function writeLinuxLauncher(binDir: string, electronName: string): void {
   const launcherPath = join(binDir, 'open-vs-code');
   const script = `#!/usr/bin/env bash
 set -euo pipefail
+# A parent VS Code or Cursor terminal exports ELECTRON_RUN_AS_NODE=1.
+# Leave it set only for the CLI handoff below; never inherit it into the GUI.
+unset ELECTRON_RUN_AS_NODE
+# Launching this desktop app is the operator authorization to call the
+# workspace's configured local endpoint. It does not enable cloud inference.
+export OPEN_VS_CODE_REAL_INFERENCE=1
 ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
 ELECTRON="$ROOT/${electronName}"
 CLI="$ROOT/resources/app/out/cli.js"
@@ -89,6 +95,20 @@ function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): s
     ].join('\n'),
   );
   chmodSync(join(debianDir, 'control'), 0o644);
+  writeFileSync(
+    join(debianDir, 'postinst'),
+    [
+      '#!/bin/sh',
+      'set -e',
+      'SANDBOX=/usr/lib/open-vs-code/chrome-sandbox',
+      'if [ -f "$SANDBOX" ]; then',
+      '  chown root:root "$SANDBOX"',
+      '  chmod 4755 "$SANDBOX"',
+      'fi',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
 
   if (!existsSync('/usr/bin/dpkg-deb')) {
     console.log('[package] dpkg-deb is not installed; wrote Debian tree without building .deb');
@@ -130,6 +150,10 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
     extensionsDir: join(payloadDir, 'resources', 'app', 'extensions'),
   });
   writeLinuxLauncher(join(payloadDir, 'bin'), electronName);
+  const sandboxHelper = join(payloadDir, 'chrome-sandbox');
+  if (existsSync(sandboxHelper)) {
+    chmodSync(sandboxHelper, 0o4755);
+  }
   cpSync(join(DESKTOP_ROOT, 'branding', 'open-vs-code.desktop'), join(payloadDir, 'open-vs-code.desktop'));
   const iconSrc = join(DESKTOP_ROOT, 'branding', 'icon.png');
   if (existsSync(iconSrc)) {

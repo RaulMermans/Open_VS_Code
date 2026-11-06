@@ -1276,6 +1276,14 @@ export class ChatController {
       this.completePendingActivities(result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
       this.closeUndecided();
       this.state.pendingConfirmation = undefined;
+      const identity = currentBridge.routeIdentity;
+      if (identity) {
+        this._connectionInput = {
+          ...this._connectionInput,
+          modelLabel: identity.modelLabel,
+          providerLabel: identity.providerId,
+        };
+      }
       if (result.status === 'COMPLETED' && this._connectionInput.inferenceBackend !== 'halo') {
         const { lastError: _ignored, ...rest } = this._connectionInput;
         this._connectionInput = { ...rest, endpointVerified: true };

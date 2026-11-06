@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { AgentRunner } from "./runner.ts";
 import { RepairOrchestrator } from "./repair-loop.ts";
 import { RoutedModelGateway, StaticHealthChecker } from "../model/routed-gateway.ts";
+import { formatRouteIdentity, type ConfiguredRouteIdentity } from "../model/router.ts";
 import { EndpointHealthChecker } from "../model/endpoint-health.ts";
 import { ModelPerformanceLedger } from "../model/performance-ledger.ts";
 import { loadRoutingConfig, resolveProviderApiKey } from "../model/config-loader.ts";
@@ -142,9 +143,11 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   let routedGateway: RoutedModelGateway | undefined;
   let healthChecker: HealthChecker | undefined;
   let performanceLedger: ModelPerformanceLedger | undefined;
+  let routingConfig: RoutingConfiguration | undefined;
 
   if (!provider) {
     const config = options.routingConfigOverride ?? (await loadRoutingConfig(options.workspaceRoot));
+    if (config) routingConfig = config;
     if (!config) {
       throw new Error("No model routing configuration found.");
     }
@@ -594,6 +597,11 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     mcpCatalog,
     mcpStats,
     routedGateway,
+    readRouteIdentity(): ConfiguredRouteIdentity | undefined {
+      const route = routedGateway?.lastDiagnostics?.route;
+      if (!route || !routingConfig) return undefined;
+      return formatRouteIdentity(routingConfig, route.deploymentId, route.providerId, route.modelId);
+    },
     mcpSnapshot,
     skillSelection,
     actualSkillTokens,

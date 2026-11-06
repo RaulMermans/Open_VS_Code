@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget, isSkillApplied } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -37,6 +37,7 @@ export class AgentSessionBridge {
   private browserSessionManager?: BrowserSessionManager;
   private lastWorkflowState?: WorkflowState;
   private accountScope?: string;
+  private lastRouteIdentity?: ConfiguredRouteIdentity;
   
   constructor(options: BridgeOptions) {
     this.host = options.host;
@@ -54,6 +55,11 @@ export class AgentSessionBridge {
   /** Bounded workflow state of the most recent structured task, if one ran. */
   public get workflowState(): WorkflowState | undefined {
     return this.lastWorkflowState;
+  }
+
+  /** Deployment that actually served the most recent model turn, when the gateway recorded one. */
+  public get routeIdentity(): ConfiguredRouteIdentity | undefined {
+    return this.lastRouteIdentity;
   }
 
   /** Bounded, privacy-safe skill evidence from the most recent task (ids, versions, reason codes only). */
@@ -307,6 +313,8 @@ export class AgentSessionBridge {
     } finally {
       if (runtime) {
         this.lastSkillEvidence = runtime.skillEvidence;
+        const identity = runtime.readRouteIdentity?.();
+        if (identity) this.lastRouteIdentity = identity;
         await runtime.cleanup();
       }
     }

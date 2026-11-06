@@ -636,5 +636,12 @@ Sprint 10A.1D — Final Pre-HALO Readiness, Security Closure & Release Freeze �
   - Record: `docs/sprints/SPRINT_10A1D_FINAL_PRE_HALO_READINESS.md`.
   - Release Freeze Spec: `docs/releases/PRE_HALO_READINESS.md`.
 
+Sprint 11A — Linux Daily Driver & Real Local Inference — SPRINT_11A_PARTIALLY_VERIFIED
+  - Standalone Linux x64 package, setuid sandbox fail-closed behavior, and routed local-model identity.
+  - Real Ollama `qwen2.5-coder:7b` through the existing model gateway. One grounded explanation task passed. Two code-editing tasks failed honestly.
+  - Record: `docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md`.
+
 Next:
-1. Physical HALO hardware arrival & benchmark execution.
+1. Install the Sprint 11A Debian package as root and re-check the applications-menu launch.
+2. Sprint 11B model picker, after a stronger local coding model can apply an approved patch.
+3. Physical HALO hardware arrival and benchmark execution remain optional.

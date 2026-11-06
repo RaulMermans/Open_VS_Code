@@ -4,12 +4,13 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { mkdir, writeFile, rm } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { compileContext } from "../../src/context/compiler.ts"
 import { ProjectMemoryLoader } from "../../src/context/memory-loader.ts"
 import { MemoryRetriever } from "../../src/context/memory-retriever.ts"
 import { SessionSummaryStorage } from "../../src/context/session-storage.ts"
 
-const fixDir = join(new URL(".", import.meta.url).pathname, "..", "fixtures", "memory-test")
+const fixDir = join(fileURLToPath(new URL(".", import.meta.url)), "..", "fixtures", "memory-test")
 
 async function setupFixture(name: string, files: Record<string, string>) {
   const dir = join(fixDir, name)

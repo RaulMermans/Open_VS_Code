@@ -21,7 +21,7 @@ const APP_PATH = join(DIST_DIR, 'Open VS Code.app');
 const APP_EXE = join(APP_PATH, 'Contents', 'MacOS', 'Open VS Code');
 const ARCHIVE_PATH = join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
 
-describe('Category C: Real Desktop Runtime Acceptance Suite', () => {
+describe('Category C: Real Desktop Runtime Acceptance Suite', { skip: process.platform !== 'darwin' }, () => {
   test('1. Real packaged Open VS Code GUI launches, reaches usable state, and shuts down cleanly', async () => {
     assert.strictEqual(existsSync(APP_EXE), true, `Executable must exist at ${APP_EXE}`);
 
@@ -682,6 +682,75 @@ module.exports = { run };
       assert.strictEqual(probe.ok, true, 'Probe report marked ok');
       console.log('[browser-accept] Report: ' + JSON.stringify(probe));
     } finally {
+      rmSync(testTmp, { recursive: true, force: true });
+    }
+  });
+});
+
+const LINUX_PAYLOAD = join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0');
+
+function sandboxMode(path: string): string {
+  return execSync(`stat -c '%a %U' ${JSON.stringify(path)}`, { encoding: 'utf8' }).trim();
+}
+
+describe('Category C: Linux desktop runtime acceptance', { skip: process.platform !== 'linux' }, () => {
+  test('unprivileged payload fails closed instead of disabling the sandbox', async () => {
+    const exe = join(LINUX_PAYLOAD, 'codium');
+    const sandbox = join(LINUX_PAYLOAD, 'chrome-sandbox');
+    assert.strictEqual(existsSync(exe), true, `Linux payload executable must exist at ${exe}`);
+    assert.match(sandboxMode(sandbox), /^4755 /, 'package tree must record the setuid bit');
+    assert.doesNotMatch(sandboxMode(sandbox), /^4755 root$/, 'an uninstalled tree is not root-owned');
+
+    const testTmp = mkdtempSync(join(tmpdir(), 'ovsc-linux-unpriv-'));
+    const userDataDir = join(testTmp, 'userData');
+    const workspaceDir = join(testTmp, 'workspace');
+    mkdirSync(userDataDir, { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
+    let stderr = '';
+    const proc = spawn(exe, [
+      '--user-data-dir', userDataDir,
+      '--disable-gpu',
+      '--disable-crash-reporter',
+      workspaceDir,
+    ], { stdio: ['ignore', 'pipe', 'pipe'], env: cleanAppEnv() });
+    proc.stderr?.on('data', (chunk) => { stderr += String(chunk); });
+    const exitCode = await new Promise<number | null>((resolve) => proc.on('exit', (code) => resolve(code)));
+    assert.match(stderr, /SUID sandbox helper binary was found, but is not configured correctly/);
+    assert.doesNotMatch(stderr, /--no-sandbox/);
+    assert.notStrictEqual(exitCode, 0);
+    rmSync(testTmp, { recursive: true, force: true });
+  });
+
+  test('root-installed application launches with sandbox helpers and without --no-sandbox', async () => {
+    const exe = '/usr/lib/open-vs-code/codium';
+    const sandbox = '/usr/lib/open-vs-code/chrome-sandbox';
+    assert.strictEqual(existsSync(exe), true, 'installed codium binary must exist');
+    assert.strictEqual(sandboxMode(sandbox), '4755 root');
+
+    const testTmp = mkdtempSync(join(tmpdir(), 'ovsc-linux-gui-'));
+    const userDataDir = join(testTmp, 'userData');
+    const workspaceDir = join(testTmp, 'workspace');
+    mkdirSync(userDataDir, { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
+    const proc = spawn(exe, [
+      '--user-data-dir', userDataDir,
+      '--disable-gpu',
+      '--disable-crash-reporter',
+      '--disable-telemetry',
+      '--disable-workspace-trust',
+      workspaceDir,
+    ], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...cleanAppEnv(), ELECTRON_ENABLE_LOGGING: '1' } });
+    let stderr = '';
+    proc.stderr?.on('data', (chunk) => { stderr += String(chunk); });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      assert.strictEqual(proc.exitCode, null, 'installed GUI must still be running');
+      const tree = execSync(`ps -o args= --ppid ${proc.pid}; ps -p ${proc.pid} -o args=`, { encoding: 'utf8' });
+      assert.doesNotMatch(tree, /(^|\s)--no-sandbox(\s|$)/);
+      assert.match(tree, /chrome-sandbox/);
+      assert.doesNotMatch(stderr, /Rather than run without sandboxing I'm aborting now/);
+    } finally {
+      try { process.kill(proc.pid!, 'SIGTERM'); } catch { /* already exited */ }
       rmSync(testTmp, { recursive: true, force: true });
     }
   });

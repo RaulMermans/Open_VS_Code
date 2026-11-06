@@ -13,6 +13,22 @@ const __filename = fileURLToPath(import.meta.url);
 const DESKTOP_ROOT = join(__filename, '..', '..');
 const DIST_DIR = join(DESKTOP_ROOT, 'dist');
 const APP_PATH = join(DIST_DIR, 'Open VS Code.app');
+const LINUX_PAYLOAD = join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0');
+
+function packagedResourcesApp(): string {
+  if (process.platform === 'linux') {
+    return join(LINUX_PAYLOAD, 'resources', 'app');
+  }
+  return join(APP_PATH, 'Contents', 'Resources', 'app');
+}
+
+function bundledExtensionDir(): string {
+  return join(packagedResourcesApp(), 'extensions', 'open-vs-code.vscode-integration');
+}
+
+function packagedPayloadRoot(): string {
+  return process.platform === 'linux' ? LINUX_PAYLOAD : APP_PATH;
+}
 
 // Mock VS Code environment for testing packaged extension in Node
 const mockVscode = {
@@ -180,7 +196,11 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     );
   });
 
-  test('2. [Category A] Packaged macOS Open VS Code.app bundle structure and branding', () => {
+  test('2. [Category A] Packaged macOS Open VS Code.app bundle structure and branding', (t) => {
+    if (process.platform !== 'darwin') {
+      t.skip('macOS bundle structure is checked on darwin');
+      return;
+    }
     assert.strictEqual(existsSync(APP_PATH), true, `Packaged app must exist at ${APP_PATH}`);
 
     // Check Info.plist
@@ -218,14 +238,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
   });
 
   test('3. [Category A] Bundled Open VS Code extension is installed and discoverable in app', () => {
-    const bundledExtDir = join(
-      APP_PATH,
-      'Contents',
-      'Resources',
-      'app',
-      'extensions',
-      'open-vs-code.vscode-integration'
-    );
+    const bundledExtDir = bundledExtensionDir();
     assert.strictEqual(existsSync(bundledExtDir), true, 'Bundled extension directory must exist');
 
     const manifestPath = join(bundledExtDir, 'package.json');
@@ -246,7 +259,11 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     }
   });
 
-  test('4. [Category A] Packaged Open VS Code CLI launcher script executes and reports version', () => {
+  test('4. [Category A] Packaged Open VS Code CLI launcher script executes and reports version', (t) => {
+    if (process.platform !== 'darwin') {
+      t.skip('macOS CLI launcher is checked on darwin; Linux launcher is covered by desktop-linux-smoke');
+      return;
+    }
     const cliScript = join(APP_PATH, 'Contents', 'Resources', 'app', 'bin', 'open-vs-code');
     assert.strictEqual(existsSync(cliScript), true, 'CLI launcher script must exist');
 
@@ -256,7 +273,11 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     console.log(`[smoke] Packaged CLI launcher version output:\n${output.trim()}`);
   });
 
-  test('5. [Category A] Packaging signature verification validates truthfully', () => {
+  test('5. [Category A] Packaging signature verification validates truthfully', (t) => {
+    if (process.platform !== 'darwin') {
+      t.skip('codesign verification is macOS-only');
+      return;
+    }
     const archivePath = join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
     assert.strictEqual(existsSync(archivePath), true, 'Distribution archive must exist');
 
@@ -278,20 +299,22 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
 
   test('6. [Category A] Security and supply-chain invariants verified', () => {
     // A. Check for forbidden cloud endpoints
-    const productJsonPath = join(APP_PATH, 'Contents', 'Resources', 'app', 'product.json');
+    const productJsonPath = join(packagedResourcesApp(), 'product.json');
     const productContent = readFileSync(productJsonPath, 'utf8');
     assert.strictEqual(productContent.includes('api.openai.com'), false, 'Cannot contain api.openai.com');
     assert.strictEqual(productContent.includes('api.anthropic.com'), false, 'Cannot contain api.anthropic.com');
 
     // B. Check that no model weight files exist in repository or app bundle
     const findWeights = execSync(
-      `find "${APP_PATH}" -name "*.gguf" -o -name "*.safetensors" -o -name "*.ggml" -o -name "pytorch_model*.bin" -o -name "*.pt" -o -name "*.pth" 2>/dev/null || true`,
+      `find "${packagedPayloadRoot()}" -name "*.gguf" -o -name "*.safetensors" -o -name "*.ggml" -o -name "pytorch_model*.bin" -o -name "*.pt" -o -name "*.pth" 2>/dev/null || true`,
       { encoding: 'utf8' }
     ).trim();
     assert.strictEqual(findWeights, '', 'Packaged application must NOT bundle model weight files');
 
     // C. Check that distribution archive exists
-    const archivePath = join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
+    const archivePath = process.platform === 'linux'
+      ? join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0.tar.gz')
+      : join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
     assert.strictEqual(existsSync(archivePath), true, 'Distribution archive must exist');
   });
 
@@ -300,14 +323,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
   // =========================================================================
 
   test('7. [Category B — Unit] Bundled extension exports activation contracts and starter config', () => {
-    const bundledExtDir = join(
-      APP_PATH,
-      'Contents',
-      'Resources',
-      'app',
-      'extensions',
-      'open-vs-code.vscode-integration'
-    );
+    const bundledExtDir = bundledExtensionDir();
     const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
     assert.strictEqual(typeof extensionModule.activate, 'function', 'activate must be exported');
@@ -324,14 +340,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
   });
 
   test('8. [Category B — Unit] Mocked VS Code activation registers commands in mock environment', () => {
-    const bundledExtDir = join(
-      APP_PATH,
-      'Contents',
-      'Resources',
-      'app',
-      'extensions',
-      'open-vs-code.vscode-integration'
-    );
+    const bundledExtDir = bundledExtensionDir();
     const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
     const subscriptions: { dispose: () => void }[] = [];
@@ -447,14 +456,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
   });
 
   test('11. [Category B — Unit] Clean deactivation flushes state and leaves zero leaks', async () => {
-    const bundledExtDir = join(
-      APP_PATH,
-      'Contents',
-      'Resources',
-      'app',
-      'extensions',
-      'open-vs-code.vscode-integration'
-    );
+    const bundledExtDir = bundledExtensionDir();
     const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
     await assert.doesNotReject(async () => {
@@ -514,14 +516,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
 
     try {
       // 2. Load bundled extension and activate with test workspace
-      const bundledExtDir = join(
-        APP_PATH,
-        'Contents',
-        'Resources',
-        'app',
-        'extensions',
-        'open-vs-code.vscode-integration'
-      );
+      const bundledExtDir = bundledExtensionDir();
       const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
       mockVscode.workspace.workspaceFolders = [
@@ -638,14 +633,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     writeFileSync(join(configDir, 'models.json'), JSON.stringify(modelsConfig, null, 2), 'utf8');
 
     try {
-      const bundledExtDir = join(
-        APP_PATH,
-        'Contents',
-        'Resources',
-        'app',
-        'extensions',
-        'open-vs-code.vscode-integration'
-      );
+      const bundledExtDir = bundledExtensionDir();
       const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
       // Configure workspaceFolder to point to our test workspace
@@ -777,14 +765,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     process.env.OPEN_VS_CODE_REAL_INFERENCE = '1';
 
     try {
-      const bundledExtDir = join(
-        APP_PATH,
-        'Contents',
-        'Resources',
-        'app',
-        'extensions',
-        'open-vs-code.vscode-integration'
-      );
+      const bundledExtDir = bundledExtensionDir();
       const extensionModule = require(join(bundledExtDir, 'dist', 'extension.js'));
 
       mockVscode.workspace.workspaceFolders = [

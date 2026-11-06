@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, type AutocompleteGateway, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
@@ -217,9 +217,12 @@ class VSCodeIdeHost implements IdeHost {
         const config = loadRoutingConfigSync(root);
         if (config) {
           configStatus = 'present';
-          const model = config.models?.[0];
-          modelLabel = model?.displayName || model?.id;
-          providerLabel = config.providers?.[0]?.id;
+          const mode = chatController?.getActiveExecutionMode()?.mode ?? 'ASK';
+          const identity = await describeConfiguredRoute(config, mode);
+          if (identity) {
+            modelLabel = identity.modelLabel;
+            providerLabel = identity.providerId;
+          }
         }
       } catch {
         configStatus = 'invalid';
