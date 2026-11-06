@@ -33,7 +33,10 @@
   "devDependencies": {
     "@types/node": "^24.12.4",
     "oxlint": "^1.80.0",
-    "typescript": "^5.8.2"
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=22.0.0"

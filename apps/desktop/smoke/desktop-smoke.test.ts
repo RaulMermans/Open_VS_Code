@@ -161,6 +161,25 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
     );
   });
 
+  test('1b. [Category A] Pinned Linux x64 upstream shell specification is validated', () => {
+    const specPath = join(DESKTOP_ROOT, 'upstream.linux-x64.json');
+    assert.strictEqual(existsSync(specPath), true, 'upstream.linux-x64.json must exist');
+    const spec = JSON.parse(readFileSync(specPath, 'utf8'));
+
+    assert.strictEqual(spec.distribution, 'vscodium', 'Must use vscodium distribution');
+    assert.strictEqual(spec.version, '1.135.06055', 'Must pin version 1.135.06055');
+    assert.strictEqual(spec.vscodeVersion, '1.135.0', 'Base VS Code version must be 1.135.0');
+    assert.strictEqual(spec.upstreamCommit, '5a73682ca091082675b10c9dc3f348c1d824d94f', 'Commit must be pinned');
+    assert.strictEqual(spec.platform, 'linux-x64');
+    assert.strictEqual(spec.artifactName, 'VSCodium-linux-x64-1.135.06055.tar.gz');
+    assert.strictEqual(spec.license, 'MIT', 'License must be MIT');
+    assert.strictEqual(
+      spec.sha256,
+      'c09d8ac8dd7f52b09ee159ee24b440541dfd8f937a0f6f88cc428c78e48ee1f2',
+      'Linux x64 SHA-256 checksum must match upstream release'
+    );
+  });
+
   test('2. [Category A] Packaged macOS Open VS Code.app bundle structure and branding', () => {
     assert.strictEqual(existsSync(APP_PATH), true, `Packaged app must exist at ${APP_PATH}`);
 

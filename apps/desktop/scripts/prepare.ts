@@ -20,8 +20,31 @@ export interface UpstreamSpec {
   license: string;
 }
 
+export function resolveDesktopPlatform(): string {
+  if (process.env.OPEN_VS_CODE_DESKTOP_PLATFORM) {
+    return process.env.OPEN_VS_CODE_DESKTOP_PLATFORM;
+  }
+  if (process.platform === 'linux') {
+    return process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64';
+  }
+  if (process.platform === 'darwin') {
+    return process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
+  }
+  return `${process.platform}-${process.arch}`;
+}
+
+export function upstreamSpecPath(platform = resolveDesktopPlatform()): string {
+  if (platform === 'linux-x64') {
+    return join(DESKTOP_ROOT, 'upstream.linux-x64.json');
+  }
+  return join(DESKTOP_ROOT, 'upstream.json');
+}
+
 export function loadUpstreamSpec(): UpstreamSpec {
-  const specPath = join(DESKTOP_ROOT, 'upstream.json');
+  const specPath = upstreamSpecPath();
+  if (!existsSync(specPath)) {
+    throw new Error(`No pinned upstream spec for platform ${resolveDesktopPlatform()} at ${specPath}`);
+  }
   return JSON.parse(readFileSync(specPath, 'utf8'));
 }
 
@@ -55,7 +78,9 @@ export async function prepareDesktopShell(): Promise<{
   const cacheDir = join(DESKTOP_ROOT, 'cache');
   const stagingDir = join(DESKTOP_ROOT, 'staging');
   const cachedZipPath = join(cacheDir, spec.artifactName);
-  const stagedAppPath = join(stagingDir, 'VSCodium.app');
+  const stagedAppPath = spec.platform.startsWith('linux')
+    ? join(stagingDir, spec.platform)
+    : join(stagingDir, 'VSCodium.app');
 
   mkdirSync(cacheDir, { recursive: true });
   mkdirSync(stagingDir, { recursive: true });
@@ -82,7 +107,12 @@ export async function prepareDesktopShell(): Promise<{
     console.log(`[prepare] Extracting shell into staging: ${stagingDir}...`);
     rmSync(stagingDir, { recursive: true, force: true });
     mkdirSync(stagingDir, { recursive: true });
-    execSync(`unzip -q "${cachedZipPath}" -d "${stagingDir}"`, { stdio: 'inherit' });
+    if (spec.artifactName.endsWith('.tar.gz')) {
+      mkdirSync(stagedAppPath, { recursive: true });
+      execSync(`tar -xzf "${cachedZipPath}" -C "${stagedAppPath}"`, { stdio: 'inherit' });
+    } else {
+      execSync(`unzip -q "${cachedZipPath}" -d "${stagingDir}"`, { stdio: 'inherit' });
+    }
     console.log(`[prepare] Extracted successfully to ${stagedAppPath}`);
   } else {
     console.log(`[prepare] Staged shell already present: ${stagedAppPath}`);

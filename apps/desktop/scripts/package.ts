@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { prepareDesktopShell, UpstreamSpec } from './prepare.js';
+import { prepareDesktopShell, loadUpstreamSpec, UpstreamSpec } from './prepare.js';
+import { bundleOpenVSCodeExtension, mergeProductJson } from './bundle-extension.js';
+import { packageLinuxOpenVSCode } from './package-linux.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -24,20 +26,13 @@ export interface PackageResult {
 
 export async function packageOpenVSCode(): Promise<PackageResult> {
   console.log(`[package] Starting Open VS Code desktop packaging...`);
+  const requested = loadUpstreamSpec();
+  if (requested.platform.startsWith('linux')) {
+    return packageLinuxOpenVSCode();
+  }
 
   // 1. Ensure upstream shell is ready
   const { spec, stagedAppPath } = await prepareDesktopShell();
-
-  // 2. Ensure extension bundle exists
-  const extensionDistPath = join(REPO_ROOT, 'packages', 'vscode-integration', 'dist', 'extension.js');
-  const extensionManifestPath = join(REPO_ROOT, 'packages', 'vscode-integration', 'package.json');
-  if (!existsSync(extensionDistPath)) {
-    console.log(`[package] Extension bundle not found at ${extensionDistPath}. Building...`);
-    execSync('npm --workspace=@open-vs-code/vscode-integration run build', {
-      cwd: REPO_ROOT,
-      stdio: 'inherit',
-    });
-  }
 
   const distDir = join(DESKTOP_ROOT, 'dist');
   mkdirSync(distDir, { recursive: true });
@@ -179,67 +174,13 @@ exit $?
   // 6. Update product.json
   const productJsonPath = join(tempAppPath, 'Contents', 'Resources', 'app', 'product.json');
   const customProductPath = join(DESKTOP_ROOT, 'branding', 'product.json');
-  if (existsSync(productJsonPath) && existsSync(customProductPath)) {
-    console.log(`[package] Merging Open VS Code product metadata...`);
-    const upstreamProduct = JSON.parse(readFileSync(productJsonPath, 'utf8'));
-    const customProduct = JSON.parse(readFileSync(customProductPath, 'utf8'));
-
-    const mergedProduct = {
-      ...upstreamProduct,
-      ...customProduct,
-      commit: spec.upstreamCommit,
-      date: new Date().toISOString(),
-    };
-
-    writeFileSync(productJsonPath, JSON.stringify(mergedProduct, null, 2) + '\n', 'utf8');
-  }
+  console.log(`[package] Merging Open VS Code product metadata...`);
+  mergeProductJson(productJsonPath, customProductPath, spec.upstreamCommit);
 
   // 7. Bundle Open VS Code Extension
   const extensionsDir = join(tempAppPath, 'Contents', 'Resources', 'app', 'extensions');
-  const bundledExtDir = join(extensionsDir, 'open-vs-code.vscode-integration');
-  mkdirSync(join(bundledExtDir, 'dist'), { recursive: true });
-
-  console.log(`[package] Bundling Open VS Code extension into ${bundledExtDir}...`);
-  const rawManifest = JSON.parse(readFileSync(extensionManifestPath, 'utf8'));
-  const bundledManifest = {
-    ...rawManifest,
-    name: 'vscode-integration',
-    publisher: 'open-vs-code',
-    displayName: 'Open VS Code Agent',
-    description: 'Integrated local-first AI coding agent for Open VS Code desktop',
-  };
-  writeFileSync(join(bundledExtDir, 'package.json'), JSON.stringify(bundledManifest, null, 2) + '\n', 'utf8');
-
-  const extensionJsContent = readFileSync(extensionDistPath);
-  writeFileSync(join(bundledExtDir, 'dist', 'extension.js'), extensionJsContent);
-
-  // Curated built-in skills (ADR-029) are Markdown data read lazily at runtime, not bundled code.
-  const builtinSkillsPath = join(REPO_ROOT, 'packages', 'agent-core', 'skills', 'builtins');
-  cpSync(builtinSkillsPath, join(bundledExtDir, 'dist', 'skills', 'builtins'), { recursive: true });
-
-  // Sprint 9B: Bundle playwright-core JS driver + browsers.json (excluding bin/ install scripts)
-  // so standalone extracted Open VS Code.app resolves playwright-core without uncontrolled downloads.
-  const playwrightCoreSrc = join(REPO_ROOT, 'node_modules', 'playwright-core');
-  if (existsSync(playwrightCoreSrc)) {
-    const playwrightCoreDest = join(bundledExtDir, 'node_modules', 'playwright-core');
-    mkdirSync(join(bundledExtDir, 'node_modules'), { recursive: true });
-    cpSync(playwrightCoreSrc, playwrightCoreDest, {
-      recursive: true,
-      filter: (src) => {
-        const rel = src.slice(playwrightCoreSrc.length);
-        return rel !== '/bin' && !rel.startsWith('/bin/') && rel !== '\\bin' && !rel.startsWith('\\bin\\');
-      },
-    });
-  }
-
-  // Maintain compatibility alias directory 'open-vs-code'
-  const compatExtDir = join(extensionsDir, 'open-vs-code');
-  rmSync(compatExtDir, { recursive: true, force: true });
-  try {
-    execSync(`ln -s "open-vs-code.vscode-integration" "${compatExtDir}"`);
-  } catch {
-    execSync(`cp -R "${bundledExtDir}" "${compatExtDir}"`);
-  }
+  console.log(`[package] Bundling Open VS Code extension into ${extensionsDir}...`);
+  bundleOpenVSCodeExtension({ repoRoot: REPO_ROOT, extensionsDir });
 
   // 8. Clear quarantine/extended attributes and apply ad-hoc code signature
   console.log(`[package] Signing application bundle with ad-hoc signature...`);
