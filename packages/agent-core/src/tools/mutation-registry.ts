@@ -27,7 +27,7 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
     {
       definition: {
         name: "apply_patch",
-        description: "Modify an existing text file by replacing a specific text occurrence. Provide the exact text to find (search) and its replacement (replace). The search text must appear exactly once in the file.",
+        description: "Modify an existing text file. search must match the target text exactly once. path is workspace-relative. This tool cannot create a new file.",
         action: "write_file",
         inputSchema: {
           type: "object",
@@ -91,7 +91,7 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
     {
       definition: {
         name: "create_file",
-        description: "Create a new text file. The file must not already exist. Provide the workspace-relative path and the complete file content.",
+        description: "Create a new text file that does not already exist. path is workspace-relative. To change an existing file, use apply_patch.",
         action: "write_file",
         inputSchema: {
           type: "object",

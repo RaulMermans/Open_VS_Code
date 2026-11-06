@@ -30,6 +30,9 @@
 
 ## Current sprint
 
+Sprint 11A.1 — Real-Model Coding Reliability (`docs/sprints/SPRINT_11A1_REAL_CODING_RELIABILITY.md`).
+Status: `SPRINT_11A1_PARTIALLY_VERIFIED`. Editing tasks can no longer be marked complete when no relevant mutation was applied. Invalid tool calls get one corrective observation and then stop. Local `qwen2.5-coder:7b` completed two unseen edits through `apply_patch` and still failed the two original Sprint 11A edit tasks. The new Debian package is not installed, so the GUI journey is not verified.
+
 Sprint 11A — Linux Daily Driver & Real Local Inference (`docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md`).
 Status: `SPRINT_11A_PARTIALLY_VERIFIED`. The Linux desktop package launches with the Electron sandbox, fails closed when `chrome-sandbox` is not root setuid, and the production model gateway talks to a local Ollama `qwen2.5-coder:7b`. Chat shows the routed deployment rather than the first `models.json` entry. A grounded repository-explanation task succeeded. Two code-editing tasks with the same 7B model did not apply a correct patch. Installing the new package still requires root. HALO is not required.
 

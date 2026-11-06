@@ -1303,7 +1303,9 @@ export class ChatController {
         const failMsg: ChatMessage = {
           id: this.generateId(),
           role: 'system',
-          content: `Task failed: ${result.failureReason}`,
+          content: result.finalAnswer?.trim()
+            ? `Task failed (${result.failureReason}): ${result.finalAnswer}`
+            : `Task failed: ${result.failureReason}`,
           timestamp: Date.now(),
           status: 'failed'
         };

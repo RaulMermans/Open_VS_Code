@@ -28,7 +28,8 @@ async function run(instruction: string, skills?: { enabled: boolean; builtinRoot
 
 test("5A-INJ-1: a skill that reaches the model request is reported INJECTED with final-context tokens", async () => {
   const { before, after, result, prompt } = await run(TASK, { enabled: true })
-  assert.equal(result.status, "COMPLETED")
+  assert.equal(result.status, "FAILED")
+  assert.equal(result.failureReason, "INCOMPLETE")
   assert.equal(before.injectionStatus, "PENDING", "not yet injected before any request is compiled")
   assert.equal(isSkillApplied(before), false)
   assert.equal(after.selectedSkill, "bug-triage")
@@ -53,7 +54,8 @@ test("5A-INJ-2: preliminary skill budget passes but final compile drops the skil
   const instruction = TASK + " ".repeat((available - skillTokens) * 4 - TASK.length)
 
   const { after, result, prompt } = await run(instruction, { enabled: true })
-  assert.equal(result.status, "COMPLETED")
+  assert.equal(result.status, "FAILED")
+  assert.equal(result.failureReason, "INCOMPLETE")
   assert.equal(after.selectedSkill, "bug-triage", "selected")
   assert.equal(after.skillLoadStatus, "LOADED", "loaded and fitted by the preliminary budget")
   assert.equal(after.injectionStatus, "OMITTED_BY_FINAL_BUDGET", "but never injected")
@@ -68,7 +70,8 @@ test("5A-INJ-2: preliminary skill budget passes but final compile drops the skil
 test("5A-INJ-3: zero skills and disabled skills remain valid NOT_APPLICABLE states", async () => {
   const emptyBuiltins = await tempDir("injection-empty")
   const zero = await run(TASK, { enabled: true, builtinRoot: emptyBuiltins })
-  assert.equal(zero.result.status, "COMPLETED")
+  assert.equal(zero.result.status, "FAILED")
+  assert.equal(zero.result.failureReason, "INCOMPLETE")
   assert.equal(zero.after.skillLoadStatus, "NO_SKILL_SELECTED")
   assert.equal(zero.after.injectionStatus, "NOT_APPLICABLE")
   assert.deepEqual(zero.after.injectedSkills, [])

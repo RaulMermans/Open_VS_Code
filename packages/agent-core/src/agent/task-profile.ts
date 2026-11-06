@@ -35,6 +35,8 @@ export interface TaskProfile {
   readonly evidenceRequirements: readonly EvidenceRequirement[]
   readonly toolGuidance: string
   readonly explicitFilePaths: readonly string[]
+  /** BUILD/DEBUG requests that ask for a code change. Ask, Plan, and Review stay false. */
+  readonly requiresCodeChange: boolean
 }
 
 const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
@@ -50,9 +52,17 @@ export function extractExplicitFilePaths(instruction: string): string[] {
   return Array.from(unique)
 }
 
-export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK"): TaskProfile {
+export function requestsCodeEdit(instruction: string): boolean {
+  if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch)\b/i.test(instruction)) return true
+  if (/\b(?:edit|change)\s+(?:the\s+)?(?:code|file|implementation|function|test|tests|source)\b/i.test(instruction)) return true
+  return /\b(?:add|reject|remove|delete|create|write)\b/i.test(instruction)
+    && /\b(?:file|test|tests|function|implementation|code|method|body|title)\b/i.test(instruction)
+}
+
+export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"): TaskProfile {
   const text = instruction.toLowerCase()
   const explicitFiles = extractExplicitFilePaths(instruction)
+  const requiresCodeChange = (mode === "BUILD" || mode === "DEBUG") && requestsCodeEdit(instruction)
 
   // 1. Rules Query (AGENTS.md, guidelines, rules)
   if (/\b(?:agents\.md|guidelines?|rules?|policy|conventions?)\b/i.test(text)) {
@@ -70,6 +80,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read the project rules or AGENTS.md directly using read_file.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -90,6 +101,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use find_files with a glob pattern (e.g. **/*.ts or *.ts) to find matching files across the repository.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -110,6 +122,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Search for the test or error string with search_text, then read both the test file and the code being tested.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -130,6 +143,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read package.json directly using read_file to inspect exact dependencies.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles.length > 0 ? explicitFiles : ["package.json"],
     }
   }
@@ -153,6 +167,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use search_text with the symbol name to find its definition immediately.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -173,6 +188,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use search_text or read_file (e.g. config.ts, README.md) to inspect configuration settings.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -196,6 +212,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read each of the mentioned files using read_file to observe how they interact.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -216,6 +233,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read entry points and middleware/handlers using read_file to trace execution flow.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -236,6 +254,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use find_files with a glob pattern (e.g. **/*.ts) to find matching files across the repository.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -256,6 +275,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read ARCHITECTURE.md/README.md or list directory structure, then read key entry files.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -279,6 +299,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
     toolGuidance: explicitFiles.length > 0
       ? `Read ${explicitFiles.join(", ")} directly using read_file.`
       : "Read README.md or use list_directory to inspect repository files.",
+    requiresCodeChange,
     explicitFilePaths: explicitFiles,
   }
 }
