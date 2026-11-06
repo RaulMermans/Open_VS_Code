@@ -24,7 +24,7 @@ import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
-import { assessCodingCompletion, describeToolContractFault, mutationToolGuidance, relevantAppliedPaths } from "./tool-contract.ts"
+import { assessCodingCompletion, describeToolContractFault, mutationToolGuidance, relevantAppliedPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -321,7 +321,20 @@ export class AgentRunner {
         this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
       }
       this.#addErrorObservation(pending.prepared, "PERMISSION_REJECTED", "Caller rejected this tool request", "REJECTED")
-      if (pending.prepared.definition.action === "write_file") session.mutationRejectedByUser = true
+      if (pending.prepared.definition.action === "write_file") {
+        session.mutationRejectedByUser = true
+        if (session.taskProfile.requiresCodeChange) {
+          const verdict = this.#codingGoalVerdict()
+          if (verdict?.accept) {
+            await this.#completeTask(verdict.summary)
+          } else {
+            session.failureReason = "REJECTED"
+            session.finalAnswer = verdict?.summary ?? "The proposed edit was rejected."
+            this.#emit("task.failed", { message: session.finalAnswer })
+          }
+          return this.#result()
+        }
+      }
     } else {
       if (pending.reviewable) {
         const reviewable = pending.reviewable
@@ -866,6 +879,11 @@ export class AgentRunner {
         break
       }
       if (session.turns >= session.input.maxTurns) {
+        const met = this.#codingGoalVerdict()
+        if (met?.accept) {
+          await this.#completeTask(met.summary)
+          break
+        }
         session.failureReason = "MAX_TURNS_EXCEEDED"
         this.#recordTurnExhaustion()
         this.#emit("task.max_turns", { message: `Maximum of ${session.input.maxTurns} model turns reached` })
@@ -1017,6 +1035,13 @@ export class AgentRunner {
       }
       const calls = response.toolCalls ?? []
       this.#emit("model.completed", { turn, toolCallCount: calls.length, hasAnswer: response.message.content.length > 0 })
+      if (calls.length > 0) {
+        const verdict = this.#codingGoalVerdict()
+        if (verdict?.accept) {
+          await this.#completeTask(response.message.content.trim() || verdict.summary)
+          break
+        }
+      }
       if (calls.length === 0) {
         if (this.#evidenceGate) {
           const evalResult = session.evidenceLedger.evaluate(
@@ -2383,6 +2408,22 @@ export class AgentRunner {
     if (count >= 1) return { message: fault.message, category: fault.category, stop: true }
     seen.set(fault.signature, count + 1)
     return { message: fault.message, category: fault.category, stop: false }
+  }
+
+  #codingGoalVerdict(): CodingCompletion | undefined {
+    const session = this.#requiredSession()
+    if (!session.taskProfile.requiresCodeChange) return undefined
+    if (session.input.task.metadata?.verificationOwner === "workflow") return undefined
+    const evidence = session.evidenceCollector.getEvidence()
+    return assessCodingCompletion({
+      requiresCodeChange: true,
+      explicitPaths: session.taskProfile.explicitFilePaths,
+      mutations: evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp })),
+      verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
+      verificationRequired: this.#verificationRequired(),
+      userRejectedMutation: session.mutationRejectedByUser === true,
+      scheduledVerification: "NOT_RUN",
+    })
   }
 
   async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {

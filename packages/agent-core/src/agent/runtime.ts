@@ -252,7 +252,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     schemaBudget: 1500
   });
 
-  const mcpStats = { callsStarted: 0, callsCompleted: 0, callsRejected: 0, callsCancelled: 0, callsTimedOut: 0, callsFailed: 0, resultBytesRetained: 0, resultsTruncated: 0 };
+  const mcpStats = { callsStarted: 0, callsCompleted: 0, callsRejected: 0, callsCancelled: 0, callsTimedOut: 0, callsFailed: 0, resultBytesRetained: 0, resultsTruncated: 0, cleanupCount: 0 };
   
   for (const mcpTool of selectedMcpTools) {
     if (options.resolvedProfile && !options.resolvedProfile.activeMcpServers.includes(mcpTool.serverId)) {
@@ -640,7 +640,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       if (!options.mcpCatalog) {
         await mcpCatalog.close();
       }
-      (mcpStats as any).cleanupCount = ((mcpStats as any).cleanupCount || 0) + 1;
+      mcpStats.cleanupCount += 1;
     }
   };
 }

@@ -1,6 +1,6 @@
 import * as readline from "node:readline/promises";
 
-import type { AgentMode, AgentEvent } from "@open-vs-code/agent-core";
+import type { AgentMode, AgentEvent, AgentResult, RepairResult } from "@open-vs-code/agent-core";
 import type { ModelProvider, WorkflowStageEvent, WorkflowResult } from "@open-vs-code/agent-core";
 
 export interface CLIAppOptions {
@@ -23,10 +23,16 @@ export interface CLIAppOptions {
 
 
 
+function eventString(payload: unknown, key: string): string | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+  const value = Object.fromEntries(Object.entries(payload))[key];
+  return typeof value === "string" ? value : undefined;
+}
+
 export async function runCLI(options: CLIAppOptions): Promise<any> {
   
   
-  const { createAgentRuntime, isSkillApplied } = await import("@open-vs-code/agent-core");
+  const { createAgentRuntime, isSkillApplied, classifyFailure, appliedPathsFromAgentResult, integrateRepairOutcome, lastFailedVerification, readMutationReview, readVerificationReview } = await import("@open-vs-code/agent-core");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   const confirm = async (prompt: string): Promise<boolean> => {
@@ -134,7 +140,7 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     process.on("SIGINT", sigintHandler);
     runnerInput.signal = ac.signal;
 
-    let runnerResult = await runner.run(runnerInput as any);
+    let runnerResult: AgentResult = await runner.run(runnerInput);
 
     while (runnerResult.status === "PAUSED") {
       const conf = runnerResult.confirmation!;
@@ -186,43 +192,37 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
         
         const approved = await confirm("\nRun this verification? [y/N] ");
         if (approved) {
-          if (options.mode === "DEBUG" || options.mode === "BUILD") {
-            let repairResult = await repairOrchestrator.run(runnerInput as any, (conf.preparedCommand || conf.preparedMutation) as any);
-            
-            while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
-              if (repairResult.status === "AWAITING_MUTATION_APPROVAL") {
-                const pm = repairResult.pendingReview as any;
-                if (!options.json) {
-                  console.log(`\nProposed Mutation (Repair):`);
-                  console.log(`File: ${pm.path}`);
-                  console.log(`Operation: ${pm.operation}`);
-                  console.log(`Hash before: ${pm.beforeHash.substring(0, 8)}`);
-                  console.log(`Lines added: ${pm.linesAdded}, removed: ${pm.linesRemoved}`);
-                  console.log(`\n--- old`);
-                  console.log(`+++ new`);
-                  console.log(pm.diff);
-                }
-                const repApproved = await confirm("\nApprove this change? [y/N] ");
-                repairResult = await repairOrchestrator.resume(repApproved ? "APPROVE" : "REJECT");
-              } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
-                const pv = repairResult.pendingReview as any;
-                if (!options.json) {
-                  console.log(`\nProposed Verification (Repair):`);
-                  console.log(`Action: ${pv.arguments?.action || "TEST"}`);
-                }
-                const repApproved = await confirm("\nRun this verification? [y/N] ");
-                repairResult = await repairOrchestrator.resume(repApproved ? "APPROVE" : "REJECT");
-              }
-            }
-            
-            runnerResult = repairResult;
-          } else {
-            runnerResult = await runner.resume("APPROVE");
-          }
+          runnerResult = await runner.resume("APPROVE");
         } else {
           if (!options.json) console.log("REJECT");
           runnerResult = await runner.resume("REJECT");
         }
+      }
+    }
+
+    if ((options.mode === "BUILD" || options.mode === "DEBUG") && runnerResult.failureReason === "VERIFICATION_FAILED" && !ac.signal.aborted) {
+      const verification = lastFailedVerification(runnerResult);
+      if (verification) {
+        let repairResult: RepairResult = await repairOrchestrator.repairFromFailedVerification(
+          runnerInput,
+          appliedPathsFromAgentResult(runnerResult),
+          classifyFailure("TEST", verification),
+          verification,
+        );
+        while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
+          const mutation = readMutationReview(repairResult.pendingReview);
+          const verificationReview = readVerificationReview(repairResult.pendingReview);
+          let repApproved = false;
+          if (repairResult.status === "AWAITING_MUTATION_APPROVAL" && mutation) {
+            if (!options.json) console.log(`\nProposed repair edit: ${mutation.path} (${mutation.operation})`);
+            repApproved = await confirm("\nApprove this repair change? [y/N] ");
+          } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL" && verificationReview) {
+            if (!options.json) console.log(`\nProposed repair verification: ${verificationReview.action}`);
+            repApproved = await confirm("\nRun this repair verification? [y/N] ");
+          }
+          repairResult = await repairOrchestrator.resume(repApproved ? "APPROVE" : "REJECT");
+        }
+        runnerResult = integrateRepairOutcome(runnerResult, repairResult);
       }
     }
 
@@ -237,13 +237,15 @@ export async function runCLI(options: CLIAppOptions): Promise<any> {
     let mutations = 0;
     let verifications = 0;
     for (const ev of runnerResult.events || []) {
-      if (ev.type === "mutation.prepared") {
-         if (ev.payload?.mutationId && ev.payload?.path) mutationPaths.set(ev.payload.mutationId, ev.payload.path);
+      const mutationId = eventString(ev.payload, "mutationId");
+      const mutationPath = eventString(ev.payload, "path");
+      if (ev.type === "mutation.prepared" && mutationId && mutationPath) {
+         mutationPaths.set(mutationId, mutationPath);
       }
       if (ev.type === "mutation.applied") {
         mutations++;
-        if (ev.payload?.mutationId) {
-           const path = mutationPaths.get(ev.payload.mutationId);
+        if (mutationId) {
+           const path = mutationPaths.get(mutationId);
            if (path) changedFiles.add(path);
         }
       }

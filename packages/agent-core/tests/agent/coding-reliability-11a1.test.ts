@@ -107,6 +107,31 @@ test("an edit with no applied change cannot report success", () => {
   assert.equal(verdict.failureReason, "INCOMPLETE")
 })
 
+test("a change request is a coding task even without the word fix", () => {
+  assert.equal(classifyTaskProfile("Change the greeting prefix in src/greet.mjs from hi to hello, and run the tests.", "BUILD").requiresCodeChange, true)
+  assert.equal(classifyTaskProfile("What does this project do?", "BUILD").requiresCodeChange, false)
+})
+
+test("further tool calls after a passing edit are not executed", async () => {
+  const root = await workspace()
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "read", name: "read_file", arguments: { path: "src/add.ts" } }]),
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }]),
+    response("", [{ id: "verify", name: "run_verification", arguments: {} }]),
+    response("", [{ id: "again", name: "run_verification", arguments: {} }]),
+    response("should not run"),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 8, [verificationTool("PASS")])
+    assert.equal(result.status, "COMPLETED")
+    assert.equal(provider.requests.length, 4)
+    assert.equal(result.toolCalls.filter((call) => call.name === "run_verification").length, 1)
+    assert.match(await readFile(join(root, "src/add.ts"), "utf8"), /return left \+ right/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("ask and plan tasks are not required to mutate", () => {
   assert.equal(classifyTaskProfile("Explain src/add.ts", "ASK").requiresCodeChange, false)
   assert.equal(classifyTaskProfile("Update src/add.ts", "PLAN").requiresCodeChange, false)

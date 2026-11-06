@@ -192,16 +192,16 @@ const extra: IdeEvalCase[] = [
     { id: "30 confirmation-error cleanup", setup: (h) => { h.nextConfirmationResponse = "REJECT"; }, action: (b, ac) => b.runTask("hello", "BUILD", ac.signal), expected: { status: "COMPLETED", activeSessionCleared: true, cleanupCount: 1 } },
     // T-1626: active-session concurrency — session A active=yes, session B result=BUSY (showError), providerCalls=1 (only session A)
     { id: "31 active-session concurrency isolation", setup: () => {}, action: async (b, ac) => { const p1 = b.runTask("1", "ASK", ac.signal); const p2 = b.runTask("2", "ASK", ac.signal); await Promise.allSettled([p1,p2]); }, expected: { status: "COMPLETED", providerCalls: 1, busyRejected: true } },
-    // T-1611: RepairOrchestrator preserved — run_known_test in DEBUG triggers repair path
+    // Ordinary DEBUG verification stays on the original runner. Repair starts only after a failed edit verification.
     {
-      id: "37 RepairOrchestrator preserved",
+      id: "37 original runner owns verification",
       setup: (h) => { h.nextConfirmationResponse = "APPROVE"; },
       action: async (b, ac) => { await b.runTask("hello", "DEBUG", ac.signal); },
       providerSteps: [
         { message: { role: "assistant", content: "" }, toolCalls: [{ id: "t1", name: "run_known_test", arguments: { action: "jest" } }] },
         { message: { role: "assistant", content: "done" } }
       ],
-      expected: { status: "COMPLETED", repairOrchestratorEntered: true }
+      expected: { status: "COMPLETED", repairHandoffCount: 0 }
     },
     // T-1625: MCP lifecycle cleanup
     { id: "38 MCP lifecycle cleanup", setup: () => {}, action: (b, ac) => b.runTask("hello", "ASK", ac.signal), expected: { status: "COMPLETED", cleanupCount: 1 } },
@@ -273,6 +273,16 @@ describe("resolveWorkspaceRoot boundary-aware unit tests", () => {
     });
 });
 
+function mentionsPathRejection(content: string): boolean {
+    return content.includes("ENOENT")
+        || content.includes("must be within the workspace")
+        || content.includes("outside workspace")
+        || content.includes("permission denied")
+        || content.includes("INVALID_PATH")
+        || content.includes("path traversal")
+        || content.includes("Absolute paths");
+}
+
 async function runIdeEvaluation(idSuffix: string) {
     const results = [];
     for (const c of scenarios) {
@@ -309,7 +319,7 @@ async function runIdeEvaluation(idSuffix: string) {
         
         let pathEscapeRejected = false;
         let mutationCount = 0;
-        let repairOrchestratorEntered = false;
+        let repairHandoffCount = 0;
         let lateCompletionAttempted = false;
         let lateCompletionAccepted = false;
         
@@ -351,15 +361,15 @@ async function runIdeEvaluation(idSuffix: string) {
             if (req.messages) {
                 const sys = req.messages.find((m: any) => m.role === "system");
                 if (sys && typeof sys.content === "string") {
-                     if (sys.content.includes("ENOENT") || sys.content.includes("must be within the workspace") || sys.content.includes("permission denied")) {
-                         pathEscapeRejected = true;
-                     }
+                     if (mentionsPathRejection(sys.content)) pathEscapeRejected = true;
                 }
                 const usr = req.messages.find((m: any) => m.role === "user");
                 if (usr && typeof usr.content === "string") {
-                    if (usr.content.includes("ENOENT") || usr.content.includes("must be within the workspace") || usr.content.includes("outside workspace") || usr.content.includes("permission denied")) {
-                         pathEscapeRejected = true;
-                    }
+                    if (mentionsPathRejection(usr.content)) pathEscapeRejected = true;
+                }
+                const tool = req.messages.find((m: any) => m.role === "tool");
+                if (tool && typeof tool.content === "string" && mentionsPathRejection(tool.content)) {
+                    pathEscapeRejected = true;
                 }
             }
         }
@@ -372,12 +382,7 @@ async function runIdeEvaluation(idSuffix: string) {
             lateCompletionAccepted = status !== "CANCELLED" && lateCompletionAttempted;
         }
         
-        // T-1611: For scenario 37 — RepairOrchestrator entered if more than 1 provider call in DEBUG
-        if (c.id === "37 RepairOrchestrator preserved") {
-            if (reqs.length > 1) {
-                repairOrchestratorEntered = true;
-            }
-        }
+        repairHandoffCount = bridge.repairHandoffs;
         
         const snapshot = await host.getSnapshot();
         const rootFromHost = resolveWorkspaceRoot(snapshot);
@@ -395,7 +400,7 @@ async function runIdeEvaluation(idSuffix: string) {
 
         // T-1626: fallbackCalls — number of provider calls if status=CANCELLED but bridge made extra calls
         let productionSelectionRetained = 0;
-        const runnerInput = (bridge as any)._lastRuntime?.runnerInput;
+        const runnerInput = bridge.debugRuntime?.runnerInput;
         if (runnerInput && runnerInput.task.instruction) {
 
              const match = runnerInput.task.instruction.match(/\nSelection:\n([\s\S]*)/);
@@ -415,11 +420,11 @@ async function runIdeEvaluation(idSuffix: string) {
             pathEscapeRejected,
             resolvedRoot,
             activeSessionCleared: (bridge as any).activeSession === false,
-            repairOrchestratorEntered,
+            repairHandoffCount,
             abortObserved: reqs.some((r: any) => r._providerSawAbort),
             lateCompletionAttempted,
             lateCompletionAccepted,
-            cleanupCount: (bridge as any)._lastRuntime?.mcpStats?.cleanupCount || 0,
+            cleanupCount: bridge.debugRuntime?.mcpStats?.cleanupCount || 0,
             selectionInputTokens,
             productionSelectionRetained,
 

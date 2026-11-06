@@ -232,6 +232,7 @@ export type WebviewToHostMessage =
   | { type: "ui.copyCode"; text: string }
   | { type: "ui.openFile"; path: string }
   | { type: "ui.openModelConfig" }
+  | { type: "ui.selectModel" }
   | { type: "context.attach"; target: "current-file" | "selection" }
   | { type: "context.attachFile"; path: string }
   | { type: "context.remove"; id: string }
@@ -441,6 +442,9 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
 
     case "ui.openModelConfig":
       return { type: "ui.openModelConfig" };
+
+    case "ui.selectModel":
+      return { type: "ui.selectModel" };
 
     case "context.attach": {
       if (raw.target !== "current-file" && raw.target !== "selection") return null;
