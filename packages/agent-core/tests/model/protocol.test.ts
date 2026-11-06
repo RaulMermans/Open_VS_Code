@@ -92,6 +92,34 @@ test("protocol normalizer safely tags unparseable JSON tool arguments", () => {
   assert.deepEqual(normalized.toolCalls[0]!.arguments, { __malformedJson: "{ path: unquoted_invalid_json }" })
 })
 
+test("protocol normalizer decodes concatenated JSON tool calls from local models", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen2.5-coder:7b",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "{\"name\": \"read_file\", \"arguments\": {\"path\": \"src/format-note.ts\"}}\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"package.json\"}}",
+      },
+    }],
+  })
+  assert.equal(normalized.toolCalls?.length, 2)
+  assert.equal(normalized.toolCalls?.[0]?.name, "read_file")
+  assert.deepEqual(normalized.toolCalls?.[0]?.arguments, { path: "src/format-note.ts" })
+  assert.equal(normalized.toolCalls?.[1]?.name, "read_file")
+  assert.deepEqual(normalized.toolCalls?.[1]?.arguments, { path: "package.json" })
+  assert.equal(normalized.message.content, "")
+})
+
+test("protocol normalizer leaves prose that merely contains JSON as text", () => {
+  const content = "The file starts with { \"name\": \"notes\" } and then continues."
+  const normalized = normalizeWireResponse({
+    model: "qwen2.5-coder:7b",
+    choices: [{ message: { role: "assistant", content } }],
+  })
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.message.content, content)
+})
+
 test("protocol normalizer decodes content JSON tool call", () => {
   const normalized = normalizeWireResponse(PROTOCOL_FIXTURES.contentJsonToolCall)
   assert.ok(normalized.toolCalls)

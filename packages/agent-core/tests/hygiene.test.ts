@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 const FORBIDDEN_IMPORT_PATTERNS = [
   /@kilocode\//,
@@ -30,7 +31,7 @@ async function getFilesRecursively(dir: string): Promise<string[]> {
 }
 
 test("agent-core codebase maintains strict zero-baggage architectural boundary", async () => {
-  const srcDir = path.resolve(new URL(".", import.meta.url).pathname, "../src")
+  const srcDir = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../src")
   const srcFiles = await getFilesRecursively(srcDir)
 
   for (const filePath of srcFiles) {

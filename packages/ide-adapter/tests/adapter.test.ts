@@ -7,10 +7,10 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { URL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { ScriptedModelProvider, estimateTokens } from "@open-vs-code/agent-core";
 
-const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GLOBAL_TEMP = path.join(os.tmpdir(), "ide-test-" + Date.now());
 
 process.env.OPEN_VS_CODE_LOCAL_ENDPOINT = "http://localhost:11434/v1";

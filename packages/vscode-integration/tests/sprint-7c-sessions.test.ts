@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { parseWebviewMessage } from "../src/chat-protocol.ts";
 import {
@@ -910,7 +911,7 @@ describe("Sprint 7C history UI", () => {
   test("23. the bundled webview runtime includes the 7C surfaces and keeps text inert", () => {
     const esbuild = createRequire(import.meta.url)("esbuild");
     const bundled = esbuild.buildSync({
-      entryPoints: [new URL("../src/webview-render-helpers.ts", import.meta.url).pathname],
+      entryPoints: [fileURLToPath(new URL("../src/webview-render-helpers.ts", import.meta.url))],
       bundle: true, write: false, format: "cjs", platform: "node",
     });
     const mod: any = { exports: {} };

@@ -284,7 +284,8 @@ function hasSandboxDisablingFlag(commandLine: string): boolean {
     if (
       tok === "--no-sandbox" ||
       tok === "--disable-setuid-sandbox" ||
-      tok === "--no-zygote-sandbox" ||
+      // Chromium's setuid sandbox host is started with --no-zygote-sandbox.
+      // The sandboxed zygote is the chrome-sandbox child. That flag is not --no-sandbox.
       tok === "--disable-gpu-sandbox" ||
       tok.startsWith("--disable-seccomp-filter-sandbox")
     ) {
