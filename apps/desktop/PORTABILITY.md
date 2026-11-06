@@ -37,18 +37,22 @@ The core packaging and integration architecture is completely cross-platform:
 
 ---
 
-### B. Linux (x64 & arm64) — Future Milestone
+### B. Linux (x64) — Implemented · arm64 still a later milestone
 
+- **Current Implementation**: Linux x86-64 packaging via `npm run desktop:package` on Linux (`upstream.linux-x64.json`).
 - **Upstream Distribution Assets**:
-  - `VSCodium-linux-x64-1.135.06055.tar.gz` / `VSCodium-linux-arm64-1.135.06055.tar.gz`
-  - `.deb`, `.rpm`, or `.AppImage` packages.
+  - Pinned: `VSCodium-linux-x64-1.135.06055.tar.gz` (same VSCodium version/commit as macOS).
+  - Optional later: `VSCodium-linux-arm64-1.135.06055.tar.gz`.
+- **Target Artifacts**:
+  - `Open-VS-Code-linux-x64-0.1.0.tar.gz` (relocatable tree + `bin/open-vs-code`).
+  - `open-vs-code_0.1.0_amd64.deb` when `dpkg-deb` is available.
 - **Packaging Pipeline**:
   - Unpack tarball.
   - Inject `product.json` into `resources/app/product.json`.
-  - Copy extension bundle into `resources/app/extensions/open-vs-code/`.
-  - Provide desktop entry file (`open-vs-code.desktop`) and icon in `/usr/share/icons`.
-  - Rename main executable `codium` to `open-vs-code`.
-  - Repackage as `.tar.gz` or `.AppImage`.
+  - Copy extension bundle into `resources/app/extensions/open-vs-code.vscode-integration/`.
+  - Provide desktop entry file (`open-vs-code.desktop`) and icon.
+  - Install launcher `bin/open-vs-code` (does not replace the Electron binary `codium`).
+  - Repackage as `.tar.gz` and, when possible, `.deb`.
 
 ---
 

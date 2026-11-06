@@ -9,6 +9,7 @@
     "build": "npm --workspace=@open-vs-code/vscode-integration run build",
     "package": "node --import tsx scripts/package.ts",
     "smoke": "node --import tsx --test smoke/desktop-smoke.test.ts",
+    "smoke:linux": "node --import tsx --test smoke/desktop-linux-smoke.test.ts",
     "accept": "node --import tsx --test smoke/desktop-runtime-acceptance.test.ts"
   },
   "dependencies": {
