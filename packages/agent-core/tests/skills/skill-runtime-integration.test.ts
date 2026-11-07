@@ -12,7 +12,7 @@ import { VALID_BODY, skillDocument, tempDir, writeSkill, writeWorkspaceSkill } f
 const final: ModelResponse = { message: { role: "assistant", content: "Done" }, model: "test", usage: { inputTokens: 1, outputTokens: 1 } }
 
 async function run(workspaceRoot: string, instruction: string, mode: AgentMode, skills?: Parameters<typeof createAgentRuntime>[0]["skills"]) {
-  const provider = new ScriptedModelProvider([final])
+  const provider = new ScriptedModelProvider([final, final, final])
   const runtime = await createAgentRuntime({ workspaceRoot, mode, instruction, eventSink: () => {}, isTrusted: true, providerOverride: provider, ...(skills ? { skills } : {}) })
   const result = await runtime.runner.run(runtime.runnerInput as never)
   await runtime.cleanup()

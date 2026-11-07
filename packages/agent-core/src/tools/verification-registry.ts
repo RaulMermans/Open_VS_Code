@@ -32,7 +32,7 @@ export function createVerificationToolRegistrations(workspaceRoot: string): Tool
     },
     validate: (input: unknown) => {
       if (!input || typeof input !== "object") throw new Error("Input must be an object")
-      const action = (input as any).action
+      const action = (input as any).action ?? "TEST"
       if (!["TEST", "TYPECHECK", "LINT", "BUILD"].includes(action)) {
         throw new Error("action must be one of TEST, TYPECHECK, LINT, BUILD")
       }

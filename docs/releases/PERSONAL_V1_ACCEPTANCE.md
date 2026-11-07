@@ -2,81 +2,84 @@
 
 Status: `PERSONAL_V1_BLOCKED`
 
-The installed Linux application has not been shown to complete a real coding task. This record is the evidence for that decision. It is not a release.
+The installed application has not completed the seven GUI journeys. Privileged install was not authorized. This is not a release.
 
 ## Git
 
-- Branch: `product/personal-v1-production-completion`
-- Starting commit: `68e80d1f2392a0737448e9ff9f74ab7a50f580d1` (`feat(agent): stop marking unapplied code edits as complete`)
-- `git fetch origin` failed: `could not read Username for 'https://github.com': No such device or address`
-- Local `origin/main` at the time of the branch was `9ed4743fe2d4a096f46db7025ec1d0d9a6508a26`
-- The requested canonical main `3e58ebee606d6e457547712ef5f466f48f4b8a68` was not fetched. No reset or clean was run.
-- Working tree was clean before this branch. No uncommitted work was discarded.
-- Delivery commit: the commit on this branch whose parent is `68e80d1f2392a0737448e9ff9f74ab7a50f580d1`.
+- Branch: `product/personal-v1-production-completion` (dirty working tree)
+- Canonical `origin/main`: `08e32e175829106f98807f1c817d26351990e421`
+- Release-candidate payload stamp: `gitCommit` `08e32e1758`, **`gitDirty`: true**. The bundled agent is this working tree, not a clean commit. No merge or push.
 
-## What changed
+## 1. original-format-note (`qwen3-coder:30b`)
 
-Ordinary Build and Debug verification stays on the original `AgentRunner`. `RepairOrchestrator` starts only after that runner records `VERIFICATION_FAILED`, and it does not ask for the already-approved test again. `integrateRepairOutcome` keeps the original task id, events, tool calls, and applied paths. The CLI uses the same split.
+`OPEN_VS_CODE_MODEL_TRACE=1` showed tools advertised (`apply_patch`, `create_file`, `find_files`, `list_directory`, `read_file`, `run_verification`, `search_text`) with `tool_choice: auto`. Early turns had `finish_reason: stop` and Qwen `<function=…><parameter=…>` in content (`rawToolCallCount: 0`). Class: **content-tool parsing**, not missing tools. `run_verification` without `action` was rejected; auto-verify sent `{}`. Class: **invalid verify arguments**.
 
-A coding task that already has the required edit and a passing test completes instead of accepting another tool call or dying at the turn limit. A rejected edit on a coding task stops as `REJECTED` and does not write the file. Requests that say "change", "edit", "rename", or "replace" count as code changes in Build and Debug.
+Correction: parse Qwen function-parameter calls; default omitted verify `action` to `TEST`; synthesized auto-verify uses `{ action: "TEST" }`. Single AgentRunner, approvals, path checks, truthful completion unchanged.
 
-The chat header has a Model button. `Open VS Code: Select Local Model` lists models from the configured local Ollama endpoint, writes the chat and coding routes, and leaves the autocomplete route alone. A running task is not retargeted. There is no cloud fallback and no model download.
+## 2. Independent 30B benchmark
 
-## Local model
+Oracles in `scripts/personal-v1-local-benchmark.ts` import workspace source. `formatNote("", "body")` and `formatNote("title", "")` must throw. Agent-written tests are not trusted. Rejected writes must leave files unchanged.
 
-- Machine: EVO X3 Linux host. Ollama 0.40.15 at `http://127.0.0.1:11434`.
-- Authorized additional model: `qwen3-coder:30b` Q4_K_M (~18 GB). Context budget `num_ctx` 32768.
-- Harness default is now `qwen3-coder:30b`. No other models were downloaded.
-- Every benchmark task routed to `local-chat` / `Qwen 2.5 Coder 7B · qwen2.5-coder:7b`.
-- Harness: `scripts/personal-v1-local-benchmark.ts` through `AgentSessionBridge` and `createAgentRuntime`, with `OPEN_VS_CODE_REAL_INFERENCE=1`. Approvals were automatic. This is not the GUI.
+Three runs before the last read-loop skip:
 
-Measured run, 2026-11-06, one pass. The same tasks vary between runs.
+| Run | Unseen | Originals | False COMPLETED | Unauthorized writes | Mean ms |
+|---|---|---|---|---|---|
+| 1 | 9/10 | 1/2 | 0 | 0 | 5806 |
+| 2 | 8/10 | 1/2 | 0 | 0 | 7658 |
+| 3 | 9/10 | 2/2 | 0 | 0 | 6585 |
 
-| Task | Group | Status | Independent check | Notes |
-|---|---|---|---|---|
-| original-format-note | original | `COMPLETED` | failed | Changed only `test/format-note.test.mjs`. Tests passed. The source still does not reject an empty title. False completion. |
-| original-add | original | `FAILED` / `NON_PROGRESS` | failed | Repeated `search_text`. File still subtracts. |
-| single-greet | unseen | `COMPLETED` | passed | `apply_patch` on `src/greet.mjs`, then verification. |
-| single-even | unseen | `COMPLETED` | passed | `apply_patch` on `src/even.mjs`, then verification. |
-| single-tax | unseen | `COMPLETED` | passed | Rate changed to `0.15`. |
-| single-clamp | unseen | `FAILED` / `MAX_TURNS_EXCEEDED` | failed | Tests still failing. |
-| single-shout | unseen | `FAILED` / `MAX_TURNS_EXCEEDED` | failed | Wrote an unrelated test file. Source unchanged. |
-| debug-sum | unseen | `COMPLETED` | passed | Loop fix applied, tests passed. |
-| debug-sign | unseen | `FAILED` / `NON_PROGRESS` | failed | Search only. |
-| debug-join | unseen | `FAILED` / `NON_PROGRESS` | failed | Search only. |
-| multi-prefix | unseen | `FAILED` / `NON_PROGRESS` | files matched, task did not | Both files changed. Verification did not run after the edit, so the task stayed incomplete. |
-| multi-fullname | unseen | `FAILED` / `INCOMPLETE` | failed | Repeated `create_file` on an existing file, then stopped. |
-| reject-greet | rejection | `FAILED` / `REJECTED` | file unchanged | One `apply_patch` rejected. No write. |
+Unseen bar held. Follow-up after skipping non-progress only while a required edit is outstanding: originals **2/2**, reject-greet unchanged.
 
-Unseen tasks completed and independently correct: 4/10. Required bar: 8/10. Original regressions: 0/2. False completion in this run: the format-note task. Unauthorized writes on the rejection task: 0.
+## 3. Evaluations
 
-Token counts are not on `AgentResult`. Latency for the completed unseen tasks was about 6–22 seconds.
+- `eval:runtime` 14/14 (`e2e.1` still `BEFORE_COMPLETION` `VERIFY`)
+- `eval:workflow` 14/14 eligibility
+- `eval:recovery` 58/58
+- `eval:skills` 38/40 (same Halo-deferred misses)
+- `eval:performance` 5/5
+- `eval:coding` **30/30** (100%) after aligning four scripted cases with the actual fixture files
 
-## Checks that ran
+## 4. Local monorepo + CI
 
-- `tsc --noEmit` for `agent-core`, `ide-adapter`, `cli`, and `vscode-integration` passed before the final turn-limit edit. `agent-core` was typechecked again before the coding-reliability rerun.
-- `packages/agent-core/tests/agent/coding-reliability-11a1.test.ts`: 21 passed.
-- Repair workflow and repair integration tests: passed, including "failed verification repair does not ask to approve the same verification again".
-- `packages/ide-adapter` `npm test`: passed after the bridge change.
-- `packages/vscode-integration/tests/local-model-selection.test.ts`: 3 passed. Chat selection routes to the chosen served model. Autocomplete stays on `local-fim`.
+- `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`: pass. Four skipped agent-core tests are optional REA (not installed). Chromium suites ran on this host (`verifyEffectiveSandboxSupport` supported).
+- CI for **this tree** is not on GitHub. Latest `main` run still targets `08e32e1758`: https://github.com/RaulMermans/Open_VS_Code/actions/runs/42289274193
+- Workflow now provisions Linux Chromium and does not skip Linux CI Chromium suites. That is unproven until pushed.
 
-Not run: `npm run lint`, `npm run build`, `npm test` for the whole monorepo, `eval:runtime`, `eval:workflow`, `eval:skills`, `eval:recovery`, `eval:performance`, `desktop:smoke`, `desktop:accept`. A skipped gate is not a pass.
+## 5. Desktop RC (not installed)
 
-## Package and GUI
+- Deb: `apps/desktop/dist/open-vs-code_0.1.0-rc.1_amd64.deb` (170 MB), version **0.1.0-rc.1**
+- Payload SHA-256: `179e964b20d627426613878e2f61df4e42687181a079fb80b5281b424df55711`
+- `chrome-sandbox` mode `4755`; launcher does not pass `--no-sandbox`
+- User data folder remains `.open-vs-code-desktop`
+- Packaged-app smoke: 12 pass / 3 macOS skips; Linux smoke 6/6
+- `desktop:accept` Linux Category C: see below
 
-- Fresh Debian: `apps/desktop/dist/open-vs-code_0.1.0_amd64.deb` (178 MB, 2026-11-06 21:28). Payload `chrome-sandbox` mode `4755`.
-- Privileged install was not run. The seven GUI journeys are not proven.
+Install (needs explicit sudo from Raul; not run):
+
+```bash
+sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0-rc.1_amd64.deb"
+```
+
+Rollback after install:
+
+```bash
+sudo dpkg -r open-vs-code
+# if restoring the previous 0.1.0 package:
+sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0_amd64.deb"
+```
+
+User data in `~/.open-vs-code-desktop` is not deleted by `dpkg -r`.
+
+## 6. Installed GUI
+
+Not run. No sudo. No screenshots. Journeys 1–7 unverified on the installed app.
 
 ## Remaining blockers
 
-1. Original regression `original-format-note` still fails on `qwen3-coder:30b`: 0 tool calls, source unchanged. Class: model tool-selection / capability. Unseen bar 8/10 is met; both originals are not.
-2. `eval:runtime` scenario `e2e.1` expects `BEFORE_COMPLETION` `VERIFY` before auto-scheduled tests; that checkpoint is skipped when verification is synthesized after an applied edit.
-3. GitHub CI on `main` is not green. Local fixes skip Chromium when the sandbox is unavailable, relax FINAL_REPORT to Node 22.x, and skip REA when it is not installed.
-4. Privileged Debian install and the seven GUI journeys are not done.
-
-## Rollback
-
-Revert the delivery commit on `product/personal-v1-production-completion`. Its parent is `68e80d1f2392a0737448e9ff9f74ab7a50f580d1`. Do not reset the branch. No package was installed, so the installed application does not need a downgrade.
+1. Working tree is dirty and not pushed; CI is not green for these fixes.
+2. RC stamp is `gitDirty: true` — not a clean final commit.
+3. No authorized privileged install; seven GUI journeys have no inspectable evidence.
+4. Chromium sandbox on GitHub runners is not yet demonstrated.
 
 ## Readiness
 

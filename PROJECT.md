@@ -31,7 +31,7 @@
 ## Current sprint
 
 Personal V1 production completion (`docs/releases/PERSONAL_V1_ACCEPTANCE.md`).
-Status: `PERSONAL_V1_BLOCKED`. Local routing uses `qwen3-coder:30b` at 32K context. After an approved implementation edit the runner now schedules verification and completes when tests pass, instead of looping failed patches. A measured 30B pass scored 8/10 unseen tasks with 0 false COMPLETED and 0 unauthorized writes. `original-add` passed. `original-format-note` still fails: the model made no tool calls. Debian is not installed and the seven GUI journeys are not proven. See `docs/releases/PERSONAL_V1_ACCEPTANCE.md`.
+Status: `PERSONAL_V1_BLOCKED`. Coding and runtime gates moved: format-note class was Qwen XML parsing plus rejected verify-without-action; 3-run 30B unseen 9/10, 8/10, 9/10 with 0 false COMPLETED; follow-up originals 2/2; `eval:runtime` 14/14; `eval:coding` 30/30; local typecheck/lint/build/test pass. RC Debian `0.1.0-rc.1` is built from a **dirty** tree. CI is not green for this tree. Privileged install and the seven GUI journeys are not done. See `docs/releases/PERSONAL_V1_ACCEPTANCE.md`.
 
 Sprint 11A.1 — Real-Model Coding Reliability (`docs/sprints/SPRINT_11A1_REAL_CODING_RELIABILITY.md`).
 Status: `SPRINT_11A1_PARTIALLY_VERIFIED`. Editing tasks can no longer be marked complete when no relevant mutation was applied. Invalid tool calls get one corrective observation and then stop. Local `qwen2.5-coder:7b` completed two unseen edits through `apply_patch` and still failed the two original Sprint 11A edit tasks. The new Debian package is not installed, so the GUI journey is not verified.

@@ -32,6 +32,25 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"))
 }
 
+test("advertises tools with explicit auto tool choice", async () => {
+  await withServer(async (request, response) => {
+    const body = await readJson(request) as { tools?: unknown; tool_choice?: unknown }
+    assert.equal(body.tool_choice, "auto")
+    assert.ok(Array.isArray(body.tools) && body.tools.length === 1)
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "", tool_calls: [{ id: "1", type: "function", function: { name: "read_file", arguments: "{\"path\":\"a.ts\"}" } }] }, finish_reason: "tool_calls" }],
+    }))
+  }, async (baseUrl) => {
+    const provider = new OpenAICompatibleProvider({ baseUrl, model: "local-model" })
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "read it" }],
+      tools: [{ name: "read_file", description: "Read a file", action: "read_repository", inputSchema: { type: "object" } }],
+    })
+    assert.equal(result.toolCalls?.[0]?.name, "read_file")
+  })
+})
+
 test("constructs a configurable chat completion request and parses the response", async () => {
   await withServer(async (request, response) => {
     assert.equal(request.url, "/v1/chat/completions")

@@ -90,7 +90,9 @@ class RealTestPanelView implements BrowserPanelViewAdapter {
 const chromiumSandbox = verifyEffectiveSandboxSupport();
 
 describe("Sprint 9B — Real Chromium Agent/Browser Synchronization, Security & Performance Suite", {
-  skip: chromiumSandbox.supported ? false : chromiumSandbox.details,
+  skip: process.env.CI === "true" && process.platform === "linux"
+    ? false
+    : chromiumSandbox.supported ? false : chromiumSandbox.details,
 }, () => {
   let tmpRoot: string;
   let workspaceRoot: string;

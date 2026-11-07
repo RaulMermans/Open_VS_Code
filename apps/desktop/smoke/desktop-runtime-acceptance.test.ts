@@ -5,6 +5,7 @@ import { spawn, execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { PRODUCT_VERSION } from '../scripts/product-version.ts';
 
 /**
  * Environment for launching the packaged app. Strips Electron/VS Code host variables inherited when the
@@ -687,7 +688,7 @@ module.exports = { run };
   });
 });
 
-const LINUX_PAYLOAD = join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0');
+const LINUX_PAYLOAD = join(DIST_DIR, `Open-VS-Code-linux-x64-${PRODUCT_VERSION}`);
 
 function sandboxMode(path: string): string {
   return execSync(`stat -c '%a %U' ${JSON.stringify(path)}`, { encoding: 'utf8' }).trim();

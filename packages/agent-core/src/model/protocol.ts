@@ -68,9 +68,42 @@ function parseToolArguments(raw: unknown): unknown {
   return { __invalidType: raw }
 }
 
+function extractQwenFunctionCalls(rawContent: string): { readonly toolCalls: readonly ToolCall[]; readonly remainingContent: string } | undefined {
+  const functionRegex = /<function=([A-Za-z0-9_.:-]+)>([\s\S]*?)<\/function>/gi
+  const matches = [...rawContent.matchAll(functionRegex)]
+  if (matches.length === 0) return undefined
+  const calls: ToolCall[] = []
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i]
+    const name = match?.[1]?.trim()
+    const body = match?.[2] ?? ""
+    if (!name) return undefined
+    const args: Record<string, unknown> = {}
+    const paramRegex = /<parameter=([^>]+)>\s*([\s\S]*?)\s*<\/parameter>/gi
+    for (const param of body.matchAll(paramRegex)) {
+      const key = param[1]?.trim()
+      if (!key) continue
+      args[key] = param[2] ?? ""
+    }
+    calls.push({
+      id: `call_${i + 1}`,
+      name,
+      arguments: Object.keys(args).length > 0 ? args : {},
+    })
+  }
+  const remaining = rawContent
+    .replace(functionRegex, "")
+    .replace(/<\/?tool_call>/gi, "")
+    .trim()
+  return { toolCalls: calls, remainingContent: remaining }
+}
+
 function extractToolCallsFromContent(rawContent: string): { readonly toolCalls: readonly ToolCall[]; readonly remainingContent: string } {
   const trimmed = rawContent.trim()
   if (!trimmed) return { toolCalls: [], remainingContent: rawContent }
+
+  const qwen = extractQwenFunctionCalls(trimmed)
+  if (qwen && qwen.toolCalls.length > 0) return qwen
 
   // Check 1: <tool_call>...</tool_call> tags
   const toolCallTagRegex = /<tool_call>([\s\S]*?)<\/tool_call>/gi

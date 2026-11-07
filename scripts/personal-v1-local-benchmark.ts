@@ -6,7 +6,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { spawn } from "node:child_process"
+import { pathToFileURL } from "node:url"
 import { AgentSessionBridge } from "../packages/ide-adapter/src/bridge.ts"
 import { TestIdeHost } from "../packages/ide-adapter/tests/test-host.ts"
 
@@ -57,8 +57,10 @@ const tasks: Task[] = [
     },
     approve: true,
     pass: async (root) => {
-      const source = await readFile(join(root, "src/format-note.mjs"), "utf8")
-      return /throw|Error/.test(source) && await nodeTest(root)
+      const formatNote = await loadExport<(title: string, body: string) => string>(root, "src/format-note.mjs", "formatNote")
+      return rejects(() => formatNote("", "body"))
+        && rejects(() => formatNote("title", ""))
+        && formatNote("Hi", "There") === "# Hi\n\nThere\n"
     },
   },
   {
@@ -71,7 +73,10 @@ const tasks: Task[] = [
       "test/add.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { add } from '../src/add.mjs'\ntest('adds', () => { assert.equal(add(2, 3), 5) })\n",
     },
     approve: true,
-    pass: async (root) => (await readFile(join(root, "src/add.mjs"), "utf8")).includes("left + right") && await nodeTest(root),
+    pass: async (root) => {
+      const add = await loadExport<(left: number, right: number) => number>(root, "src/add.mjs", "add")
+      return add(2, 3) === 5 && add(0, 0) === 0
+    },
   },
   {
     id: "single-greet",
@@ -83,7 +88,10 @@ const tasks: Task[] = [
       "test/greet.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { greet } from '../src/greet.mjs'\ntest('greets', () => { assert.equal(greet('Ada'), 'hello Ada') })\n",
     },
     approve: true,
-    pass: async (root) => (await readFile(join(root, "src/greet.mjs"), "utf8")).includes("hello ${name}") && await nodeTest(root),
+    pass: async (root) => {
+      const greet = await loadExport<(name: string) => string>(root, "src/greet.mjs", "greet")
+      return greet("Ada") === "hello Ada"
+    },
   },
   {
     id: "single-even",
@@ -95,7 +103,10 @@ const tasks: Task[] = [
       "test/even.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { isEven } from '../src/even.mjs'\ntest('even', () => { assert.equal(isEven(2), true); assert.equal(isEven(3), false) })\n",
     },
     approve: true,
-    pass: async (root) => (await readFile(join(root, "src/even.mjs"), "utf8")).includes("% 2 === 0") && await nodeTest(root),
+    pass: async (root) => {
+      const isEven = await loadExport<(value: number) => boolean>(root, "src/even.mjs", "isEven")
+      return isEven(2) === true && isEven(3) === false
+    },
   },
   {
     id: "single-tax",
@@ -107,7 +118,10 @@ const tasks: Task[] = [
       "test/tax.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { tax } from '../src/tax.mjs'\ntest('tax', () => { assert.equal(tax(100), 15) })\n",
     },
     approve: true,
-    pass: async (root) => (await readFile(join(root, "src/tax.mjs"), "utf8")).includes("0.15") && await nodeTest(root),
+    pass: async (root) => {
+      const tax = await loadExport<(amount: number) => number>(root, "src/tax.mjs", "tax")
+      return tax(100) === 15
+    },
   },
   {
     id: "single-clamp",
@@ -119,7 +133,10 @@ const tasks: Task[] = [
       "test/clamp.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { clamp } from '../src/clamp.mjs'\ntest('clamp', () => { assert.equal(clamp(-2), 0); assert.equal(clamp(4), 4); assert.equal(clamp(12), 10) })\n",
     },
     approve: true,
-    pass: async (root) => await nodeTest(root),
+    pass: async (root) => {
+      const clamp = await loadExport<(value: number) => number>(root, "src/clamp.mjs", "clamp")
+      return clamp(-2) === 0 && clamp(4) === 4 && clamp(12) === 10
+    },
   },
   {
     id: "single-shout",
@@ -131,7 +148,10 @@ const tasks: Task[] = [
       "test/shout.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { shout } from '../src/shout.mjs'\ntest('shout', () => { assert.equal(shout('hey'), 'hey!') })\n",
     },
     approve: true,
-    pass: async (root) => (await readFile(join(root, "src/shout.mjs"), "utf8")).includes("!") && await nodeTest(root),
+    pass: async (root) => {
+      const shout = await loadExport<(text: string) => string>(root, "src/shout.mjs", "shout")
+      return shout("hey") === "hey!"
+    },
   },
   {
     id: "debug-sum",
@@ -143,7 +163,10 @@ const tasks: Task[] = [
       "test/sum.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { sum } from '../src/sum.mjs'\ntest('sum', () => { assert.equal(sum([1, 2, 3]), 6) })\n",
     },
     approve: true,
-    pass: async (root) => await nodeTest(root),
+    pass: async (root) => {
+      const sum = await loadExport<(values: number[]) => number>(root, "src/sum.mjs", "sum")
+      return sum([1, 2, 3]) === 6
+    },
   },
   {
     id: "debug-sign",
@@ -155,7 +178,10 @@ const tasks: Task[] = [
       "test/sign.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { label } from '../src/sign.mjs'\ntest('zero', () => { assert.equal(label(0), 'zero') })\n",
     },
     approve: true,
-    pass: async (root) => await nodeTest(root),
+    pass: async (root) => {
+      const label = await loadExport<(value: number) => string>(root, "src/sign.mjs", "label")
+      return label(0) === "zero" && label(2) === "positive" && label(-1) === "negative"
+    },
   },
   {
     id: "debug-join",
@@ -167,7 +193,10 @@ const tasks: Task[] = [
       "test/join.test.mjs": "import test from 'node:test'\nimport assert from 'node:assert/strict'\nimport { joinPair } from '../src/join.mjs'\ntest('join', () => { assert.equal(joinPair('1', '2'), '1-2') })\n",
     },
     approve: true,
-    pass: async (root) => await nodeTest(root),
+    pass: async (root) => {
+      const joinPair = await loadExport<(left: string, right: string) => string>(root, "src/join.mjs", "joinPair")
+      return joinPair("1", "2") === "1-2"
+    },
   },
   {
     id: "multi-prefix",
@@ -180,9 +209,8 @@ const tasks: Task[] = [
     },
     approve: true,
     pass: async (root) => {
-      const source = await readFile(join(root, "src/item.mjs"), "utf8")
-      const testFile = await readFile(join(root, "test/item.test.mjs"), "utf8")
-      return source.includes("ITEM") && !source.includes("NOTE") && testFile.includes("ITEM") && await nodeTest(root)
+      const item = await loadExport<(name: string) => string>(root, "src/item.mjs", "item")
+      return item("a") === "ITEM a"
     },
   },
   {
@@ -197,9 +225,8 @@ const tasks: Task[] = [
     },
     approve: true,
     pass: async (root) => {
-      const name = await readFile(join(root, "src/name.mjs"), "utf8")
-      const badge = await readFile(join(root, "src/badge.mjs"), "utf8")
-      return name.includes("fullName") && badge.includes("fullName") && await nodeTest(root)
+      const badge = await loadExport<(person: { first: string; last: string }) => string>(root, "src/badge.mjs", "badge")
+      return badge({ first: "Ada", last: "Lovelace" }) === "Ada Lovelace"
     },
   },
   {
@@ -215,13 +242,20 @@ const tasks: Task[] = [
   },
 ]
 
-function nodeTest(root: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const child = spawn("npm", ["test"], { cwd: root, stdio: "ignore" })
-    const timer = setTimeout(() => { child.kill("SIGKILL"); resolve(false) }, 15000)
-    child.on("exit", (code) => { clearTimeout(timer); resolve(code === 0) })
-    child.on("error", () => { clearTimeout(timer); resolve(false) })
-  })
+async function loadExport<T>(root: string, relative: string, name: string): Promise<T> {
+  const module = await import(`${pathToFileURL(join(root, relative)).href}?oracle=${Date.now()}-${Math.random()}`)
+  const value = (module as Record<string, unknown>)[name]
+  if (typeof value !== "function") throw new Error(`${relative} does not export ${name}`)
+  return value as T
+}
+
+function rejects(run: () => unknown): boolean {
+  try {
+    run()
+    return false
+  } catch {
+    return true
+  }
 }
 
 async function prepare(task: Task): Promise<string> {
@@ -298,22 +332,42 @@ if (process.env.OPEN_VS_CODE_REAL_INFERENCE !== "1") {
 
 const selected = process.argv.slice(2)
 const chosen = selected.length > 0 ? tasks.filter((task) => selected.includes(task.id)) : tasks
-const results = []
-for (const task of chosen) {
-  results.push(await runOne(task))
+const runCount = Math.max(1, Number.parseInt(process.env.OPEN_VS_CODE_BENCHMARK_RUNS ?? "3", 10) || 1)
+const allRuns = []
+for (let run = 1; run <= runCount; run += 1) {
+  const results = []
+  for (const task of chosen) {
+    results.push(await runOne(task))
+  }
+  const unseen = results.filter((result) => result.group !== "original" && result.group !== "reject")
+  const summary = {
+    run,
+    model: MODEL_NAME,
+    provider: "ollama http://127.0.0.1:11434",
+    unseenPassed: unseen.filter((result) => result.predicate && result.status === "COMPLETED" && !result.falsePositive).length,
+    unseenTotal: unseen.length,
+    originalsPassed: results.filter((result) => result.group === "original" && result.predicate && result.status === "COMPLETED").length,
+    originalsTotal: results.filter((result) => result.group === "original").length,
+    falsePositives: results.filter((result) => result.falsePositive).length,
+    unauthorizedMutations: results.filter((result) => result.unauthorizedMutation).length,
+    meanDurationMs: Math.round(results.reduce((sum, result) => sum + result.durationMs, 0) / results.length),
+    toolCallFailures: results.reduce((sum, result) => sum + result.tools.filter((tool) => /:(FAILED|REJECTED)$/.test(tool)).length, 0),
+    originals: results.filter((result) => result.group === "original").map((result) => ({ id: result.id, status: result.status, predicate: result.predicate })),
+  }
+  console.log(JSON.stringify({ summary }))
+  allRuns.push({ summary, results })
+  const keep = process.env.OPEN_VS_CODE_KEEP_BENCHMARK === "1"
+  if (!keep) {
+    for (const result of results) await rm(result.workspace, { recursive: true, force: true })
+  }
 }
-const unseen = results.filter((result) => result.group !== "original" && result.group !== "reject")
-const summary = {
-  model: MODEL_NAME,
-  provider: "ollama http://127.0.0.1:11434",
-  unseenPassed: unseen.filter((result) => result.predicate && result.status === "COMPLETED" && !result.falsePositive).length,
-  unseenTotal: unseen.length,
-  falsePositives: results.filter((result) => result.falsePositive).length,
-  unauthorizedMutations: results.filter((result) => result.unauthorizedMutation).length,
-  originals: results.filter((result) => result.group === "original").map((result) => ({ id: result.id, status: result.status, predicate: result.predicate })),
-}
-console.log(JSON.stringify({ summary }))
-const keep = process.env.OPEN_VS_CODE_KEEP_BENCHMARK === "1"
-if (!keep) {
-  for (const result of results) await rm(result.workspace, { recursive: true, force: true })
-}
+console.log(JSON.stringify({
+  aggregate: {
+    runs: runCount,
+    model: MODEL_NAME,
+    unseenRates: allRuns.map((entry) => `${entry.summary.unseenPassed}/${entry.summary.unseenTotal}`),
+    originalRates: allRuns.map((entry) => `${entry.summary.originalsPassed}/${entry.summary.originalsTotal}`),
+    falsePositives: allRuns.map((entry) => entry.summary.falsePositives),
+    unauthorizedMutations: allRuns.map((entry) => entry.summary.unauthorizedMutations),
+  },
+}))

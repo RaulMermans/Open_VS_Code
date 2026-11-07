@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopShell, type UpstreamSpec } from './prepare.js';
 import { bundleOpenVSCodeExtension, mergeProductJson } from './bundle-extension.js';
+import { PRODUCT_VERSION } from './product-version.js';
 
 export interface LinuxPackageResult {
   appPath: string;
@@ -22,7 +23,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DESKTOP_ROOT = join(__dirname, '..');
 const REPO_ROOT = join(DESKTOP_ROOT, '..', '..');
-const PRODUCT_VERSION = '0.1.0';
 
 function writeLinuxLauncher(binDir: string, electronName: string): void {
   const launcherPath = join(binDir, 'open-vs-code');
@@ -149,6 +149,12 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
     repoRoot: REPO_ROOT,
     extensionsDir: join(payloadDir, 'resources', 'app', 'extensions'),
   });
+  const gitCommit = execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim();
+  const gitDirty = execSync("git status --porcelain", { cwd: REPO_ROOT, encoding: "utf8" }).trim().length > 0;
+  writeFileSync(
+    join(payloadDir, "resources", "app", "open-vs-code-release.json"),
+    `${JSON.stringify({ productVersion: PRODUCT_VERSION, gitCommit, gitDirty, packagedAt: new Date().toISOString() }, null, 2)}\n`,
+  );
   writeLinuxLauncher(join(payloadDir, 'bin'), electronName);
   const sandboxHelper = join(payloadDir, 'chrome-sandbox');
   if (existsSync(sandboxHelper)) {

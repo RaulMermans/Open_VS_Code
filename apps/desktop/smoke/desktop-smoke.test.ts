@@ -7,13 +7,14 @@ import { tmpdir } from 'node:os';
 import Module, { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { SmokeEndpointFixture } from './smoke-fixture.js';
+import { PRODUCT_VERSION } from '../scripts/product-version.ts';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const DESKTOP_ROOT = join(__filename, '..', '..');
 const DIST_DIR = join(DESKTOP_ROOT, 'dist');
 const APP_PATH = join(DIST_DIR, 'Open VS Code.app');
-const LINUX_PAYLOAD = join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0');
+const LINUX_PAYLOAD = join(DIST_DIR, `Open-VS-Code-linux-x64-${PRODUCT_VERSION}`);
 
 function packagedResourcesApp(): string {
   if (process.platform === 'linux') {
@@ -313,7 +314,7 @@ describe('Open VS Code V1 Desktop Candidate — Smoke & Packaging Suite', () => 
 
     // C. Check that distribution archive exists
     const archivePath = process.platform === 'linux'
-      ? join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0.tar.gz')
+      ? join(DIST_DIR, `Open-VS-Code-linux-x64-${PRODUCT_VERSION}.tar.gz`)
       : join(DIST_DIR, 'Open-VS-Code-darwin-arm64-0.1.0.tar.gz');
     assert.strictEqual(existsSync(archivePath), true, 'Distribution archive must exist');
   });
