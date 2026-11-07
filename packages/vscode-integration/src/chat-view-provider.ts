@@ -130,6 +130,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             border-bottom: 1px solid var(--vscode-sideBar-border, var(--vscode-widget-border, transparent));
             flex-shrink: 0;
         }
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        #header #conversation-bar { padding: 0; flex: 1; min-width: 0; }
+        #overflow-menu { position: relative; }
+        #overflow-menu > summary {
+            list-style: none;
+            cursor: pointer;
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border-radius: 2px;
+            padding: 4px 8px;
+        }
+        #overflow-menu > summary::-webkit-details-marker { display: none; }
+        .overflow-panel {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 4px);
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 180px;
+            padding: 6px;
+            background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+            color: var(--vscode-menu-foreground, var(--vscode-foreground));
+            border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
+            border-radius: 4px;
+        }
+        #overflow-menu:not([open]) .overflow-panel { display: none; }
+        .overflow-panel button { width: 100%; text-align: left; }
         #header-main {
             display: flex;
             align-items: center;
@@ -475,6 +509,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             flex-wrap: wrap;
             align-items: center;
         }
+        #composer-meta {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            flex: 1;
+        }
+        #model-selector {
+            min-width: 140px;
+            flex: 1 1 160px;
+            max-width: 100%;
+            background: var(--vscode-dropdown-background);
+            color: var(--vscode-dropdown-foreground);
+            border: 1px solid var(--vscode-dropdown-border);
+            padding: 4px 6px;
+            border-radius: 2px;
+        }
+        #connection-status { flex: 0 1 auto; min-width: 0; }
+        #context-menu > summary {
+            list-style: none;
+            cursor: pointer;
+            background: transparent;
+            color: var(--vscode-textLink-foreground);
+            padding: 2px 0;
+        }
+        #context-menu > summary::-webkit-details-marker { display: none; }
+        .activity-fold { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+        .activity-fold summary { cursor: pointer; padding: 2px 0; }
         button {
             background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
@@ -920,26 +983,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="header">
-        <div id="header-main">
-            <label class="sr-only" for="mode-selector">Agent mode</label>
-            <select id="mode-selector" aria-label="Agent mode">
-                <option value="ASK">ASK</option>
-                <option value="PLAN">PLAN</option>
-                <option value="BUILD">BUILD</option>
-                <option value="DEBUG">DEBUG</option>
-                <option value="REVIEW">REVIEW</option>
-            </select>
-            <span id="mode-badge" class="status-badge" style="display:none;"></span>
-            <div id="connection-status"></div>
+        <div id="conversation-bar"></div>
+        <div class="header-actions">
+            <button id="new-chat-btn" class="secondary" type="button" aria-label="Start a new conversation">New</button>
+            <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
+            <details id="overflow-menu">
+                <summary aria-label="Agent settings">More</summary>
+                <div class="overflow-panel">
+                    <button id="browser-panel-btn" class="secondary" type="button" aria-label="Open visual browser panel">Visual browser</button>
+                    <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Tools</button>
+                    <button id="model-btn" class="secondary" type="button" aria-label="Select local model">Model list</button>
+                </div>
+            </details>
         </div>
-        <button id="browser-panel-btn" class="secondary" type="button" aria-label="Open visual browser panel">Browser</button>
-        <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Integrations</button>
-        <button id="model-btn" class="secondary" type="button" aria-label="Select local model">Model</button>
-        <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
-        <button id="new-chat-btn" class="secondary" aria-label="Start a new conversation">New</button>
     </div>
     <div id="integrations-panel" role="region" aria-label="Visual integration manager" hidden></div>
-    <div id="conversation-bar"></div>
     <div id="history-panel" role="region" aria-label="Conversation history" hidden>
         <div class="history-controls">
             <label class="sr-only" for="history-filter">Filter conversations</label>
@@ -962,15 +1020,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <div id="context-chips" aria-label="Attached context"></div>
         <div id="file-picker" role="listbox" aria-label="Workspace file matches"></div>
         <label class="sr-only" for="composer">Message</label>
-        <textarea id="composer" placeholder="Ask the agent. Enter to send, Shift+Enter for a newline, @ to attach a file." aria-label="Message composer"></textarea>
+        <textarea id="composer" placeholder="Ask anything. Enter to send, Shift+Enter for a newline, @ to attach a file." aria-label="Message composer"></textarea>
         <div id="controls">
-            <div id="context-actions">
-                <button id="attach-file-btn" class="secondary" type="button" aria-label="Attach current file">File</button>
-                <button id="attach-selection-btn" class="secondary" type="button" aria-label="Attach selected code">Selection</button>
-                <button id="pick-file-btn" class="secondary" type="button" aria-label="Search workspace files">@ File</button>
+            <div id="composer-meta">
+                <label class="sr-only" for="mode-selector">Agent mode</label>
+                <select id="mode-selector" aria-label="Agent mode">
+                    <optgroup label="Mode">
+                        <option value="ASK">Ask</option>
+                        <option value="PLAN">Plan</option>
+                        <option value="BUILD">Agent</option>
+                    </optgroup>
+                    <optgroup label="More">
+                        <option value="DEBUG">Debug</option>
+                        <option value="REVIEW">Review</option>
+                    </optgroup>
+                </select>
+                <span id="mode-badge" class="status-badge" style="display:none;"></span>
+                <label class="sr-only" for="model-selector">Local model</label>
+                <select id="model-selector" aria-label="Local model"></select>
+                <div id="connection-status"></div>
             </div>
             <div id="composer-actions">
-                <button id="cancel-btn" class="secondary" type="button" style="display: none;" aria-label="Cancel running task">Cancel</button>
+                <details id="context-menu">
+                    <summary>Context</summary>
+                    <div id="context-actions">
+                        <button id="attach-file-btn" class="secondary" type="button" aria-label="Attach current file">File</button>
+                        <button id="attach-selection-btn" class="secondary" type="button" aria-label="Attach selected code">Selection</button>
+                        <button id="pick-file-btn" class="secondary" type="button" aria-label="Search workspace files">@ File</button>
+                    </div>
+                </details>
+                <button id="cancel-btn" class="secondary" type="button" style="display: none;" aria-label="Cancel running task">Stop</button>
                 <button id="send-btn" type="button" aria-label="Send message">Send</button>
             </div>
         </div>
@@ -982,6 +1061,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const vscode = acquireVsCodeApi();
         
         const modeSelector = document.getElementById('mode-selector');
+        const modelSelector = document.getElementById('model-selector');
         const modeBadge = document.getElementById('mode-badge');
         const newChatBtn = document.getElementById('new-chat-btn');
         const transcript = document.getElementById('transcript');
@@ -1080,19 +1160,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (modesSig !== lastModesSig) {
                 lastModesSig = modesSig;
                 modeSelector.innerHTML = '';
-                var stdGroup = document.createElement('optgroup');
-                stdGroup.label = 'Standard Modes';
-                ['ASK', 'PLAN', 'BUILD', 'DEBUG', 'REVIEW'].forEach(function(m) {
+                var primary = document.createElement('optgroup');
+                primary.label = 'Mode';
+                [{ value: 'ASK', label: 'Ask' }, { value: 'PLAN', label: 'Plan' }, { value: 'BUILD', label: 'Agent' }].forEach(function(m) {
                     var opt = document.createElement('option');
-                    opt.value = m;
-                    opt.textContent = m;
-                    stdGroup.appendChild(opt);
+                    opt.value = m.value;
+                    opt.textContent = m.label;
+                    primary.appendChild(opt);
                 });
-                modeSelector.appendChild(stdGroup);
+                modeSelector.appendChild(primary);
+                var more = document.createElement('optgroup');
+                more.label = 'More';
+                [{ value: 'DEBUG', label: 'Debug' }, { value: 'REVIEW', label: 'Review' }].forEach(function(m) {
+                    var opt = document.createElement('option');
+                    opt.value = m.value;
+                    opt.textContent = m.label;
+                    more.appendChild(opt);
+                });
+                modeSelector.appendChild(more);
 
                 if (customModes.length) {
                     var cGroup = document.createElement('optgroup');
-                    cGroup.label = 'Custom Profiles';
+                    cGroup.label = 'Custom';
                     customModes.forEach(function(cm) {
                         var opt = document.createElement('option');
                         opt.value = 'custom:' + cm.id;
@@ -1134,6 +1223,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             currentState = state;
             syncModeSelector(state);
             syncModeBadge(state);
+            syncModelSelector(state.connection);
             sendInFlight = !!state.activeTurn;
             var follow = false;
             if (!transcriptUnchanged) {
@@ -1329,6 +1419,54 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ type: 'chat.newConversation' });
         });
         
+        var lastModelSig = '__initial__';
+        var syncingModels = false;
+        function preferredModelRank(name) {
+            if (name.indexOf('qwen3-coder') === 0) return 0;
+            if (name.indexOf('qwen2.5-coder') === 0) return 1;
+            return 2;
+        }
+        function syncModelSelector(connection) {
+            if (!modelSelector) return;
+            var models = (connection && connection.installedModels) ? connection.installedModels.slice() : [];
+            models.sort(function(a, b) {
+                var rank = preferredModelRank(a) - preferredModelRank(b);
+                return rank !== 0 ? rank : a.localeCompare(b);
+            });
+            var selected = (connection && (connection.selectedModel || connection.modelLabel)) || '';
+            var sig = models.join('|') + '#' + selected + '#' + (connection && connection.state || '');
+            if (sig === lastModelSig) return;
+            lastModelSig = sig;
+            syncingModels = true;
+            modelSelector.innerHTML = '';
+            if (!models.length) {
+                var empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = connection && connection.state === 'disconnected' ? 'Ollama offline' : (connection && connection.state === 'missing-config' ? 'No model config' : 'No models');
+                modelSelector.appendChild(empty);
+                modelSelector.disabled = true;
+                syncingModels = false;
+                return;
+            }
+            models.forEach(function(name) {
+                var opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                modelSelector.appendChild(opt);
+            });
+            modelSelector.disabled = !!(currentState && currentState.activeTurn);
+            if (selected && models.indexOf(selected) >= 0) modelSelector.value = selected;
+            syncingModels = false;
+        }
+        if (modelSelector) {
+            modelSelector.addEventListener('change', function() {
+                if (syncingModels) return;
+                var name = modelSelector.value;
+                if (!name) return;
+                vscode.postMessage({ type: 'ui.applyModel', name: name });
+            });
+        }
+
         modeSelector.addEventListener('change', () => {
             var val = modeSelector.value;
             if (val.startsWith('custom:')) {

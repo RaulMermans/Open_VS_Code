@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Open VS Code
-Comment=Local-first AI coding agent
+Comment=Local-first coding environment
 GenericName=Text Editor
 Exec=open-vs-code %F
 Icon=open-vs-code
@@ -9,5 +9,5 @@ StartupNotify=true
 StartupWMClass=open-vs-code
 Categories=Development;IDE;TextEditor;
 MimeType=text/plain;inode/directory;
-Keywords=vscode;codium;agent;
+Keywords=editor;agent;coding;
 Terminal=false

@@ -57,6 +57,12 @@ export interface ConnectionStatus {
   detail?: string;
   healthChecked: boolean;
   actionable: "none" | "open-config" | "create-config" | "check-connection";
+  /** Models the local endpoint actually returned. Absent until a probe succeeds. */
+  installedModels?: string[];
+  /** Served model name on the chat route, when configuration names one. */
+  selectedModel?: string;
+  /** Local inference base URL. Never a cloud endpoint. */
+  endpoint?: string;
 }
 
 export interface FileSearchHit {
@@ -233,6 +239,7 @@ export type WebviewToHostMessage =
   | { type: "ui.openFile"; path: string }
   | { type: "ui.openModelConfig" }
   | { type: "ui.selectModel" }
+  | { type: "ui.applyModel"; name: string }
   | { type: "context.attach"; target: "current-file" | "selection" }
   | { type: "context.attachFile"; path: string }
   | { type: "context.remove"; id: string }
@@ -445,6 +452,13 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
 
     case "ui.selectModel":
       return { type: "ui.selectModel" };
+
+    case "ui.applyModel": {
+      if (typeof raw.name !== "string") return null;
+      const name = raw.name.trim();
+      if (!/^[A-Za-z0-9_.:@+-]{1,128}$/.test(name)) return null;
+      return { type: "ui.applyModel", name };
+    }
 
     case "context.attach": {
       if (raw.target !== "current-file" && raw.target !== "selection") return null;

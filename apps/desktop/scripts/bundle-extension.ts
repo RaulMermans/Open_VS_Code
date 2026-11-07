@@ -29,6 +29,10 @@ export function bundleOpenVSCodeExtension(options: {
   };
   writeFileSync(join(bundledExtDir, 'package.json'), JSON.stringify(bundledManifest, null, 2) + '\n', 'utf8');
   writeFileSync(join(bundledExtDir, 'dist', 'extension.js'), readFileSync(extensionDistPath));
+  const mediaDir = join(repoRoot, 'packages', 'vscode-integration', 'media');
+  if (existsSync(mediaDir)) {
+    cpSync(mediaDir, join(bundledExtDir, 'media'), { recursive: true });
+  }
 
   const builtinSkillsPath = join(repoRoot, 'packages', 'agent-core', 'skills', 'builtins');
   cpSync(builtinSkillsPath, join(bundledExtDir, 'dist', 'skills', 'builtins'), { recursive: true });

@@ -326,8 +326,10 @@ export function renderActivityTimeline(container: any, activities: any[], doc?: 
   var list = d.createElement("ol");
   list.className = "activity-list";
   setAttr(list, "aria-label", "Agent activity");
+  var working = false;
   for (var i = start; i < activities.length; i++) {
     var act = activities[i];
+    if (act.status === "pending" || act.status === "running") working = true;
     var li = d.createElement("li");
     li.className = "activity-item is-" + (act.status || "pending");
     setAttr(li, "aria-current", act.status === "pending" ? "step" : "false");
@@ -341,8 +343,15 @@ export function renderActivityTimeline(container: any, activities: any[], doc?: 
     li.appendChild(label);
     list.appendChild(li);
   }
-  container.appendChild(list);
-  return list;
+  var details = d.createElement("details");
+  details.className = "activity-fold";
+  details.open = working;
+  var summary = d.createElement("summary");
+  setText(summary, working ? "Working" : "Activity");
+  details.appendChild(summary);
+  details.appendChild(list);
+  container.appendChild(details);
+  return details;
 }
 
 export function renderContextChips(
@@ -407,8 +416,9 @@ export function renderConnectionStatus(container: any, connection: any, doc?: an
   setAttr(wrap, "aria-live", "polite");
   var backendLabel =
     status.backend === "halo" ? "HALO" :
-    status.backend === "standalone-local" ? "Standalone local" : "Backend";
-  var model = status.modelLabel ? " · " + status.modelLabel : "";
+    status.backend === "standalone-local" ? "Local" : "Backend";
+  var modelName = status.selectedModel || status.modelLabel || "";
+  var model = modelName ? " · " + modelName : "";
   var stateLabel =
     status.state === "ready" ? "Ready" :
     status.state === "running" ? "Running" :
@@ -417,8 +427,10 @@ export function renderConnectionStatus(container: any, connection: any, doc?: an
     status.state === "invalid-credentials" ? "Invalid credentials" :
     status.state === "model-unavailable" ? "Model unavailable" :
     status.state === "timeout" ? "Timed out" : "Unavailable";
-  setText(wrap, backendLabel + model + " · " + stateLabel);
-  setAttr(wrap, "title", status.detail || stateLabel);
+  setText(wrap, stateLabel + model);
+  var title = status.detail || stateLabel;
+  if (status.endpoint) title += " (" + status.endpoint + ")";
+  setAttr(wrap, "title", backendLabel + " · " + title);
   setAttr(wrap, "aria-label", "Inference status: " + backendLabel + " " + stateLabel);
   if (postMessage) {
     onClick(wrap, function () {

@@ -1,7 +1,9 @@
-# Open VS Code Desktop Icon
+# Open VS Code desktop icon
 
-This directory holds the icon assets for Open VS Code desktop packaging.
+`render-icon.py` draws the original mark: an ink rounded square, a paper bracket, and a teal diamond.
 
-- `open-vs-code.icns` (or `icon.png`): Application icon asset for macOS bundle.
-- In Sprint 4F, a clean placeholder icon is provided to satisfy reproducible build requirements without blocking on final graphic design.
-- To replace: provide a 1024x1024 PNG or standard macOS ICNS file at this location.
+Committed sizes:
+
+- `icon-48.png`, `icon-128.png`, `icon.png` (256), `icon-512.png`
+
+The Linux package installs these under `hicolor` and replaces the editor window icon.

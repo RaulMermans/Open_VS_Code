@@ -6,6 +6,13 @@
   "engines": {
     "vscode": "^1.90.0"
   },
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "The agent can read and explain a restricted workspace. File changes and commands still wait for workspace trust and your approval."
+    }
+  },
   "type": "commonjs",
   "main": "dist/extension.js",
   "activationEvents": [
@@ -18,12 +25,22 @@
     "onCommand:open-vs-code.openBrowserPanel"
   ],
   "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "open-vs-code-agent",
+          "title": "Open VS Code",
+          "icon": "media/agent.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "open-vs-code-agent": [
         {
           "type": "webview",
           "id": "open-vs-code.chat",
-          "name": "Open VS Code Chat"
+          "name": "Agent",
+          "visibility": "visible"
         }
       ]
     },

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
-import { applyChatModelSelection, localProviderBaseUrl, parseOllamaTags } from './local-model-selection.js';
+import { applyChatModelSelection, fetchLocalModelCatalog, localProviderBaseUrl } from './local-model-selection.js';
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
@@ -207,12 +207,22 @@ class VSCodeIdeHost implements IdeHost {
     modelLabel?: string;
     providerLabel?: string;
     configStatus: 'present' | 'missing' | 'invalid';
+    installedModels?: string[];
+    selectedModel?: string;
+    endpoint?: string;
+    endpointVerified?: boolean;
+    lastError?: 'disconnected' | 'model-unavailable';
   }> {
     const settings = haloSettings();
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     let configStatus: 'present' | 'missing' | 'invalid' = 'missing';
     let modelLabel: string | undefined;
     let providerLabel: string | undefined;
+    let selectedModel: string | undefined;
+    let endpoint: string | undefined;
+    let installedModels: string[] | undefined;
+    let endpointVerified = false;
+    let lastError: 'disconnected' | 'model-unavailable' | undefined;
     if (root) {
       try {
         const config = loadRoutingConfigSync(root);
@@ -221,8 +231,23 @@ class VSCodeIdeHost implements IdeHost {
           const mode = chatController?.getActiveExecutionMode()?.mode ?? 'ASK';
           const identity = await describeConfiguredRoute(config, mode);
           if (identity) {
-            modelLabel = identity.modelLabel;
+            modelLabel = identity.servedModelName || identity.modelLabel;
+            selectedModel = identity.servedModelName;
             providerLabel = identity.providerId;
+          }
+          if (settings.backend !== 'halo') {
+            const baseUrl = localProviderBaseUrl(config);
+            if (baseUrl) {
+              endpoint = baseUrl;
+              const catalog = await fetchLocalModelCatalog(baseUrl);
+              if (catalog.error) {
+                lastError = 'disconnected';
+              } else {
+                installedModels = catalog.models.map((model) => model.name);
+                endpointVerified = true;
+                if (selectedModel && !installedModels.includes(selectedModel)) lastError = 'model-unavailable';
+              }
+            }
           }
         }
       } catch {
@@ -234,6 +259,11 @@ class VSCodeIdeHost implements IdeHost {
       modelLabel,
       providerLabel: settings.backend === 'halo' ? 'HALO' : (providerLabel || 'Standalone local'),
       configStatus,
+      ...(installedModels ? { installedModels } : {}),
+      ...(selectedModel ? { selectedModel } : {}),
+      ...(endpoint ? { endpoint } : {}),
+      endpointVerified,
+      lastError,
     };
   }
 
@@ -616,6 +646,9 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
   void chatController.refreshConnection();
+  // Layout restore runs after activation. Opening earlier is overwritten, so wait once.
+  const revealTimer = setTimeout(() => { void revealAgentPanelOnce(context); }, 1200);
+  context.subscriptions.push({ dispose: () => clearTimeout(revealTimer) });
 
   // Sprint 7C: visible conversation history lives in VS Code's per-workspace storage
   // (outside the repository), never in .open-vs-code/sessions.jsonl.
@@ -699,6 +732,7 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.workspace.fs.writeFile(filePath, encoder.encode(STARTER_MODELS_JSON));
         const doc = await vscode.workspace.openTextDocument(filePath);
         await vscode.window.showTextDocument(doc);
+        await chatController?.refreshConnection();
         vscode.window.showInformationMessage('Created starter model configuration at .open-vs-code/models.json');
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to create starter config: ${err.message}`);
@@ -780,16 +814,12 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage('No local inference endpoint is configured. Cloud models are not used.');
         return;
       }
-      let models: { name: string }[] = [];
-      try {
-        const response = await fetch(new URL('/api/tags', baseUrl), { signal: AbortSignal.timeout(5000) });
-        if (!response.ok) throw new Error(`The local endpoint returned HTTP ${response.status}.`);
-        models = parseOllamaTags(await response.json());
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'The local endpoint is unreachable.';
-        vscode.window.showErrorMessage(`Cannot list local models at ${baseUrl}. ${message}`);
+      const catalog = await fetchLocalModelCatalog(baseUrl, 5000);
+      if (catalog.error) {
+        vscode.window.showErrorMessage(`Cannot list local models at ${baseUrl}. ${catalog.error}`);
         return;
       }
+      const models = catalog.models;
       if (models.length === 0) {
         vscode.window.showWarningMessage(`Connected to ${baseUrl}, but no models are installed.`);
         return;
@@ -806,25 +836,11 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Connected to ${baseUrl}. ${models.length} local model${models.length === 1 ? '' : 's'} available.`);
         return;
       }
-      const next = applyChatModelSelection(config, picked.id);
-      const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
-      const previous = await vscode.workspace.fs.readFile(filePath);
-      const encoder = new TextEncoder();
-      await vscode.workspace.fs.writeFile(filePath, encoder.encode(JSON.stringify(next, null, 2) + '\n'));
-      try {
-        const loaded = loadRoutingConfigSync(root);
-        if (!loaded) throw new Error('The model configuration could not be read back.');
-        const identity = await describeConfiguredRoute(loaded, 'BUILD');
-        if (identity?.servedModelName !== picked.id) {
-          throw new Error('The coding route did not select the chosen model.');
-        }
-        await chatController?.refreshConnection();
-        vscode.window.showInformationMessage(`Chat and coding will use ${identity.servedModelName}.`);
-      } catch (error) {
-        await vscode.workspace.fs.writeFile(filePath, previous);
-        const message = error instanceof Error ? error.message : 'The selection was rejected.';
-        vscode.window.showErrorMessage(`Model selection was not saved. ${message}`);
-      }
+      await persistSelectedLocalModel(picked.id, false);
+    }),
+    vscode.commands.registerCommand('open-vs-code.applyLocalModel', async (name?: string) => {
+      if (typeof name !== 'string' || !name.trim()) return;
+      await persistSelectedLocalModel(name.trim(), true);
     }),
     vscode.commands.registerCommand('open-vs-code.openModelConfig', async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -1097,6 +1113,87 @@ export const STARTER_MODELS_JSON = JSON.stringify({
   }
 }, null, 2) + "\n";
 
+
+/** Writes the chat model into workspace config. Autocomplete routes stay unchanged. */
+async function persistSelectedLocalModel(name: string, quiet: boolean): Promise<void> {
+  if (chatController?.getState().activeTurn) {
+    vscode.window.showWarningMessage('A task is running. Choose a model before the next request. The running task keeps its current model.');
+    return;
+  }
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!root) {
+    vscode.window.showWarningMessage('Open a folder before choosing a model.');
+    return;
+  }
+  let config = null;
+  try {
+    config = loadRoutingConfigSync(root);
+  } catch {
+    vscode.window.showErrorMessage('Model configuration is invalid. Open it and correct it before choosing a model.');
+    return;
+  }
+  if (!config) {
+    vscode.window.showWarningMessage('No local model configuration yet.');
+    return;
+  }
+  const baseUrl = localProviderBaseUrl(config);
+  if (!baseUrl) {
+    vscode.window.showErrorMessage('No local inference endpoint is configured. Cloud models are not used.');
+    return;
+  }
+  const catalog = await fetchLocalModelCatalog(baseUrl, 5000);
+  if (catalog.error) {
+    vscode.window.showErrorMessage(`Ollama is offline at ${baseUrl}. ${catalog.error}`);
+    await chatController?.refreshConnection();
+    return;
+  }
+  if (!catalog.models.some((model) => model.name === name)) {
+    vscode.window.showErrorMessage(`${name} is not installed at ${baseUrl}.`);
+    await chatController?.refreshConnection();
+    return;
+  }
+  const next = applyChatModelSelection(config, name);
+  const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
+  const previous = await vscode.workspace.fs.readFile(filePath);
+  const encoder = new TextEncoder();
+  await vscode.workspace.fs.writeFile(filePath, encoder.encode(JSON.stringify(next, null, 2) + '\n'));
+  try {
+    const loaded = loadRoutingConfigSync(root);
+    if (!loaded) throw new Error('The model configuration could not be read back.');
+    const identity = await describeConfiguredRoute(loaded, 'BUILD');
+    if (identity?.servedModelName !== name) {
+      throw new Error('The coding route did not select the chosen model.');
+    }
+    const autocomplete = loaded.routes.autocomplete;
+    if (autocomplete && JSON.stringify(autocomplete) !== JSON.stringify(config.routes.autocomplete)) {
+      throw new Error('Autocomplete routing must stay independent of the chat model.');
+    }
+    await chatController?.refreshConnection();
+    if (!quiet) vscode.window.showInformationMessage(`Chat and coding will use ${identity.servedModelName}.`);
+  } catch (error) {
+    await vscode.workspace.fs.writeFile(filePath, previous);
+    const message = error instanceof Error ? error.message : 'The selection was rejected.';
+    vscode.window.showErrorMessage(`Model selection was not saved. ${message}`);
+    await chatController?.refreshConnection();
+  }
+}
+
+/** Opens the right-hand agent once per workspace. Later launches keep the saved layout. */
+async function revealAgentPanelOnce(context: vscode.ExtensionContext): Promise<void> {
+  const key = 'open-vs-code.agentPanel.revealed.v2';
+  const workspaceState = context?.workspaceState;
+  if (!workspaceState || typeof workspaceState.get !== 'function') return;
+  if (workspaceState.get(key) === true) return;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await vscode.commands.executeCommand('workbench.view.extension.open-vs-code-agent');
+      if (typeof workspaceState.update === 'function') await workspaceState.update(key, true);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
+}
 
 /** Native, keyboard-first conversation picker over safe local metadata. */
 async function showConversationHistory(): Promise<void> {

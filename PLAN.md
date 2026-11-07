@@ -1,3 +1,11 @@
+Sprint 13 — Daily driver MVP
+STATUS: IN_VERIFICATION
+  - Agent view is in the secondary sidebar. Composer modes are Ask, Plan, and Agent, mapped to ASK, PLAN, and BUILD.
+  - Local model dropdown uses the Ollama tag probe. Autocomplete routes stay independent.
+  - `requiredEditPaths` treats a missing capture as "no only-target" without loosening the check. A path named after "do not edit" is not a required edit unless that exclusion would drop every path.
+  - Installed package is `0.1.0-rc.6` from `50e79ce463`. Debian SHA-256 `046e3a8af17a4c62b6d4d121364aceecb5dad290019b02a8a7007df38c35a973`. `gitDirty` was false. Sandbox helper is `4755 root:root`.
+  - Installed GUI on this machine: right-hand agent, Qwen3-Coder 30B ask and coding, approved repair, rejected edit with an unchanged file hash, restart persistence, offline endpoint error, and rollback through `0.1.0-rc.4` without changing the saved conversation. Details are in `docs/sprints/SPRINT_13_DAILY_DRIVER.md`. GitHub CI is still the acceptance gate.
+
 Sprint 12 — Personal V1 installed acceptance
 STATUS: PERSONAL_V1_BLOCKED
   - Clean package `0.1.0-rc.4` from `02d21325ef` is installed. Sandbox helper is `4755 root:root`. Launcher does not pass `--no-sandbox`.

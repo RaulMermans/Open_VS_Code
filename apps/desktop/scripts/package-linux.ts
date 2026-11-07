@@ -50,18 +50,44 @@ exec "$ELECTRON" "$@"
   writeFileSync(launcherPath, script, { mode: 0o755 });
 }
 
+function installBrandIcons(hicolorDir: string): void {
+  const sizes: Array<[number, string]> = [
+    [48, 'icon-48.png'],
+    [128, 'icon-128.png'],
+    [256, 'icon.png'],
+    [512, 'icon-512.png'],
+  ];
+  for (const [size, file] of sizes) {
+    const src = join(DESKTOP_ROOT, 'branding', file);
+    if (!existsSync(src)) continue;
+    const destDir = join(hicolorDir, `${size}x${size}`, 'apps');
+    mkdirSync(destDir, { recursive: true });
+    cpSync(src, join(destDir, 'open-vs-code.png'));
+  }
+}
+
+function installPayloadIcon(payloadDir: string): void {
+  const large = join(DESKTOP_ROOT, 'branding', 'icon-512.png');
+  const icon = existsSync(large) ? large : join(DESKTOP_ROOT, 'branding', 'icon.png');
+  if (!existsSync(icon)) return;
+  cpSync(icon, join(payloadDir, 'open-vs-code.png'));
+  const linuxDir = join(payloadDir, 'resources', 'app', 'resources', 'linux');
+  if (existsSync(linuxDir)) cpSync(icon, join(linuxDir, 'code.png'));
+}
+
 function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): string | undefined {
   const debRoot = join(distDir, `open-vs-code_${PRODUCT_VERSION}_amd64`);
   rmSync(debRoot, { recursive: true, force: true });
   const libDir = join(debRoot, 'usr', 'lib', 'open-vs-code');
   const binDir = join(debRoot, 'usr', 'bin');
   const appsDir = join(debRoot, 'usr', 'share', 'applications');
-  const iconDir = join(debRoot, 'usr', 'share', 'icons', 'hicolor', '256x256', 'apps');
+  for (const size of [48, 128, 256, 512]) {
+    mkdirSync(join(debRoot, 'usr', 'share', 'icons', 'hicolor', `${size}x${size}`, 'apps'), { recursive: true });
+  }
   const debianDir = join(debRoot, 'DEBIAN');
   mkdirSync(libDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
   mkdirSync(appsDir, { recursive: true });
-  mkdirSync(iconDir, { recursive: true });
   mkdirSync(debianDir, { recursive: true });
 
   execSync(`cp -a "${payloadDir}/." "${libDir}/"`);
@@ -71,10 +97,7 @@ function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): s
     { mode: 0o755 },
   );
   cpSync(join(DESKTOP_ROOT, 'branding', 'open-vs-code.desktop'), join(appsDir, 'open-vs-code.desktop'));
-  const iconSrc = join(DESKTOP_ROOT, 'branding', 'icon.png');
-  if (existsSync(iconSrc)) {
-    cpSync(iconSrc, join(iconDir, 'open-vs-code.png'));
-  }
+  installBrandIcons(join(debRoot, 'usr', 'share', 'icons', 'hicolor'));
 
   const installedSize = execSync(`du -sk "${debRoot}/usr" | cut -f1`).toString().trim();
   writeFileSync(
@@ -88,9 +111,9 @@ function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): s
       'Maintainer: Open VS Code <noreply@localhost>',
       `Installed-Size: ${installedSize}`,
       'Depends: libgtk-3-0, libnss3, libxss1, libasound2t64 | libasound2, libgbm1, libdrm2',
-      'Description: Local-first AI coding agent on a VSCodium shell',
-      ' Open VS Code bundles the local agent extension into a pinned VSCodium',
-      ` Linux build. Payload SHA-256: ${archiveSha256}`,
+      'Description: Local-first AI coding environment',
+      ' Open VS Code is a desktop editor with a local AI coding assistant.',
+      ` Payload SHA-256: ${archiveSha256}`,
       '',
     ].join('\n'),
   );
@@ -177,10 +200,7 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
     chmodSync(sandboxHelper, 0o4755);
   }
   cpSync(join(DESKTOP_ROOT, 'branding', 'open-vs-code.desktop'), join(payloadDir, 'open-vs-code.desktop'));
-  const iconSrc = join(DESKTOP_ROOT, 'branding', 'icon.png');
-  if (existsSync(iconSrc)) {
-    cpSync(iconSrc, join(payloadDir, 'open-vs-code.png'));
-  }
+  installPayloadIcon(payloadDir);
 
   const archiveName = `${payloadName}.tar.gz`;
   const archivePath = join(distDir, archiveName);
