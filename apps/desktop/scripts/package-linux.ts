@@ -154,7 +154,7 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
   if (gitDirty && process.env.OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE !== "1") {
     throw new Error("Refusing to package a release candidate from a dirty source tree. Commit the tree, or set OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE=1 for a diagnostic build.");
   }
-  const extensionVersion = JSON.parse(readFileSync(join(REPO_ROOT, "packages/vscode-integration/package.json"), "utf8")).version;
+  const extensionVersion = PRODUCT_VERSION;
   const modelGatewayVersion = JSON.parse(readFileSync(join(REPO_ROOT, "packages/agent-core/package.json"), "utf8")).version;
   const packagedAt = new Date().toISOString();
   const releaseStamp = {
