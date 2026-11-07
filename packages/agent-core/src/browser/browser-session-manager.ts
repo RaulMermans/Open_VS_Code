@@ -784,17 +784,21 @@ export class BrowserSessionManager {
       await this.#egressProxy.start();
 
       // Strictly forbidden to ever introduce --no-sandbox or --disable-setuid-sandbox.
-      // Motion sampling omits --disable-gpu and disables background throttling so the
-      // measured frame clock is the compositor clock, not a hidden-window timer.
+      // Headless macOS runners deliver requestAnimationFrame at about 10–30Hz even
+      // with background throttling disabled. A headed window on that platform uses
+      // the display clock. Vsync stays enabled so the sample cannot invent frames.
+      const measureFrames = this.#config.foregroundFrames === true;
+      const headedMotion = measureFrames && process.platform === "darwin";
       const launchArgs = [
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
-        ...(this.#config.foregroundFrames
+        ...(measureFrames
           ? [
               "--disable-background-timer-throttling",
               "--disable-renderer-backgrounding",
               "--disable-backgrounding-occluded-windows",
+              "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
             ]
           : ["--disable-gpu"]),
       ];
@@ -806,7 +810,7 @@ export class BrowserSessionManager {
       // and proxy bypass "<-loopback>" so loopback ports cannot bypass the egress proxy.
       this.#context = await chromium.launchPersistentContext(userDataDir, {
         executablePath: execPath,
-        headless: this.#config.headless ?? true,
+        headless: headedMotion ? false : (this.#config.headless ?? true),
         chromiumSandbox: true,
         args: launchArgs,
         proxy: {
@@ -970,7 +974,7 @@ export class BrowserSessionManager {
       this.#emit("session_started", {
         executablePath: execPath,
         source: execSource,
-        headless: this.#config.headless ?? true,
+        headless: headedMotion ? false : (this.#config.headless ?? true),
         sandboxed: true,
         runtimeVerified,
         browserVersion,

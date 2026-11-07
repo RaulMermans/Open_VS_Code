@@ -1,6 +1,6 @@
 Sprint 13.1 — Daily driver acceptance
 STATUS: IN_VERIFICATION
-  - Motion sampling keeps the `>10` frame and `>=30` FPS bars. The motion browser uses a foreground frame clock instead of `--disable-gpu`, and the sample starts after a four-frame warmup.
+  - Motion sampling keeps the `>10` frame and `>=30` FPS bars. On macOS the motion browser is headed so the sample uses the display clock. Headless macOS runners were measuring 12 FPS and 29 FPS for the same animation.
   - A path named after "do not edit" is refused before confirmation. A patch that repeats an `export function` is refused.
   - Recovery files and the model ledger are added to `.git/info/exclude`. They are not deleted.
   - Linux packaging rewrites workbench welcome strings from VSCodium to Open VS Code. The window icon is the supplied borderless mark. Package target is `0.1.0-rc.7`.

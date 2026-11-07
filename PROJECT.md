@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 13.1 — Daily driver acceptance. Desktop version target `0.1.0-rc.7`. The installed candidate remains `0.1.0-rc.6` until that package is built and installed.
+Sprint 13.1 — Daily driver acceptance. Desktop version target `0.1.0-rc.8`. `0.1.0-rc.7` was installed for the first acceptance pass and remains available beside the `0.1.0-rc.6` rollback package.
 
 Sprint 13 — Daily driver MVP (`docs/sprints/SPRINT_13_DAILY_DRIVER.md`).
 The agent lives in the right-hand sidebar. Ask, Plan, and Agent sit on the composer, and the model dropdown lists models returned by the local endpoint.
