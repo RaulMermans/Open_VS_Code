@@ -12,6 +12,17 @@ test("extractExplicitFilePaths extracts valid paths and ignores excluded tokens"
   assert.ok(!paths.includes("node_modules"))
 })
 
+test("attached context descriptors are not required edit targets", () => {
+  const instruction = [
+    "In src/greet.ts, change greet so it returns a greeting.",
+    "",
+    "[Attached context]",
+    "The user explicitly attached these workspace references.",
+    "- diagnostics: .open-vs-code/models.json",
+  ].join("\n")
+  assert.deepEqual(extractExplicitFilePaths(instruction), ["src/greet.ts"])
+})
+
 test("classifyTaskProfile classifies RULES_QUERY tasks correctly", () => {
   const profile = classifyTaskProfile("Read AGENTS.md in markdown-project and state the Testing and Safety rules.")
   assert.equal(profile.category, "RULES_QUERY")
