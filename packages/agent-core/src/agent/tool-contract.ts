@@ -85,6 +85,19 @@ export function isTestArtifactPath(path: string): boolean {
  * A behavior change needs an implementation edit.
  * An explicit request that names only test files can be satisfied by those tests.
  */
+/**
+ * Paths the user asked to change. "Read A and B, then fix only A" does not
+ * require an edit to B. A request that names several files without "only"
+ * still requires each of them.
+ */
+export function requiredEditPaths(instruction: string, explicitPaths: readonly string[]): string[] {
+  const only = instruction.match(/\b(?:fix|change|edit|modify|update)\s+only\s+((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)/i)
+  if (!only) return [...explicitPaths]
+  const target = only[1].replace(/^\.\//, "")
+  const matched = explicitPaths.filter((path) => pathsReferToSameFile(path, target))
+  return matched.length > 0 ? matched : [...explicitPaths]
+}
+
 export function implementationChangeRequired(instruction: string, explicitPaths: readonly string[]): boolean {
   if (explicitPaths.length > 0 && explicitPaths.every((path) => isTestArtifactPath(path))) return false
   if (explicitPaths.some((path) => !isTestArtifactPath(path))) return true

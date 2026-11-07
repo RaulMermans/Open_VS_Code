@@ -7,7 +7,7 @@ import test from "node:test"
 import { AgentRunner } from "../../src/agent/runner.ts"
 import type { AgentResult } from "../../src/contracts/agent.ts"
 import { classifyTaskProfile } from "../../src/agent/task-profile.ts"
-import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired } from "../../src/agent/tool-contract.ts"
+import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, requiredEditPaths } from "../../src/agent/tool-contract.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
@@ -142,6 +142,28 @@ test("creating an unrelated file does not change the existing implementation", (
   })
   assert.equal(verdict.accept, false)
   assert.match(verdict.summary, /existing implementation was not modified/)
+})
+
+test("a file named only as context is not a required edit", () => {
+  const instruction = "Read src/sum.mjs and test/sum.test.mjs, then fix only src/sum.mjs so npm test passes. Do not edit the test."
+  const mentioned = ["src/sum.mjs", "test/sum.test.mjs"]
+  assert.deepEqual(requiredEditPaths(instruction, mentioned), ["src/sum.mjs"])
+  assert.deepEqual(
+    requiredEditPaths("Change the prefix in both src/item.mjs and test/item.test.mjs, then run the tests.", ["src/item.mjs", "test/item.test.mjs"]),
+    ["src/item.mjs", "test/item.test.mjs"],
+  )
+  const verdict = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: requiredEditPaths(instruction, mentioned),
+    requireImplementationChange: true,
+    mutations: [{ path: "src/sum.mjs", status: "APPLIED", at: "2026-11-07T00:00:01.000Z", operation: "patch" }],
+    verifications: [{ status: "PASS", at: "2026-11-07T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verdict.accept, true)
+  assert.match(verdict.summary, /src\/sum\.mjs/)
 })
 
 test("an edit with no applied change cannot report success", () => {
