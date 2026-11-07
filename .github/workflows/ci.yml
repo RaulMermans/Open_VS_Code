@@ -32,6 +32,21 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Enable Linux Chromium user-namespace sandbox
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Ubuntu 24.04 runners block unprivileged user namespaces. Chromium's
+          # sandbox needs them. This does not pass --no-sandbox.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = "0"
+          fi
+          if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+            test "$(cat /proc/sys/kernel/unprivileged_userns_clone)" = "1"
+          fi
+
       - name: Install dependencies
         shell: bash
         run: npm ci
