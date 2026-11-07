@@ -129,6 +129,16 @@ test("protocol normalizer decodes content JSON tool call", () => {
   assert.deepEqual(normalized.toolCalls[0]!.arguments, { path: "." })
 })
 
+test("protocol normalizer decodes Qwen function-parameter tool calls from content", () => {
+  const normalized = normalizeWireResponse(PROTOCOL_FIXTURES.contentQwenFunctionTags)
+  assert.ok(normalized.toolCalls)
+  assert.equal(normalized.toolCalls.length, 1)
+  assert.equal(normalized.toolCalls[0]!.name, "search_text")
+  assert.deepEqual(normalized.toolCalls[0]!.arguments, { query: "formatNote" })
+  assert.match(normalized.message.content, /I'll search first/)
+  assert.equal(normalized.message.content.includes("<function="), false)
+})
+
 test("protocol normalizer decodes tool call from <tool_call> tags", () => {
   const normalized = normalizeWireResponse(PROTOCOL_FIXTURES.contentToolCallTags)
   assert.ok(normalized.toolCalls)

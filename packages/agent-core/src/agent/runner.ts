@@ -132,6 +132,7 @@ interface Session {
   timeoutOccurred?: boolean | undefined
   contractFaults?: Map<string, number>
   mutationRejectedByUser?: boolean
+  autoVerifyPending?: boolean
 }
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
@@ -663,22 +664,26 @@ export class AgentRunner {
       }
     }
     const afterApproval = this.#codingGoalVerdict()
-    if (afterApproval?.accept) {
+    if (afterApproval?.accept && session.autoVerifyPending) {
+      session.autoVerifyPending = false
       await this.#completeTask(afterApproval.summary)
       return this.#result()
     }
     if (
-      afterApproval?.editsSatisfied
+      afterApproval
+      && afterApproval.editsSatisfied
       && !afterApproval.verificationSatisfied
       && this.#verificationRequired()
     ) {
       const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
       if (verifyName) {
-        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: {} })) {
+        session.autoVerifyPending = true
+        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } })) {
           return this.#result()
         }
         const verified = this.#codingGoalVerdict()
         if (verified?.accept) {
+          session.autoVerifyPending = false
           await this.#completeTask(verified.summary)
           return this.#result()
         }
@@ -1113,18 +1118,6 @@ export class AgentRunner {
           }
         }
 
-        if (
-          calls.length === 0
-          && codingVerdict?.editsSatisfied
-          && !codingVerdict.verificationSatisfied
-          && this.#verificationRequired()
-        ) {
-          const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
-          if (verifyName) {
-            calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: {} }]
-          }
-        }
-
         if (calls.length > 0) {
           // Fall through to execute tool calls from this model turn.
         } else {
@@ -1187,6 +1180,19 @@ export class AgentRunner {
           }
         }
 
+        if (
+          calls.length === 0
+          && codingVerdict?.editsSatisfied
+          && !codingVerdict.verificationSatisfied
+          && this.#verificationRequired()
+        ) {
+          const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
+          if (verifyName) {
+            session.autoVerifyPending = true
+            calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }]
+          }
+        }
+
         if (calls.length === 0) {
           await this.#acceptCompletion(response.message.content, "NOT_RUN")
           break
@@ -1203,7 +1209,8 @@ export class AgentRunner {
       }
       if (!stopped) {
         const afterTools = this.#codingGoalVerdict()
-        if (afterTools?.accept) {
+        if (afterTools?.accept && (session.autoVerifyPending || response.message.content.trim())) {
+          session.autoVerifyPending = false
           await this.#completeTask(response.message.content.trim() || afterTools.summary)
           break
         }
@@ -1581,13 +1588,10 @@ export class AgentRunner {
     const progressKey = `${signature}\0${observation.ok}\0${observation.content}`
     session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
     session.lastProgressKey = progressKey
-    const mutatingRepeat = prepared.definition.action === "write_file"
-      || prepared.definition.action === "delete_file"
-      || prepared.definition.action === "run_known_test"
-      || prepared.definition.action === "terminal_command"
     const codingProgress = this.#codingGoalVerdict()
     const waitingOnVerification = codingProgress?.editsSatisfied === true && codingProgress.verificationSatisfied === false
-    if (mutatingRepeat && session.repeatedProgress >= this.#nonProgressThreshold && !waitingOnVerification) {
+    const waitingOnRequestedEdit = codingProgress !== undefined && !codingProgress.editsSatisfied
+    if (session.repeatedProgress >= this.#nonProgressThreshold && !waitingOnVerification && !waitingOnRequestedEdit) {
       session.failureReason = "NON_PROGRESS"
       session.terminationSource = "NON_PROGRESS_GUARD"
       this.#emit("task.non_progress", { message: `Repeated ${prepared.name} call made no progress`, threshold: this.#nonProgressThreshold, terminationSource: "NON_PROGRESS_GUARD" })

@@ -6,11 +6,13 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { PRODUCT_VERSION } from '../scripts/product-version.ts';
+
 const DESKTOP_ROOT = join(fileURLToPath(import.meta.url), '..', '..');
 const DIST_DIR = join(DESKTOP_ROOT, 'dist');
-const PAYLOAD = join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0');
-const ARCHIVE = join(DIST_DIR, 'Open-VS-Code-linux-x64-0.1.0.tar.gz');
-const DEB = join(DIST_DIR, 'open-vs-code_0.1.0_amd64.deb');
+const PAYLOAD = join(DIST_DIR, `Open-VS-Code-linux-x64-${PRODUCT_VERSION}`);
+const ARCHIVE = join(DIST_DIR, `Open-VS-Code-linux-x64-${PRODUCT_VERSION}.tar.gz`);
+const DEB = join(DIST_DIR, `open-vs-code_${PRODUCT_VERSION}_amd64.deb`);
 
 describe('Linux x64 desktop package', { skip: process.platform !== 'linux' }, () => {
   test('payload, archive, and debian package exist', () => {

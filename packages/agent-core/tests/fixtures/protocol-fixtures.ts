@@ -408,6 +408,23 @@ export const PROTOCOL_FIXTURES = {
   },
 
   // 18. Local backend quirk: tool call inside markdown code fence
+  contentQwenFunctionTags: {
+    id: "chatcmpl-438",
+    object: "chat.completion",
+    created: 1787682897,
+    model: "qwen3-coder:30b",
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: "I'll search first.\n\n<function=search_text>\n<parameter=query>\nformatNote\n</parameter>\n</function>\n</tool_call>",
+        },
+        finish_reason: "stop",
+      },
+    ],
+  },
+
   contentMarkdownJsonToolCall: {
     id: "chatcmpl-437",
     object: "chat.completion",

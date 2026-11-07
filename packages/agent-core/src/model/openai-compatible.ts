@@ -92,8 +92,21 @@ export class OpenAICompatibleProvider implements ModelProvider {
       messages: wireMessages,
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...(request.maxOutputTokens !== undefined ? { max_tokens: request.maxOutputTokens } : {}),
-      ...(wireTools ? { tools: wireTools } : {}),
+      ...(wireTools ? { tools: wireTools, tool_choice: "auto" } : {}),
       ...(this.contextWindow ? { options: { num_ctx: this.contextWindow } } : {}),
+    }
+    if (process.env["OPEN_VS_CODE_MODEL_TRACE"] === "1") {
+      const lastMessage = wireMessages.at(-1)
+      const lastContent = lastMessage?.content
+      process.stderr.write(`${JSON.stringify({
+        phase: "request",
+        model: this.model,
+        toolNames: wireTools?.map((tool) => tool.function.name) ?? [],
+        toolChoice: wireTools ? "auto" : null,
+        messageCount: wireMessages.length,
+        lastRole: lastMessage?.role,
+        lastContentChars: typeof lastContent === "string" ? lastContent.length : 0,
+      })}\n`)
     }
 
     let response: Response
@@ -121,6 +134,18 @@ export class OpenAICompatibleProvider implements ModelProvider {
     } catch (error) {
       throw new ModelProviderError("MALFORMED_RESPONSE", "Model endpoint returned invalid JSON", undefined, { cause: error })
     }
-    return normalizeWireResponse(payload, this.model)
+    const normalized = normalizeWireResponse(payload, this.model)
+    if (process.env["OPEN_VS_CODE_MODEL_TRACE"] === "1") {
+      const choice = payload && typeof payload === "object" ? (payload as { choices?: { finish_reason?: string; message?: { content?: unknown; tool_calls?: unknown } }[] }).choices?.[0] : undefined
+      process.stderr.write(`${JSON.stringify({
+        phase: "response",
+        finishReason: choice?.finish_reason ?? normalized.finishReason,
+        parsedToolCalls: normalized.toolCalls?.map((call) => call.name) ?? [],
+        rawToolCallCount: Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls.length : 0,
+        contentChars: normalized.message.content.length,
+        contentPrefix: normalized.message.content.slice(0, 400),
+      })}\n`)
+    }
+    return normalized
   }
 }

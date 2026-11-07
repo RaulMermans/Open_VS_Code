@@ -253,6 +253,17 @@ test("Verification Engine - Cancellation", async () => {
   }
 })
 
+test("Verification Registry - omitted action defaults to TEST", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  try {
+    const registry = createVerificationToolRegistry(tmpDir)
+    const prepared = registry.prepare({ id: "1", name: "run_verification", arguments: {} })
+    assert.equal((prepared.arguments as { action: string }).action, "TEST")
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
 test("Verification Registry - Command injection resistance", async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
   try {

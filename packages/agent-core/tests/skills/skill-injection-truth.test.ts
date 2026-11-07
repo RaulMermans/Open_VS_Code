@@ -18,7 +18,7 @@ const TASK = "The parser crash needs a fix"
 
 async function run(instruction: string, skills?: { enabled: boolean; builtinRoot?: string }) {
   const workspaceRoot = await tempDir("injection")
-  const provider = new ScriptedModelProvider([final])
+  const provider = new ScriptedModelProvider([final, final, final])
   const runtime = await createAgentRuntime({ workspaceRoot, mode: "DEBUG", instruction, eventSink: () => {}, isTrusted: true, providerOverride: provider, ...(skills ? { skills } : {}) })
   const before = runtime.skillEvidence
   const result = await runtime.runner.run(runtime.runnerInput as never)
@@ -38,8 +38,8 @@ test("5A-INJ-1: a skill that reaches the model request is reported INJECTED with
   assert.deepEqual(after.injectedSkills, ["bug-triage"])
   assert.deepEqual(after.omittedSkills, [])
   assert.equal(after.injectedSkillTokens, after.skillContextTokens)
-  assert.equal(after.compiledRequests, 1)
-  assert.equal(after.requestsWithSkill, 1)
+  assert.ok(after.compiledRequests >= 1)
+  assert.equal(after.requestsWithSkill, after.compiledRequests)
   assert.ok(prompt.includes("[Skill: bug-triage v1 · built-in]"))
   assert.equal(isSkillApplied(after), true)
 })
