@@ -143,6 +143,20 @@ function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): s
   return debPath;
 }
 
+/** The shell's own welcome and walkthrough strings. Extension catalogs stay upstream. */
+export function rewriteWelcomeIdentity(messagesPath: string): void {
+  if (!existsSync(messagesPath)) return;
+  const messages = JSON.parse(readFileSync(messagesPath, 'utf8')) as unknown;
+  if (!Array.isArray(messages)) return;
+  let changed = false;
+  const next = messages.map((entry) => {
+    if (typeof entry !== 'string' || !entry.includes('VSCodium')) return entry;
+    changed = true;
+    return entry.replaceAll('VSCodium', 'Open VS Code');
+  });
+  if (changed) writeFileSync(messagesPath, JSON.stringify(next));
+}
+
 export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
   console.log('[package] Starting Open VS Code Linux x86-64 packaging...');
   const { spec, stagedAppPath } = await prepareDesktopShell();
@@ -168,6 +182,7 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
     join(DESKTOP_ROOT, 'branding', 'product.json'),
     spec.upstreamCommit,
   );
+  rewriteWelcomeIdentity(join(payloadDir, 'resources', 'app', 'out', 'nls.messages.json'));
   bundleOpenVSCodeExtension({
     repoRoot: REPO_ROOT,
     extensionsDir: join(payloadDir, 'resources', 'app', 'extensions'),

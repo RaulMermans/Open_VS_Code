@@ -783,12 +783,20 @@ export class BrowserSessionManager {
       });
       await this.#egressProxy.start();
 
-      // Strictly forbidden to ever introduce --no-sandbox or --disable-setuid-sandbox
+      // Strictly forbidden to ever introduce --no-sandbox or --disable-setuid-sandbox.
+      // Motion sampling omits --disable-gpu and disables background throttling so the
+      // measured frame clock is the compositor clock, not a hidden-window timer.
       const launchArgs = [
         "--disable-dev-shm-usage",
-        "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
+        ...(this.#config.foregroundFrames
+          ? [
+              "--disable-background-timer-throttling",
+              "--disable-renderer-backgrounding",
+              "--disable-backgrounding-occluded-windows",
+            ]
+          : ["--disable-gpu"]),
       ];
 
       const { chromium } = await import("playwright-core");
@@ -2624,8 +2632,16 @@ export class BrowserSessionManager {
         let lastTime = 0;
         let frameCount = 0;
         let started = false;
+        // Discard the frames spent compiling the animation. They are not part of
+        // the steady compositor rate the sample is supposed to measure.
+        let warmupFrames = 4;
 
         const recordFrame = (now: number) => {
+          if (warmupFrames > 0) {
+            warmupFrames -= 1;
+            win.requestAnimationFrame(recordFrame);
+            return;
+          }
           // The wait for the first frame is not an animation interval. Starting
           // the sample clock here keeps a delayed first rAF from consuming the
           // requested duration and under-counting a smooth animation.

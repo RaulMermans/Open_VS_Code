@@ -124,17 +124,19 @@ describe("Sprint 9C — Real Chromium Measured Motion Verification", { skip: ski
     const session = new BrowserSessionManager({
       workspaceRoot: tmpRoot,
       networkPolicy: { allowedOrigins: [appOrigin] },
+      foregroundFrames: true,
     });
 
     try {
       await session.open(`${appOrigin}/smooth`);
       const motion = await session.measureMotion({ durationMs: 400 });
+      const detail = `frames=${motion.report.totalFrames} fps=${motion.report.measuredFps} jank=${motion.report.jankCount} ${motion.report.summary}`;
 
       assert.equal(motion.evidenceKind, "multi_frame_sample");
-      assert.ok(motion.report.totalFrames > 10, `Expected >10 frames, got ${motion.report.totalFrames}`);
-      assert.ok(motion.report.measuredFps >= 30, `Expected >=30 FPS in headless Chromium, got ${motion.report.measuredFps}`);
+      assert.ok(motion.report.totalFrames > 10, `Expected >10 frames, got ${motion.report.totalFrames}. ${detail}`);
+      assert.ok(motion.report.measuredFps >= 30, `Expected >=30 FPS in headless Chromium, got ${motion.report.measuredFps}. ${detail}`);
       assert.equal(motion.report.layoutThrashingProperties.length, 0);
-      assert.equal(motion.report.motionQualityClaimAllowed, true);
+      assert.equal(motion.report.motionQualityClaimAllowed, true, detail);
     } finally {
       await session.dispose();
     }

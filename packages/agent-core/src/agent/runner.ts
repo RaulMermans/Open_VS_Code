@@ -24,7 +24,7 @@ import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
-import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, mutationToolGuidance, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
+import { assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -1316,6 +1316,18 @@ export class AgentRunner {
     }
     if (permission === "CONFIRM") {
       let reviewable: import("../tools/registry.ts").ReviewableExecution | undefined
+      if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
+        const target = String((prepared.arguments as { path?: unknown; targetFile?: unknown }).path
+          ?? (prepared.arguments as { targetFile?: unknown }).targetFile
+          ?? "")
+        const denied = excludedEditPaths(session.input.task.instruction)
+          .find((named) => target && pathsReferToSameFile(target, named))
+        if (denied) {
+          const message = `The request said not to edit ${denied}.`
+          this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
+          return false
+        }
+      }
       if (prepared.prepareForReview) {
         try {
           reviewable = await prepared.prepareForReview({
