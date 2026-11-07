@@ -2,6 +2,9 @@ import type { ModelDeployment, ModelDescriptor, RoutingConfiguration } from "@op
 
 export const CHAT_MODEL_DEPLOYMENT_ID = "open-vs-code-chat"
 
+/** Routes the chat picker is allowed to retarget. Autocomplete and any other key stay put. */
+const CHAT_ROUTE_KEYS = new Set(["default", "general", "planning", "coding", "debugging", "review"])
+
 export interface LocalModelChoice {
   readonly name: string
   readonly sizeBytes?: number
@@ -60,7 +63,7 @@ export function applyChatModelSelection(config: RoutingConfiguration, servedMode
   const routes: Record<string, readonly string[]> = {}
   for (const [key, value] of Object.entries(config.routes)) {
     if (!value) continue
-    routes[key] = key === "autocomplete" ? [...value] : [CHAT_MODEL_DEPLOYMENT_ID]
+    routes[key] = CHAT_ROUTE_KEYS.has(key) ? [CHAT_MODEL_DEPLOYMENT_ID] : [...value]
   }
   if (!routes.default) routes.default = [CHAT_MODEL_DEPLOYMENT_ID]
   if (!routes.coding) routes.coding = [CHAT_MODEL_DEPLOYMENT_ID]

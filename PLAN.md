@@ -1,3 +1,10 @@
+Sprint 12 — Personal V1 installed acceptance
+STATUS: PERSONAL_V1_BLOCKED
+  - Clean package `0.1.0-rc.4` from `02d21325ef` is installed. Sandbox helper is `4755 root:root`. Launcher does not pass `--no-sandbox`.
+  - Installed GUI: launch, terminal, Git, extensions, local model picker, Qwen3-Coder 30B chat, approved edit, debug repair with a passing test, rejected edit, restart persistence, and a dead-endpoint error were exercised on this machine.
+  - A file named next to "fix only" is context, not a second required edit. Chat context chips are not required edits. Motion sampling starts on the first animation frame. Linux CI enables user namespaces instead of skipping the Chromium sandbox.
+  - Local checks and the three-run 30B benchmark meet their gates. Remaining: push `.github/workflows/ci.yml` with a credential that has the `workflow` scope, then a green GitHub run. Details are in `docs/releases/PERSONAL_V1_ACCEPTANCE.md`.
+
 Sprint 2A — Project Memory & Session Continuity
 STATUS: COMPLETE
 

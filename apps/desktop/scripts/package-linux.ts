@@ -151,9 +151,25 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
   });
   const gitCommit = execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim();
   const gitDirty = execSync("git status --porcelain", { cwd: REPO_ROOT, encoding: "utf8" }).trim().length > 0;
+  if (gitDirty && process.env.OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE !== "1") {
+    throw new Error("Refusing to package a release candidate from a dirty source tree. Commit the tree, or set OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE=1 for a diagnostic build.");
+  }
+  const extensionVersion = PRODUCT_VERSION;
+  const modelGatewayVersion = JSON.parse(readFileSync(join(REPO_ROOT, "packages/agent-core/package.json"), "utf8")).version;
+  const packagedAt = new Date().toISOString();
+  const releaseStamp = {
+    productVersion: PRODUCT_VERSION,
+    gitCommit,
+    gitDirty,
+    packagedAt,
+    extensionId: "open-vs-code.vscode-integration",
+    extensionVersion,
+    modelGatewayPackage: "@open-vs-code/agent-core",
+    modelGatewayVersion,
+  };
   writeFileSync(
     join(payloadDir, "resources", "app", "open-vs-code-release.json"),
-    `${JSON.stringify({ productVersion: PRODUCT_VERSION, gitCommit, gitDirty, packagedAt: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify(releaseStamp, null, 2)}\n`,
   );
   writeLinuxLauncher(join(payloadDir, 'bin'), electronName);
   const sandboxHelper = join(payloadDir, 'chrome-sandbox');
@@ -179,6 +195,27 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
   const archiveSha256 = createHash('sha256').update(archiveBuffer).digest('hex');
   const debPath = buildDeb(payloadDir, distDir, archiveSha256);
   rmSync(buildTmp, { recursive: true, force: true });
+  const debSha256 = debPath && existsSync(debPath)
+    ? createHash('sha256').update(readFileSync(debPath)).digest('hex')
+    : undefined;
+  writeFileSync(
+    join(distDir, `open-vs-code_${PRODUCT_VERSION}_release-stamp.json`),
+    `${JSON.stringify({
+      productVersion: PRODUCT_VERSION,
+      gitCommit,
+      gitDirty,
+      packagedAt,
+      sourceClean: !gitDirty,
+      extensionId: "open-vs-code.vscode-integration",
+      extensionVersion,
+      modelGatewayPackage: "@open-vs-code/agent-core",
+      modelGatewayVersion,
+      archivePath,
+      archiveSha256,
+      debPath: debPath ?? null,
+      packageSha256: debSha256 ?? null,
+    }, null, 2)}\n`,
+  );
 
   const result: LinuxPackageResult = {
     appPath: targetAppPath,

@@ -24,12 +24,14 @@ const starter = {
   deployments: [
     { id: "local-chat", providerId: "local-inference", modelId: "qwen2.5-coder-7b", modelName: "qwen2.5-coder:7b", enabled: true, priority: 10 },
     { id: "local-fim", providerId: "local-inference", modelId: "qwen2.5-coder-7b", modelName: "qwen2.5-coder:7b", enabled: true, priority: 10, fimStrategy: "qwen" },
+    { id: "special-research", providerId: "local-inference", modelId: "qwen2.5-coder-7b", modelName: "research-model", enabled: true, priority: 5 },
   ],
   routes: {
     coding: ["local-chat"],
     debugging: ["local-chat"],
     default: ["local-chat"],
     autocomplete: ["local-fim"],
+    research: ["special-research"],
   },
 }
 
@@ -63,6 +65,8 @@ test("chat selection changes the routed coding model and leaves autocomplete", a
   }, { async checkHealth() { return "unknown" } })
   assert.equal(autocomplete.deploymentId, "local-fim")
   assert.equal(loaded.deployments.find((entry) => entry.id === "local-fim")?.modelName, "qwen2.5-coder:7b")
+  assert.deepEqual(loaded.routes.research, ["special-research"])
+  assert.deepEqual(loaded.routes.autocomplete, ["local-fim"])
 })
 
 test("a cloud-only configuration cannot be selected as a local model", () => {

@@ -2620,20 +2620,32 @@ export class BrowserSessionManager {
           // ignore if layout-shift observer is unsupported
         }
 
-        const startTime = win.performance.now();
-        let lastTime = startTime;
+        let origin = 0;
+        let lastTime = 0;
         let frameCount = 0;
+        let started = false;
 
         const recordFrame = (now: number) => {
+          // The wait for the first frame is not an animation interval. Starting
+          // the sample clock here keeps a delayed first rAF from consuming the
+          // requested duration and under-counting a smooth animation.
+          if (!started) {
+            started = true;
+            origin = now;
+            lastTime = now;
+            frameTimings.push({ frameIndex: frameCount++, timestampMs: 0, deltaMs: 0 });
+            win.requestAnimationFrame(recordFrame);
+            return;
+          }
           const delta = now - lastTime;
           lastTime = now;
           frameTimings.push({
             frameIndex: frameCount++,
-            timestampMs: Math.round(now - startTime),
+            timestampMs: Math.round(now - origin),
             deltaMs: Math.round(delta * 10) / 10,
           });
 
-          if (now - startTime < sampleDuration && frameCount < 90) {
+          if (now - origin < sampleDuration && frameCount < 90) {
             win.requestAnimationFrame(recordFrame);
           } else {
             try {

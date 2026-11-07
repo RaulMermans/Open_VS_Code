@@ -42,7 +42,8 @@ export interface TaskProfile {
 const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|mjs|cjs|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
 
 export function extractExplicitFilePaths(instruction: string): string[] {
-  const matches = instruction.match(FILE_PATH_REGEX) ?? []
+  const userRequest = instruction.split("[Attached context]")[0] ?? instruction
+  const matches = userRequest.match(FILE_PATH_REGEX) ?? []
   const unique = new Set<string>()
   for (const match of matches) {
     if (match.includes("/") || match.endsWith(".md") || match.endsWith(".ts") || match.endsWith(".js") || match.endsWith(".json")) {

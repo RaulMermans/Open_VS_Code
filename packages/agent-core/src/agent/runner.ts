@@ -24,7 +24,7 @@ import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
-import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, mutationToolGuidance, requestsExistingFileEdit, type CodingCompletion } from "./tool-contract.ts"
+import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, mutationToolGuidance, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -2507,10 +2507,11 @@ export class AgentRunner {
   #assessCoding(scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): CodingCompletion {
     const session = this.#requiredSession()
     const evidence = session.evidenceCollector.getEvidence()
+    const editPaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
     return assessCodingCompletion({
       requiresCodeChange: session.taskProfile.requiresCodeChange,
-      explicitPaths: session.taskProfile.explicitFilePaths,
-      requireImplementationChange: implementationChangeRequired(session.input.task.instruction, session.taskProfile.explicitFilePaths),
+      explicitPaths: editPaths,
+      requireImplementationChange: implementationChangeRequired(session.input.task.instruction, editPaths),
       requireExistingFileEdit: requestsExistingFileEdit(session.input.task.instruction),
       mutations: evidence.mutationOutcomes.map((mutation) => ({
         path: mutation.path,
