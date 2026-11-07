@@ -1,6 +1,6 @@
 # Sprint 13 — Daily driver MVP
 
-Status: implementation committed; installed GUI acceptance is recorded after the `0.1.0-rc.5` package is exercised on this machine.
+Status: `0.1.0-rc.6` is the package under verification. Installed GUI acceptance stays open until the journeys below are recorded against that package.
 
 ## Product
 
@@ -14,4 +14,4 @@ Status: implementation committed; installed GUI acceptance is recorded after the
 
 ## Baseline fix
 
-`requiredEditPaths` no longer reads a possibly missing regular-expression capture. A match without a capture keeps the explicit path list.
+`requiredEditPaths` no longer reads a possibly missing regular-expression capture. A match without a capture keeps the explicit path list. A path the user names after "do not edit" is dropped from the required set when at least one other required path remains.

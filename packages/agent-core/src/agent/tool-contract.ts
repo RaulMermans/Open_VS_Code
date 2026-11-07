@@ -85,18 +85,32 @@ export function isTestArtifactPath(path: string): boolean {
  * A behavior change needs an implementation edit.
  * An explicit request that names only test files can be satisfied by those tests.
  */
+const EDIT_PATH = String.raw`((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)`
+
 /**
  * Paths the user asked to change. "Read A and B, then fix only A" does not
- * require an edit to B. A request that names several files without "only"
- * still requires each of them.
+ * require an edit to B. "Do not edit B" also leaves B out. A request that
+ * names several files without either restriction still requires each of them.
+ * If every named path is excluded, the original list stays in force.
  */
 export function requiredEditPaths(instruction: string, explicitPaths: readonly string[]): string[] {
-  const only = instruction.match(/\b(?:fix|change|edit|modify|update)\s+only\s+((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)/i)
+  let paths = [...explicitPaths]
+  const only = instruction.match(new RegExp(String.raw`\b(?:fix|change|edit|modify|update)\s+only\s+${EDIT_PATH}`, "i"))
   const captured = only?.[1]
-  if (!captured) return [...explicitPaths]
-  const target = captured.replace(/^\.\//, "")
-  const matched = explicitPaths.filter((path) => pathsReferToSameFile(path, target))
-  return matched.length > 0 ? matched : [...explicitPaths]
+  if (captured) {
+    const target = captured.replace(/^\.\//, "")
+    const matched = explicitPaths.filter((path) => pathsReferToSameFile(path, target))
+    if (matched.length > 0) paths = matched
+  }
+  const negated: string[] = []
+  const denial = new RegExp(String.raw`\b(?:do not|don't|never)\s+(?:edit|modify|change|update|touch|alter)\s+${EDIT_PATH}`, "gi")
+  for (const match of instruction.matchAll(denial)) {
+    const named = match[1]
+    if (named) negated.push(named.replace(/^\.\//, ""))
+  }
+  if (negated.length === 0) return paths
+  const kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
+  return kept.length > 0 ? kept : paths
 }
 
 export function implementationChangeRequired(instruction: string, explicitPaths: readonly string[]): boolean {

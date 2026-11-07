@@ -732,6 +732,7 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.workspace.fs.writeFile(filePath, encoder.encode(STARTER_MODELS_JSON));
         const doc = await vscode.workspace.openTextDocument(filePath);
         await vscode.window.showTextDocument(doc);
+        await chatController?.refreshConnection();
         vscode.window.showInformationMessage('Created starter model configuration at .open-vs-code/models.json');
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to create starter config: ${err.message}`);

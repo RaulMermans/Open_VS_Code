@@ -166,6 +166,24 @@ test("a file named only as context is not a required edit", () => {
   assert.match(verdict.summary, /src\/sum\.mjs/)
 })
 
+test("a file the user said not to edit is not required", () => {
+  const instruction = "npm test fails because src/greet.mjs declares farewell twice. Remove the duplicate and do not edit test/greet.test.mjs."
+  const mentioned = ["src/greet.mjs", "test/greet.test.mjs"]
+  assert.deepEqual(requiredEditPaths(instruction, mentioned), ["src/greet.mjs"])
+  const verdict = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: requiredEditPaths(instruction, mentioned),
+    requireImplementationChange: true,
+    mutations: [{ path: "src/greet.mjs", status: "APPLIED", at: "2026-11-07T00:00:01.000Z", operation: "patch" }],
+    verifications: [{ status: "PASS", at: "2026-11-07T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verdict.accept, true)
+  assert.doesNotMatch(verdict.summary, /did not include/)
+})
+
 test("an edit with no applied change cannot report success", () => {
   const verdict = assessCodingCompletion({
     requiresCodeChange: true,

@@ -2,8 +2,8 @@ Sprint 13 — Daily driver MVP
 STATUS: IN_VERIFICATION
   - Agent view is in the secondary sidebar. Composer modes are Ask, Plan, and Agent, mapped to ASK, PLAN, and BUILD.
   - Local model dropdown uses the Ollama tag probe. Autocomplete routes stay independent.
-  - `requiredEditPaths` treats a missing capture as "no only-target" without loosening the check.
-  - Package target is `0.1.0-rc.5`. Installed GUI acceptance is not claimed until the journeys in `docs/sprints/SPRINT_13_DAILY_DRIVER.md` are run.
+  - `requiredEditPaths` treats a missing capture as "no only-target" without loosening the check. A path named after "do not edit" is not a required edit unless that exclusion would drop every path.
+  - Package target is `0.1.0-rc.6`. Installed GUI acceptance is not claimed until the journeys in `docs/sprints/SPRINT_13_DAILY_DRIVER.md` are run.
 
 Sprint 12 — Personal V1 installed acceptance
 STATUS: PERSONAL_V1_BLOCKED
