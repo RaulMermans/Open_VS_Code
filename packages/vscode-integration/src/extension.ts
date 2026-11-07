@@ -646,7 +646,9 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
   void chatController.refreshConnection();
-  void revealAgentPanelOnce(context);
+  // Layout restore runs after activation. Opening earlier is overwritten, so wait once.
+  const revealTimer = setTimeout(() => { void revealAgentPanelOnce(context); }, 1200);
+  context.subscriptions.push({ dispose: () => clearTimeout(revealTimer) });
 
   // Sprint 7C: visible conversation history lives in VS Code's per-workspace storage
   // (outside the repository), never in .open-vs-code/sessions.jsonl.
@@ -1177,23 +1179,19 @@ async function persistSelectedLocalModel(name: string, quiet: boolean): Promise<
 
 /** Opens the right-hand agent once per workspace. Later launches keep the saved layout. */
 async function revealAgentPanelOnce(context: vscode.ExtensionContext): Promise<void> {
-  const key = 'open-vs-code.agentPanel.revealed';
+  const key = 'open-vs-code.agentPanel.revealed.v2';
   const workspaceState = context?.workspaceState;
   if (!workspaceState || typeof workspaceState.get !== 'function') return;
   if (workspaceState.get(key) === true) return;
-  let shown = false;
-  try {
-    await vscode.commands.executeCommand('workbench.view.extension.open-vs-code-agent');
-    shown = true;
-  } catch {
+  for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      await vscode.commands.executeCommand('open-vs-code.chat.focus');
-      shown = true;
+      await vscode.commands.executeCommand('workbench.view.extension.open-vs-code-agent');
+      if (typeof workspaceState.update === 'function') await workspaceState.update(key, true);
+      return;
     } catch {
-      shown = false;
+      await new Promise((resolve) => setTimeout(resolve, 400));
     }
   }
-  if (shown && typeof workspaceState.update === 'function') await workspaceState.update(key, true);
 }
 
 /** Native, keyboard-first conversation picker over safe local metadata. */

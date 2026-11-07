@@ -511,14 +511,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         #composer-meta {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 6px;
             min-width: 0;
+            flex: 1;
         }
         #model-selector {
-            min-width: 0;
-            flex: 1;
-            max-width: 220px;
+            min-width: 140px;
+            flex: 1 1 160px;
+            max-width: 100%;
             background: var(--vscode-dropdown-background);
             color: var(--vscode-dropdown-foreground);
             border: 1px solid var(--vscode-dropdown-border);
@@ -1440,7 +1442,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (!models.length) {
                 var empty = document.createElement('option');
                 empty.value = '';
-                empty.textContent = connection && connection.state === 'disconnected' ? 'Ollama offline' : 'No local models';
+                empty.textContent = connection && connection.state === 'disconnected' ? 'Ollama offline' : (connection && connection.state === 'missing-config' ? 'No model config' : 'No models');
                 modelSelector.appendChild(empty);
                 modelSelector.disabled = true;
                 syncingModels = false;
