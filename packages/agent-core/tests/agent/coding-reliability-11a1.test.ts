@@ -678,3 +678,44 @@ test("a multi-file edit completes only after both requested files change", async
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("a path the user forbade is not written", async () => {
+  const root = await workspace()
+  const before = await readFile(join(root, "src/add.ts"), "utf8")
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }]),
+    response("Leaving src/add.ts unchanged."),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Read src/add.ts. Do not modify src/add.ts.", "BUILD", 4)
+    assert.notEqual(result.status, "PAUSED")
+    assert.equal(await readFile(join(root, "src/add.ts"), "utf8"), before)
+    assert.equal(result.appliedMutations?.length ?? 0, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a patch that repeats an exported function is refused", async () => {
+  const root = await workspace()
+  const source = "export function greet(name) {\n  return \"Hello, \" + name\n}\n\nexport function farewell(name) {\n  return \"Goodbye, \" + name\n}\n"
+  await writeFile(join(root, "src/greet.mjs"), source)
+  const provider = new ScriptedModelProvider([
+    response("", [{
+      id: "patch",
+      name: "apply_patch",
+      arguments: {
+        path: "src/greet.mjs",
+        search: "export function farewell(name) {\n  return \"Goodbye, \" + name\n}\n",
+        replace: "export function farewell(name) {\n  return \"Goodbye, \" + name\n}\n\nexport function farewell(name) {\n  return \"Goodbye, \" + name\n}\n",
+      },
+    }]),
+    response("The duplicate was not written."),
+  ])
+  try {
+    await runTask(provider, root, "Add farewell to src/greet.mjs. Do not edit test/format-note.test.ts.", "BUILD", 4)
+    assert.equal(await readFile(join(root, "src/greet.mjs"), "utf8"), source)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

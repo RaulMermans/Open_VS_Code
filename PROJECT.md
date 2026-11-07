@@ -30,8 +30,10 @@
 
 ## Current sprint
 
+Sprint 13.1 — Daily driver acceptance. Desktop version target `0.1.0-rc.8`. `0.1.0-rc.7` was installed for the first acceptance pass and remains available beside the `0.1.0-rc.6` rollback package.
+
 Sprint 13 — Daily driver MVP (`docs/sprints/SPRINT_13_DAILY_DRIVER.md`).
-The agent lives in the right-hand sidebar. Ask, Plan, and Agent sit on the composer, and the model dropdown lists models returned by the local endpoint. Desktop version `0.1.0-rc.6`.
+The agent lives in the right-hand sidebar. Ask, Plan, and Agent sit on the composer, and the model dropdown lists models returned by the local endpoint.
 
 Personal V1 installed acceptance (`docs/releases/PERSONAL_V1_ACCEPTANCE.md`).
 Status: `PERSONAL_V1_BLOCKED`. Release branch `release/personal-v1-installed-acceptance`. Clean Debian `0.1.0-rc.4` from `02d21325ef` is installed on this machine with the Electron sandbox enabled. The installed GUI completed a real debug repair and a rejected edit against `qwen3-coder:30b`. The three-run local benchmark met the agreed thresholds. GitHub CI is not green: this branch cannot be pushed while `.github/workflows/ci.yml` is included, and `main` at `6db9ec3467` still fails the Ubuntu and macOS jobs.

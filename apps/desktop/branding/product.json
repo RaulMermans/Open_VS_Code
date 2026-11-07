@@ -2,6 +2,7 @@
   "nameShort": "Open VS Code",
   "nameLong": "Open VS Code",
   "applicationName": "open-vs-code",
+  "linuxIconName": "open-vs-code",
   "dataFolderName": ".open-vs-code-desktop",
   "win32AppId": "{{4F8A6B29-41EA-4D88-B27D-A2234032BE01}}",
   "win32x64AppId": "{{2E775B32-E8B1-4A2D-A484-9D9DE0384594}}",

@@ -21,6 +21,20 @@ export function sha256(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex")
 }
 
+/** The first exported function name that the text declares more than once. */
+export function duplicateExportFunction(source: string): string | undefined {
+  const counts = new Map<string, number>()
+  for (const match of source.matchAll(/^export function ([A-Za-z_$][\w$]*)/gm)) {
+    const name = match[1]
+    if (!name) continue
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  for (const [name, count] of counts) {
+    if (count > 1) return name
+  }
+  return undefined
+}
+
 // --- Path Safety for Writes ---
 
 function isContainedPath(root: string, candidate: string): boolean {
@@ -368,6 +382,10 @@ export class MutationEngine {
     }
 
     const afterContent = beforeContent.slice(0, searchIndex) + request.patch.replace + beforeContent.slice(searchIndex + request.patch.search.length)
+    const duplicate = duplicateExportFunction(afterContent)
+    if (duplicate) {
+      throw new MutationFailure("INVALID_PATCH", `Patch would declare export function ${duplicate} more than once in ${request.path}`)
+    }
     const resultHash = sha256(afterContent)
 
     // Validate result is valid UTF-8 text

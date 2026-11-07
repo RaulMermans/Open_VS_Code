@@ -47,6 +47,11 @@ export interface BrowserSessionConfig {
   readonly accountId?: string | undefined;
   readonly storageDir?: string | undefined;
   readonly headless?: boolean | undefined;
+  /**
+   * Keep the page on a foreground frame clock. Motion measurement uses this so a
+   * hidden CI renderer is not sampled at a throttled rate. It never disables the sandbox.
+   */
+  readonly foregroundFrames?: boolean | undefined;
   readonly executablePath?: string | undefined;
   readonly networkPolicy?: BrowserNetworkPolicyConfig | undefined;
   readonly viewport?: { readonly width: number; readonly height: number } | undefined;

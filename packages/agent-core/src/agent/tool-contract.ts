@@ -87,6 +87,17 @@ export function isTestArtifactPath(path: string): boolean {
  */
 const EDIT_PATH = String.raw`((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)`
 
+/** Paths named after "do not edit" (and the same verbs). */
+export function excludedEditPaths(instruction: string): string[] {
+  const negated: string[] = []
+  const denial = new RegExp(String.raw`\b(?:do not|don't|never)\s+(?:edit|modify|change|update|touch|alter)\s+${EDIT_PATH}`, "gi")
+  for (const match of instruction.matchAll(denial)) {
+    const named = match[1]
+    if (named) negated.push(named.replace(/^\.\//, ""))
+  }
+  return negated
+}
+
 /**
  * Paths the user asked to change. "Read A and B, then fix only A" does not
  * require an edit to B. "Do not edit B" also leaves B out. A request that
@@ -102,12 +113,7 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
     const matched = explicitPaths.filter((path) => pathsReferToSameFile(path, target))
     if (matched.length > 0) paths = matched
   }
-  const negated: string[] = []
-  const denial = new RegExp(String.raw`\b(?:do not|don't|never)\s+(?:edit|modify|change|update|touch|alter)\s+${EDIT_PATH}`, "gi")
-  for (const match of instruction.matchAll(denial)) {
-    const named = match[1]
-    if (named) negated.push(named.replace(/^\.\//, ""))
-  }
+  const negated = excludedEditPaths(instruction)
   if (negated.length === 0) return paths
   const kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
   return kept.length > 0 ? kept : paths
