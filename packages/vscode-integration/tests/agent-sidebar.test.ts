@@ -12,6 +12,7 @@ test("the agent view is contributed to the secondary sidebar, not the explorer",
   assert.equal(views.explorer, undefined)
   assert.equal(views["open-vs-code-agent"][0].id, "open-vs-code.chat")
   assert.equal(manifest.contributes.viewsContainers.secondarySidebar[0].id, "open-vs-code-agent")
+  assert.equal(manifest.capabilities.untrustedWorkspaces.supported, "limited")
 })
 
 test("the chat page keeps one composer and asks, plans, and agents by their runtime modes", () => {
