@@ -186,7 +186,7 @@ Or run the CLI directly:
 apps/desktop/dist/Open\ VS\ Code.app/Contents/Resources/app/bin/open-vs-code
 ```
 
-On Linux x64 the same packaging commands produce `apps/desktop/dist/open-vs-code_0.1.0_amd64.deb`. Install that package as root, then launch **Open VS Code** from the applications menu or with `open-vs-code /path/to/repo`. The launcher authorizes the workspace's configured local endpoint and does not disable the Electron sandbox. Setup and the Sprint 11A results are in [`docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md`](docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md).
+On Linux x64 the same packaging commands produce `apps/desktop/dist/open-vs-code_<version>_amd64.deb`. The current candidate is `0.1.0-rc.4`. Install that package as root, then launch **Open VS Code** from the applications menu or with `open-vs-code /path/to/repo`. The launcher authorizes the workspace's configured local endpoint and does not disable the Electron sandbox. User data lives in `~/.config/Open VS Code`. Rollback and the Personal V1 evidence are in [`docs/releases/PERSONAL_V1_ACCEPTANCE.md`](docs/releases/PERSONAL_V1_ACCEPTANCE.md).
 
 ### Target Inference Machine / Optional Live Evaluation
 
