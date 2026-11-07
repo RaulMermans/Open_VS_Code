@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
-import { applyChatModelSelection, fetchLocalModelCatalog, localProviderBaseUrl } from './local-model-selection.js';
+import { applyChatModelSelection, buildStarterRoutingConfig, fetchLocalModelCatalog, localProviderBaseUrl } from './local-model-selection.js';
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
@@ -727,9 +727,20 @@ export function activate(context: vscode.ExtensionContext) {
       const dirPath = vscode.Uri.file(`${root}/.open-vs-code`);
       const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
       try {
+        try {
+          await vscode.workspace.fs.stat(filePath);
+          vscode.window.showInformationMessage('Model configuration already exists and was left unchanged.');
+          return;
+        } catch {
+          // The starter is only written when the workspace has no routing file.
+        }
         await vscode.workspace.fs.createDirectory(dirPath);
+        const catalog = await fetchLocalModelCatalog('http://127.0.0.1:11434', 2000);
+        const body = !catalog.error && catalog.models.length > 0
+          ? JSON.stringify(buildStarterRoutingConfig(catalog.models.map((model) => model.name)), null, 2) + '\n'
+          : STARTER_MODELS_JSON;
         const encoder = new TextEncoder();
-        await vscode.workspace.fs.writeFile(filePath, encoder.encode(STARTER_MODELS_JSON));
+        await vscode.workspace.fs.writeFile(filePath, encoder.encode(body));
         const doc = await vscode.workspace.openTextDocument(filePath);
         await vscode.window.showTextDocument(doc);
         await chatController?.refreshConnection();

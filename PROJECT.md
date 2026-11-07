@@ -30,6 +30,8 @@
 
 ## Current sprint
 
+Sprint 14 — Final daily-driver stabilization. Desktop version target `0.1.0-rc.9`. Installed `0.1.0-rc.8` stays in place until the rc.9 package passes the installed GUI journeys. Status: `IN_VERIFICATION`. See `PLAN.md`.
+
 Sprint 13.1 — Daily driver acceptance. Desktop version target `0.1.0-rc.8`. `0.1.0-rc.7` was installed for the first acceptance pass and remains available beside the `0.1.0-rc.6` rollback package.
 
 Sprint 13 — Daily driver MVP (`docs/sprints/SPRINT_13_DAILY_DRIVER.md`).

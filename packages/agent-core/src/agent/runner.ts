@@ -23,7 +23,7 @@ import { type PreparedToolCall, ToolRegistry, ToolRegistryError } from "../tools
 import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
-import { classifyTaskProfile, type TaskProfile } from "./task-profile.ts"
+import { classifyTaskProfile, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
@@ -133,6 +133,9 @@ interface Session {
   contractFaults?: Map<string, number>
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
+  lastAssistantText?: string
+  /** One "answer now" nudge has already been sent for a non-editing task. */
+  conversationAnswerNudged?: boolean
 }
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
@@ -929,10 +932,13 @@ export class AgentRunner {
       }
 
       const hasRealEvidence = session.evidenceLedger.totalObservations > 0
-      const isEvidenceSatisfied = hasRealEvidence && session.evidenceLedger.evaluate(
+      const evidenceEvaluation = session.evidenceLedger.evaluate(
         session.taskProfile.evidenceRequirements,
         session.taskProfile.explicitFilePaths,
-      ).satisfied
+      )
+      const directReply = session.taskProfile.directReply === true || isSocialTurn(session.input.task.instruction)
+      const answerableWithoutEdit = !session.taskProfile.requiresCodeChange
+      const isEvidenceSatisfied = directReply || (hasRealEvidence && evidenceEvaluation.satisfied)
 
       const isTurnBudgetTight = session.turns >= session.input.maxTurns - 1
       const allowedToolNames = new Set(session.taskProfile.allowedTools)
@@ -952,8 +958,12 @@ export class AgentRunner {
         ? `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. A test-only edit does not finish a behavior change. Use apply_patch for an existing file and create_file only for a new file.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
         : verificationOutstanding
           ? "\n\n[VERIFICATION REQUIRED]\nThe requested edit is applied. Run the tests before answering. Do not finish while verification is outstanding."
+          : directReply
+            ? "\n\n[CONVERSATION]\nAnswer the user directly. Do not call tools. Do not edit files. A greeting or question is complete without a source change."
           : isEvidenceSatisfied
             ? "\n\n[STATUS: EVIDENCE READY]\nYou have gathered the necessary repository evidence. DO NOT call any more tools. Provide your final concise, grounded answer directly now."
+            : answerableWithoutEdit
+              ? "\n\n[NO EDIT REQUIRED]\nThis request does not ask for a source change. Answer it. Use a tool only when the answer depends on a repository fact."
             : isTurnBudgetTight
               ? "\n\n[TURN BUDGET WARNING]\nYou are approaching your turn limit. Provide your grounded answer now without calling any further tools."
               : ""
@@ -962,8 +972,12 @@ export class AgentRunner {
         ? `Apply the requested edit. Inspect the repository when needed, then call apply_patch or create_file. Strategy: ${session.taskProfile.toolGuidance}`
         : verificationOutstanding
           ? "Run the project tests now. Inspection alone is not completion, and the edit is not complete until verification has run."
+          : directReply
+            ? "Answer the user's message in plain language. Do not call tools and do not edit files."
           : isEvidenceSatisfied
             ? `Phase 2 - Answer: You have gathered sufficient repository evidence below. Analyze the observations and provide your final grounded answer directly now with exact names, strings, constants, and paths from the observations. Do not call any further tools.`
+            : answerableWithoutEdit
+              ? `Answer the user. Do not edit files. Inspect the repository only if a fact is required. Strategy: ${session.taskProfile.toolGuidance}`
             : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`
 
       const completionLine = editOutstanding
@@ -1072,6 +1086,8 @@ export class AgentRunner {
         session.lastDeploymentId = newDeploymentId ?? response.model
       }
       let calls = [...(response.toolCalls ?? [])]
+      const assistantText = response.message.content.trim()
+      if (assistantText) session.lastAssistantText = assistantText
       this.#emit("model.completed", { turn, toolCallCount: calls.length, hasAnswer: response.message.content.length > 0 })
       if (calls.length > 0) {
         const verdict = this.#codingGoalVerdict()
@@ -1604,6 +1620,31 @@ export class AgentRunner {
     const waitingOnVerification = codingProgress?.editsSatisfied === true && codingProgress.verificationSatisfied === false
     const waitingOnRequestedEdit = codingProgress !== undefined && !codingProgress.editsSatisfied
     if (session.repeatedProgress >= this.#nonProgressThreshold && !waitingOnVerification && !waitingOnRequestedEdit) {
+      if (session.taskProfile.directReply) {
+        if (!session.conversationAnswerNudged) {
+          session.conversationAnswerNudged = true
+          session.repeatedProgress = 0
+          session.observations.push(createToolObservation({
+            toolName: "conversation_gate",
+            callId: "conversation-answer",
+            error: {
+              category: "ANSWER_REQUIRED",
+              message: "[ANSWER REQUIRED]\nThis request does not require a source edit. Stop calling tools and answer the user.",
+            },
+            maxContentBytes: this.#observationMaxBytes,
+          }))
+          return false
+        }
+        const text = session.lastAssistantText?.trim()
+        if (text) {
+          await this.#completeTask(text)
+          return true
+        }
+        session.failureReason = "INCOMPLETE"
+        session.finalAnswer = "No code change was required, and no answer was produced."
+        this.#emit("task.failed", { message: session.finalAnswer })
+        return true
+      }
       session.failureReason = "NON_PROGRESS"
       session.terminationSource = "NON_PROGRESS_GUARD"
       this.#emit("task.non_progress", { message: `Repeated ${prepared.name} call made no progress`, threshold: this.#nonProgressThreshold, terminationSource: "NON_PROGRESS_GUARD" })
