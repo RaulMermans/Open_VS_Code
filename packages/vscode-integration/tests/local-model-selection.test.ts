@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describeConfiguredRoute, loadRoutingConfigSync, ModelRouter } from "@open-vs-code/agent-core"
-import { applyChatModelSelection, parseOllamaTags } from "../src/local-model-selection.ts"
+import { applyChatModelSelection, fetchLocalModelCatalog, parseOllamaTags } from "../src/local-model-selection.ts"
 
 const starter = {
   providers: [
@@ -67,6 +67,12 @@ test("chat selection changes the routed coding model and leaves autocomplete", a
   assert.equal(loaded.deployments.find((entry) => entry.id === "local-fim")?.modelName, "qwen2.5-coder:7b")
   assert.deepEqual(loaded.routes.research, ["special-research"])
   assert.deepEqual(loaded.routes.autocomplete, ["local-fim"])
+})
+
+test("a failed local catalog probe reports the error and no models", async () => {
+  const catalog = await fetchLocalModelCatalog("http://127.0.0.1:9", 300)
+  assert.equal(catalog.models.length, 0)
+  assert.equal(typeof catalog.error, "string")
 })
 
 test("a cloud-only configuration cannot be selected as a local model", () => {

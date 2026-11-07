@@ -92,8 +92,9 @@ export function isTestArtifactPath(path: string): boolean {
  */
 export function requiredEditPaths(instruction: string, explicitPaths: readonly string[]): string[] {
   const only = instruction.match(/\b(?:fix|change|edit|modify|update)\s+only\s+((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)/i)
-  if (!only) return [...explicitPaths]
-  const target = only[1].replace(/^\.\//, "")
+  const captured = only?.[1]
+  if (!captured) return [...explicitPaths]
+  const target = captured.replace(/^\.\//, "")
   const matched = explicitPaths.filter((path) => pathsReferToSameFile(path, target))
   return matched.length > 0 ? matched : [...explicitPaths]
 }

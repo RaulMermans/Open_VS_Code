@@ -10,6 +10,17 @@ export interface LocalModelChoice {
   readonly sizeBytes?: number
 }
 
+export async function fetchLocalModelCatalog(baseUrl: string, timeoutMs = 2500): Promise<{ models: LocalModelChoice[]; error?: string }> {
+  try {
+    const response = await fetch(new URL("/api/tags", baseUrl), { signal: AbortSignal.timeout(timeoutMs) })
+    if (!response.ok) return { models: [], error: `The local endpoint returned HTTP ${response.status}.` }
+    return { models: parseOllamaTags(await response.json()) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "The local endpoint is unreachable."
+    return { models: [], error: message }
+  }
+}
+
 export function parseOllamaTags(body: unknown): LocalModelChoice[] {
   const record = asRecord(body)
   const models = record?.models

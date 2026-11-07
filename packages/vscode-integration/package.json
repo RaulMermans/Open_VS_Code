@@ -18,12 +18,22 @@
     "onCommand:open-vs-code.openBrowserPanel"
   ],
   "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "open-vs-code-agent",
+          "title": "Open VS Code",
+          "icon": "media/agent.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "open-vs-code-agent": [
         {
           "type": "webview",
           "id": "open-vs-code.chat",
-          "name": "Open VS Code Chat"
+          "name": "Agent",
+          "visibility": "visible"
         }
       ]
     },

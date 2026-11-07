@@ -44,6 +44,9 @@ export interface ConnectionSnapshotInput {
   readonly activeTurn?: boolean;
   readonly trusted?: boolean;
   readonly endpointVerified?: boolean;
+  readonly installedModels?: readonly string[];
+  readonly selectedModel?: string;
+  readonly endpoint?: string;
 }
 
 export interface AttachmentRequest {
@@ -117,6 +120,20 @@ export function sanitizeSearchQuery(raw: string): string {
 }
 
 export function deriveConnectionStatus(input: ConnectionSnapshotInput): ConnectionStatus {
+  const status = deriveConnectionStatusBody(input);
+  const installed = (input.installedModels || [])
+    .filter((name) => typeof name === "string" && name.trim().length > 0)
+    .map((name) => name.trim())
+    .slice(0, 64);
+  return {
+    ...status,
+    ...(installed.length ? { installedModels: installed } : {}),
+    ...(input.selectedModel ? { selectedModel: input.selectedModel } : {}),
+    ...(input.endpoint ? { endpoint: input.endpoint } : {}),
+  };
+}
+
+function deriveConnectionStatusBody(input: ConnectionSnapshotInput): ConnectionStatus {
   const backend: InferenceBackend =
     input.inferenceBackend === "halo" ? "halo" : input.inferenceBackend === "standalone-local" ? "standalone-local" : "unknown";
 
@@ -182,7 +199,9 @@ export function deriveConnectionStatus(input: ConnectionSnapshotInput): Connecti
       backend,
       modelLabel: input.modelLabel,
       providerLabel: input.providerLabel,
-      detail: "Inference endpoint unreachable",
+      detail: input.endpoint
+        ? `Ollama is offline or unreachable at ${input.endpoint}`
+        : "Inference endpoint unreachable",
       healthChecked: Boolean(input.haloHealthChecked),
       actionable: "check-connection",
     };
@@ -194,7 +213,9 @@ export function deriveConnectionStatus(input: ConnectionSnapshotInput): Connecti
       backend,
       modelLabel: input.modelLabel,
       providerLabel: input.providerLabel,
-      detail: "Configured model is not available on the endpoint",
+      detail: input.selectedModel
+        ? `${input.selectedModel} is not installed on the local endpoint`
+        : "Configured model is not available on the endpoint",
       healthChecked: Boolean(input.haloHealthChecked),
       actionable: "open-config",
     };

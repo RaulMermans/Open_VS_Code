@@ -129,7 +129,7 @@ export function bootChatWebview(html: string): BootedWebview {
   const dom = new FakeDom();
   const ids = Array.from(html.matchAll(/id="([^"]+)"/g)).map((m) => m[1]);
   for (const id of ids) {
-    const tag = id === "composer" ? "textarea" : id.endsWith("-filter") ? "input" : id.endsWith("-btn") ? "button" : id === "mode-selector" ? "select" : "div";
+    const tag = id === "composer" ? "textarea" : id.endsWith("-filter") ? "input" : id.endsWith("-btn") ? "button" : id === "mode-selector" || id === "model-selector" ? "select" : "div";
     const el = new FakeElement(tag, dom);
     el.id = id;
     dom.byId[id] = el;
