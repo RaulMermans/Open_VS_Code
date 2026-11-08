@@ -1,9 +1,18 @@
+Sprint 14C.1A — Global model hardening and desktop acceptance
+STATUS: IN_VERIFICATION
+  - `ModelRoutingHost.refresh()` does not read `.open-vs-code/models.json` unless the folder is trusted. Presence is a stat. An unreadable file still cannot redirect inference.
+  - Saving a global chat, autocomplete, endpoint, or advanced route does not suspend an active workspace override and does not rewrite the file. "Use global models" is the switch.
+  - The Model Manager shows the active chat model, autocomplete model, endpoint, and source. A global preference is labeled separately while an override is active.
+  - Workspace mode and pack saves, and starter model-file creation, refuse an untrusted folder.
+  - The agent-core test `bounds large tool output in the recompiled model context and event trace` passes. The failure was the required prompt growing past 1,000 bytes after conversational guidance. The 32-byte observation cap and the event-trace check are unchanged. Recovery still sends one fresh message.
+  - agent-core tests and vscode-integration tests passed (313). Typecheck passed for agent-core, ide-adapter, and vscode-integration. agent-core lint passed. Package and installed GUI evidence are in the sprint doc.
+
 Sprint 14C.1 — Global model management
 STATUS: IMPLEMENTED_NOT_INSTALLED
   - Chat and autocomplete use extension storage. A trusted `.open-vs-code/models.json` remains an explicit override and is not rewritten.
   - An untrusted workspace file cannot change the inference endpoint. Agent and Debug stay unavailable until the user trusts the folder.
   - Starter creation no longer opens the model file. VS Code may still restore a tab that was already open.
-  - vscode-integration tests: 311 passed. Typecheck passed for agent-core, ide-adapter, and vscode-integration. No new package was installed. Details are in `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
+  - The installed desktop at the start of 14C.1A was `0.1.0-rc.11`. Details are in `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
 
 Sprint 14B.2 — Clean release and real GUI acceptance
 STATUS: PARTIALLY_VERIFIED

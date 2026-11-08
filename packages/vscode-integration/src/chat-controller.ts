@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { AgentEvent, ConversationTurn, inspectRunRecovery, type RunRecoveryInspection, type ResolvedExecutionProfile } from '@open-vs-code/agent-core';
 import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto, ModelManagerSnapshot } from './chat-protocol.js';
-import { executionModeAvailable } from './model-routing.js';
+import { connectionFromSnapshot, executionModeAvailable } from './model-routing.js';
 import { IntegrationManagerController } from './integrations/integration-manager-controller.js';
 import { ModeService } from './modes/mode-service.js';
 import {
@@ -635,8 +635,8 @@ export class ChatController {
           await this.host.checkConnection();
         } else if (vscode.commands?.executeCommand) {
           await vscode.commands.executeCommand('open-vs-code.checkHaloConnection');
+          await this.refreshConnection();
         }
-        await this.refreshConnection();
         break;
       case 'context.attach':
         await this.attachFromEditor(message.target);
@@ -782,7 +782,7 @@ export class ChatController {
       case 'modelManager.test':
         if (typeof this.host.checkConnection === 'function') await this.host.checkConnection();
         else if (typeof this.host.refreshGlobalModels === 'function') await this.host.refreshGlobalModels();
-        await this.refreshConnection();
+        else await this.refreshConnection();
         break;
       case 'modelManager.setChat':
         await this.reportModelAction(await this.host.setGlobalChatModel?.(message.name));
@@ -798,18 +798,18 @@ export class ChatController {
         break;
       case 'modelManager.clearAdvanced':
         if (typeof this.host.clearGlobalAdvancedRouting === 'function') await this.host.clearGlobalAdvancedRouting();
-        await this.refreshConnection();
+        else await this.refreshConnection();
         break;
       case 'modelManager.suspendOverride':
         if (typeof this.host.suspendWorkspaceModelOverride === 'function') await this.host.suspendWorkspaceModelOverride();
-        await this.refreshConnection();
+        else await this.refreshConnection();
         break;
       case 'modelManager.useOverride':
         await this.reportModelAction(await this.host.useWorkspaceModelOverride?.());
         break;
       case 'modelManager.setCredential':
         if (typeof this.host.setGlobalModelCredential === 'function') await this.host.setGlobalModelCredential(message.token);
-        await this.refreshConnection();
+        else await this.refreshConnection();
         break;
       case 'ui.manageTrust':
         if (vscode.commands?.executeCommand) await vscode.commands.executeCommand('workbench.trust.manage');
@@ -1712,6 +1712,16 @@ export class ChatController {
     if (!snapshot) return;
     this.state.modelManager = { ...snapshot, installedModels: [...snapshot.installedModels], open: this._modelManagerOpen };
     this.state.workspaceTrusted = snapshot.workspaceTrusted;
+    const fields = connectionFromSnapshot(snapshot);
+    this._connectionInput = {
+      ...this._connectionInput,
+      ...fields,
+      inferenceBackend: this._connectionInput.inferenceBackend || "standalone-local",
+    };
+    this.state.connection = deriveConnectionStatus({
+      ...this._connectionInput,
+      activeTurn: this.state.activeTurn,
+    });
     this.sendState();
   }
 
@@ -1732,9 +1742,11 @@ export class ChatController {
 
   private async reportModelAction(error: string | undefined): Promise<void> {
     if (error) this.host.showError?.(error);
-    if (this.state.modelManager) this.state.modelManager = { ...this.state.modelManager, open: true };
     this._modelManagerOpen = true;
-    await this.refreshConnection();
+    if (this.state.modelManager && !this.state.modelManager.open) {
+      this.state.modelManager = { ...this.state.modelManager, open: true };
+      this.sendState();
+    }
   }
 
   private sendMessage(msg: HostToWebviewMessage) {

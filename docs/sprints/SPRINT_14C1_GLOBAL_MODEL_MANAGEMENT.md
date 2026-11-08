@@ -1,6 +1,29 @@
 # Sprint 14C.1 — Global model management
 
-STATUS: IMPLEMENTED_NOT_INSTALLED
+STATUS: IN_VERIFICATION
+
+## 14C.1A corrections
+
+`ModelRoutingHost.refresh()` used to call `loadRoutingConfigSync` before the trust check, so an untrusted `models.json` was parsed and then ignored. The host now stats the file and parses it only when `workspace.isTrusted === true`. `createAgentRuntime` does the same: an untrusted workspace does not load the file unless the caller already passed `routingConfigOverride`. A mode `000` file is the read probe. The untrusted path returns "No model routing configuration found" instead of `EACCES`, which is what a read would throw.
+
+Selecting a chat model, an autocomplete model, an endpoint, or advanced routing writes extension storage only. It does not set the suspend flag. The Models panel keeps showing the workspace model, endpoint, and "Source: workspace override (active)" until the user chooses "Use global models". That button sets the suspend flag and does not change the file.
+
+The Model Manager lists the active chat model, the active autocomplete model, the active endpoint, and the source. While an override is active, the dropdowns are labeled as global preferences.
+
+Starter creation returns before any write when the folder is untrusted. Saving workspace modes or packs throws the same refusal.
+
+The failing runner test was not a leaked tool body. A 10,000-character tool result was already cut to 32 bytes, `"truncated":true` was in the recompiled context, and the event trace did not contain 100 `x` characters. The whole user message was 1,331 bytes because the evidence-ready guidelines repeated the same stop instruction and included the conversational guidance. The scripted provider's assertion then threw, and the runner recorded that as `FAILED`. The duplicate evidence-ready banner is gone and the phase line is one sentence. Conversational guidance stays in that same user message. The 1,000-byte assertion, the 32-byte cap, and the trace check are unchanged. A recovery prompt is still one message.
+
+Scripted results before packaging:
+
+- `packages/agent-core` `npm test`: pass, exit 0
+- `packages/vscode-integration` `npm test`: 313 pass, 0 fail
+- `tsc --noEmit` for agent-core, ide-adapter, and vscode-integration: pass
+- `oxlint --deny-warnings` for agent-core: pass
+
+The desktop package and the installed GUI are recorded below after they exist. This sprint is not complete until that GUI check is done.
+
+## 14C.1 baseline
 
 ## Root cause
 

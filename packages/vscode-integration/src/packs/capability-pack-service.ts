@@ -14,6 +14,7 @@ import {
 } from "@open-vs-code/agent-core";
 import type { AccountClient, AccountCapabilityPack } from "@open-vs-code/account-service";
 import type { ModeService } from "../modes/mode-service.js";
+import { assertTrustedWorkspaceWrite } from "../workspace-trust-write.js";
 
 export interface WorkspacePacksFile {
   $schema?: string;
@@ -146,6 +147,7 @@ export class CapabilityPackService {
   }
 
   public saveWorkspacePacks(): void {
+    assertTrustedWorkspaceWrite();
     const configPath = this.getWorkspaceConfigPath();
     if (!configPath) return;
 

@@ -3653,13 +3653,28 @@ export function renderModelManager(container: any, snapshot: any, doc?: any, pos
   if (snapshot && snapshot.workspaceOverrideIgnored) statusText += " Workspace file ignored because the folder is untrusted.";
   setText(status, statusText);
   panel.appendChild(status);
-  appendModelSelect(d, panel, postMessage, "Chat and Agent", snapshot && snapshot.installedModels, snapshot && snapshot.chatModel, "modelManager.setChat");
-  appendModelSelect(d, panel, postMessage, "Autocomplete", snapshot && snapshot.installedModels, snapshot && snapshot.autocompleteModel, "modelManager.setAutocomplete");
+  appendManagerLine(d, panel, "Active chat model: " + ((snapshot && snapshot.chatModel) || "none"));
+  appendManagerLine(d, panel, "Active autocomplete model: " + ((snapshot && snapshot.autocompleteModel) || "none"));
+  appendManagerLine(d, panel, "Active endpoint: " + ((snapshot && snapshot.endpoint) || "none"));
+  appendManagerLine(d, panel, routingSourceLine(snapshot));
+  var overrideActive = !!(snapshot && snapshot.workspaceOverrideActive);
+  if (overrideActive) {
+    appendManagerLine(d, panel, "Global preferences stay saved. Changing them does not switch the active route. Use global models to suspend the override without editing the project file.");
+  }
+  if (snapshot && snapshot.workspaceTrusted === false && snapshot.trustNotice) {
+    appendManagerLine(d, panel, snapshot.trustNotice);
+  }
+  var chatLabel = overrideActive ? "Global chat preference" : "Chat and Agent";
+  var completeLabel = overrideActive ? "Global autocomplete preference" : "Autocomplete";
+  var chatSelected = overrideActive ? snapshot && snapshot.globalChatModel : snapshot && snapshot.chatModel;
+  var completeSelected = overrideActive ? snapshot && snapshot.globalAutocompleteModel : snapshot && snapshot.autocompleteModel;
+  appendModelSelect(d, panel, postMessage, chatLabel, snapshot && snapshot.installedModels, chatSelected, "modelManager.setChat");
+  appendModelSelect(d, panel, postMessage, completeLabel, snapshot && snapshot.installedModels, completeSelected, "modelManager.setAutocomplete");
   var endpointLabel = d.createElement("label");
-  setText(endpointLabel, "Endpoint");
+  setText(endpointLabel, overrideActive ? "Global endpoint" : "Endpoint");
   var endpoint = d.createElement("input");
   endpoint.type = "text";
-  endpoint.value = (snapshot && snapshot.endpoint) || "";
+  endpoint.value = overrideActive ? ((snapshot && snapshot.globalEndpoint) || "") : ((snapshot && snapshot.endpoint) || "");
   setAttr(endpoint, "aria-label", "Local inference endpoint");
   endpointLabel.appendChild(endpoint);
   panel.appendChild(endpointLabel);
@@ -3711,6 +3726,28 @@ export function renderModelManager(container: any, snapshot: any, doc?: any, pos
   });
   container.appendChild(panel);
   return panel;
+}
+
+function routingSourceLine(snapshot: any): string {
+  if (!snapshot || snapshot.workspaceTrusted === false) {
+    return "Source: global. This folder is not trusted, so a workspace model file cannot redirect inference.";
+  }
+  if (snapshot.workspaceOverrideActive) return "Source: workspace override (active).";
+  if (snapshot.workspaceConfigInvalid && snapshot.workspaceOverridePresent) {
+    return "Source: global. The workspace model file is invalid and was not applied.";
+  }
+  if (snapshot.workspaceOverridePresent) {
+    return "Source: global. The workspace override is suspended. The project file was not modified.";
+  }
+  if (snapshot.source === "discovered") return "Source: models discovered from the global endpoint.";
+  if (snapshot.source === "none") return "Source: none. Choose a model.";
+  return "Source: global.";
+}
+
+function appendManagerLine(d: any, parent: any, text: string): void {
+  var line = d.createElement("p");
+  setText(line, text);
+  parent.appendChild(line);
 }
 
 function appendModelSelect(d: any, parent: any, postMessage: any, labelText: string, models: any, selected: any, messageType: string): void {
@@ -3781,6 +3818,8 @@ export function webviewRenderRuntime(): string {
     renderConnectionStatus.toString(),
     renderTrustNotice.toString(),
     renderModelManager.toString(),
+    routingSourceLine.toString(),
+    appendManagerLine.toString(),
     appendModelSelect.toString(),
     appendManagerButton.toString(),
     formatDuration.toString(),

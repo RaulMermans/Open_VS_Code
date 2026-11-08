@@ -962,7 +962,7 @@ export class AgentRunner {
           : directReply
             ? "\n\n[CONVERSATION]\nAnswer the user directly. Do not call tools. Do not edit files. A greeting or question is complete without a source change."
           : isEvidenceSatisfied
-            ? "\n\n[STATUS: EVIDENCE READY]\nYou have gathered the necessary repository evidence. DO NOT call any more tools. Provide your final concise, grounded answer directly now."
+            ? ""
             : answerableWithoutEdit
               ? "\n\n[NO EDIT REQUIRED]\nThis request does not ask for a source change. Answer it. Use a tool only when the answer depends on a repository fact."
             : isTurnBudgetTight
@@ -976,7 +976,7 @@ export class AgentRunner {
           : directReply
             ? "Answer the user's message in plain language. Do not call tools and do not edit files."
           : isEvidenceSatisfied
-            ? `Phase 2 - Answer: You have gathered sufficient repository evidence below. Analyze the observations and provide your final grounded answer directly now with exact names, strings, constants, and paths from the observations. Do not call any further tools.`
+            ? "Phase 2 - Answer: Answer from the observations now. Do not call more tools."
             : answerableWithoutEdit
               ? `Answer the user. Do not edit files. Inspect the repository only if a fact is required. Strategy: ${session.taskProfile.toolGuidance}`
             : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`

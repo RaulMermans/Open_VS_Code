@@ -151,8 +151,9 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   let routingConfig: RoutingConfiguration | undefined;
 
   if (!provider) {
+    const readWorkspaceFile = options.isTrusted === true && options.skipWorkspaceRoutingFile !== true
     const config = options.routingConfigOverride
-      ?? (options.skipWorkspaceRoutingFile ? null : await loadRoutingConfig(options.workspaceRoot));
+      ?? (readWorkspaceFile ? await loadRoutingConfig(options.workspaceRoot) : null);
     if (config) routingConfig = config;
     if (!config) {
       throw new Error("No model routing configuration found.");

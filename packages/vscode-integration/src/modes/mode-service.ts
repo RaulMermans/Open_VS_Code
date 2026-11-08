@@ -10,6 +10,7 @@ import {
   resolveExecutionProfile,
 } from "@open-vs-code/agent-core";
 import type { AccountClient, AccountModeProfile } from "@open-vs-code/account-service";
+import { assertTrustedWorkspaceWrite } from "../workspace-trust-write.js";
 
 export interface WorkspaceModesFile {
   $schema?: string;
@@ -188,6 +189,7 @@ export class ModeService {
   }
 
   public saveWorkspaceProfiles(): void {
+    assertTrustedWorkspaceWrite();
     const configPath = this.getWorkspaceConfigPath();
     if (!configPath) return;
 

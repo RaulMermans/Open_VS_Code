@@ -81,6 +81,9 @@ export interface ModelManagerSnapshot {
   installedModels: readonly string[];
   chatModel?: string;
   autocompleteModel?: string;
+  globalChatModel?: string;
+  globalAutocompleteModel?: string;
+  globalEndpoint?: string;
   workspaceOverridePresent: boolean;
   workspaceOverrideActive: boolean;
   workspaceOverrideIgnored: boolean;

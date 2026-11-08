@@ -30,7 +30,9 @@
 
 ## Current sprint
 
-Sprint 14C.1 — Global model management and product experience. Status: `IMPLEMENTED_NOT_INSTALLED`. Model choice is stored in extension storage. A trusted `.open-vs-code/models.json` is an explicit override and is not rewritten. An untrusted folder cannot redirect inference. No new desktop package was installed. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md` and `docs/adrs/ADR-043-global-model-preferences.md`.
+Sprint 14C.1A — Global model hardening and desktop acceptance. Status: `IN_VERIFICATION`. Untrusted folders are not parsed for routing. A global model change does not replace an active workspace override. The bounded tool-output test passes. Desktop `0.1.0-rc.12` is the release candidate. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
+
+Sprint 14C.1 — Global model management and product experience. Status: `IMPLEMENTED_NOT_INSTALLED`. Model choice is stored in extension storage. A trusted `.open-vs-code/models.json` is an explicit override and is not rewritten. An untrusted folder cannot redirect inference. The installed desktop at the start of 14C.1A was `0.1.0-rc.11`. See `docs/adrs/ADR-043-global-model-preferences.md`.
 
 Sprint 14B.2 — Clean release and real GUI acceptance. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.11` from `9d8ab96c06` is built and not installed. The installed desktop remains `0.1.0-rc.9`. The installed GUI walkthrough is still open. See `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md` and `PLAN.md`.
 

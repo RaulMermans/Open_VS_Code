@@ -3,7 +3,9 @@ import assert from "node:assert/strict"
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { chmod } from "node:fs/promises"
 import { loadRoutingConfigSync, type RoutingConfiguration } from "@open-vs-code/agent-core"
+import { readWorkspaceRoutingOverride } from "../src/model-routing-file.ts"
 import { shouldShowModelConfiguration } from "../src/model-config-open.ts"
 import { applyAutocompleteModelSelection, applyChatModelSelection } from "../src/local-model-selection.ts"
 import {
@@ -87,7 +89,19 @@ test("chat selection does not write a workspace file and leaves autocomplete ind
     overrideActive: true,
   })
   assert.equal(plan.writesWorkspaceFile, false)
-  assert.equal(plan.suspendWorkspaceOverride, true)
+  assert.equal(plan.suspendWorkspaceOverride, false)
+  const stillOverride = resolveModelRouting({
+    workspaceTrusted: true,
+    workspaceConfig: fileConfig("http://127.0.0.1:9"),
+    workspaceConfigInvalid: false,
+    overrideSuspended: plan.suspendWorkspaceOverride,
+    globalPreferences: plan.preferences,
+    discoveredModelNames: [],
+    credentialConfigured: false,
+  })
+  assert.equal(stillOverride.source, "workspace-override")
+  assert.equal(stillOverride.chatModel, "workspace-chat")
+  assert.equal(stillOverride.endpoint, "http://127.0.0.1:9")
   assert.equal(plan.preferences.chatModel, "llama3.1:8b")
   assert.equal(plan.preferences.autocompleteModel, "qwen2.5-coder:7b")
   assert.equal("advanced" in plan.preferences, false)
@@ -125,6 +139,37 @@ test("a trusted workspace file overrides the global model and is not mutated", a
   assert.equal(resolved.workspaceOverrideActive, true)
   assert.equal(resolved.chatModel, "workspace-chat")
   assert.equal(await readFile(path, "utf8"), raw)
+})
+
+test("an untrusted workspace file is not read", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ovsc-untrusted-route-"))
+  await mkdir(join(root, ".open-vs-code"))
+  const path = join(root, ".open-vs-code", "models.json")
+  const body = JSON.stringify(fileConfig("http://127.0.0.1:9"))
+  await writeFile(path, body)
+  await chmod(path, 0)
+  try {
+    const read = readWorkspaceRoutingOverride(root, false)
+    assert.equal(read.config, null)
+    assert.equal(read.invalid, false)
+    assert.equal(read.present, true)
+    const resolved = resolveModelRouting({
+      workspaceTrusted: false,
+      workspaceConfig: read.config,
+      workspaceConfigInvalid: read.invalid,
+      workspaceFilePresent: read.present,
+      overrideSuspended: false,
+      globalPreferences: globalPrefs,
+      discoveredModelNames: [],
+      credentialConfigured: false,
+    })
+    assert.equal(resolved.source, "global")
+    assert.equal(resolved.workspaceOverrideIgnored, true)
+    assert.equal(resolved.endpoint, globalPrefs.endpoint)
+    assert.equal(resolved.chatModel, "qwen3-coder:30b")
+  } finally {
+    await chmod(path, 0o644)
+  }
 })
 
 test("an untrusted workspace file cannot redirect inference", () => {
@@ -287,7 +332,10 @@ test("model manager and trust banner describe the active limit", () => {
   renderModelManager(root, snapshot, doc, () => {})
   const text = JSON.stringify(root)
   assert.match(text, /untrusted/)
-  assert.match(text, /qwen3-coder:30b/)
+  assert.match(text, /Active chat model: qwen3-coder:30b/)
+  assert.match(text, /Active autocomplete model: qwen2\.5-coder:7b/)
+  assert.match(text, /Active endpoint: http:\/\/127\.0\.0\.1:11434/)
+  assert.match(text, /Source: global/)
   assert.match(text, /Autocomplete/)
   const trust = new MockElement("div")
   renderTrustNotice(trust, { workspaceTrusted: false, modelManager: snapshot }, doc, () => {})
@@ -295,4 +343,38 @@ test("model manager and trust banner describe the active limit", () => {
   const trusted = new MockElement("div")
   renderTrustNotice(trusted, { workspaceTrusted: true }, doc, () => {})
   assert.equal(trusted.children.length, 0)
+})
+
+test("an active workspace override stays visible when the global preference differs", () => {
+  const doc = { createElement: (tag: string) => new MockElement(tag) }
+  const root = new MockElement("div")
+  const resolution = resolveModelRouting({
+    workspaceTrusted: true,
+    workspaceConfig: fileConfig("http://127.0.0.1:9"),
+    workspaceConfigInvalid: false,
+    overrideSuspended: false,
+    globalPreferences: globalPrefs,
+    discoveredModelNames: ["qwen3-coder:30b", "qwen2.5-coder:7b"],
+    credentialConfigured: false,
+  })
+  const snapshot = snapshotFromResolution({
+    resolution,
+    installedModels: ["qwen3-coder:30b", "qwen2.5-coder:7b", "workspace-chat"],
+    workspaceTrusted: true,
+    credentialConfigured: false,
+    advancedActive: false,
+    probedEndpoint: "http://127.0.0.1:9",
+    globalChatModel: globalPrefs.chatModel,
+    globalAutocompleteModel: globalPrefs.autocompleteModel,
+    globalEndpoint: globalPrefs.endpoint,
+  })
+  renderModelManager(root, { ...snapshot, open: true }, doc, () => {})
+  const text = JSON.stringify(root)
+  assert.match(text, /Active chat model: workspace-chat/)
+  assert.match(text, /Active endpoint: http:\/\/127\.0\.0\.1:9/)
+  assert.match(text, /Source: workspace override \(active\)/)
+  assert.match(text, /does not switch the active route/)
+  assert.match(text, /Global chat preference/)
+  assert.match(text, /Use global models/)
+  assert.equal(text.includes("Saved qwen3-coder:30b as the active"), false)
 })

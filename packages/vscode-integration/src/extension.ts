@@ -114,7 +114,7 @@ class VSCodeIdeHost implements IdeHost {
   }
 
   async isWorkspaceTrusted(): Promise<boolean> {
-    return vscode.workspace.isTrusted;
+    return vscode.workspace.isTrusted === true;
   }
 
   async showOutput(message: string): Promise<void> {
@@ -243,7 +243,7 @@ class VSCodeIdeHost implements IdeHost {
         endpointVerified = fields.endpointVerified;
         lastError = fields.lastError;
       }
-    } else if (root) {
+    } else if (root && vscode.workspace.isTrusted === true) {
       try {
         const config = loadRoutingConfigSync(root);
         if (config) {
@@ -307,8 +307,8 @@ class VSCodeIdeHost implements IdeHost {
           : (probed?.notice || 'Local inference has no model route.');
       await this.showOutput(line);
       if (chatController) {
-        chatController.setConnectionInput({ ...snapshot, haloHealthChecked: false, haloReachable: false });
-        chatController.publishModelManager(probed || undefined);
+        if (probed) chatController.publishModelManager(probed);
+        else chatController.setConnectionInput({ ...snapshot, haloHealthChecked: false, haloReachable: false });
       }
       return;
     }
@@ -832,6 +832,10 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('Open a workspace folder before creating model configuration.');
         return;
       }
+      if (vscode.workspace.isTrusted !== true) {
+        vscode.window.showErrorMessage('This folder is not trusted. The workspace model file was not written. Trust was not granted automatically.');
+        return;
+      }
       const dirPath = vscode.Uri.file(`${root}/.open-vs-code`);
       const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
       try {
@@ -1233,9 +1237,8 @@ async function persistSelectedLocalModel(name: string, quiet: boolean): Promise<
   }
   if (!quiet) {
     const used = refreshed.snapshot.chatModel || name;
-    const suspended = refreshed.snapshot.workspaceOverridePresent && !refreshed.snapshot.workspaceOverrideActive;
-    vscode.window.showInformationMessage(suspended
-      ? `Chat will use ${used}. The workspace models.json file was not modified.`
+    vscode.window.showInformationMessage(refreshed.snapshot.workspaceOverrideActive
+      ? `Saved ${name} as the global chat model. The active route is still the workspace override. Choose Use global models to switch. The project file was not modified.`
       : `Chat will use ${used}.`);
   }
 }

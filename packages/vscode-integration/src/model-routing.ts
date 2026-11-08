@@ -55,6 +55,8 @@ export interface RoutingResolutionInput {
   readonly workspaceTrusted: boolean
   readonly workspaceConfig: RoutingConfiguration | null
   readonly workspaceConfigInvalid: boolean
+  /** Set when the file exists but was not parsed. An untrusted folder uses this instead of `workspaceConfig`. */
+  readonly workspaceFilePresent?: boolean
   readonly overrideSuspended: boolean
   readonly globalPreferences: GlobalModelPreferences | null
   readonly discoveredModelNames: readonly string[]
@@ -82,6 +84,9 @@ export interface ModelRoutingSnapshot {
   readonly installedModels: readonly string[]
   readonly chatModel?: string
   readonly autocompleteModel?: string
+  readonly globalChatModel?: string
+  readonly globalAutocompleteModel?: string
+  readonly globalEndpoint?: string
   readonly workspaceOverridePresent: boolean
   readonly workspaceOverrideActive: boolean
   readonly workspaceOverrideIgnored: boolean
@@ -175,7 +180,7 @@ export function routingFromSelection(options: {
 }
 
 export function resolveModelRouting(input: RoutingResolutionInput): RoutingResolution {
-  const filePresent = input.workspaceConfig !== null || input.workspaceConfigInvalid
+  const filePresent = input.workspaceFilePresent === true || input.workspaceConfig !== null || input.workspaceConfigInvalid
   const trusted = input.workspaceTrusted === true
   const ignored = filePresent && !trusted
   const invalid = input.workspaceConfigInvalid
@@ -192,7 +197,7 @@ export function resolveModelRouting(input: RoutingResolutionInput): RoutingResol
       endpoint,
       chatModel: routeModelName(input.workspaceConfig, "default") || routeModelName(input.workspaceConfig, "coding"),
       autocompleteModel: routeModelName(input.workspaceConfig, "autocomplete"),
-      notice: "Workspace models.json is the active route. Model choices in the panel do not edit that file.",
+      notice: "Workspace models.json is the active route. A global preference change stays saved and does not switch this route. Use global models to suspend the override. The file is not modified.",
     }
   }
   const globalConfig = configFromPreferences(input.globalPreferences, input.credentialConfigured)
@@ -265,7 +270,7 @@ export function planChatSelection(input: {
   const autocompleteModel = (input.autocompleteModel || input.current?.autocompleteModel || chatModel).trim()
   return {
     preferences: { version: 1, endpoint, chatModel, autocompleteModel },
-    suspendWorkspaceOverride: input.overrideActive,
+    suspendWorkspaceOverride: input.overrideActive && false,
     writesWorkspaceFile: false,
   }
 }
@@ -284,7 +289,7 @@ export function planAutocompleteSelection(input: {
   const chatModel = (input.chatModel || input.current?.chatModel || autocompleteModel).trim()
   return {
     preferences: { version: 1, endpoint, chatModel, autocompleteModel },
-    suspendWorkspaceOverride: input.overrideActive,
+    suspendWorkspaceOverride: input.overrideActive && false,
     writesWorkspaceFile: false,
   }
 }
@@ -308,6 +313,9 @@ export function snapshotFromResolution(input: {
   credentialConfigured: boolean
   advancedActive: boolean
   probedEndpoint: string
+  globalChatModel?: string
+  globalAutocompleteModel?: string
+  globalEndpoint?: string
 }): ModelRoutingSnapshot {
   const trustNotice = input.workspaceTrusted
     ? undefined
@@ -320,6 +328,9 @@ export function snapshotFromResolution(input: {
     installedModels: input.installedModels,
     ...(input.resolution.chatModel ? { chatModel: input.resolution.chatModel } : {}),
     ...(input.resolution.autocompleteModel ? { autocompleteModel: input.resolution.autocompleteModel } : {}),
+    ...(input.globalChatModel ? { globalChatModel: input.globalChatModel } : {}),
+    ...(input.globalAutocompleteModel ? { globalAutocompleteModel: input.globalAutocompleteModel } : {}),
+    ...(input.globalEndpoint ? { globalEndpoint: input.globalEndpoint } : {}),
     workspaceOverridePresent: input.resolution.workspaceOverridePresent,
     workspaceOverrideActive: input.resolution.workspaceOverrideActive,
     workspaceOverrideIgnored: input.resolution.workspaceOverrideIgnored,
