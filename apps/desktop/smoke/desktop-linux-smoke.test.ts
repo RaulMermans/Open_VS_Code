@@ -58,6 +58,8 @@ describe('Linux x64 desktop package', { skip: process.platform !== 'linux' }, ()
     const launcher = readFileSync(join(PAYLOAD, 'bin', 'open-vs-code'), 'utf8');
     assert.match(launcher, /unset ELECTRON_RUN_AS_NODE/);
     assert.match(launcher, /export OPEN_VS_CODE_REAL_INFERENCE=1/);
+    assert.match(launcher, /CHROME_DESKTOP="open-vs-code\.desktop"/);
+    assert.match(launcher, /ELECTRON="\$ROOT\/open-vs-code"/);
     assert.doesNotMatch(launcher, /--no-sandbox/);
   });
 

@@ -11,7 +11,7 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests",
-    "test": "node --import tsx/esm --test tests/**/*.test.ts"
+    "test": "node --import tsx/esm --test --test-timeout=120000 --test-force-exit tests/**/*.test.ts"
   },
   "dependencies": {
     "@open-vs-code/agent-core": "*"

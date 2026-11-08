@@ -19,6 +19,8 @@ import { TerminalReviewController, TerminalReviewEntry, formatTerminalTranscript
 import {
   activityFromAgentEvent,
   classifyTurnError,
+  formatTerminalTaskMessage,
+  USER_REJECTION_MESSAGE,
   deriveConnectionStatus,
   describeAttachment,
   formatAttachmentInstruction,
@@ -677,7 +679,7 @@ export class ChatController {
             const resolver = this._confirmationResolver;
             this._confirmationResolver = undefined;
             if (message.action === 'REJECT' && mutId) {
-              this.setMutationStatus(mutId, 'REJECTED');
+              this.setMutationStatus(mutId, 'REJECTED', USER_REJECTION_MESSAGE);
               this.diffReviewController.clearReview(mutId);
             }
             this._confirmationInFlight = false;
@@ -1296,37 +1298,16 @@ export class ChatController {
       }
       this.state.connection = deriveConnectionStatus(this._connectionInput);
       
-      if (result.status === 'CANCELLED') {
-        const cancelMsg: ChatMessage = {
-          id: this.generateId(),
-          role: 'system',
-          content: 'Task cancelled.',
-          timestamp: Date.now(),
-          status: 'cancelled'
-        };
-        this.state.messages.push(cancelMsg);
-      } else if (result.status === 'FAILED') {
-        const failMsg: ChatMessage = {
-          id: this.generateId(),
-          role: 'system',
-          content: result.finalAnswer?.trim()
-            ? `Task failed (${result.failureReason}): ${result.finalAnswer}`
-            : `Task failed: ${result.failureReason}`,
-          timestamp: Date.now(),
-          status: 'failed'
-        };
-        this.state.messages.push(failMsg);
-      } else {
-        const assistantMsg: ChatMessage = {
-          id: this.generateId(),
-          role: 'assistant',
-          content: result.finalAnswer || (result.status === 'COMPLETED' ? 'Task completed successfully.' : `Task finished with status: ${result.status}`),
-          timestamp: Date.now(),
-          status: 'completed'
-        };
-        this.state.messages.push(assistantMsg);
-      }
-      this.state.lastStatus = result.status === 'CANCELLED' ? 'cancelled' : result.status === 'FAILED' ? 'failed' : 'completed';
+      const terminal = formatTerminalTaskMessage(result);
+      const terminalMsg: ChatMessage = {
+        id: this.generateId(),
+        role: terminal.lastStatus === 'completed' ? 'assistant' : 'system',
+        content: terminal.content,
+        timestamp: Date.now(),
+        status: terminal.lastStatus === 'rejected' ? 'cancelled' : terminal.lastStatus === 'failed' ? 'failed' : terminal.lastStatus === 'cancelled' ? 'cancelled' : 'completed',
+      };
+      this.state.messages.push(terminalMsg);
+      this.state.lastStatus = terminal.lastStatus;
       this.persistConversation();
       this.sendState();
     } catch (e: any) {
@@ -1445,7 +1426,7 @@ export class ChatController {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
         if (this.diffReviewController.getStatus(payload.mutationId) !== 'CANCELLED') {
-          this.setMutationStatus(payload.mutationId, 'REJECTED');
+          this.setMutationStatus(payload.mutationId, 'REJECTED', USER_REJECTION_MESSAGE);
         }
         this.diffReviewController.clearReview(payload.mutationId);
       }

@@ -228,7 +228,7 @@ function listMatchingProcessTree(userDataDir: string): {
     }
   } else if (platform === "win32") {
     const escapedDir = userDataDir.replace(/'/g, "''");
-    const psCmd = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${escapedDir}*' } | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }`;
+    const psCmd = `Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe' OR Name = 'msedge.exe' OR Name = 'chromium.exe'" | Where-Object { $_.CommandLine -like '*${escapedDir}*' } | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }`;
     const probe = execProcessProbe(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-Command", psCmd],
@@ -812,6 +812,7 @@ export class BrowserSessionManager {
         executablePath: execPath,
         headless: headedMotion ? false : (this.#config.headless ?? true),
         chromiumSandbox: true,
+        timeout: 20_000,
         args: launchArgs,
         proxy: {
           server: this.#egressProxy.serverUrl,

@@ -7,7 +7,33 @@
  * over what enters the model prompt.
  */
 
-import type { ChatActivity, ChatContextChip, ConnectionStatus, InferenceBackend } from "./chat-protocol.js";
+import type { ChatActivity, ChatContextChip, ConnectionStatus, ConversationExecutionStatus, InferenceBackend } from "./chat-protocol.js";
+
+/** Shown when the user rejects a proposed edit. This is a decision, not a malfunction. */
+export const USER_REJECTION_MESSAGE = "Change rejected — no files modified."
+
+export function formatTerminalTaskMessage(result: {
+  readonly status: string
+  readonly failureReason?: string | undefined
+  readonly finalAnswer?: string | undefined
+}): { content: string; lastStatus: ConversationExecutionStatus } {
+  if (result.status === "CANCELLED") {
+    return { content: "Task cancelled.", lastStatus: "cancelled" }
+  }
+  if (result.status === "FAILED" && result.failureReason === "REJECTED") {
+    return { content: USER_REJECTION_MESSAGE, lastStatus: "rejected" }
+  }
+  if (result.status === "FAILED") {
+    const content = result.finalAnswer?.trim()
+      ? `Task failed (${result.failureReason}): ${result.finalAnswer}`
+      : `Task failed: ${result.failureReason}`
+    return { content, lastStatus: "failed" }
+  }
+  return {
+    content: result.finalAnswer || (result.status === "COMPLETED" ? "Task completed successfully." : `Task finished with status: ${result.status}`),
+    lastStatus: "completed",
+  }
+}
 
 export const MAX_ATTACHMENTS = 8;
 export const MAX_FILE_SEARCH_RESULTS = 20;

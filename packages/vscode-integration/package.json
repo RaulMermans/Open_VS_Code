@@ -242,7 +242,7 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:playwright-core --format=cjs --platform=node && node -e \"require('fs').cpSync('../agent-core/skills/builtins','dist/skills/builtins',{recursive:true})\"",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test --test-timeout=120000 --test-force-exit tests/*.test.ts",
     "eval:performance": "node --expose-gc --import tsx tests/perf/ide-performance.bench.ts"
   },
   "dependencies": {

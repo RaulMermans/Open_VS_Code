@@ -1,6 +1,8 @@
 import type { ModelDeployment, ModelDescriptor, RoutingConfiguration } from "@open-vs-code/agent-core"
 
 export const CHAT_MODEL_DEPLOYMENT_ID = "open-vs-code-chat"
+export const PREFERRED_CODING_MODEL = "qwen3-coder:30b"
+export const PREFERRED_AUTOCOMPLETE_MODEL = "qwen2.5-coder:7b"
 
 /** Routes the chat picker is allowed to retarget. Autocomplete and any other key stay put. */
 const CHAT_ROUTE_KEYS = new Set(["default", "general", "planning", "coding", "debugging", "review"])
@@ -84,6 +86,62 @@ export function applyChatModelSelection(config: RoutingConfiguration, servedMode
     models: [...config.models.filter((entry) => entry.id !== modelId), model],
     deployments: [...config.deployments.filter((entry) => entry.id !== CHAT_MODEL_DEPLOYMENT_ID), deployment],
     routes,
+  }
+}
+
+/** First installed name that equals a preference, then one that starts with its family. */
+export function chooseInstalledModel(installed: readonly string[], preferences: readonly string[]): string | undefined {
+  const names = installed.map((name) => name.trim()).filter((name) => name.length > 0)
+  for (const preference of preferences) {
+    const exact = names.find((name) => name === preference)
+    if (exact) return exact
+  }
+  for (const preference of preferences) {
+    const family = preference.split(":")[0] ?? preference
+    const prefixed = names.find((name) => name === family || name.startsWith(`${family}:`))
+    if (prefixed) return prefixed
+  }
+  return undefined
+}
+
+/**
+ * Fresh local routing. Chat prefers Qwen3-Coder 30B when that tag is installed.
+ * Autocomplete stays on Qwen2.5-Coder 7B when that tag is installed.
+ * An empty catalog keeps the offline starter, which still does not point at a cloud model.
+ */
+export function buildStarterRoutingConfig(installed: readonly string[]): RoutingConfiguration {
+  const coding = chooseInstalledModel(installed, [PREFERRED_CODING_MODEL, PREFERRED_AUTOCOMPLETE_MODEL]) ?? PREFERRED_AUTOCOMPLETE_MODEL
+  const autocomplete = chooseInstalledModel(installed, [PREFERRED_AUTOCOMPLETE_MODEL, PREFERRED_CODING_MODEL]) ?? PREFERRED_AUTOCOMPLETE_MODEL
+  const model = (name: string, id: string, fim: boolean): ModelDescriptor => ({
+    id,
+    displayName: name,
+    family: "qwen",
+    contextWindow: 32768,
+    capabilities: fim ? ["toolUse", "coding", "autocomplete", "fim"] : ["toolUse", "coding"],
+    specialization: "coding",
+    provenance: "Selected from the local inference endpoint",
+    modelName: name,
+    ...(fim ? { fimStrategy: "qwen" as const } : {}),
+  })
+  const codingId = `local-${slugModelId(coding)}`
+  const autocompleteId = coding === autocomplete ? codingId : `local-${slugModelId(autocomplete)}`
+  const models = [model(coding, codingId, coding === autocomplete)]
+  if (autocompleteId !== codingId) models.push(model(autocomplete, autocompleteId, true))
+  return {
+    providers: [{ id: "local-inference", kind: "openai_compatible_local", baseUrl: "http://127.0.0.1:11434" }],
+    models,
+    deployments: [
+      { id: "local-chat", providerId: "local-inference", modelId: codingId, modelName: coding, enabled: true, priority: 10 },
+      { id: "local-fim", providerId: "local-inference", modelId: autocompleteId, modelName: autocomplete, enabled: true, priority: 10, fimStrategy: "qwen" },
+    ],
+    routes: {
+      coding: ["local-chat"],
+      debugging: ["local-chat"],
+      planning: ["local-chat"],
+      review: ["local-chat"],
+      default: ["local-chat"],
+      autocomplete: ["local-fim"],
+    },
   }
 }
 

@@ -37,6 +37,11 @@ export interface TaskProfile {
   readonly explicitFilePaths: readonly string[]
   /** BUILD/DEBUG requests that ask for a code change. Ask, Plan, and Review stay false. */
   readonly requiresCodeChange: boolean
+  /**
+   * A greeting or other message that can be answered with no repository inspection.
+   * Agent mode must not turn this into a tool loop.
+   */
+  readonly directReply?: boolean
 }
 
 const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|mjs|cjs|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
@@ -53,6 +58,17 @@ export function extractExplicitFilePaths(instruction: string): string[] {
   return Array.from(unique)
 }
 
+/**
+ * Greetings and other short messages that do not ask about the repository.
+ * "hola" in Agent mode is one of these. A question that names a file is not.
+ */
+export function isSocialTurn(instruction: string): boolean {
+  const head = (instruction.split("[Attached context]")[0] ?? instruction).trim()
+  if (!head || head.length > 80) return false
+  if (requestsCodeEdit(head) || extractExplicitFilePaths(head).length > 0) return false
+  return /^(?:hi|hey|hello|hola|hey there|good morning|good afternoon|good evening|thanks|thank you|ok|okay|yo|sup|buenas|buenos dias|buenos días)[.!?\s]*$/i.test(head)
+}
+
 export function requestsCodeEdit(instruction: string): boolean {
   if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch|change|edit|rename|replace)\b/i.test(instruction)) return true
   if (/\b(?:make|ensure)\b/i.test(instruction) && /\b(?:test|tests|function|file|return|keep|export)\b/i.test(instruction)) return true
@@ -64,6 +80,20 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
   const text = instruction.toLowerCase()
   const explicitFiles = extractExplicitFilePaths(instruction)
   const requiresCodeChange = (mode === "BUILD" || mode === "DEBUG") && requestsCodeEdit(instruction)
+
+  if (isSocialTurn(instruction)) {
+    return {
+      category: "ORIENTATION",
+      allowedTools: [],
+      recommendedInitialTools: [],
+      defaultTurnBudget: 2,
+      evidenceRequirements: [],
+      toolGuidance: "Answer the user directly. Do not call tools and do not edit files.",
+      requiresCodeChange: false,
+      directReply: true,
+      explicitFilePaths: [],
+    }
+  }
 
   // 1. Rules Query (AGENTS.md, guidelines, rules)
   if (/\b(?:agents\.md|guidelines?|rules?|policy|conventions?)\b/i.test(text)) {

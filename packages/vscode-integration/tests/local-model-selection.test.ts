@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describeConfiguredRoute, loadRoutingConfigSync, ModelRouter } from "@open-vs-code/agent-core"
-import { applyChatModelSelection, fetchLocalModelCatalog, parseOllamaTags } from "../src/local-model-selection.ts"
+import { applyChatModelSelection, buildStarterRoutingConfig, fetchLocalModelCatalog, parseOllamaTags, PREFERRED_CODING_MODEL } from "../src/local-model-selection.ts"
 
 const starter = {
   providers: [
@@ -73,6 +73,29 @@ test("a failed local catalog probe reports the error and no models", async () =>
   const catalog = await fetchLocalModelCatalog("http://127.0.0.1:9", 300)
   assert.equal(catalog.models.length, 0)
   assert.equal(typeof catalog.error, "string")
+})
+
+test("a fresh catalog prefers qwen3-coder:30b for chat and keeps autocomplete on the 7b tag", () => {
+  const config = buildStarterRoutingConfig(["qwen2.5-coder:7b", "qwen3-coder:30b"])
+  assert.equal(PREFERRED_CODING_MODEL, "qwen3-coder:30b")
+  assert.equal(config.deployments.find((entry) => entry.id === "local-chat")?.modelName, "qwen3-coder:30b")
+  assert.equal(config.deployments.find((entry) => entry.id === "local-fim")?.modelName, "qwen2.5-coder:7b")
+  assert.deepEqual(config.routes.coding, ["local-chat"])
+  assert.deepEqual(config.routes.autocomplete, ["local-fim"])
+})
+
+test("a fresh catalog without qwen3 keeps the installed 7b chat model", () => {
+  const config = buildStarterRoutingConfig(["qwen2.5-coder:7b"])
+  assert.equal(config.deployments.find((entry) => entry.id === "local-chat")?.modelName, "qwen2.5-coder:7b")
+  assert.equal(config.deployments.find((entry) => entry.id === "local-fim")?.modelName, "qwen2.5-coder:7b")
+})
+
+test("applying a chat model does not rewrite an autocomplete route", async () => {
+  const fresh = buildStarterRoutingConfig(["qwen2.5-coder:7b", "qwen3-coder:30b"])
+  const selected = applyChatModelSelection(fresh, "qwen2.5-coder:7b")
+  assert.equal(selected.deployments.find((entry) => entry.id === "open-vs-code-chat")?.modelName, "qwen2.5-coder:7b")
+  assert.equal(selected.deployments.find((entry) => entry.id === "local-fim")?.modelName, "qwen2.5-coder:7b")
+  assert.deepEqual(selected.routes.autocomplete, ["local-fim"])
 })
 
 test("a cloud-only configuration cannot be selected as a local model", () => {

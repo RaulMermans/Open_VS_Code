@@ -1,3 +1,12 @@
+Sprint 14 — Final daily-driver stabilization
+STATUS: IN_VERIFICATION
+  - Wayland app id follows the Electron executable name. `--class` and `CHROME_DESKTOP` left the installed window as `codium`, so GNOME showed a gear. The Linux package renames that binary to `open-vs-code` and keeps `codium` as a symlink. rc.8 stays installed until rc.9 is checked.
+  - A fresh model file prefers `qwen3-coder:30b` for chat when that tag is installed, and leaves autocomplete on `qwen2.5-coder:7b`. An existing `models.json` is not rewritten.
+  - A greeting such as `hola` in Agent mode is a direct reply. It can finish without an edit. A repeated tool loop on that reply does not end as `NON_PROGRESS`. An edit task still does.
+  - A user rejection is shown as `Change rejected — no files modified.` Internal status stays `REJECTED`. Other failures stay failures.
+  - The motion claim still requires more than 10 frames and at least 30 FPS. Shared macOS GitHub runners skip that measurement. Linux CI still runs it. A skip is not a pass.
+  - Workspace tests use a 120 second test deadline and exit when the suite finishes.
+
 Sprint 13.1 — Daily driver acceptance
 STATUS: IN_VERIFICATION
   - Motion sampling keeps the `>10` frame and `>=30` FPS bars. On macOS the motion browser is headed so the sample uses the display clock. Headless macOS runners were measuring 12 FPS and 29 FPS for the same animation.

@@ -1008,6 +1008,7 @@ function conversationStatusLabel(status: string): string {
     case 'interrupted': return 'Interrupted';
     case 'failed': return 'Failed';
     case 'cancelled': return 'Cancelled';
+    case 'rejected': return 'Change rejected';
     default: return '';
   }
 }

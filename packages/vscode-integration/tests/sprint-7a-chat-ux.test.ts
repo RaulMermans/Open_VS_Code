@@ -14,6 +14,7 @@ import {
 import {
   activityFromAgentEvent,
   classifyTurnError,
+  formatTerminalTaskMessage,
   deriveConnectionStatus,
   describeAttachment,
   formatAttachmentInstruction,
@@ -578,3 +579,20 @@ describe("Sprint 7A performance and webview runtime", () => {
     assert.match(src, /function renderConnectionStatus/);
   });
 });
+
+test("a rejected edit is a decision, and a security failure stays a failure", () => {
+  const rejected = formatTerminalTaskMessage({
+    status: "FAILED",
+    failureReason: "REJECTED",
+    finalAnswer: "The proposed edit was rejected.",
+  })
+  assert.equal(rejected.content, "Change rejected — no files modified.")
+  assert.equal(rejected.lastStatus, "rejected")
+  const blocked = formatTerminalTaskMessage({
+    status: "FAILED",
+    failureReason: "INTERNAL_ERROR",
+    finalAnswer: "PATH_ESCAPE: the target is outside the workspace.",
+  })
+  assert.equal(blocked.lastStatus, "failed")
+  assert.match(blocked.content, /Task failed \(INTERNAL_ERROR\)/)
+})

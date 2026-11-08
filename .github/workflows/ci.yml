@@ -62,6 +62,11 @@ jobs:
       - name: Run Deterministic Tests
         shell: bash
         run: npm test
+        # Each workspace test process uses --test-timeout=120000 and --test-force-exit.
+        # A stuck test fails at that deadline instead of holding the job open.
+        # Real FPS (>10 frames, >=30 FPS) runs on Linux. On shared macOS runners that
+        # measurement is skipped unless OPEN_VS_CODE_MOTION_PERFORMANCE=1. A skip is
+        # not a pass of the performance gate.
 
       - name: Build
         shell: bash

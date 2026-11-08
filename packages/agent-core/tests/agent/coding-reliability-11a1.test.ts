@@ -6,7 +6,7 @@ import test from "node:test"
 
 import { AgentRunner } from "../../src/agent/runner.ts"
 import type { AgentResult } from "../../src/contracts/agent.ts"
-import { classifyTaskProfile } from "../../src/agent/task-profile.ts"
+import { classifyTaskProfile, isSocialTurn } from "../../src/agent/task-profile.ts"
 import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, requiredEditPaths } from "../../src/agent/tool-contract.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
@@ -218,6 +218,55 @@ test("further tool calls after a passing edit are not executed", async () => {
     assert.equal(provider.requests.length, 2)
     assert.equal(result.toolCalls.filter((call) => call.name === "run_verification").length, 1)
     assert.match(await readFile(join(root, "src/add.ts"), "utf8"), /return left \+ right/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a greeting in agent mode is a direct reply and does not require an edit", () => {
+  assert.equal(isSocialTurn("hola"), true)
+  assert.equal(isSocialTurn("hello"), true)
+  assert.equal(isSocialTurn("Fix the implementation in src/add.ts"), false)
+  const profile = classifyTaskProfile("hola", "BUILD")
+  assert.equal(profile.directReply, true)
+  assert.equal(profile.requiresCodeChange, false)
+  assert.equal(classifyTaskProfile("Why is this test failing?", "BUILD").requiresCodeChange, false)
+  assert.equal(classifyTaskProfile("Explain this function.", "BUILD").requiresCodeChange, false)
+  assert.equal(classifyTaskProfile("What does this project do?", "BUILD").requiresCodeChange, false)
+})
+
+test("a greeting in agent mode completes without a tool call or a non-progress failure", async () => {
+  const root = await workspace()
+  const provider = new ScriptedModelProvider([
+    response("Hola. Dime en qué quieres que trabaje."),
+    response("should not run"),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "hola", "BUILD")
+    assert.equal(result.status, "COMPLETED")
+    assert.equal(result.failureReason, undefined)
+    assert.match(result.finalAnswer ?? "", /Hola/)
+    assert.equal(provider.requests.length, 1)
+    assert.match(provider.requests[0]?.messages[0]?.content ?? "", /CONVERSATION/)
+    assert.equal(await readFile(join(root, "src/add.ts"), "utf8").then((text) => text.includes("return left - right")), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a greeting that starts as a tool call still answers instead of failing non-progress", async () => {
+  const root = await workspace()
+  const read = { id: "read", name: "read_file", arguments: { path: "README.md" } }
+  const provider = new ScriptedModelProvider([
+    response("", [read]),
+    response("Hola. No hace falta cambiar archivos."),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "hola", "BUILD", 8)
+    assert.equal(result.status, "COMPLETED")
+    assert.notEqual(result.failureReason, "NON_PROGRESS")
+    assert.match(result.finalAnswer ?? "", /Hola/)
+    assert.equal(await readFile(join(root, "README.md"), "utf8"), "# notes\n")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

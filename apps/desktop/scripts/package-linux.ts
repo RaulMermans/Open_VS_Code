@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -34,6 +34,9 @@ unset ELECTRON_RUN_AS_NODE
 # Launching this desktop app is the operator authorization to call the
 # workspace's configured local endpoint. It does not enable cloud inference.
 export OPEN_VS_CODE_REAL_INFERENCE=1
+# Chromium on Wayland uses the executable's real path as the app id.
+# The binary is named open-vs-code so GNOME matches open-vs-code.desktop.
+export CHROME_DESKTOP="open-vs-code.desktop"
 ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
 ELECTRON="$ROOT/${electronName}"
 CLI="$ROOT/resources/app/out/cli.js"
@@ -48,6 +51,21 @@ fi
 exec "$ELECTRON" "$@"
 `;
   writeFileSync(launcherPath, script, { mode: 0o755 });
+}
+
+/**
+ * GNOME matches a Wayland window to a launcher by app id. This Electron build
+ * sets that id from the real executable name (`/proc/self/exe`), not from
+ * `--class` or CHROME_DESKTOP. The upstream file is `codium`, which does not
+ * match `open-vs-code.desktop`, so the dock shows a generic gear. The packaged
+ * binary is named `open-vs-code`. `codium` stays as a symlink for the CLI.
+ */
+function publishLinuxElectronIdentity(payloadDir: string, electronName: string): void {
+  if (electronName === 'open-vs-code') return;
+  const source = join(payloadDir, electronName);
+  const target = join(payloadDir, 'open-vs-code');
+  renameSync(source, target);
+  symlinkSync('open-vs-code', source);
 }
 
 function installBrandIcons(hicolorDir: string): void {
@@ -209,7 +227,8 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
     join(payloadDir, "resources", "app", "open-vs-code-release.json"),
     `${JSON.stringify(releaseStamp, null, 2)}\n`,
   );
-  writeLinuxLauncher(join(payloadDir, 'bin'), electronName);
+  publishLinuxElectronIdentity(payloadDir, electronName);
+  writeLinuxLauncher(join(payloadDir, 'bin'), 'open-vs-code');
   const sandboxHelper = join(payloadDir, 'chrome-sandbox');
   if (existsSync(sandboxHelper)) {
     chmodSync(sandboxHelper, 0o4755);

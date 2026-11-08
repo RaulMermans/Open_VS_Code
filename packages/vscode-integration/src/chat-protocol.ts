@@ -155,7 +155,7 @@ export interface ReviewRecordDto {
 /** Stable conversation id; the only form accepted from the webview or used as a file name. */
 export const CONVERSATION_ID_PATTERN = /^c-[0-9a-f]{16}$/;
 
-export type ConversationExecutionStatus = "idle" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+export type ConversationExecutionStatus = "idle" | "running" | "completed" | "failed" | "cancelled" | "interrupted" | "rejected";
 
 /** Safe, local metadata for the conversation picker. No message bodies beyond a short redacted preview. */
 export interface ConversationSummaryDto {
