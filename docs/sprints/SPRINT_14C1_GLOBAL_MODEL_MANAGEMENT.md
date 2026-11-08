@@ -1,6 +1,6 @@
 # Sprint 14C.1 — Global model management
 
-STATUS: IN_VERIFICATION
+STATUS: BLOCKED
 
 ## 14C.1A corrections
 
@@ -21,7 +21,52 @@ Scripted results before packaging:
 - `tsc --noEmit` for agent-core, ide-adapter, and vscode-integration: pass
 - `oxlint --deny-warnings` for agent-core: pass
 
-The desktop package and the installed GUI are recorded below after they exist. This sprint is not complete until that GUI check is done.
+A chat send now waits for `ensureModelRoute()` when no route is loaded yet, so the first turn does not start against an empty configuration.
+
+## Package
+
+Built with `npm run package` from a clean tree. `OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE` was unset.
+
+- Product version: `0.1.0-rc.12`
+- Source SHA: `6417724105e42da4be6df2daf21b46008c05c42a`
+- `gitDirty`: false
+- Debian: `apps/desktop/dist/open-vs-code_0.1.0-rc.12_amd64.deb`
+- Debian SHA-256: `ad5dbe9c8d40bfcef15e5217575f352adc385b9d2d1e9f4fdb4ee37fea8a1958`
+- Payload archive SHA-256: `b0e425b83a1f089b83cdcf5125f9e3fb6cc6188e92b6a759dd0db97d3692c026`
+- Bundled extension: `open-vs-code.vscode-integration` `0.1.0-rc.12`
+- Upstream shell: VSCodium `1.135.06055`, commit `5a73682ca091082675b10c9dc3f348c1d824d94f`
+- Desktop smoke: 12 pass, 3 skipped (macOS-only), 0 fail
+- Linux package smoke: 6 pass
+- Linux runtime acceptance: the unpackaged payload fails closed, and the installed binary launches with sandbox helpers and without `--no-sandbox`
+
+## Installation
+
+Not performed. `sudo -n true` returned `interactive authentication is required`. The install was not attempted with a stored password, and `--no-sandbox` was not used.
+
+The installed package is still `0.1.0-rc.11`. `chrome-sandbox` is `4755 root:root`. The rc.11 deb remains at `apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb`, SHA-256 `36a7b49b22f7a2215f2db4f296b463a5e6df868e8ac847ec1a7d8cc793d64541`.
+
+Profile copies, taken before any rc.12 install and without changing the live directories:
+
+- `~/open-vs-code-backups/pre-0.1.0-rc.12-2026-11-08/Open VS Code`
+- `~/open-vs-code-backups/pre-0.1.0-rc.12-2026-11-08/open-vs-code-desktop`
+
+After the owner authorizes installation:
+
+```text
+sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0-rc.12_amd64.deb"
+```
+
+Rollback to the installed candidate:
+
+```text
+sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb"
+```
+
+## Installed GUI
+
+Not run. There are no rc.12 screenshots and no in-window Ollama session on this package. Ollama at `127.0.0.1:11434` does have `qwen3-coder:30b` and `qwen2.5-coder:7b`. That probe is not GUI acceptance.
+
+This sprint stays blocked until that installed window is exercised.
 
 ## 14C.1 baseline
 

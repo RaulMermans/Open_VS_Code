@@ -1,11 +1,12 @@
 Sprint 14C.1A — Global model hardening and desktop acceptance
-STATUS: IN_VERIFICATION
+STATUS: BLOCKED
   - `ModelRoutingHost.refresh()` does not read `.open-vs-code/models.json` unless the folder is trusted. Presence is a stat. An unreadable file still cannot redirect inference.
   - Saving a global chat, autocomplete, endpoint, or advanced route does not suspend an active workspace override and does not rewrite the file. "Use global models" is the switch.
   - The Model Manager shows the active chat model, autocomplete model, endpoint, and source. A global preference is labeled separately while an override is active.
   - Workspace mode and pack saves, and starter model-file creation, refuse an untrusted folder.
   - The agent-core test `bounds large tool output in the recompiled model context and event trace` passes. The failure was the required prompt growing past 1,000 bytes after conversational guidance. The 32-byte observation cap and the event-trace check are unchanged. Recovery still sends one fresh message.
-  - agent-core tests and vscode-integration tests passed (313). Typecheck passed for agent-core, ide-adapter, and vscode-integration. agent-core lint passed. Package and installed GUI evidence are in the sprint doc.
+  - vscode-integration tests: 313 pass. Typecheck, lint, and build passed. Desktop smoke, Linux package smoke, and Linux runtime acceptance passed.
+  - Clean Debian `0.1.0-rc.12` is from `6417724105`. Package SHA-256 `ad5dbe9c8d40bfcef15e5217575f352adc385b9d2d1e9f4fdb4ee37fea8a1958`. It is not installed. `sudo` needs a password. The installed desktop remains `0.1.0-rc.11`. No installed GUI screenshots.
 
 Sprint 14C.1 — Global model management
 STATUS: IMPLEMENTED_NOT_INSTALLED
