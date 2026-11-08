@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity, type RepairOrchestrator, type RepairResult } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity, type RepairOrchestrator, type RepairResult, type RoutingConfiguration } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget, isSkillApplied, classifyFailure, appliedPathsFromAgentResult, integrateRepairOutcome, lastFailedVerification, readMutationReview, readVerificationReview } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -7,6 +7,10 @@ export interface BridgeOptions {
   host: IdeHost;
   workspaceRoot: string;
   providerOverride?: any;
+  /** Resolved route. When set, the runtime does not read a workspace model file. */
+  routingConfigOverride?: RoutingConfiguration;
+  /** Do not fall back to `.open-vs-code/models.json` when no override is present. */
+  skipWorkspaceRoutingFile?: boolean;
   /** Portable Skills Runtime (ADR-029); disabled unless the host enables it. */
   skills?: { enabled: boolean; builtinRoot?: string };
   /** Structured Engineering Loop (ADR-030); disabled unless the host enables it. */
@@ -28,6 +32,8 @@ export class AgentSessionBridge {
   private workspaceRoot: string;
   private activeSession: boolean = false;
   private providerOverride?: any;
+  private routingConfigOverride?: RoutingConfiguration;
+  private skipWorkspaceRoutingFile?: boolean;
   private skills?: BridgeOptions["skills"];
   private lastSkillEvidence?: SkillEvidence;
   private workflow?: BridgeOptions["workflow"];
@@ -45,6 +51,8 @@ export class AgentSessionBridge {
     this.host = options.host;
     this.workspaceRoot = options.workspaceRoot;
     this.providerOverride = options.providerOverride;
+    this.routingConfigOverride = options.routingConfigOverride;
+    this.skipWorkspaceRoutingFile = options.skipWorkspaceRoutingFile;
     this.skills = options.skills;
     this.workflow = options.workflow;
     this.progressMonitor = options.progressMonitor;
@@ -172,6 +180,8 @@ export class AgentSessionBridge {
         isTrusted,
         eventSink: sink,
         providerOverride: this.providerOverride,
+        ...(this.routingConfigOverride ? { routingConfigOverride: this.routingConfigOverride } : {}),
+        ...(this.skipWorkspaceRoutingFile ? { skipWorkspaceRoutingFile: true } : {}),
         ...(this.accountScope ? { accountScope: this.accountScope } : {}),
         ...(resolvedProfile ? { resolvedProfile } : {}),
         ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),

@@ -63,6 +63,17 @@ export class FakeElement {
   hasAttribute(n: string) { return Object.prototype.hasOwnProperty.call(this.attrs, n); }
   addEventListener(t: string, fn: Function) { this.dom.counters.listenersAdded++; (this.listeners[t] ||= []).push(fn); }
   removeEventListener(t: string, fn: Function) { this.listeners[t] = (this.listeners[t] || []).filter((x) => x !== fn); }
+  querySelector(selector: string): FakeElement | null {
+    const want = selector.replace(/^\./, "");
+    const stack = [...this.children];
+    while (stack.length) {
+      const node = stack.shift();
+      if (!node) continue;
+      if (node.className.split(" ").includes(want) || node.tagName === want || node.id === want) return node;
+      stack.push(...node.children);
+    }
+    return null;
+  }
   contains(other: FakeElement | null) {
     for (let p = other; p; p = p.parentNode) if (p === this) return true;
     return false;

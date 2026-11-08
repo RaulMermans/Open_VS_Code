@@ -368,7 +368,7 @@ export class IntegrationManagerController {
 
     let availableDeployments: string[] | undefined;
     const root = this.mcpService.getRoot();
-    if (root) {
+    if (root && isTrusted) {
       try {
         const routingConfig = await loadRoutingConfig(root);
         if (routingConfig?.deployments) {

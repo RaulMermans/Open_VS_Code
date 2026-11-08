@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { AgentEvent, ConversationTurn, inspectRunRecovery, type RunRecoveryInspection, type ResolvedExecutionProfile } from '@open-vs-code/agent-core';
-import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto } from './chat-protocol.js';
+import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto, ModelManagerSnapshot } from './chat-protocol.js';
+import { executionModeAvailable } from './model-routing.js';
 import { IntegrationManagerController } from './integrations/integration-manager-controller.js';
 import { ModeService } from './modes/mode-service.js';
 import {
@@ -78,6 +79,8 @@ export class ChatController {
   private diffReviewController: DiffReviewController;
   private terminalReviewController: TerminalReviewController;
   private _webviewView?: vscode.WebviewView;
+  private _extraWebviews = new Set<vscode.Webview>();
+  private _modelManagerOpen = false;
   private _webviewMessageDisposable?: { dispose: () => void };
   private _webviewDisposeDisposable?: { dispose: () => void };
   private _activeAbortController?: AbortController;
@@ -570,6 +573,12 @@ export class ChatController {
           vscode.window?.showWarningMessage?.("Cannot change execution mode while a task is running.");
           break;
         }
+        if (!executionModeAvailable(message.mode, this.state.workspaceTrusted !== false)) {
+          this.state.workspaceTrusted = false;
+          this.host.showError?.("Agent and Debug need a trusted folder. Ask remains available. Trust was not granted automatically.");
+          this.sendState();
+          break;
+        }
         this.state.mode = message.mode;
         this.state.customModeId = message.customModeId;
         this.syncActiveModeFromManager();
@@ -757,6 +766,56 @@ export class ChatController {
         } else if (vscode.commands?.executeCommand) {
           await vscode.commands.executeCommand('open-vs-code.openModelConfig');
         }
+        break;
+      case 'modelManager.open':
+        this._modelManagerOpen = true;
+        if (typeof this.host.refreshGlobalModels === 'function') await this.host.refreshGlobalModels();
+        if (this.state.modelManager) this.state.modelManager = { ...this.state.modelManager, open: true };
+        this.sendState();
+        break;
+      case 'modelManager.close':
+        this._modelManagerOpen = false;
+        if (this.state.modelManager) this.state.modelManager = { ...this.state.modelManager, open: false };
+        this.sendState();
+        break;
+      case 'modelManager.refresh':
+      case 'modelManager.test':
+        if (typeof this.host.checkConnection === 'function') await this.host.checkConnection();
+        else if (typeof this.host.refreshGlobalModels === 'function') await this.host.refreshGlobalModels();
+        await this.refreshConnection();
+        break;
+      case 'modelManager.setChat':
+        await this.reportModelAction(await this.host.setGlobalChatModel?.(message.name));
+        break;
+      case 'modelManager.setAutocomplete':
+        await this.reportModelAction(await this.host.setGlobalAutocompleteModel?.(message.name));
+        break;
+      case 'modelManager.setEndpoint':
+        await this.reportModelAction(await this.host.setGlobalEndpoint?.(message.endpoint));
+        break;
+      case 'modelManager.setAdvanced':
+        await this.reportModelAction(await this.host.setGlobalAdvancedRouting?.(message.text));
+        break;
+      case 'modelManager.clearAdvanced':
+        if (typeof this.host.clearGlobalAdvancedRouting === 'function') await this.host.clearGlobalAdvancedRouting();
+        await this.refreshConnection();
+        break;
+      case 'modelManager.suspendOverride':
+        if (typeof this.host.suspendWorkspaceModelOverride === 'function') await this.host.suspendWorkspaceModelOverride();
+        await this.refreshConnection();
+        break;
+      case 'modelManager.useOverride':
+        await this.reportModelAction(await this.host.useWorkspaceModelOverride?.());
+        break;
+      case 'modelManager.setCredential':
+        if (typeof this.host.setGlobalModelCredential === 'function') await this.host.setGlobalModelCredential(message.token);
+        await this.refreshConnection();
+        break;
+      case 'ui.manageTrust':
+        if (vscode.commands?.executeCommand) await vscode.commands.executeCommand('workbench.trust.manage');
+        break;
+      case 'ui.openWideChat':
+        if (vscode.commands?.executeCommand) await vscode.commands.executeCommand('open-vs-code.openWideChat');
         break;
       case 'integration.openHub':
         await this.openIntegrationsHub();
@@ -1118,6 +1177,24 @@ export class ChatController {
     this.sendState();
     
     const snapshot = await this.host.getSnapshot();
+    const trusted = this.trustedSnapshot(snapshot);
+    this.state.workspaceTrusted = trusted;
+    if (!executionModeAvailable(mode, trusted)) {
+      this.state.activeTurn = false;
+      this.state.activities = [];
+      this.state.connection = deriveConnectionStatus(this._connectionInput);
+      this.state.messages.push({
+        id: this.generateId(),
+        role: 'system',
+        content: 'Agent and Debug are unavailable until you trust this folder. Ask still works. Use Manage Workspace Trust in the agent panel. This folder was not trusted automatically.',
+        timestamp: Date.now(),
+        status: 'failed',
+      });
+      this.state.lastStatus = 'failed';
+      this.persistConversation();
+      this.sendState();
+      return;
+    }
     const resolvedRoot = resolveWorkspaceRoot(snapshot);
     if (!resolvedRoot) {
       this.state.activeTurn = false;
@@ -1354,7 +1431,7 @@ export class ChatController {
       
       let errorMessage = `Agent Error: ${e.message}`;
       if (classified === 'missing-config' || (typeof e.message === 'string' && e.message.includes('No model routing configuration found'))) {
-        errorMessage = 'No model configuration found (`.open-vs-code/models.json`). Open VS Code requires a local or self-hosted OpenAI-compatible inference endpoint (e.g. Ollama, vLLM, or HALO). Run the command "Open VS Code: Create Starter Model Configuration" to initialize.';
+        errorMessage = 'No model selected. Open Models in the agent panel and choose a local model. A workspace models.json file is optional and is ignored while this folder is untrusted.';
       } else if (classified === 'disconnected' || (typeof e.message === 'string' && (e.message.includes('ECONNREFUSED') || e.message.includes('fetch failed')))) {
         errorMessage = 'Inference endpoint unreachable. Ensure your local or self-hosted model server (e.g. Ollama or HALO) is running at the configured endpoint.';
       } else if (classified === 'invalid-credentials') {
@@ -1595,7 +1672,7 @@ export class ChatController {
     m.statePosts++;
     m.peakMessages = Math.max(m.peakMessages, this.state.messages.length);
     m.peakActivities = Math.max(m.peakActivities, this.state.activities.length);
-    if (!this._webviewView) return;
+    if (!this._webviewView && this._extraWebviews.size === 0) return;
     // The transcript is most of each post (up to 200k characters). Agent events and
     // context changes rarely touch it, so an unchanged transcript is not re-sent.
     if (this.transcriptUnchanged()) {
@@ -1631,9 +1708,41 @@ export class ChatController {
     return { ...this._metrics };
   }
   
+  public publishModelManager(snapshot?: ModelManagerSnapshot): void {
+    if (!snapshot) return;
+    this.state.modelManager = { ...snapshot, installedModels: [...snapshot.installedModels], open: this._modelManagerOpen };
+    this.state.workspaceTrusted = snapshot.workspaceTrusted;
+    this.sendState();
+  }
+
+  public attachWebview(webview: vscode.Webview): { dispose: () => void } {
+    this._extraWebviews.add(webview);
+    const listener = typeof webview.onDidReceiveMessage === 'function'
+      ? webview.onDidReceiveMessage((message: WebviewToHostMessage) => { void this.handleWebviewMessage(message); })
+      : { dispose: () => {} };
+    this.forgetSentTranscript();
+    this.sendState();
+    return {
+      dispose: () => {
+        this._extraWebviews.delete(webview);
+        listener.dispose();
+      },
+    };
+  }
+
+  private async reportModelAction(error: string | undefined): Promise<void> {
+    if (error) this.host.showError?.(error);
+    if (this.state.modelManager) this.state.modelManager = { ...this.state.modelManager, open: true };
+    this._modelManagerOpen = true;
+    await this.refreshConnection();
+  }
+
   private sendMessage(msg: HostToWebviewMessage) {
     if (this._webviewView) {
       this._webviewView.webview.postMessage(msg);
+    }
+    for (const webview of this._extraWebviews) {
+      void webview.postMessage(msg);
     }
   }
 

@@ -75,7 +75,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this._extensionUri]
     };
 
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    webviewView.webview.html = this.htmlFor(webviewView.webview);
     
     this._controller.setWebviewView(webviewView);
   }
@@ -84,7 +84,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return this._view;
   }
 
-  private _getHtmlForWebview(webview: vscode.Webview) {
+  public htmlFor(webview: vscode.Webview, options?: { wide?: boolean }): string {
+    return this._getHtmlForWebview(webview, options);
+  }
+
+  private _getHtmlForWebview(webview: vscode.Webview, options?: { wide?: boolean }) {
     const nonce = this.getNonce();
 
     return `<!DOCTYPE html>
@@ -216,7 +220,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .message {
             padding: 8px 10px;
             border-radius: 6px;
+            max-width: 72ch;
         }
+        body.wide-chat .message { max-width: 88ch; }
+        .trust-banner, .model-manager {
+            margin: 8px 10px 0;
+            padding: 8px;
+            border: 1px solid var(--vscode-widget-border, transparent);
+            border-radius: 6px;
+            background: var(--vscode-editorWidget-background);
+        }
+        .model-manager h2 { margin: 0 0 6px; font-size: 0.95em; }
+        .model-manager p, .trust-banner p { margin: 0 0 6px; font-size: 0.85em; }
+        .model-manager label, .model-manager select, .model-manager input, .model-manager textarea {
+            display: block;
+            width: 100%;
+            margin-bottom: 6px;
+        }
+        .model-manager textarea { min-height: 72px; }
         .message-meta {
             font-size: 0.75em;
             color: var(--vscode-descriptionForeground);
@@ -518,7 +539,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         #composer {
             resize: vertical;
-            min-height: 64px;
+            min-height: 72px;
             max-height: 200px;
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
@@ -1013,10 +1034,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     </style>
 </head>
-<body>
+<body class="${options?.wide ? "wide-chat" : ""}">
     <div id="header">
         <div id="conversation-bar"></div>
         <div class="header-actions">
+            <button id="models-btn" class="secondary" type="button" aria-label="Open model manager" aria-expanded="false" aria-controls="model-manager">Models</button>
             <button id="new-chat-btn" class="secondary" type="button" aria-label="Start a new conversation">New</button>
             <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
             <details id="overflow-menu">
@@ -1025,6 +1047,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     <button id="browser-panel-btn" class="secondary" type="button" aria-label="Open visual browser panel">Visual browser</button>
                     <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Tools</button>
                     <button id="model-btn" class="secondary" type="button" aria-label="Select local model">Model list</button>
+                    <button id="wide-chat-btn" class="secondary" type="button" aria-label="Open a wider chat beside the editor">Wider chat</button>
                 </div>
             </details>
         </div>
@@ -1038,11 +1061,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         </div>
         <div id="history-list"></div>
     </div>
+    <div id="trust-banner"></div>
+    <div id="model-manager"></div>
     <div id="recovery-container"></div>
 
     <div id="empty-state">
         <p class="empty-title">Ask about this workspace</p>
         <p class="empty-detail">Ask is read-only. Plan does not edit until you approve. Agent waits for approval before writing.</p>
+        <button id="empty-setup" class="secondary" type="button" hidden>Choose a model</button>
     </div>
     <div id="transcript" role="log" aria-live="polite" aria-relevant="additions"></div>
     
@@ -1192,7 +1218,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         function syncModeSelector(state) {
             var currentVal = state.customModeId ? 'custom:' + state.customModeId : state.mode;
             var customModes = state.customModes || [];
-            var modesSig = customModes.map(function(m) { return m.id + ':' + m.name + ':' + m.isReady; }).join('|');
+            var trusted = state.workspaceTrusted !== false;
+            var modesSig = (trusted ? 'trusted' : 'restricted') + '|' + customModes.map(function(m) { return m.id + ':' + m.name + ':' + m.isReady; }).join('|');
             if (modesSig !== lastModesSig) {
                 lastModesSig = modesSig;
                 modeSelector.innerHTML = '';
@@ -1201,7 +1228,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 [{ value: 'ASK', label: 'Ask' }, { value: 'PLAN', label: 'Plan' }, { value: 'BUILD', label: 'Agent' }].forEach(function(m) {
                     var opt = document.createElement('option');
                     opt.value = m.value;
-                    opt.textContent = m.label;
+                    var restricted = !trusted && (m.value === 'BUILD');
+                    opt.textContent = restricted ? m.label + ' (needs trust)' : m.label;
+                    opt.disabled = restricted;
                     primary.appendChild(opt);
                 });
                 modeSelector.appendChild(primary);
@@ -1210,7 +1239,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 [{ value: 'DEBUG', label: 'Debug' }, { value: 'REVIEW', label: 'Review' }].forEach(function(m) {
                     var opt = document.createElement('option');
                     opt.value = m.value;
-                    opt.textContent = m.label;
+                    var restricted = !trusted && m.value === 'DEBUG';
+                    opt.textContent = restricted ? m.label + ' (needs trust)' : m.label;
+                    opt.disabled = restricted;
                     more.appendChild(opt);
                 });
                 modeSelector.appendChild(more);
@@ -1262,10 +1293,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             var detail = empty.querySelector('.empty-detail');
             var conn = state.connection || {};
             var offline = conn.state === 'disconnected' || conn.state === 'unavailable' || conn.state === 'missing-config' || conn.state === 'timeout' || conn.state === 'model-unavailable' || conn.state === 'invalid-credentials';
-            if (title) title.textContent = offline ? 'Local model unavailable' : 'Ask about this workspace';
-            if (detail) detail.textContent = offline
-                ? (conn.detail || 'Start the local model endpoint, then check the connection.')
-                : 'Ask is read-only. Plan does not edit until you approve. Agent waits for approval before writing.';
+            var setup = document.getElementById('empty-setup');
+            var needsModel = conn.state === 'missing-config';
+            if (title) title.textContent = needsModel ? 'Choose a local model' : (offline ? 'Local model unavailable' : 'Ask about this workspace');
+            if (detail) detail.textContent = needsModel
+                ? 'Use Models to pick a chat model and an autocomplete model. That choice is kept for every folder. No project file is required.'
+                : offline
+                ? (conn.detail || 'Start the local model endpoint, then test the connection.')
+                : (state.workspaceTrusted === false
+                    ? 'This folder is not trusted. Ask can read it. Agent and Debug stay unavailable until you trust the folder.'
+                    : 'Ask is read-only. Plan does not edit until you approve. Agent waits for approval before writing.');
+            if (setup) setup.hidden = !needsModel;
         }
 
         function updateState(state, transcriptUnchanged) {
@@ -1291,6 +1329,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             renderContextChips(implicitChips, state.context || [], document, vscode.postMessage, false);
             renderContextChips(contextChips, state.attachments || [], document, vscode.postMessage, true);
             renderConnectionStatus(connectionStatus, state.connection, document, vscode.postMessage);
+            var trustBanner = document.getElementById('trust-banner');
+            var modelManager = document.getElementById('model-manager');
+            if (trustBanner) renderTrustNotice(trustBanner, state, document, vscode.postMessage);
+            if (modelManager) renderModelManager(modelManager, state.modelManager, document, vscode.postMessage);
+            var modelsBtn = document.getElementById('models-btn');
+            if (modelsBtn) modelsBtn.setAttribute('aria-expanded', state.modelManager && state.modelManager.open ? 'true' : 'false');
             renderConversationBar(conversationBar, state, document, vscode.postMessage);
             renderRecoveryPanel(recoveryContainer, state.recovery, state.conversationTitle, document, vscode.postMessage);
             renderHistory();
@@ -1370,6 +1414,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         modelBtn.addEventListener('click', function () { vscode.postMessage({ type: 'ui.selectModel' }); });
+        var modelsBtn = document.getElementById('models-btn');
+        if (modelsBtn) modelsBtn.addEventListener('click', function () { vscode.postMessage({ type: 'modelManager.open' }); });
+        var emptySetup = document.getElementById('empty-setup');
+        if (emptySetup) emptySetup.addEventListener('click', function () { vscode.postMessage({ type: 'modelManager.open' }); });
+        var wideChatBtn = document.getElementById('wide-chat-btn');
+        if (wideChatBtn) wideChatBtn.addEventListener('click', function () { vscode.postMessage({ type: 'ui.openWideChat' }); });
         historyBtn.addEventListener('click', function () { setHistoryOpen(!historyOpen, true); });
         historyFilter.addEventListener('input', function () { renderHistory(); });
         historyFilter.addEventListener('keydown', function (e) {
