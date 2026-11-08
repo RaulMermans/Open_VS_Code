@@ -1,3 +1,9 @@
+Sprint 15 — Product acceptance lab
+STATUS: IN_VERIFICATION
+  - Permanent lab: `apps/desktop/acceptance/`, 46 scenarios, isolated temp profiles, sandbox left on, no silent approvals on real projects.
+  - Executed: SAFE-NO-SILENT, SAFE-PROFILE, LIFE-UPGRADE, LIFE-ROLLBACK, LIFE-SANDBOX, LIFE-FIRST passed. CONV-PING failed: Playwright detaches the chat webview before Send.
+  - Protocol parse drops an unfinished tool envelope in source. Installed desktop is still `0.1.0-rc.12`. No package was installed. Gate: FAIL. See `docs/releases/V1_LIVE_ACCEPTANCE.md`.
+
 Sprint 14C.1A — Global model hardening and desktop acceptance
 STATUS: PARTIALLY_VERIFIED
   - `ModelRoutingHost.refresh()` does not read `.open-vs-code/models.json` unless the folder is trusted. Presence is a stat. An unreadable file still cannot redirect inference.

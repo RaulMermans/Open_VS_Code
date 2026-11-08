@@ -228,6 +228,20 @@ function parseConcatenatedToolCallObjects(source: string): ToolCall[] | null {
   return calls.length > 1 ? calls : null
 }
 
+const PROTOCOL_ENVELOPE = /<tool_call\b|<\/tool_call>|<function=|<\/function>|<parameter=/i
+
+/**
+ * A local model sometimes appends an unfinished tool envelope after the answer.
+ * That envelope is protocol, not prose. Text before the first marker stays.
+ * The marker and everything after it is dropped here, before the runner stores
+ * the assistant message. This is the parse boundary, not a display filter.
+ */
+export function separateUnparsedProtocolEnvelope(content: string): { readonly content: string; readonly discarded: boolean } {
+  const match = PROTOCOL_ENVELOPE.exec(content)
+  if (match?.index === undefined) return { content, discarded: false }
+  return { content: content.slice(0, match.index).trim(), discarded: true }
+}
+
 function scanJsonObjectEnd(text: string, start: number): number | null {
   let depth = 0
   let inString = false
@@ -367,6 +381,15 @@ export function normalizeWireResponse(payload: unknown, fallbackModel = "unknown
     }
   }
 
+  const separated = separateUnparsedProtocolEnvelope(content)
+  content = separated.content
+  if (separated.discarded && !content.trim() && toolCalls.length === 0) {
+    throw new ModelProviderError(
+      "MALFORMED_RESPONSE",
+      "Assistant message contained an incomplete tool-call envelope and no answer",
+    )
+  }
+
   // Extract usage
   const usage = record.usage && typeof record.usage === "object" ? record.usage as Record<string, unknown> : undefined
   const inputTokens = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : undefined
@@ -381,6 +404,7 @@ export function normalizeWireResponse(payload: unknown, fallbackModel = "unknown
   if (typeof record.created === "number") metadata.created = record.created
   if (typeof record.system_fingerprint === "string") metadata.systemFingerprint = record.system_fingerprint
   if (typeof choice.index === "number") metadata.choiceIndex = choice.index
+  if (separated.discarded) metadata.protocolEnvelopeDiscarded = true
 
   const model = typeof record.model === "string" && record.model.trim() ? record.model.trim() : fallbackModel
 

@@ -139,6 +139,36 @@ test("protocol normalizer decodes Qwen function-parameter tool calls from conten
   assert.equal(normalized.message.content.includes("<function="), false)
 })
 
+test("protocol normalizer keeps prose and drops an unclosed tool envelope", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: { role: "assistant", content: "pong\n<tool_call>\n{\"name\": \"read_file\"" },
+      finish_reason: "stop",
+    }],
+  })
+  assert.equal(normalized.message.content, "pong")
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.metadata?.protocolEnvelopeDiscarded, true)
+  assert.equal(normalized.message.content.includes("<tool_call"), false)
+})
+
+test("protocol normalizer rejects an incomplete tool envelope with no answer", () => {
+  assert.throws(() => normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: { role: "assistant", content: "<tool_call>not-json</tool_call>" },
+      finish_reason: "stop",
+    }],
+  }), (err) => {
+    return err instanceof ModelProviderError
+      && err.code === "MALFORMED_RESPONSE"
+      && err.message.includes("incomplete tool-call envelope")
+      && !err.message.includes("not-json")
+      && !err.message.includes("<tool_call>")
+  })
+})
+
 test("protocol normalizer decodes tool call from <tool_call> tags", () => {
   const normalized = normalizeWireResponse(PROTOCOL_FIXTURES.contentToolCallTags)
   assert.ok(normalized.toolCalls)

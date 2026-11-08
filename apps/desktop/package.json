@@ -10,7 +10,9 @@
     "package": "node --import tsx scripts/package.ts",
     "smoke": "node --import tsx --test smoke/desktop-smoke.test.ts",
     "smoke:linux": "node --import tsx --test smoke/desktop-linux-smoke.test.ts",
-    "accept": "node --import tsx --test smoke/desktop-runtime-acceptance.test.ts"
+    "accept": "node --import tsx --test smoke/desktop-runtime-acceptance.test.ts",
+    "accept:lab": "node --import tsx acceptance/src/run-lab.ts",
+    "test": "node --import tsx --test acceptance/lab.test.ts"
   },
   "dependencies": {
     "@open-vs-code/agent-core": "*",
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
+    "playwright-core": "^1.50.1",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }
