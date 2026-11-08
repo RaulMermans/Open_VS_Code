@@ -42,8 +42,7 @@ There is no second summarization call. Coding tools, ASK denial, PLAN approval, 
 
 - A completed conversational answer is shown as the model wrote it.
 - Applied paths come from `appliedMutations` and mutation reviews whose status is `applied`.
-- The test line comes from the last command review: passed, failed, timed out, cancelled, not run, or not finished.
-- A coding completion with files and no command review says `Tests were not run.`
+- Sprint 14B.1 replaced the single "last command is a test" line. A command is classified from its script name or command text, and only a review whose run id matches the turn is used. A coding completion with file changes and no matching command says `Verification was not executed.`
 - Rejection stays `Change rejected — no files modified.` A rejected review path is named as not applied. Earlier applied files are listed only when the result actually contains them.
 - Cancellation stays `Task cancelled.` Model text that claims success is not shown.
 
@@ -127,7 +126,7 @@ The installed rc.9 package is the rollback target until that command succeeds. T
 - Installed GUI screenshots and a live `qwen3-coder:30b` walkthrough inside the installed window were not produced. The provider checks above are not that walkthrough.
 - The workspace directory disappeared after the package build. The source was restored from `sprint/14-daily-driver-stabilization` at `2bdbd7e67a` and these edits were applied again. The original dirty package file is gone.
 - The model can still ignore the response guidance. The plan reply used headings. The verified block does not rewrite the prose.
-- `Unsupported claim` matches phrases such as "tests pass" in a reply about future work, not only a false report of a finished run.
+- `Unsupported claim` used to match "tests pass" in a reply about future work. Sprint 14B.2 limits that note to a past report such as "tests passed".
 - Activity groups are presentation. They are not a new progress protocol.
 - A wider editor-column conversation is not implemented.
 - Streaming is deferred.
@@ -147,17 +146,63 @@ Required later, as a separate sprint:
 
 Until those exist, the timeline's "Planning changes" / "Reviewing results" row is the waiting state. The UI must not invent tokens.
 
-## Release and rollback
+## Sprint 14B.2
 
-No package was cut. Installed `0.1.0-rc.8` is unchanged. Conversation files and `models.json` are not migrated.
+Status: **PARTIALLY_VERIFIED**. The source corrections and the clean `0.1.0-rc.11` package are verified. The package is not installed, so the installed GUI and the live model walkthrough inside that window were not run. The sprint is not complete.
 
-Rollback is a source revert of this sprint. There is no storage rewrite to undo.
+`taskReviews` now always uses `reviewsForRun`. A turn with no run id, and a review whose run id does not match, cannot supply files or checks for the verified block. Paths on the current `appliedMutations` result are still listed, because they belong to the runner result rather than the conversation ledger.
 
-To ship later: build the desktop package from this tree, install it beside rc.8, and run the installed GUI journeys before replacing the daily driver.
+The unsupported-claim note matches a past report (`tests passed`, `lint passed`, `typecheck passed`, `checks passed`). It does not match `tests pass` or `tests will pass`.
 
-## Verification evidence
+Targeted tests after the change: `sprint-14b-conversation-ux.test.ts`, `sprint-7a-chat-ux.test.ts`, and `sprint-7c-sessions.test.ts`, 60 pass and 0 fail. Source commit `9d8ab96c06451f40c4d5cacaf9c6b85070d267cd`.
 
-Mocked, this session:
+### Clean package
+
+Built with `npm run package` from that commit. `OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE` was unset. `git status` was clean and the release stamp records `gitDirty: false` and `sourceClean: true`.
+
+- Product version: `0.1.0-rc.11`
+- Source SHA: `9d8ab96c06451f40c4d5cacaf9c6b85070d267cd`
+- Debian: `apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb`
+- Debian SHA-256: `36a7b49b22f7a2215f2db4f296b463a5e6df868e8ac847ec1a7d8cc793d64541`
+- Payload archive SHA-256: `ea5f9f628bfcf23d19dd014899e273f05b682455688131ad7404ea4fe206ef2b`
+- Bundled extension: `open-vs-code.vscode-integration` `0.1.0-rc.11`
+- Upstream shell: VSCodium `1.135.06055`, commit `5a73682ca091082675b10c9dc3f348c1d824d94f`
+- The bundled `extension.js` calls `reviewsForRun` for every outcome and returns no reviews when the run id is missing. Its claim pattern matches `passed` and `succeeded`, not a bare `pass`.
+
+### Installation
+
+Not performed. `sudo` on this machine needs the owner's password, and this sprint does not bypass that. After the owner installs it:
+
+```text
+sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb"
+```
+
+Do not add `--no-sandbox`. The package `postinst` sets `chrome-sandbox` to `root:root` mode `4755`.
+
+### Rollback
+
+Installed desktop is still `0.1.0-rc.9`, commit `bb07b1481d5465cb9e1b88589da17fa21a6f609d`, extension `0.1.0-rc.9`, `chrome-sandbox` `4755 root:root`.
+
+The original rc.9 `.deb` is not on disk. A rollback package was rebuilt from the installed files, and every regular file under `usr/` matches `/var/lib/dpkg/info/open-vs-code.md5sums` (2545 files, 0 mismatches). The container hash is the hash of that rebuild, not of the original archive.
+
+- Rollback deb: `~/open-vs-code-backups/rollback-0.1.0-rc.9-2026-11-08/open-vs-code_0.1.0-rc.9_amd64.deb`
+- Rollback SHA-256: `b9b312ac965b0f5ce9bb9fbdb4338d9ffddb73e72bea98001cc6b9fb39fac297`
+
+```text
+sudo dpkg -i ~/open-vs-code-backups/rollback-0.1.0-rc.9-2026-11-08/open-vs-code_0.1.0-rc.9_amd64.deb
+```
+
+Profile copy, taken before any candidate install and without replacing earlier backups: `~/open-vs-code-backups/pre-0.1.0-rc.11-2026-11-08/Open VS Code` (188 files). The earlier `pre-0.1.0-rc.10-2026-11-08` copy was left in place. The live profile was not modified.
+
+### Installed GUI
+
+Not run. There are no new screenshots and no new in-window `qwen3-coder:30b` session. Provider checks from Sprint 14B.1 are not this acceptance.
+
+## Earlier presentation evidence
+
+The checks below are the first Sprint 14B presentation pass. They are not the 14B.1 or 14B.2 release record. The sections above replace the earlier statement that no package had been cut and that `0.1.0-rc.8` was still the installed desktop.
+
+Mocked at that pass:
 
 - `packages/vscode-integration/tests/sprint-14b-conversation-ux.test.ts`: 5 pass
 - `packages/vscode-integration/tests/sprint-7a-chat-ux.test.ts`: 27 pass
@@ -166,16 +211,3 @@ Mocked, this session:
 - `packages/agent-core/tests/agent/response-guidance.test.ts` and `coding-reliability-11a1.test.ts`: 36 pass
 - `tsc --noEmit` in `vscode-integration` and `agent-core`: pass
 - `oxlint --deny-warnings` on the agent-core response guidance and runner: pass
-
-Not evidence of the installed UI:
-
-- Desktop smoke reads the already packaged extension under `apps/desktop/dist`. This diff is not in that package, so smoke was not used as acceptance.
-- `/usr/bin/open-vs-code` is installed and `DISPLAY` is set. It was not launched, because it does not contain this source.
-
-## Known limitations
-
-- Installed GUI screenshots and a live `qwen3-coder:30b` walkthrough were not produced here.
-- The model can still ignore the response guidance. The verified block does not rewrite the prose.
-- Activity groups are presentation. They are not a new progress protocol.
-- A wider editor-column conversation is not implemented.
-- Streaming is deferred.

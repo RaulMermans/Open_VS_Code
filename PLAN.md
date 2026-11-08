@@ -1,3 +1,10 @@
+Sprint 14B.2 — Clean release and real GUI acceptance
+STATUS: PARTIALLY_VERIFIED
+  - A review supports an outcome only when its run id matches the turn. A missing run id matches nothing. Applied paths on the current runner result are still listed.
+  - "tests pass" and "tests will pass" do not add an unsupported-claim note. "tests passed" still does when this run has no passing test.
+  - Clean Debian `0.1.0-rc.11` is from `9d8ab96c06`. Package SHA-256 `36a7b49b22f7a2215f2db4f296b463a5e6df868e8ac847ec1a7d8cc793d64541`. `gitDirty` was false. It is not installed.
+  - Installed desktop remains `0.1.0-rc.9`. A rebuilt rollback deb whose `usr/` files match the installed md5sums is at `~/open-vs-code-backups/rollback-0.1.0-rc.9-2026-11-08`. The installed GUI walkthrough was not run.
+
 Sprint 14B.1 — Conversational truth and installed GUI acceptance
 STATUS: PARTIALLY_VERIFIED
   - A final answer uses reviews stamped with the current run. An earlier run's files and checks stay in the conversation ledger and in that run's own message.
