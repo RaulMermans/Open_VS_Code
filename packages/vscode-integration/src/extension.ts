@@ -342,6 +342,12 @@ class VSCodeIdeHost implements IdeHost {
     await vscode.commands.executeCommand('open-vs-code.openModelConfig');
   }
 
+  async ensureModelRoute(): Promise<void> {
+    if (haloSettings().backend === 'halo') return;
+    if (modelRouting?.config) return;
+    await this.refreshGlobalModels();
+  }
+
   async refreshGlobalModels(): Promise<void> {
     const refreshed = await modelRouting?.refresh();
     if (refreshed && !_testSeam.autocompleteGatewayFactory) installAutocompleteGateway(refreshed.config);

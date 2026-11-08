@@ -1348,6 +1348,9 @@ export class ChatController {
     const isAuthenticated = Boolean(acctState?.user && acctState.status !== "UNAUTHENTICATED");
     const accountScope = isAuthenticated && acctState?.user?.id ? acctState.user.id : undefined;
 
+    if (typeof this.host.ensureModelRoute === 'function') {
+      await this.host.ensureModelRoute();
+    }
     this._activeAbortController = new AbortController();
     this._activeSessionBridge = this.bridgeFactory({
       host: this.host,
