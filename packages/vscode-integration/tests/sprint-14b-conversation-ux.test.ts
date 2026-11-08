@@ -66,8 +66,9 @@ test("verified files and tests come only from runtime facts", () => {
   const passed = formatTerminalTaskMessage({
     status: "COMPLETED",
     finalAnswer: "I updated the adder.",
+    runId: "run-pass",
     appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
-    reviews: [{ kind: "command", status: "succeeded", path: "npm test" }],
+    reviews: [{ kind: "command", status: "succeeded", path: "npm test", runId: "run-pass" }],
   });
   assert.match(passed.content, /I updated the adder\./);
   assert.match(passed.content, /Changed:\n- src\/add\.ts/);
@@ -86,8 +87,9 @@ test("verified files and tests come only from runtime facts", () => {
     status: "FAILED",
     failureReason: "VERIFICATION_FAILED",
     finalAnswer: "The edit is applied and tests passed.",
+    runId: "run-fail",
     appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
-    reviews: [{ kind: "command", status: "failed", scriptName: "test" }],
+    reviews: [{ kind: "command", status: "failed", scriptName: "test", runId: "run-fail" }],
   });
   assert.match(failed.content, /Task failed \(VERIFICATION_FAILED\)/);
   assert.equal(failed.lastStatus, "failed");
@@ -101,7 +103,8 @@ test("rejection names only the proposed file and cancellation is not success", (
     status: "FAILED",
     failureReason: "REJECTED",
     finalAnswer: "The requested edit was applied.",
-    reviews: [{ kind: "mutation", status: "rejected", path: "src/add.ts" }],
+    runId: "run-reject",
+    reviews: [{ kind: "mutation", status: "rejected", path: "src/add.ts", runId: "run-reject" }],
   });
   assert.equal(rejected.lastStatus, "rejected");
   assert.match(rejected.content, /Change rejected — no files modified\./);
@@ -160,7 +163,8 @@ test("a check is classified from the command that ran, not from a successful exi
   const lint = formatTerminalTaskMessage({
     status: "COMPLETED",
     finalAnswer: "Lint is clean.",
-    reviews: [{ kind: "command", status: "succeeded", scriptName: "lint", command: "npm run lint" }],
+    runId: "run-lint",
+    reviews: [{ kind: "command", status: "succeeded", scriptName: "lint", command: "npm run lint", runId: "run-lint" }],
   });
   assert.match(lint.content, /Lint passed\./);
   assert.doesNotMatch(lint.content, /Tests passed/);
@@ -170,7 +174,8 @@ test("a check is classified from the command that ran, not from a successful exi
     status: "FAILED",
     failureReason: "VERIFICATION_FAILED",
     finalAnswer: "Typecheck passed.",
-    reviews: [{ kind: "command", status: "failed", scriptName: "typecheck" }],
+    runId: "run-types",
+    reviews: [{ kind: "command", status: "failed", scriptName: "typecheck", runId: "run-types" }],
   });
   assert.match(types.content, /Typecheck failed\./);
   assert.match(types.content, /Unsupported claim/);
@@ -178,7 +183,8 @@ test("a check is classified from the command that ran, not from a successful exi
   const other = formatTerminalTaskMessage({
     status: "COMPLETED",
     finalAnswer: "The command finished.",
-    reviews: [{ kind: "command", status: "succeeded", command: "echo ok" }],
+    runId: "run-other",
+    reviews: [{ kind: "command", status: "succeeded", command: "echo ok", runId: "run-other" }],
   });
   assert.match(other.content, /Other checks completed\./);
   assert.doesNotMatch(other.content, /Tests passed/);
@@ -186,7 +192,8 @@ test("a check is classified from the command that ran, not from a successful exi
   const rejected = formatTerminalTaskMessage({
     status: "COMPLETED",
     finalAnswer: "I did not run it.",
-    reviews: [{ kind: "command", status: "rejected", scriptName: "test" }],
+    runId: "run-rejected-check",
+    reviews: [{ kind: "command", status: "rejected", scriptName: "test", runId: "run-rejected-check" }],
   });
   assert.match(rejected.content, /Verification was rejected\./);
   assert.doesNotMatch(rejected.content, /Tests passed/);
@@ -195,7 +202,8 @@ test("a check is classified from the command that ran, not from a successful exi
     status: "FAILED",
     failureReason: "INTERRUPTED",
     finalAnswer: "Checks passed.",
-    reviews: [{ kind: "command", status: "interrupted", command: "npm test" }],
+    runId: "run-interrupted",
+    reviews: [{ kind: "command", status: "interrupted", command: "npm test", runId: "run-interrupted" }],
   });
   assert.match(interrupted.content, /Verification was interrupted\./);
   assert.match(interrupted.content, /Unsupported claim/);
@@ -238,6 +246,28 @@ test("two sequential tasks keep the earlier run's files and checks out of the la
     reviews: shared,
   });
   assert.equal(third.content, "Nothing in this run wrote a file.");
+
+  const uncorrelated = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "Once the tests pass, the file can be merged. Tests will pass after the fix.",
+    appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
+    reviews: [
+      { kind: "command", status: "succeeded", scriptName: "test", command: "npm test" },
+      { kind: "mutation", status: "applied", path: "src/old.ts", runId: "run-a" },
+    ],
+  });
+  assert.match(uncorrelated.content, /Changed:\n- src\/add\.ts/);
+  assert.match(uncorrelated.content, /Verification was not executed\./);
+  assert.doesNotMatch(uncorrelated.content, /Tests passed|src\/old\.ts|Unsupported claim/);
+
+  const pastClaim = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "The tests passed.",
+    runId: "run-empty",
+    reviews: [{ kind: "command", status: "succeeded", scriptName: "test", runId: "run-other" }],
+  });
+  assert.match(pastClaim.content, /Unsupported claim/);
+  assert.doesNotMatch(pastClaim.content, /Tests passed/);
 });
 
 test("planning is titled only when the activity carries plan evidence", () => {

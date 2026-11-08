@@ -1,3 +1,9 @@
+Sprint 14B.2 — Clean release and real GUI acceptance
+STATUS: IN_PROGRESS
+  - A review supports an outcome only when its run id matches the turn. A missing run id matches nothing. Applied paths on the current runner result are still listed.
+  - "tests pass" and "tests will pass" do not add an unsupported-claim note. "tests passed" still does when this run has no passing test.
+  - Product version default is `0.1.0-rc.11`. The clean package and the installed GUI walkthrough are not done. Installed desktop remains `0.1.0-rc.9`.
+
 Sprint 14B.1 — Conversational truth and installed GUI acceptance
 STATUS: PARTIALLY_VERIFIED
   - A final answer uses reviews stamped with the current run. An earlier run's files and checks stay in the conversation ledger and in that run's own message.

@@ -84,8 +84,7 @@ function rejectedMessage(result: TerminalTaskInput): string {
 }
 
 function taskReviews(result: TerminalTaskInput): readonly TerminalTaskReview[] {
-  if (result.runId) return reviewsForRun(result.reviews, result.runId)
-  return result.reviews || []
+  return reviewsForRun(result.reviews, result.runId)
 }
 
 function appendVerified(content: string, result: TerminalTaskInput): string {
@@ -186,10 +185,11 @@ function claimNote(result: TerminalTaskInput, facts: readonly string[]): string 
   const answer = result.finalAnswer || ""
   if (!answer.trim()) return ""
   const recorded = facts.join("\n")
+  // Past reports only. "tests pass" and "tests will pass" describe work that has not been recorded.
   const claims: Array<{ pattern: RegExp; satisfied: RegExp }> = [
-    { pattern: /\btests?\s+(have\s+)?(passed|pass|succeeded)\b/i, satisfied: /^Tests passed\.$/m },
-    { pattern: /\blint\s+(passed|pass|succeeded|is clean)\b/i, satisfied: /^Lint passed\.$/m },
-    { pattern: /\btype-?\s?check\s+(passed|pass|succeeded)\b/i, satisfied: /^Typecheck passed\.$/m },
+    { pattern: /\btests?\s+(have\s+)?(passed|succeeded)\b/i, satisfied: /^Tests passed\.$/m },
+    { pattern: /\blint\s+(passed|succeeded|is clean)\b/i, satisfied: /^Lint passed\.$/m },
+    { pattern: /\btype-?\s?check\s+(passed|succeeded)\b/i, satisfied: /^Typecheck passed\.$/m },
     { pattern: /\b(checks|verification)\s+(passed|succeeded)\b/i, satisfied: /(Tests|Lint|Typecheck) passed\.|^Other checks completed\.$/m },
     { pattern: /\b(the edit (is|was) applied|files were changed|i applied the (edit|change|patch)|i (updated|edited|changed|modified|wrote|created) the)\b/i, satisfied: /^Changed:$/m },
   ]

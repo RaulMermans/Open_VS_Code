@@ -42,8 +42,7 @@ There is no second summarization call. Coding tools, ASK denial, PLAN approval, 
 
 - A completed conversational answer is shown as the model wrote it.
 - Applied paths come from `appliedMutations` and mutation reviews whose status is `applied`.
-- The test line comes from the last command review: passed, failed, timed out, cancelled, not run, or not finished.
-- A coding completion with files and no command review says `Tests were not run.`
+- Sprint 14B.1 replaced the single "last command is a test" line. A command is classified from its script name or command text, and only a review whose run id matches the turn is used. A coding completion with file changes and no matching command says `Verification was not executed.`
 - Rejection stays `Change rejected — no files modified.` A rejected review path is named as not applied. Earlier applied files are listed only when the result actually contains them.
 - Cancellation stays `Task cancelled.` Model text that claims success is not shown.
 
@@ -127,7 +126,7 @@ The installed rc.9 package is the rollback target until that command succeeds. T
 - Installed GUI screenshots and a live `qwen3-coder:30b` walkthrough inside the installed window were not produced. The provider checks above are not that walkthrough.
 - The workspace directory disappeared after the package build. The source was restored from `sprint/14-daily-driver-stabilization` at `2bdbd7e67a` and these edits were applied again. The original dirty package file is gone.
 - The model can still ignore the response guidance. The plan reply used headings. The verified block does not rewrite the prose.
-- `Unsupported claim` matches phrases such as "tests pass" in a reply about future work, not only a false report of a finished run.
+- `Unsupported claim` used to match "tests pass" in a reply about future work. Sprint 14B.2 limits that note to a past report such as "tests passed".
 - Activity groups are presentation. They are not a new progress protocol.
 - A wider editor-column conversation is not implemented.
 - Streaming is deferred.
@@ -147,17 +146,21 @@ Required later, as a separate sprint:
 
 Until those exist, the timeline's "Planning changes" / "Reviewing results" row is the waiting state. The UI must not invent tokens.
 
-## Release and rollback
+## Sprint 14B.2
 
-No package was cut. Installed `0.1.0-rc.8` is unchanged. Conversation files and `models.json` are not migrated.
+Status: **IN_PROGRESS**. Source corrections are in this tree. The clean package and the installed GUI are not done.
 
-Rollback is a source revert of this sprint. There is no storage rewrite to undo.
+`taskReviews` now always uses `reviewsForRun`. A turn with no run id, and a review whose run id does not match, cannot supply files or checks for the verified block. Paths on the current `appliedMutations` result are still listed, because they belong to the runner result rather than the conversation ledger.
 
-To ship later: build the desktop package from this tree, install it beside rc.8, and run the installed GUI journeys before replacing the daily driver.
+The unsupported-claim note matches a past report (`tests passed`, `lint passed`, `typecheck passed`, `checks passed`). It does not match `tests pass` or `tests will pass`.
 
-## Verification evidence
+The product version default is `0.1.0-rc.11`. Packaging must be a clean tree. `OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE` is not used for this candidate. Installed desktop remains `0.1.0-rc.9`.
 
-Mocked, this session:
+## Earlier presentation evidence
+
+The checks below are the first Sprint 14B presentation pass. They are not the 14B.1 or 14B.2 release record. The sections above replace the earlier statement that no package had been cut and that `0.1.0-rc.8` was still the installed desktop.
+
+Mocked at that pass:
 
 - `packages/vscode-integration/tests/sprint-14b-conversation-ux.test.ts`: 5 pass
 - `packages/vscode-integration/tests/sprint-7a-chat-ux.test.ts`: 27 pass
@@ -166,16 +169,3 @@ Mocked, this session:
 - `packages/agent-core/tests/agent/response-guidance.test.ts` and `coding-reliability-11a1.test.ts`: 36 pass
 - `tsc --noEmit` in `vscode-integration` and `agent-core`: pass
 - `oxlint --deny-warnings` on the agent-core response guidance and runner: pass
-
-Not evidence of the installed UI:
-
-- Desktop smoke reads the already packaged extension under `apps/desktop/dist`. This diff is not in that package, so smoke was not used as acceptance.
-- `/usr/bin/open-vs-code` is installed and `DISPLAY` is set. It was not launched, because it does not contain this source.
-
-## Known limitations
-
-- Installed GUI screenshots and a live `qwen3-coder:30b` walkthrough were not produced here.
-- The model can still ignore the response guidance. The verified block does not rewrite the prose.
-- Activity groups are presentation. They are not a new progress protocol.
-- A wider editor-column conversation is not implemented.
-- Streaming is deferred.
