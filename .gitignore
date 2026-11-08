@@ -12,6 +12,8 @@ ts-dist/
 apps/desktop/cache/
 apps/desktop/staging/
 apps/desktop/dist/
+apps/desktop/acceptance/evidence/
+apps/desktop/acceptance/results/
 
 
 # OS and Editor metadata
