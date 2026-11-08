@@ -1,10 +1,18 @@
+Sprint 14B.1 — Conversational truth and installed GUI acceptance
+STATUS: PARTIALLY_VERIFIED
+  - A final answer uses reviews stamped with the current run. An earlier run's files and checks stay in the conversation ledger and in that run's own message.
+  - Test, lint, typecheck, and other commands are classified from the script name or command text. A successful command is not called a passing test unless it is a test command. A reply that asserts an outcome the run did not record is marked unsupported and left intact.
+  - "Planning changes" is shown only for a PLAN-mode turn. Read-only work is labeled as reading files, exploring the repository, or consulting the model. Technical details stay collapsed.
+  - Candidate package `0.1.0-rc.10` was built from dirty commit `2bdbd7e67a`. It was not installed. The workspace directory was removed after that build; the extracted payload remains and was repacked. Installed desktop remains `0.1.0-rc.9`. `sudo` needs a password here. The unpackaged binary aborts because `chrome-sandbox` is not `root:root` mode `4755`.
+  - Live `qwen3-coder:30b` checks are in `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`. They are provider calls plus presentation checks, not an installed GUI walkthrough.
+
 Sprint 14B — Conversational agent experience
 STATUS: PARTIALLY_VERIFIED
   - Presentation only. The same `AgentRuntime`, permission gate, and mutation path remain in place.
-  - Answers stay the model's `finalAnswer`. A verified-outcome block is added only from applied mutations and review rows.
-  - Activity in the chat view is grouped. The raw event list stays in a collapsed technical-details section.
+  - Answers stay the model's `finalAnswer`. A verified-outcome block is added only from the current run's applied mutations and review rows.
+  - Activity in the chat view is grouped. The raw event list stays in a collapsed technical-details section. Planning is not inferred from a model wait.
   - Streaming is deferred. Providers still return one complete response.
-  - Installed GUI acceptance against Ollama and `qwen3-coder:30b` has not been run for this sprint. rc.8 stays the installed desktop build.
+  - Installed GUI acceptance for this presentation is still open. The installed package is `0.1.0-rc.9`.
 
 Sprint 14 — Final daily-driver stabilization
 STATUS: IN_VERIFICATION

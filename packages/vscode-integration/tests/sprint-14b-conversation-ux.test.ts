@@ -18,7 +18,7 @@ class MockElement {
   set innerHTML(val: string) { if (val === "") this.children = []; }
   get innerHTML() { return ""; }
   appendChild(child: MockElement) {
-    child && this.children.push(child);
+    if (child) this.children.push(child);
     return child;
   }
   setAttribute(name: string, value: string) { this.attrs[name] = value; }
@@ -79,7 +79,7 @@ test("verified files and tests come only from runtime facts", () => {
     finalAnswer: "The edit is applied.",
     appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
   });
-  assert.match(notRun.content, /Tests were not run\./);
+  assert.match(notRun.content, /Verification was not executed\./);
   assert.doesNotMatch(notRun.content, /Tests passed/);
 
   const failed = formatTerminalTaskMessage({
@@ -87,11 +87,12 @@ test("verified files and tests come only from runtime facts", () => {
     failureReason: "VERIFICATION_FAILED",
     finalAnswer: "The edit is applied and tests passed.",
     appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
-    reviews: [{ kind: "command", status: "failed" }],
+    reviews: [{ kind: "command", status: "failed", scriptName: "test" }],
   });
   assert.match(failed.content, /Task failed \(VERIFICATION_FAILED\)/);
   assert.equal(failed.lastStatus, "failed");
   assert.match(failed.content, /Tests failed\./);
+  assert.match(failed.content, /Unsupported claim/);
   assert.doesNotMatch(failed.content, /Task completed/);
 });
 
@@ -129,12 +130,13 @@ test("activity groups real events and keeps the raw trace collapsed", () => {
   assert.equal(reading?.status, "failed");
   assert.match(reading?.detail || "", /src\/a\.ts/);
   assert.match(reading?.detail || "", /src\/b\.ts/);
-  assert.equal(groups.find((group) => group.category === "review")?.title, "Planning changes");
+  assert.equal(groups.find((group) => group.category === "consult")?.title, "Consulting the model");
+  assert.equal(groups.some((group) => group.title === "Planning changes"), false);
 
   const root = new MockElement("div");
   renderActivityTimeline(root, activities, mockDoc());
   const summaryText = labels(root, "activity-label").join("\n");
-  assert.match(summaryText, /Reading relevant files failed/);
+  assert.match(summaryText, /Reading files failed/);
   assert.match(summaryText, /read_file failed — src\/b\.ts/);
   const trace = root.querySelector("details");
   assert.equal(trace?.className, "activity-trace");
@@ -152,4 +154,109 @@ test("hostile model text is rendered as text", () => {
   const runtime = webviewRenderRuntime();
   assert.match(runtime, /function summarizeActivities/);
   assert.match(runtime, /function renderActivityTimeline/);
+});
+
+test("a check is classified from the command that ran, not from a successful exit alone", () => {
+  const lint = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "Lint is clean.",
+    reviews: [{ kind: "command", status: "succeeded", scriptName: "lint", command: "npm run lint" }],
+  });
+  assert.match(lint.content, /Lint passed\./);
+  assert.doesNotMatch(lint.content, /Tests passed/);
+  assert.doesNotMatch(lint.content, /Unsupported claim/);
+
+  const types = formatTerminalTaskMessage({
+    status: "FAILED",
+    failureReason: "VERIFICATION_FAILED",
+    finalAnswer: "Typecheck passed.",
+    reviews: [{ kind: "command", status: "failed", scriptName: "typecheck" }],
+  });
+  assert.match(types.content, /Typecheck failed\./);
+  assert.match(types.content, /Unsupported claim/);
+
+  const other = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "The command finished.",
+    reviews: [{ kind: "command", status: "succeeded", command: "echo ok" }],
+  });
+  assert.match(other.content, /Other checks completed\./);
+  assert.doesNotMatch(other.content, /Tests passed/);
+
+  const rejected = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "I did not run it.",
+    reviews: [{ kind: "command", status: "rejected", scriptName: "test" }],
+  });
+  assert.match(rejected.content, /Verification was rejected\./);
+  assert.doesNotMatch(rejected.content, /Tests passed/);
+
+  const interrupted = formatTerminalTaskMessage({
+    status: "FAILED",
+    failureReason: "INTERRUPTED",
+    finalAnswer: "Checks passed.",
+    reviews: [{ kind: "command", status: "interrupted", command: "npm test" }],
+  });
+  assert.match(interrupted.content, /Verification was interrupted\./);
+  assert.match(interrupted.content, /Unsupported claim/);
+});
+
+test("two sequential tasks keep the earlier run's files and checks out of the later answer", () => {
+  const shared = [
+    { kind: "mutation", status: "applied", path: "src/old.ts", runId: "run-a" },
+    { kind: "command", status: "succeeded", scriptName: "test", command: "npm test", runId: "run-a" },
+    { kind: "mutation", status: "applied", path: "src/new.ts", runId: "run-b" },
+    { kind: "command", status: "failed", scriptName: "lint", command: "npm run lint", runId: "run-b" },
+  ];
+  const first = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "I updated the adder.",
+    runId: "run-a",
+    appliedMutations: [{ path: "src/old.ts", status: "APPLIED" }],
+    reviews: shared,
+  });
+  assert.match(first.content, /src\/old\.ts/);
+  assert.match(first.content, /Tests passed\./);
+  assert.doesNotMatch(first.content, /src\/new\.ts|Lint failed/);
+
+  const second = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "The explanation is above. Tests passed.",
+    runId: "run-b",
+    reviews: shared,
+  });
+  assert.match(second.content, /src\/new\.ts/);
+  assert.match(second.content, /Lint failed\./);
+  assert.match(second.content, /Unsupported claim/);
+  assert.doesNotMatch(second.content, /src\/old\.ts/);
+  assert.doesNotMatch(second.content.split("Verified outcome")[1] || "", /Tests passed/);
+
+  const third = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "Nothing in this run wrote a file.",
+    runId: "run-c",
+    reviews: shared,
+  });
+  assert.equal(third.content, "Nothing in this run wrote a file.");
+});
+
+test("planning is titled only when the activity carries plan evidence", () => {
+  const ask = summarizeActivities([
+    { id: "m", kind: "model", label: "Waiting for the model", status: "pending" },
+    { id: "g", kind: "tool", label: "Running grep", status: "completed", toolName: "grep" },
+  ]);
+  assert.equal(ask.find((group) => group.category === "consult")?.title, "Consulting the model");
+  assert.equal(ask.find((group) => group.category === "explore")?.title, "Exploring the repository");
+  assert.equal(ask.some((group) => group.title === "Planning changes"), false);
+
+  const plan = summarizeActivities([
+    { id: "m", kind: "model", label: "Waiting for the model", status: "pending", planning: true, runId: "run-plan" },
+  ]);
+  assert.equal(plan[0]?.title, "Planning changes");
+  const root = new MockElement("div");
+  renderActivityTimeline(root, [
+    { id: "m", kind: "model", label: "Waiting for the model", status: "pending", planning: true, runId: "run-plan" },
+  ], mockDoc());
+  assert.equal(root.querySelector("details")?.open, false);
+  assert.match(labels(root, "activity-label").join("\n"), /run-plan/);
 });

@@ -496,7 +496,10 @@ describe("Sprint 7A ChatController contracts", { concurrency: false }, () => {
     await fx.view.webview.send({ type: "terminal.respond", confirmationId: pending.id, action: "REJECT" });
     resolveGate();
     await turn;
-    assert.equal(fx.controller["state"].messages.at(-1).content, "REJECT");
+    const answer = fx.controller["state"].messages.at(-1).content as string;
+    assert.match(answer, /^REJECT/);
+    assert.match(answer, /Verification was rejected\./);
+    assert.doesNotMatch(answer, /Tests passed/);
   });
 
   test("transcript and activity retention stay bounded", async () => {

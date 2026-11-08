@@ -16,6 +16,9 @@ export interface TerminalTaskReview {
   readonly kind: string
   readonly status: string
   readonly path?: string | undefined
+  readonly command?: string | undefined
+  readonly scriptName?: string | undefined
+  readonly runId?: string | undefined
 }
 
 export interface TerminalTaskInput {
@@ -24,6 +27,17 @@ export interface TerminalTaskInput {
   readonly finalAnswer?: string | undefined
   readonly appliedMutations?: readonly { readonly path: string; readonly status?: string | undefined }[] | undefined
   readonly reviews?: readonly TerminalTaskReview[] | undefined
+  /** When set, only reviews stamped with this run may support the outcome. */
+  readonly runId?: string | undefined
+}
+
+/** Reviews that belong to one agent run. A missing run id matches nothing. */
+export function reviewsForRun<T extends { readonly runId?: string | undefined }>(
+  reviews: readonly T[] | undefined,
+  runId: string | undefined,
+): T[] {
+  if (!runId) return []
+  return (reviews || []).filter((review) => review.runId === runId)
 }
 
 export function formatTerminalTaskMessage(result: TerminalTaskInput): { content: string; lastStatus: ConversationExecutionStatus } {
@@ -48,12 +62,13 @@ export function formatTerminalTaskMessage(result: TerminalTaskInput): { content:
 }
 
 function rejectedMessage(result: TerminalTaskInput): string {
+  const reviews = taskReviews(result)
   const proposed = uniqueFactPaths(
-    (result.reviews || [])
+    reviews
       .filter((review) => review.kind === "mutation" && review.status === "rejected")
       .map((review) => review.path),
   )
-  const applied = appliedFactPaths(result)
+  const applied = appliedFactPaths(result, reviews)
   if (proposed.length === 0 && applied.length === 0) return USER_REJECTION_MESSAGE
   const lines = [
     applied.length === 0
@@ -68,58 +83,125 @@ function rejectedMessage(result: TerminalTaskInput): string {
   return lines.join("\n")
 }
 
+function taskReviews(result: TerminalTaskInput): readonly TerminalTaskReview[] {
+  if (result.runId) return reviewsForRun(result.reviews, result.runId)
+  return result.reviews || []
+}
+
 function appendVerified(content: string, result: TerminalTaskInput): string {
-  const appendix = verifiedOutcomeAppendix(result)
-  return appendix ? content + appendix : content
-}
-
-function verifiedOutcomeAppendix(result: TerminalTaskInput): string {
-  if (result.status === "FAILED" && result.failureReason === "REJECTED") return ""
-  const paths = appliedFactPaths(result)
-  const testLine = verificationFact(result.reviews)
+  const facts = outcomeFacts(result)
   if (result.status === "CANCELLED") {
-    if (paths.length === 0) return ""
-    return "\n\nAlready applied before cancellation:\n" + paths.map((path) => "- " + path).join("\n")
+    return facts.length > 0 ? content + "\n\n" + facts.join("\n") : content
   }
-  const line = testLine ?? (paths.length > 0 ? unrunTestLine(result.reviews) : undefined)
-  if (paths.length === 0 && !line) return ""
-  const lines = ["", "", "Verified outcome"]
-  if (paths.length > 0) {
-    lines.push("Changed:")
-    for (const path of paths) lines.push("- " + path)
-  } else {
-    lines.push("No files were changed.")
-  }
-  if (line) lines.push(line)
-  return lines.join("\n")
+  const note = claimNote(result, facts)
+  const blocks = [content]
+  if (note) blocks.push("", note)
+  if (facts.length > 0) blocks.push("", "Verified outcome", ...facts)
+  return blocks.join("\n")
 }
 
-function unrunTestLine(reviews: readonly TerminalTaskReview[] | undefined): string {
-  const rejected = (reviews || []).some((review) => review.kind === "command" && review.status === "rejected")
-  return rejected ? "The test command was not run." : "Tests were not run."
-}
-
-function verificationFact(reviews: readonly TerminalTaskReview[] | undefined): string | undefined {
-  const finished = (reviews || []).filter((review) =>
-    review.kind === "command" &&
-    (review.status === "succeeded" || review.status === "failed" || review.status === "timed-out" || review.status === "cancelled"),
-  )
-  const last = finished[finished.length - 1]
-  if (!last) return undefined
-  switch (last.status) {
-    case "succeeded": return "Tests passed."
-    case "failed": return "Tests failed."
-    case "timed-out": return "Tests timed out."
-    case "cancelled": return "Tests were cancelled."
-    default: return undefined
+function outcomeFacts(result: TerminalTaskInput): string[] {
+  if (result.status === "FAILED" && result.failureReason === "REJECTED") return []
+  const reviews = taskReviews(result)
+  const paths = appliedFactPaths(result, reviews)
+  if (result.status === "CANCELLED") {
+    if (paths.length === 0) return []
+    return ["Already applied before cancellation:", ...paths.map((path) => "- " + path)]
   }
+  const checks = checkFacts(reviews)
+  if (paths.length === 0 && checks.length === 0) return []
+  const lines = [
+    paths.length > 0 ? "Changed:" : "No files were changed.",
+    ...paths.map((path) => "- " + path),
+  ]
+  if (checks.length > 0) lines.push(...checks)
+  else if (paths.length > 0) lines.push("Verification was not executed.")
+  return lines.filter((line) => line.length > 0)
 }
 
-function appliedFactPaths(result: TerminalTaskInput): string[] {
+type CheckClass = "test" | "lint" | "typecheck" | "other"
+
+function checkFacts(reviews: readonly TerminalTaskReview[]): string[] {
+  const commands = reviews.filter((review) => review.kind === "command")
+  const latest = new Map<CheckClass, TerminalTaskReview>()
+  for (const review of commands) latest.set(checkClass(review), review)
+  const lines: string[] = []
+  for (const kind of ["test", "lint", "typecheck", "other"] as const) {
+    const review = latest.get(kind)
+    const line = review ? checkLine(kind, review.status) : undefined
+    if (line && !lines.includes(line)) lines.push(line)
+  }
+  return lines
+}
+
+function checkClass(review: TerminalTaskReview): CheckClass {
+  const script = (review.scriptName || "").trim().toLowerCase()
+  if (script) return classFromHint(script)
+  const command = review.command || review.path || ""
+  return classFromHint(command)
+}
+
+function classFromHint(value: string): CheckClass {
+  const text = value.toLowerCase()
+  if (/(^|[^a-z])(typecheck|type-check|tsc)([^a-z]|$)/.test(text)) return "typecheck"
+  if (/(^|[^a-z])(lint|eslint|oxlint|ruff)([^a-z]|$)/.test(text)) return "lint"
+  if (
+    text === "test" ||
+    text.startsWith("test:") ||
+    /(^|[^a-z])(test|jest|vitest|pytest)([^a-z]|$)/.test(text)
+  ) return "test"
+  return "other"
+}
+
+function checkLine(kind: CheckClass, status: string): string | undefined {
+  if (status === "rejected") return "Verification was rejected."
+  if (status === "cancelled") return "Verification was cancelled."
+  if (status === "interrupted") return "Verification was interrupted."
+  if (status === "timed-out") {
+    if (kind === "test") return "Tests timed out."
+    if (kind === "lint") return "Lint timed out."
+    if (kind === "typecheck") return "Typecheck timed out."
+    return "Other checks timed out."
+  }
+  if (status === "succeeded") {
+    if (kind === "test") return "Tests passed."
+    if (kind === "lint") return "Lint passed."
+    if (kind === "typecheck") return "Typecheck passed."
+    return "Other checks completed."
+  }
+  if (status === "failed") {
+    if (kind === "test") return "Tests failed."
+    if (kind === "lint") return "Lint failed."
+    if (kind === "typecheck") return "Typecheck failed."
+    return "Other checks failed."
+  }
+  return undefined
+}
+
+const UNSUPPORTED_CLAIM = "Unsupported claim: the reply describes an outcome this run did not record."
+
+function claimNote(result: TerminalTaskInput, facts: readonly string[]): string {
+  if (result.status === "CANCELLED") return ""
+  if (result.status === "FAILED" && result.failureReason === "REJECTED") return ""
+  const answer = result.finalAnswer || ""
+  if (!answer.trim()) return ""
+  const recorded = facts.join("\n")
+  const claims: Array<{ pattern: RegExp; satisfied: RegExp }> = [
+    { pattern: /\btests?\s+(have\s+)?(passed|pass|succeeded)\b/i, satisfied: /^Tests passed\.$/m },
+    { pattern: /\blint\s+(passed|pass|succeeded|is clean)\b/i, satisfied: /^Lint passed\.$/m },
+    { pattern: /\btype-?\s?check\s+(passed|pass|succeeded)\b/i, satisfied: /^Typecheck passed\.$/m },
+    { pattern: /\b(checks|verification)\s+(passed|succeeded)\b/i, satisfied: /(Tests|Lint|Typecheck) passed\.|^Other checks completed\.$/m },
+    { pattern: /\b(the edit (is|was) applied|files were changed|i applied the (edit|change|patch)|i (updated|edited|changed|modified|wrote|created) the)\b/i, satisfied: /^Changed:$/m },
+  ]
+  const contradicted = claims.some((claim) => claim.pattern.test(answer) && !claim.satisfied.test(recorded))
+  return contradicted ? UNSUPPORTED_CLAIM : ""
+}
+
+function appliedFactPaths(result: TerminalTaskInput, reviews: readonly TerminalTaskReview[]): string[] {
   const fromResult = (result.appliedMutations || [])
     .filter((mutation) => !mutation.status || mutation.status === "APPLIED")
     .map((mutation) => mutation.path)
-  const fromReviews = (result.reviews || [])
+  const fromReviews = reviews
     .filter((review) => review.kind === "mutation" && review.status === "applied")
     .map((review) => review.path)
   return uniqueFactPaths([...fromResult, ...fromReviews])
@@ -441,6 +523,12 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
 
   const toolName = typeof ev.payload?.name === "string" ? ev.payload.name.slice(0, 80) : undefined;
   const summary = activitySummary(ev);
+  const runSource = typeof (ev as { taskId?: unknown }).taskId === "string"
+    ? (ev as { taskId: string }).taskId
+    : typeof ev.payload?.task?.id === "string"
+      ? ev.payload.task.id
+      : "";
+  const runId = runSource.trim().slice(0, 80);
   let label = mapped.label;
   if (toolName && mapped.kind === "tool") {
     if (ev.type === "tool.requested") label = "Running " + toolName;
@@ -473,6 +561,8 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
     status,
     toolName,
     ...(summary ? { summary } : {}),
+    ...(runId ? { runId } : {}),
+    ...(ev.payload?.task?.mode === "PLAN" ? { planning: true } : {}),
   };
 }
 

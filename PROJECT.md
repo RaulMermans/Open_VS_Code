@@ -30,9 +30,11 @@
 
 ## Current sprint
 
-Sprint 14B — Conversational agent experience. Presentation changes on the existing chat path. Status: `PARTIALLY_VERIFIED`. Installed GUI acceptance is still open. See `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md` and `PLAN.md`.
+Sprint 14B.1 — Conversational truth and installed GUI acceptance. Status: `PARTIALLY_VERIFIED`. Run-scoped evidence, check classification, and activity labels are covered by deterministic tests and a live `qwen3-coder:30b` provider pass. Debian `0.1.0-rc.10` was built and is not installed. The installed desktop remains `0.1.0-rc.9`. See `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md` and `PLAN.md`.
 
-Sprint 14 — Final daily-driver stabilization. Desktop version target `0.1.0-rc.9`. Installed `0.1.0-rc.8` stays in place until the rc.9 package passes the installed GUI journeys. Status: `IN_VERIFICATION`. See `PLAN.md`.
+Sprint 14B — Conversational agent experience. Presentation changes on the existing chat path. Status: `PARTIALLY_VERIFIED`. Installed GUI acceptance is still open.
+
+Sprint 14 — Final daily-driver stabilization. Desktop version target `0.1.0-rc.9`. That package is installed. Status: `IN_VERIFICATION`. See `PLAN.md`.
 
 Sprint 13.1 — Daily driver acceptance. Desktop version target `0.1.0-rc.8`. `0.1.0-rc.7` was installed for the first acceptance pass and remains available beside the `0.1.0-rc.6` rollback package.
 
