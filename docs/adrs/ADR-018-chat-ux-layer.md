@@ -87,3 +87,14 @@ The authority map is unchanged; no new Webview → Host message.
 - `ChatController.uiMetrics`: in-memory counters (numbers only), never persisted, logged or used to decide anything.
 
 Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`; ADR-026 (Sprint 7D amendment).
+
+## Sprint 14B refinements (conversation presentation)
+
+The authority map is unchanged. No new agent, permission, or provider method.
+
+- The runner appends `CONVERSATIONAL_RESPONSE_GUIDANCE` to the existing operating guidelines. It does not add a second model call.
+- `formatTerminalTaskMessage` may append a verified-outcome block built from `appliedMutations` and review rows. It does not infer files or tests from the model's prose.
+- The webview shows grouped activity titles and keeps the raw event labels in a collapsed technical-details list.
+- Token streaming stays deferred. `ModelProvider.complete` still returns one `ModelResponse`.
+
+Record: `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`.

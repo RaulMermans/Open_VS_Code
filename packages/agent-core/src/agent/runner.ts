@@ -24,6 +24,7 @@ import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, isSocialTurn, type TaskProfile } from "./task-profile.ts"
+import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
 import { assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
@@ -992,6 +993,7 @@ export class AgentRunner {
         content: `Operating Guidelines:
 - ${phaseInstruction}
 - Grounding: Always include the exact function names, literals, values, ports, and file paths found in the observations.
+- ${CONVERSATIONAL_RESPONSE_GUIDANCE}
 - ${completionLine}${fileChangeGuidance ? `\n${fileChangeGuidance}` : ""}${dynamicBanner}`,
       }
 

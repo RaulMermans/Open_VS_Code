@@ -1,3 +1,11 @@
+Sprint 14B — Conversational agent experience
+STATUS: PARTIALLY_VERIFIED
+  - Presentation only. The same `AgentRuntime`, permission gate, and mutation path remain in place.
+  - Answers stay the model's `finalAnswer`. A verified-outcome block is added only from applied mutations and review rows.
+  - Activity in the chat view is grouped. The raw event list stays in a collapsed technical-details section.
+  - Streaming is deferred. Providers still return one complete response.
+  - Installed GUI acceptance against Ollama and `qwen3-coder:30b` has not been run for this sprint. rc.8 stays the installed desktop build.
+
 Sprint 14 — Final daily-driver stabilization
 STATUS: IN_VERIFICATION
   - Wayland app id follows the Electron executable name. `--class` and `CHROME_DESKTOP` left the installed window as `codium`, so GNOME showed a gear. The Linux package renames that binary to `open-vs-code` and keeps `codium` as a symlink. rc.8 stays installed until rc.9 is checked.

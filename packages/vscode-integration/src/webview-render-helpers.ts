@@ -313,45 +313,204 @@ export function syncTranscript(
   return { created: created, updated: updated, removed: removed };
 }
 
+function activityCategory(act: any): string {
+  var kind = String((act && act.kind) || "");
+  var tool = String((act && act.toolName) || "");
+  var label = String((act && act.label) || "");
+  if (kind === "approval" || label.indexOf("Waiting for approval") === 0 || label.indexOf("Approval") === 0) return "approval";
+  if (kind === "verification") return "checks";
+  if (kind === "mutation") return "edit";
+  if (kind === "tool") {
+    if (tool === "read_file" || tool === "read_file_range") return "read";
+    return "explore";
+  }
+  if (kind === "context") return "understand";
+  if (kind === "model") return "review";
+  if (kind === "task") {
+    if (label === "Starting task") return "understand";
+    return "outcome";
+  }
+  return "understand";
+}
+
+function activityGroupStatus(items: any[]): string {
+  var pending = false;
+  var failed = false;
+  var cancelled = false;
+  for (var i = 0; i < items.length; i++) {
+    var status = items[i] && items[i].status;
+    if (status === "pending" || status === "running") pending = true;
+    else if (status === "failed") failed = true;
+    else if (status === "cancelled") cancelled = true;
+  }
+  if (failed) return "failed";
+  if (pending) return "pending";
+  if (cancelled) return "cancelled";
+  return "completed";
+}
+
+function outcomeTitle(items: any[]): string {
+  var last = items[items.length - 1] || {};
+  var label = String(last.label || "");
+  if (last.status === "failed" || label === "Failed") return "Failed";
+  if (last.status === "cancelled" || label === "Cancelled") return "Cancelled";
+  if (label.toLowerCase().indexOf("blocked") !== -1) return "Blocked";
+  if (label === "Completed" || last.status === "completed") return "Completed";
+  return label || "Completed";
+}
+
+function groupTitle(category: string, items: any[], seenEdit: boolean): string {
+  var status = activityGroupStatus(items);
+  if (category === "approval") {
+    if (status === "pending") return "Waiting for approval";
+    if (status === "failed") return "Permission denied";
+    if (status === "cancelled") return "Approval rejected";
+    return "Approval granted";
+  }
+  if (category === "outcome") return outcomeTitle(items);
+  if (category === "checks") {
+    if (status === "pending") return "Running checks";
+    if (status === "failed") return "Checks failed";
+    if (status === "cancelled") return "Checks cancelled";
+    return "Checks finished";
+  }
+  if (category === "edit") {
+    if (status === "pending") return "Editing files";
+    if (status === "failed") return "Edit failed";
+    if (status === "cancelled") return "Edit cancelled";
+    return "Edited files";
+  }
+  if (category === "review" && status === "pending" && !seenEdit) return "Planning changes";
+  var titles: Record<string, string> = {
+    understand: "Understanding the request",
+    explore: "Exploring the codebase",
+    read: "Reading relevant files",
+    plan: "Planning changes",
+    edit: "Editing files",
+    approval: "Waiting for approval",
+    checks: "Running checks",
+    review: "Reviewing results",
+    outcome: "Completed",
+  };
+  var base = titles[category] || "Working";
+  if (status === "failed") return base + " failed";
+  if (status === "cancelled") return base + " cancelled";
+  return base;
+}
+
+function groupDetail(items: any[]): string {
+  var names: string[] = [];
+  for (var i = 0; i < items.length; i++) {
+    var summary = items[i] && items[i].summary;
+    if (typeof summary !== "string" || !summary || summary.length > 80) continue;
+    if (names.indexOf(summary) === -1) names.push(summary);
+  }
+  if (!names.length) return "";
+  var shown = names.slice(0, 3).join(", ");
+  if (names.length > 3) shown += " +" + String(names.length - 3);
+  return shown;
+}
+
+export function summarizeActivities(activities: any[]): Array<{ category: string; title: string; status: string; count: number; detail: string }> {
+  var groups: Array<{ category: string; items: any[]; seenEdit: boolean }> = [];
+  var list = activities || [];
+  var seenEdit = false;
+  for (var i = 0; i < list.length; i++) {
+    var act = list[i];
+    var category = activityCategory(act);
+    var current = groups[groups.length - 1];
+    if (current && current.category === category) current.items.push(act);
+    else groups.push({ category: category, items: [act], seenEdit: seenEdit });
+    if (category === "edit") seenEdit = true;
+  }
+  var summarized = [];
+  for (var g = 0; g < groups.length; g++) {
+    var group = groups[g];
+    if (!group) continue;
+    summarized.push({
+      category: group.category,
+      title: groupTitle(group.category, group.items, group.seenEdit),
+      status: activityGroupStatus(group.items),
+      count: group.items.length,
+      detail: group.category === "edit" || group.category === "read" ? groupDetail(group.items) : "",
+    });
+  }
+  return summarized;
+}
+
 export function renderActivityTimeline(container: any, activities: any[], doc?: any): any {
   var all = activities || [];
   var start = Math.max(0, all.length - 20);
+  var visible = all.slice(start);
+  var groups = summarizeActivities(visible);
   var sig = "";
-  for (var s = start; s < all.length; s++) sig += (all[s].id || "") + "\u0000" + (all[s].status || "") + "\u0000" + (all[s].label || all[s].kind || "") + "\u0001";
+  for (var s = 0; s < groups.length; s++) {
+    var group = groups[s];
+    if (!group) continue;
+    sig += group.category + "\u0000" + group.status + "\u0000" + group.title + "\u0000" + group.detail + "\u0001";
+  }
+  for (var r = 0; r < visible.length; r++) {
+    var raw = visible[r];
+    sig += (raw.id || "") + "\u0000" + (raw.status || "") + "\u0000" + (raw.label || "") + "\u0000" + (raw.summary || "") + "\u0002";
+  }
   if (container.__activitySig === sig) return container.firstChild || null;
   container.__activitySig = sig;
   container.innerHTML = "";
   if (!all.length) return null;
   var d = docOf(doc);
-  var list = d.createElement("ol");
-  list.className = "activity-list";
-  setAttr(list, "aria-label", "Agent activity");
+  var panel = d.createElement("div");
+  panel.className = "activity-panel";
   var working = false;
-  for (var i = start; i < activities.length; i++) {
-    var act = activities[i];
-    if (act.status === "pending" || act.status === "running") working = true;
+  var summaryList = d.createElement("ol");
+  summaryList.className = "activity-summary";
+  setAttr(summaryList, "aria-label", "Task activity");
+  for (var i = 0; i < groups.length; i++) {
+    var item = groups[i];
+    if (!item) continue;
+    if (item.status === "pending") working = true;
     var li = d.createElement("li");
-    li.className = "activity-item is-" + (act.status || "pending");
-    setAttr(li, "aria-current", act.status === "pending" ? "step" : "false");
+    li.className = "activity-item is-" + item.status;
+    setAttr(li, "aria-current", item.status === "pending" ? "step" : "false");
     var mark = d.createElement("span");
     mark.className = "activity-mark";
     setAttr(mark, "aria-hidden", "true");
     var label = d.createElement("span");
     label.className = "activity-label";
-    setText(label, act.label || act.kind || "activity");
+    var text = item.title;
+    if (item.detail) text += ": " + item.detail;
+    if (item.count > 1) text += " (" + String(item.count) + ")";
+    setText(label, text);
     li.appendChild(mark);
     li.appendChild(label);
-    list.appendChild(li);
+    summaryList.appendChild(li);
   }
+  panel.appendChild(summaryList);
   var details = d.createElement("details");
-  details.className = "activity-fold";
-  details.open = working;
+  details.className = "activity-trace";
+  details.open = false;
   var summary = d.createElement("summary");
-  setText(summary, working ? "Working" : "Activity");
+  setText(summary, "Technical details");
+  var rawList = d.createElement("ol");
+  rawList.className = "activity-list";
+  setAttr(rawList, "aria-label", "Technical activity trace");
+  for (var t = 0; t < visible.length; t++) {
+    var act = visible[t];
+    var row = d.createElement("li");
+    row.className = "activity-item is-" + (act.status || "pending");
+    var rawLabel = d.createElement("span");
+    rawLabel.className = "activity-label";
+    var line = act.label || act.kind || "activity";
+    if (act.summary) line += " — " + act.summary;
+    setText(rawLabel, line);
+    row.appendChild(rawLabel);
+    rawList.appendChild(row);
+  }
   details.appendChild(summary);
-  details.appendChild(list);
-  container.appendChild(details);
-  return details;
+  details.appendChild(rawList);
+  panel.appendChild(details);
+  if (working) setAttr(panel, "aria-busy", "true");
+  container.appendChild(panel);
+  return panel;
 }
 
 export function renderContextChips(
@@ -3456,6 +3615,12 @@ export function webviewRenderRuntime(): string {
     renderChatMessage.toString(),
     updateChatMessage.toString(),
     syncTranscript.toString(),
+    activityCategory.toString(),
+    activityGroupStatus.toString(),
+    outcomeTitle.toString(),
+    groupTitle.toString(),
+    groupDetail.toString(),
+    summarizeActivities.toString(),
     renderActivityTimeline.toString(),
     renderContextChips.toString(),
     renderConnectionStatus.toString(),

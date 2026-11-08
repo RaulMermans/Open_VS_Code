@@ -1298,7 +1298,13 @@ export class ChatController {
       }
       this.state.connection = deriveConnectionStatus(this._connectionInput);
       
-      const terminal = formatTerminalTaskMessage(result);
+      const terminal = formatTerminalTaskMessage({
+        status: result.status,
+        failureReason: result.failureReason,
+        finalAnswer: result.finalAnswer,
+        appliedMutations: result.appliedMutations,
+        reviews: this.state.reviews,
+      });
       const terminalMsg: ChatMessage = {
         id: this.generateId(),
         role: terminal.lastStatus === 'completed' ? 'assistant' : 'system',
@@ -1633,6 +1639,7 @@ export class ChatController {
         prior.status = activity.status;
         prior.label = activity.label;
         prior.toolName = activity.toolName || prior.toolName;
+        if (activity.summary) prior.summary = activity.summary;
         return;
       }
     }
