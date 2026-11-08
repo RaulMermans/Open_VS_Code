@@ -245,6 +245,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .message-body {
             white-space: pre-wrap;
             word-break: break-word;
+            line-height: 1.45;
+        }
+        #empty-state {
+            padding: 28px 16px 4px;
+            color: var(--vscode-descriptionForeground);
+        }
+        #empty-state[hidden] { display: none; }
+        .empty-title {
+            margin: 0 0 6px;
+            color: var(--vscode-foreground);
+            font-size: 1.05em;
+            font-weight: 600;
+        }
+        .empty-detail {
+            margin: 0;
+            line-height: 1.45;
+            font-size: 0.92em;
         }
         .md-text { white-space: pre-wrap; }
         .file-ref, .chip-label {
@@ -274,7 +291,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .code-block pre {
             margin: 0;
             padding: 8px;
-            overflow-x: auto;
+            overflow: auto;
+            max-height: 240px;
             white-space: pre;
         }
         .code-block code {
@@ -476,6 +494,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .activity-item.is-completed .activity-mark { background: var(--vscode-testing-iconPassed, #89d185); }
         .activity-item.is-failed .activity-mark { background: var(--vscode-errorForeground); }
         .activity-item.is-cancelled .activity-mark { background: var(--vscode-disabledForeground, #888); }
+        .activity-summary { list-style: none; margin: 0; padding: 0; }
+        .activity-trace { margin-top: 4px; }
+        .activity-trace summary {
+            cursor: pointer;
+            color: var(--vscode-descriptionForeground);
+            font-size: 0.85em;
+        }
+        .activity-panel { padding-top: 2px; }
+        @media (max-width: 420px) {
+            #controls { flex-direction: column; align-items: stretch; }
+            #composer-actions { justify-content: flex-end; }
+            #model-selector, #mode-selector { min-width: 0; width: 100%; flex-basis: auto; }
+            .message { padding: 6px 8px; }
+        }
         #composer-container {
             display: flex;
             flex-direction: column;
@@ -1007,7 +1039,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <div id="history-list"></div>
     </div>
     <div id="recovery-container"></div>
-    
+
+    <div id="empty-state">
+        <p class="empty-title">Ask about this workspace</p>
+        <p class="empty-detail">Ask is read-only. Plan does not edit until you approve. Agent waits for approval before writing.</p>
+    </div>
     <div id="transcript" role="log" aria-live="polite" aria-relevant="additions"></div>
     
     <div id="activities"></div>
@@ -1216,6 +1252,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
+        function syncEmptyState(state) {
+            var empty = document.getElementById('empty-state');
+            if (!empty) return;
+            var hasMessages = !!(state.messages && state.messages.length);
+            empty.hidden = hasMessages;
+            if (hasMessages) return;
+            var title = empty.querySelector('.empty-title');
+            var detail = empty.querySelector('.empty-detail');
+            var conn = state.connection || {};
+            var offline = conn.state === 'disconnected' || conn.state === 'unavailable' || conn.state === 'missing-config' || conn.state === 'timeout' || conn.state === 'model-unavailable' || conn.state === 'invalid-credentials';
+            if (title) title.textContent = offline ? 'Local model unavailable' : 'Ask about this workspace';
+            if (detail) detail.textContent = offline
+                ? (conn.detail || 'Start the local model endpoint, then check the connection.')
+                : 'Ask is read-only. Plan does not edit until you approve. Agent waits for approval before writing.';
+        }
+
         function updateState(state, transcriptUnchanged) {
             var wasRunning = currentState && currentState.activeTurn;
             // The host omits an unchanged transcript; keep the one already rendered.
@@ -1234,6 +1286,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             renderTerminal(state.activeTerminal);
             renderConfirmationSummary(confirmationContainer, state.pendingConfirmation, document, vscode.postMessage);
             renderActivityTimeline(activities, state.activities || [], document);
+            syncEmptyState(state);
             renderReviewLedger(reviewsContainer, state.reviews || [], document, vscode.postMessage);
             renderContextChips(implicitChips, state.context || [], document, vscode.postMessage, false);
             renderContextChips(contextChips, state.attachments || [], document, vscode.postMessage, true);

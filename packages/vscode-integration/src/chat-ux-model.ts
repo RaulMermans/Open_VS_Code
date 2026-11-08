@@ -12,27 +12,137 @@ import type { ChatActivity, ChatContextChip, ConnectionStatus, ConversationExecu
 /** Shown when the user rejects a proposed edit. This is a decision, not a malfunction. */
 export const USER_REJECTION_MESSAGE = "Change rejected — no files modified."
 
-export function formatTerminalTaskMessage(result: {
+export interface TerminalTaskReview {
+  readonly kind: string
+  readonly status: string
+  readonly path?: string | undefined
+}
+
+export interface TerminalTaskInput {
   readonly status: string
   readonly failureReason?: string | undefined
   readonly finalAnswer?: string | undefined
-}): { content: string; lastStatus: ConversationExecutionStatus } {
+  readonly appliedMutations?: readonly { readonly path: string; readonly status?: string | undefined }[] | undefined
+  readonly reviews?: readonly TerminalTaskReview[] | undefined
+}
+
+export function formatTerminalTaskMessage(result: TerminalTaskInput): { content: string; lastStatus: ConversationExecutionStatus } {
   if (result.status === "CANCELLED") {
-    return { content: "Task cancelled.", lastStatus: "cancelled" }
+    return { content: appendVerified("Task cancelled.", result), lastStatus: "cancelled" }
   }
   if (result.status === "FAILED" && result.failureReason === "REJECTED") {
-    return { content: USER_REJECTION_MESSAGE, lastStatus: "rejected" }
+    return { content: rejectedMessage(result), lastStatus: "rejected" }
   }
   if (result.status === "FAILED") {
     const content = result.finalAnswer?.trim()
       ? `Task failed (${result.failureReason}): ${result.finalAnswer}`
       : `Task failed: ${result.failureReason}`
-    return { content, lastStatus: "failed" }
+    return { content: appendVerified(content, result), lastStatus: "failed" }
   }
+  const answer = result.finalAnswer?.trim()
+    || (result.status === "COMPLETED" ? "Task completed successfully." : `Task finished with status: ${result.status}`)
   return {
-    content: result.finalAnswer || (result.status === "COMPLETED" ? "Task completed successfully." : `Task finished with status: ${result.status}`),
+    content: appendVerified(answer, result),
     lastStatus: "completed",
   }
+}
+
+function rejectedMessage(result: TerminalTaskInput): string {
+  const proposed = uniqueFactPaths(
+    (result.reviews || [])
+      .filter((review) => review.kind === "mutation" && review.status === "rejected")
+      .map((review) => review.path),
+  )
+  const applied = appliedFactPaths(result)
+  if (proposed.length === 0 && applied.length === 0) return USER_REJECTION_MESSAGE
+  const lines = [
+    applied.length === 0
+      ? USER_REJECTION_MESSAGE
+      : "Change rejected — the proposed edit was not applied.",
+  ]
+  if (proposed.length > 0) lines.push("", "Not applied: " + proposed.join(", "))
+  if (applied.length > 0) {
+    lines.push("", "Already applied earlier in this task:")
+    for (const path of applied) lines.push("- " + path)
+  }
+  return lines.join("\n")
+}
+
+function appendVerified(content: string, result: TerminalTaskInput): string {
+  const appendix = verifiedOutcomeAppendix(result)
+  return appendix ? content + appendix : content
+}
+
+function verifiedOutcomeAppendix(result: TerminalTaskInput): string {
+  if (result.status === "FAILED" && result.failureReason === "REJECTED") return ""
+  const paths = appliedFactPaths(result)
+  const testLine = verificationFact(result.reviews)
+  if (result.status === "CANCELLED") {
+    if (paths.length === 0) return ""
+    return "\n\nAlready applied before cancellation:\n" + paths.map((path) => "- " + path).join("\n")
+  }
+  const line = testLine ?? (paths.length > 0 ? unrunTestLine(result.reviews) : undefined)
+  if (paths.length === 0 && !line) return ""
+  const lines = ["", "", "Verified outcome"]
+  if (paths.length > 0) {
+    lines.push("Changed:")
+    for (const path of paths) lines.push("- " + path)
+  } else {
+    lines.push("No files were changed.")
+  }
+  if (line) lines.push(line)
+  return lines.join("\n")
+}
+
+function unrunTestLine(reviews: readonly TerminalTaskReview[] | undefined): string {
+  const rejected = (reviews || []).some((review) => review.kind === "command" && review.status === "rejected")
+  return rejected ? "The test command was not run." : "Tests were not run."
+}
+
+function verificationFact(reviews: readonly TerminalTaskReview[] | undefined): string | undefined {
+  const finished = (reviews || []).filter((review) =>
+    review.kind === "command" &&
+    (review.status === "succeeded" || review.status === "failed" || review.status === "timed-out" || review.status === "cancelled"),
+  )
+  const last = finished[finished.length - 1]
+  if (!last) return undefined
+  switch (last.status) {
+    case "succeeded": return "Tests passed."
+    case "failed": return "Tests failed."
+    case "timed-out": return "Tests timed out."
+    case "cancelled": return "Tests were cancelled."
+    default: return undefined
+  }
+}
+
+function appliedFactPaths(result: TerminalTaskInput): string[] {
+  const fromResult = (result.appliedMutations || [])
+    .filter((mutation) => !mutation.status || mutation.status === "APPLIED")
+    .map((mutation) => mutation.path)
+  const fromReviews = (result.reviews || [])
+    .filter((review) => review.kind === "mutation" && review.status === "applied")
+    .map((review) => review.path)
+  return uniqueFactPaths([...fromResult, ...fromReviews])
+}
+
+function uniqueFactPaths(values: readonly (string | undefined)[]): string[] {
+  const seen = new Set<string>()
+  const paths: string[] = []
+  for (const value of values) {
+    const path = cleanFactPath(value)
+    if (!path || seen.has(path)) continue
+    seen.add(path)
+    paths.push(path)
+    if (paths.length >= 12) break
+  }
+  return paths
+}
+
+function cleanFactPath(value: string | undefined): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.replace(/[\u0000-\u001F\u007F]/g, "").trim()
+  if (!trimmed || trimmed.length > 240) return null
+  return trimmed
 }
 
 export const MAX_ATTACHMENTS = 8;
@@ -330,6 +440,7 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
   if (!mapped) return null;
 
   const toolName = typeof ev.payload?.name === "string" ? ev.payload.name.slice(0, 80) : undefined;
+  const summary = activitySummary(ev);
   let label = mapped.label;
   if (toolName && mapped.kind === "tool") {
     if (ev.type === "tool.requested") label = "Running " + toolName;
@@ -361,7 +472,23 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
     label,
     status,
     toolName,
+    ...(summary ? { summary } : {}),
   };
+}
+
+function activitySummary(ev: { type?: string; payload?: any }): string | undefined {
+  const payload = ev.payload;
+  if (!payload || typeof payload !== "object") return undefined;
+  if (ev.type === "task.started") {
+    const taskId = typeof payload.task?.id === "string" ? payload.task.id : typeof payload.taskId === "string" ? payload.taskId : "";
+    const trimmed = taskId.trim();
+    return trimmed ? trimmed.slice(0, 80) : undefined;
+  }
+  const path = typeof payload.path === "string" ? payload.path : typeof payload.targetFile === "string" ? payload.targetFile : "";
+  if (path.trim()) return path.replace(/[\u0000-\u001F\u007F]/g, "").trim().slice(0, 240);
+  const verification = payload.result && typeof payload.result === "object" ? payload.result.status : undefined;
+  if (typeof verification === "string" && verification.trim()) return verification.trim().slice(0, 20);
+  return undefined;
 }
 
 export function implicitContextChips(snapshot: {
