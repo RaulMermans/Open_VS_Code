@@ -148,13 +148,55 @@ Until those exist, the timeline's "Planning changes" / "Reviewing results" row i
 
 ## Sprint 14B.2
 
-Status: **IN_PROGRESS**. Source corrections are in this tree. The clean package and the installed GUI are not done.
+Status: **PARTIALLY_VERIFIED**. The source corrections and the clean `0.1.0-rc.11` package are verified. The package is not installed, so the installed GUI and the live model walkthrough inside that window were not run. The sprint is not complete.
 
 `taskReviews` now always uses `reviewsForRun`. A turn with no run id, and a review whose run id does not match, cannot supply files or checks for the verified block. Paths on the current `appliedMutations` result are still listed, because they belong to the runner result rather than the conversation ledger.
 
 The unsupported-claim note matches a past report (`tests passed`, `lint passed`, `typecheck passed`, `checks passed`). It does not match `tests pass` or `tests will pass`.
 
-The product version default is `0.1.0-rc.11`. Packaging must be a clean tree. `OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE` is not used for this candidate. Installed desktop remains `0.1.0-rc.9`.
+Targeted tests after the change: `sprint-14b-conversation-ux.test.ts`, `sprint-7a-chat-ux.test.ts`, and `sprint-7c-sessions.test.ts`, 60 pass and 0 fail. Source commit `9d8ab96c06451f40c4d5cacaf9c6b85070d267cd`.
+
+### Clean package
+
+Built with `npm run package` from that commit. `OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE` was unset. `git status` was clean and the release stamp records `gitDirty: false` and `sourceClean: true`.
+
+- Product version: `0.1.0-rc.11`
+- Source SHA: `9d8ab96c06451f40c4d5cacaf9c6b85070d267cd`
+- Debian: `apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb`
+- Debian SHA-256: `36a7b49b22f7a2215f2db4f296b463a5e6df868e8ac847ec1a7d8cc793d64541`
+- Payload archive SHA-256: `ea5f9f628bfcf23d19dd014899e273f05b682455688131ad7404ea4fe206ef2b`
+- Bundled extension: `open-vs-code.vscode-integration` `0.1.0-rc.11`
+- Upstream shell: VSCodium `1.135.06055`, commit `5a73682ca091082675b10c9dc3f348c1d824d94f`
+- The bundled `extension.js` calls `reviewsForRun` for every outcome and returns no reviews when the run id is missing. Its claim pattern matches `passed` and `succeeded`, not a bare `pass`.
+
+### Installation
+
+Not performed. `sudo` on this machine needs the owner's password, and this sprint does not bypass that. After the owner installs it:
+
+```text
+sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb"
+```
+
+Do not add `--no-sandbox`. The package `postinst` sets `chrome-sandbox` to `root:root` mode `4755`.
+
+### Rollback
+
+Installed desktop is still `0.1.0-rc.9`, commit `bb07b1481d5465cb9e1b88589da17fa21a6f609d`, extension `0.1.0-rc.9`, `chrome-sandbox` `4755 root:root`.
+
+The original rc.9 `.deb` is not on disk. A rollback package was rebuilt from the installed files, and every regular file under `usr/` matches `/var/lib/dpkg/info/open-vs-code.md5sums` (2545 files, 0 mismatches). The container hash is the hash of that rebuild, not of the original archive.
+
+- Rollback deb: `~/open-vs-code-backups/rollback-0.1.0-rc.9-2026-11-08/open-vs-code_0.1.0-rc.9_amd64.deb`
+- Rollback SHA-256: `b9b312ac965b0f5ce9bb9fbdb4338d9ffddb73e72bea98001cc6b9fb39fac297`
+
+```text
+sudo dpkg -i ~/open-vs-code-backups/rollback-0.1.0-rc.9-2026-11-08/open-vs-code_0.1.0-rc.9_amd64.deb
+```
+
+Profile copy, taken before any candidate install and without replacing earlier backups: `~/open-vs-code-backups/pre-0.1.0-rc.11-2026-11-08/Open VS Code` (188 files). The earlier `pre-0.1.0-rc.10-2026-11-08` copy was left in place. The live profile was not modified.
+
+### Installed GUI
+
+Not run. There are no new screenshots and no new in-window `qwen3-coder:30b` session. Provider checks from Sprint 14B.1 are not this acceptance.
 
 ## Earlier presentation evidence
 

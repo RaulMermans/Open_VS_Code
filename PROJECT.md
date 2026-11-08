@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 14B.2 — Clean release and real GUI acceptance. Status: `IN_PROGRESS`. Source corrections for uncorrelated reviews and future-tense claim notes are in this tree. A clean `0.1.0-rc.11` package and the installed GUI walkthrough are still open. The installed desktop remains `0.1.0-rc.9`. See `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md` and `PLAN.md`.
+Sprint 14B.2 — Clean release and real GUI acceptance. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.11` from `9d8ab96c06` is built and not installed. The installed desktop remains `0.1.0-rc.9`. The installed GUI walkthrough is still open. See `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md` and `PLAN.md`.
 
 Sprint 14B.1 — Conversational truth and installed GUI acceptance. Status: `PARTIALLY_VERIFIED`. Run-scoped evidence, check classification, and activity labels are covered by deterministic tests and a live `qwen3-coder:30b` provider pass. Debian `0.1.0-rc.10` was built from a dirty tree and is not installed. The installed desktop remains `0.1.0-rc.9`.
 
