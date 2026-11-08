@@ -1,5 +1,6 @@
 import * as vscode from "vscode"
-import { loadRoutingConfigSync, validateRoutingConfig, type RoutingConfiguration } from "@open-vs-code/agent-core"
+import { validateRoutingConfig, type RoutingConfiguration } from "@open-vs-code/agent-core"
+import { readWorkspaceRoutingOverride } from "./model-routing-file.js"
 import { fetchLocalModelCatalog, localProviderBaseUrl } from "./local-model-selection.js"
 import {
   DEFAULT_LOCAL_ENDPOINT,
@@ -57,15 +58,10 @@ export class ModelRoutingHost {
   async refresh(): Promise<ModelRoutingRefresh> {
     const trusted = vscode.workspace.isTrusted === true
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    let workspaceConfig: RoutingConfiguration | null = null
-    let workspaceConfigInvalid = false
-    if (root) {
-      try {
-        workspaceConfig = loadRoutingConfigSync(root)
-      } catch {
-        workspaceConfigInvalid = true
-      }
-    }
+    const read = root ? readWorkspaceRoutingOverride(root, trusted) : { config: null, invalid: false, present: false }
+    const workspaceConfig = read.config
+    const workspaceConfigInvalid = read.invalid
+    const workspaceFilePresent = read.present
     const stored = parseStoredModelPreferences(readStored(this.context.globalState, MODEL_PREFERENCES_KEY))
     this.#preserved = stored.preserved
     const suspended = readStored(this.context.workspaceState, MODEL_OVERRIDE_SUSPENDED_KEY) === true
@@ -82,6 +78,7 @@ export class ModelRoutingHost {
       workspaceTrusted: trusted,
       workspaceConfig,
       workspaceConfigInvalid,
+      workspaceFilePresent,
       overrideSuspended: suspended,
       globalPreferences: preferences,
       discoveredModelNames: catalog.error ? [] : catalog.models.map((model) => model.name),
@@ -97,6 +94,7 @@ export class ModelRoutingHost {
           workspaceTrusted: trusted,
           workspaceConfig,
           workspaceConfigInvalid,
+          workspaceFilePresent,
           overrideSuspended: suspended,
           globalPreferences: preferences,
           discoveredModelNames: catalog.models.map((model) => model.name),
@@ -112,6 +110,9 @@ export class ModelRoutingHost {
       credentialConfigured,
       advancedActive: Boolean(preferences?.advanced) && resolution.source === "global",
       probedEndpoint: probeEndpoint,
+      ...(preferences?.chatModel ? { globalChatModel: preferences.chatModel } : {}),
+      ...(preferences?.autocompleteModel ? { globalAutocompleteModel: preferences.autocompleteModel } : {}),
+      ...(preferences?.endpoint ? { globalEndpoint: preferences.endpoint } : {}),
     })
     const baseNotice = savedDiscovery
       ? "Saved the discovered local models as the global default. No project file was written."
@@ -175,9 +176,6 @@ export class ModelRoutingHost {
       advanced: advancedConfig,
     }
     await this.context.globalState.update(MODEL_PREFERENCES_KEY, next)
-    if (this.#snapshot?.workspaceOverrideActive) {
-      await this.context.workspaceState.update(MODEL_OVERRIDE_SUSPENDED_KEY, true)
-    }
     return undefined
   }
 

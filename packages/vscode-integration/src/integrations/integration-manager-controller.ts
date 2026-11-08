@@ -318,7 +318,7 @@ export class IntegrationManagerController {
     globalSkillsEnabled: boolean;
     accountPolicy?: { allowedModes?: string[]; blockedIntegrations?: string[] };
   }> {
-    const isTrusted = vscode.workspace.isTrusted ?? true;
+    const isTrusted = vscode.workspace.isTrusted === true;
     const skills = await this.getSkillsInventory();
     const skillsConfig = vscode.workspace.getConfiguration("open-vs-code").get<boolean>("skills.enabled", true);
     const skillsEnabled = skillsConfig !== false && process.env.OPEN_VS_CODE_SKILLS !== "0";

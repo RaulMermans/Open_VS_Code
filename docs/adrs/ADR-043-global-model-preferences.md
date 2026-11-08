@@ -27,5 +27,7 @@ The extension passes the resolved configuration as `routingConfigOverride` and s
 
 - Opening another folder keeps the same chat and autocomplete models without a project file.
 - A checked-in `models.json` remains an explicit, visible override on a trusted folder.
+- Changing a global preference while that override is active does not change the effective route. The user suspends the override with "Use global models". The file is not rewritten.
+- An untrusted folder is not parsed. The host records that the file exists and leaves its bytes unread.
 - Invalid stored preferences are left in place until the user saves a new choice.
 - HALO, when selected, still replaces the provider and does not use this local route.
