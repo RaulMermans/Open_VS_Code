@@ -1,6 +1,6 @@
 # Sprint 14C.1 — Global model management
 
-STATUS: BLOCKED
+STATUS: PARTIALLY_VERIFIED
 
 ## 14C.1A corrections
 
@@ -41,32 +41,28 @@ Built with `npm run package` from a clean tree. `OPEN_VS_CODE_ALLOW_DIRTY_PACKAG
 
 ## Installation
 
-Not performed. `sudo -n true` returned `interactive authentication is required`. The install was not attempted with a stored password, and `--no-sandbox` was not used.
+Installed with `pkexec dpkg -i` after the owner authorized the prompt. `--no-sandbox` was not used. `dpkg` reports `open-vs-code 0.1.0-rc.12`. `chrome-sandbox` remains `4755 root:root`. The rc.11 deb is still on disk for rollback.
 
-The installed package is still `0.1.0-rc.11`. `chrome-sandbox` is `4755 root:root`. The rc.11 deb remains at `apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb`, SHA-256 `36a7b49b22f7a2215f2db4f296b463a5e6df868e8ac847ec1a7d8cc793d64541`.
+## Installed GUI
 
-Profile copies, taken before any rc.12 install and without changing the live directories:
+Playwright launched `/usr/lib/open-vs-code/open-vs-code` with `chromiumSandbox: true`. The process argv did not contain `--no-sandbox`. The profile was a copy of `~/.config/Open VS Code`, so the live profile was not the one under test. The folder was left untrusted.
+
+The window showed Restricted Mode, the trust notice, Ask available, and Agent and Debug marked as needing trust. Models showed active chat `qwen3-coder:30b`, autocomplete `qwen2.5-coder:7b`, endpoint `http://127.0.0.1:11434`, and source global because the folder is untrusted. No `models.json` was created. A performance ledger file was written under `.open-vs-code/`.
+
+The first Ask failed in a few milliseconds because Playwright starts the Electron binary directly, and that skips the shell launcher which exports `OPEN_VS_CODE_REAL_INFERENCE=1`. Repeating the launch with that same variable set, which is what `/usr/bin/open-vs-code` does, produced an assistant reply of `pong` from `qwen3-coder:30b`. The output channel recorded `Task Finished: COMPLETED`. The reply also contained a stray `<tool_call>` fragment. Screenshots are in `~/open-vs-code-backups/rc12-gui-2026-11-08/`.
+
+Not exercised in this window: two repositories, wider chat, and a restart of the live profile.
+
+Profile copies taken before the install:
 
 - `~/open-vs-code-backups/pre-0.1.0-rc.12-2026-11-08/Open VS Code`
 - `~/open-vs-code-backups/pre-0.1.0-rc.12-2026-11-08/open-vs-code-desktop`
 
-After the owner authorizes installation:
-
-```text
-sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0-rc.12_amd64.deb"
-```
-
-Rollback to the installed candidate:
+Rollback:
 
 ```text
 sudo dpkg -i "apps/desktop/dist/open-vs-code_0.1.0-rc.11_amd64.deb"
 ```
-
-## Installed GUI
-
-Not run. There are no rc.12 screenshots and no in-window Ollama session on this package. Ollama at `127.0.0.1:11434` does have `qwen3-coder:30b` and `qwen2.5-coder:7b`. That probe is not GUI acceptance.
-
-This sprint stays blocked until that installed window is exercised.
 
 ## 14C.1 baseline
 
