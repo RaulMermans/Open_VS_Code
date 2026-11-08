@@ -27,7 +27,7 @@ npm run accept:lab -- --live all
 
 Without `--live`, the command runs the unit and package-artifact scenarios and records every other scenario as `NOT_RUN`. `NOT_RUN` is not a pass.
 
-`--live CONV-PING` is currently a known harness failure: the workbench and composer appear (Restricted Mode, `Ready · qwen3-coder:30b`), then Playwright reports the chat webview frame detached before Send. Do not treat a screenshot of an empty composer as a completed chat turn.
+From the repository root, `npm run accept:lab -- --live CONV-PING` now forwards `--live` into the desktop workspace. `--live CONV-PING` is still a known harness failure: the workbench and composer appear (Restricted Mode, `Ready · qwen3-coder:30b`), then Playwright closes its workbench page when the `vscode-webview://` OOPIF attaches, before Send is acknowledged. Do not treat a screenshot of an empty composer as a completed chat turn. Use `--repeat=10` only after Send is stable.
 
 `--live smoke` also opens the installed app for the sandbox check, the fresh-profile check, and one real `qwen3-coder:30b` reply.
 
@@ -35,7 +35,7 @@ Set `OPEN_VS_CODE_ACCEPTANCE_BINARY` to point at another production-equivalent b
 
 ## Oracles
 
-Chat assertions read `.message.assistant .message-body`, so the user's prompt does not satisfy the expected text. Filesystem assertions ignore `.open-vs-code/`, because the runtime writes its performance ledger there. A change to any other file is visible to `git status` and to the hash comparison. Coding scenarios run `node --test` in the fixture after the turn. That command is the lab's check, not the model's claim.
+Chat assertions read `.message.assistant .message-body` for the current user turn, so an earlier assistant message does not satisfy the expected text. Filesystem assertions allow only `.open-vs-code/model-performance-ledger.json` and `.open-vs-code/recovery/**`. `models.json` and other runtime files still fail a clean-git oracle. Coding scenarios run `node --test` in the fixture after the turn. That command is the lab's check, not the model's claim.
 
 Scenarios marked `review` stay `NEEDS_REVIEW` after a screenshot. A person decides the visual result.
 

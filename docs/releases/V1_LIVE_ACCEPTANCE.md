@@ -36,8 +36,9 @@ Date: 2026-11-08
 
 ## Remaining limitations
 
-- Playwright cannot currently keep the Agent webview frame attached long enough to Send. That blocks the rest of the live catalog.
-- Protocol leakage is fixed in source only.
+- Playwright Electron closes its workbench `Page` when it attaches to the Agent `vscode-webview://` OOPIF (`pending-frame` swap). That still blocks live Send and the rest of the catalog. Evidence: `apps/desktop/acceptance/evidence/` `webview-lifecycle.jsonl` (`frame-detached` then `window-closed` ~20ms after the guest is observed).
+- Protocol leakage is fixed in source only (`normalizeWireResponse` 20 unit tests). rc.12 still shows `<tool_call>` when a reply is collected by other means.
+- Ten consecutive CONV-PING automation cycles were not achieved.
 - Local 30B quality vs a proprietary frontier model was not re-measured here.
 - Streaming is still not enabled.
 - This report does not claim daily-driver parity with Cursor.
