@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop remains `0.1.0-rc.12`. A permanent Playwright Electron lab is in `apps/desktop/acceptance/`. Sandbox launch and first-run chat chrome passed. Sending a live prompt is blocked by a detaching webview frame. Protocol envelope stripping is in source and not installed. Release gate: FAIL. See `docs/sprints/SPRINT_15_PRODUCT_ACCEPTANCE.md` and `docs/releases/V1_LIVE_ACCEPTANCE.md`.
+Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop remains `0.1.0-rc.12`. A permanent Playwright Electron lab is in `apps/desktop/acceptance/`. Sending a live prompt is blocked because Playwright closes the workbench page when it attaches to the Agent webview OOPIF. Protocol envelope stripping is in source and not installed. Release gate: FAIL. See `docs/sprints/SPRINT_15_PRODUCT_ACCEPTANCE.md` and `docs/releases/V1_LIVE_ACCEPTANCE.md`.
 
 Sprint 14C.1A — Global model hardening and desktop acceptance. Status: `PARTIALLY_VERIFIED`. `0.1.0-rc.12` from `6417724105` is installed. Playwright opened that binary with the sandbox enabled. An untrusted folder kept the global route, and `qwen3-coder:30b` answered `pong`. Wider chat, a second repository, and a live-profile restart were not walked. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
 

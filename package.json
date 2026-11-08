@@ -18,7 +18,7 @@
     "desktop:package": "npm --workspace=@open-vs-code/desktop run package",
     "desktop:smoke": "npm --workspace=@open-vs-code/desktop run smoke && npm --workspace=@open-vs-code/desktop run smoke:linux",
     "desktop:accept": "npm --workspace=@open-vs-code/desktop run accept",
-    "accept:lab": "npm --workspace=@open-vs-code/desktop run accept:lab",
+    "accept:lab": "npm --workspace=@open-vs-code/desktop run accept:lab --",
     "eval:model": "npm --workspace=@open-vs-code/agent-core run eval:model",
     "eval:models": "npm --workspace=@open-vs-code/agent-core run eval:models",
     "eval:coding": "npm --workspace=@open-vs-code/agent-core run eval:coding",

@@ -1,17 +1,29 @@
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import type { Frame } from "playwright-core"
 import type { AcceptanceScenario, ScenarioExpected } from "./catalog.ts"
+import {
+  assistantTextForTurn,
+  clickDecision,
+  readMessages,
+  openAgentSurface,
+  requireChat,
+  resolveChatSurface,
+  selectModel,
+  sendPrompt,
+  waitForApproval,
+  waitForTurnAssistant,
+  WebviewLifecycleLog,
+  workbenchPage,
+  type ChatSurface,
+} from "./chat-surface.ts"
+import { classifyPingContent, gitCleanProblems, sourceDigest, trustStateFromWorkbench } from "./oracles.ts"
 import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./safety.ts"
 import {
   acceptanceBinary,
-  assistantText,
-  composerFrame,
   installedPackageVersion,
   launchLab,
   launcherExportsInference,
-  openAgentSurface,
   trustFolder,
   type LabSession,
 } from "./session.ts"
@@ -51,10 +63,7 @@ export interface RunContext {
   readonly repositoryRoot: string
   readonly evidenceRoot: string
   readonly startedVersion: string
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  readonly cycle?: number
 }
 
 function failuresForText(text: string, expected: ScenarioExpected): string[] {
@@ -72,18 +81,15 @@ function failuresForText(text: string, expected: ScenarioExpected): string[] {
   return problems
 }
 
-function sourceDigest(digests: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(digests).filter(([path]) => !path.startsWith(".open-vs-code/")))
-}
-
 function filesystemProblems(workspace: string, before: Record<string, string>, expected: ScenarioExpected): string[] {
   const problems: string[] = []
   const after = sourceDigest(workspaceDigest(workspace))
   const initial = sourceDigest(before)
   if (expected.filesUnchanged || expected.gitClean) {
     if (expected.filesUnchanged && JSON.stringify(initial) !== JSON.stringify(after)) problems.push("workspace bytes changed")
-    const dirty = gitPorcelain(workspace).split("\n").filter((line) => line && !line.includes(".open-vs-code")).join("\n")
-    if (expected.gitClean && dirty !== "") problems.push(`git status is dirty: ${dirty}`)
+    if (expected.gitClean) {
+      problems.push(...gitCleanProblems(gitPorcelain(workspace), Object.keys(workspaceDigest(workspace))))
+    }
   }
   for (const relativePath of expected.unchangedPaths ?? []) {
     if (fileDigest(join(workspace, relativePath)) !== (before[relativePath] ?? null)) {
@@ -101,131 +107,53 @@ function filesystemProblems(workspace: string, before: Record<string, string>, e
   return problems
 }
 
-async function requireComposer(session: LabSession, timeoutMs: number): Promise<Frame> {
-  await openAgentSurface(session.app)
-  const frame = await composerFrame(session.app, timeoutMs)
-  if (!frame) {
-    const urls = session.app.windows().flatMap((page) => page.frames().map((candidate) => candidate.url()))
-    throw new Error(`The Agent composer was not found. Frames: ${urls.join(" | ") || "(none)"}`)
-  }
-  return frame
-}
-
-async function waitForReadyModel(frame: Frame, timeoutMs: number): Promise<void> {
-  const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    const status = (await frame.locator("#connection-status").innerText().catch(() => "")).toLowerCase()
-    if (status.includes("ready")) return
-    await sleep(400)
-  }
-  throw new Error(`Local model did not become ready. Last status: ${JSON.stringify(await frame.locator("#connection-status").innerText().catch(() => ""))}`)
-}
-
-async function liveComposer(session: LabSession): Promise<Frame> {
-  const existing = await composerFrame(session.app, 20000)
-  if (existing) return existing
-  throw new Error("The Agent composer frame disappeared after the window had opened")
-}
-
-async function sendPrompt(session: LabSession, prompt: string, existing?: Frame): Promise<Frame> {
-  let frame = existing ?? await liveComposer(session)
-  let lastError: unknown
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    try {
-      if (!frame || (await frame.locator("#composer").count().catch(() => 0)) === 0) {
-        frame = await liveComposer(session)
-      }
-      await waitForReadyModel(frame, 15000)
-      await frame.locator("#composer").fill(prompt, { timeout: 4000 })
-      await frame.locator("#send-btn").click({ timeout: 4000 })
-      return frame
-    } catch (error) {
-      lastError = error
-      frame = await composerFrame(session.app, 5000) ?? frame
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError))
-}
-
-async function selectMode(frame: Frame, mode: AcceptanceScenario["mode"]): Promise<void> {
-  if (mode === "NONE") return
-  const current = await frame.locator("#mode-selector").inputValue().catch(() => "")
-  if (current === mode) return
-  await frame.locator("#mode-selector").selectOption(mode)
-}
-
-async function selectModel(frame: Frame, model: string): Promise<Frame> {
-  if (!model || model === "none" || model.startsWith("missing-model:")) return frame
-  const current = await frame.locator("#model-selector").inputValue().catch(() => "")
-  if (current === model) return frame
-  const option = frame.locator("#model-selector option").filter({ hasText: model }).first()
-  await option.waitFor({ state: "attached", timeout: 30000 })
-  await frame.locator("#model-selector").selectOption(model)
-  await sleep(500)
-  return frame
-}
-
-async function waitForAssistant(session: LabSession, timeoutMs: number): Promise<{ frame: Frame; text: string }> {
-  const started = Date.now()
-  let last = ""
-  let stable = 0
-  let frame = await liveComposer(session)
-  while (Date.now() - started < timeoutMs) {
-    frame = await liveComposer(session)
-    const text = await assistantText(frame)
-    const running = await frame.locator("#cancel-btn").isVisible().catch(() => false)
-    if (!running && text.length > 0 && text === last) {
-      stable += 1
-      if (stable >= 2) return { frame, text }
-    } else {
-      stable = 0
-    }
-    last = text
-    await sleep(800)
-  }
-  frame = await liveComposer(session)
-  return { frame, text: await assistantText(frame) }
-}
-
-async function clickDecision(frame: Frame, session: LabSession, scenario: AcceptanceScenario, repositoryRoot: string): Promise<void> {
-  if (scenario.approval === "none") return
-  assertApprovalTarget(session.workspace, repositoryRoot, scenario.approval)
-  const selector = scenario.approval === "approve" ? "#btn-approve" : "#btn-reject"
-  await frame.locator(selector).click({ timeout: scenario.timeoutMs })
-  await sleep(1000)
-}
-
 function writeEvidence(dir: string, name: string, body: string): void {
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, name), body)
 }
 
-async function screenshot(session: LabSession, dir: string, name: string): Promise<void> {
+async function screenshot(session: LabSession, dir: string, name: string, required: boolean): Promise<void> {
   mkdirSync(dir, { recursive: true })
-  await session.page.screenshot({ path: join(dir, name) }).catch(() => undefined)
+  const page = await workbenchPage(session.app, 5000).catch(() => session.page)
+  try {
+    await page.screenshot({ path: join(dir, name) })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    writeEvidence(dir, `${name}.error.txt`, message)
+    if (required) throw new Error(`Required screenshot ${name} failed: ${message}`)
+  }
 }
 
 export async function executeScenario(scenario: AcceptanceScenario, context: RunContext): Promise<ScenarioResult> {
   const started = Date.now()
-  const evidencePath = join(context.evidenceRoot, scenario.id)
+  const evidencePath = context.cycle
+    ? join(context.evidenceRoot, scenario.id, `cycle-${String(context.cycle).padStart(2, "0")}`)
+    : join(context.evidenceRoot, scenario.id)
   mkdirSync(evidencePath, { recursive: true })
   try {
     const detail = await runScenario(scenario, context, evidencePath)
     const failed = detail.startsWith("FAIL:")
-    const verdict: Verdict = failed ? "FAIL" : scenario.driver === "review" ? "NEEDS_REVIEW" : "PASS"
+    const blocked = detail.startsWith("BLOCKED:")
+    const verdict: Verdict = blocked
+      ? "BLOCKED"
+      : failed
+        ? "FAIL"
+        : scenario.driver === "review"
+          ? "NEEDS_REVIEW"
+          : "PASS"
     return {
       id: scenario.id,
       title: scenario.title,
       tier: scenario.tier,
       group: scenario.group,
-      verdict: detail.startsWith("FAIL:") ? "FAIL" : verdict,
-      cause: detail.startsWith("FAIL:") ? causeFor(scenario, detail) : "none",
+      verdict,
+      cause: blocked || failed ? causeFor(scenario, detail) : "none",
       oracle: scenario.oracle,
       forbidden: scenario.forbidden,
       timeoutMs: scenario.timeoutMs,
       durationMs: Date.now() - started,
       evidencePath,
-      detail: detail.replace(/^FAIL:\s*/, ""),
+      detail: detail.replace(/^(FAIL|BLOCKED):\s*/, ""),
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -249,9 +177,10 @@ export async function executeScenario(scenario: AcceptanceScenario, context: Run
 
 function causeFor(scenario: AcceptanceScenario, detail: string): FailureCause {
   if (detail.includes("--no-sandbox") || detail.includes("chrome-sandbox") || detail.includes("dpkg")) return "packaging"
-  if (detail.includes("composer") || detail.includes("selector")) return "tooling"
-  if (detail.includes("forbidden text") || detail.includes("<tool_call")) return "presentation"
+  if (detail.includes("composer") || detail.includes("selector") || detail.includes("Send not") || detail.includes("webview") || detail.includes("screenshot")) return "tooling"
+  if (detail.includes("forbidden text") || detail.includes("<tool_call") || detail.includes("protocol leak")) return "presentation"
   if (detail.includes("oracle") || detail.includes("exited")) return "model"
+  if (detail.includes("Restricted Mode") || detail.includes("trust")) return "permission"
   if (scenario.group === "safety") return "permission"
   if (scenario.group === "lifecycle") return "persistence"
   return "orchestration"
@@ -329,36 +258,65 @@ async function runElectron(scenario: AcceptanceScenario, context: RunContext, ev
     workspace: dirs.workspace,
     repositoryRoot: context.repositoryRoot,
   })
+  const log = new WebviewLifecycleLog(join(evidencePath, "webview-lifecycle.jsonl"))
+  log.attachApp(session.app)
   try {
     writeEvidence(evidencePath, "argv.txt", session.argv.join("\n"))
-    await session.page.locator(".monaco-workbench").waitFor({ timeout: 30000 })
-    await sleep(1000)
-    await screenshot(session, evidencePath, "window.png")
+    await workbenchPage(session.app, 30000)
+    await screenshot(session, evidencePath, "window.png", false)
     if (scenario.id === "LIFE-SANDBOX") return sandboxDetail(session)
     if (scenario.id === "LIFE-CRASH") return crashDetail(session, dirs.userData)
     if (scenario.id === "SAFE-STALE") return staleDetail(session, dirs.workspace, before, scenario.expected)
     if (scenario.id === "LIFE-SECOND-REPO") {
       await session.close()
-      return secondRepoDetail(dirs.workspace, before, context)
+      return secondRepoDetail(dirs.workspace, dirs.userData, before, context)
     }
-    await trustFolder(session.page, scenario.trust)
-    const frame = await requireComposer(session, 30000)
-    await screenshot(session, evidencePath, "chat.png")
-    if (scenario.id === "LIFE-FIRST") return firstLaunchDetail(frame, scenario.expected)
+    const page = await workbenchPage(session.app)
+    await trustFolder(page, scenario.trust)
+    if (scenario.trust === "trusted") {
+      const body = await page.locator("body").innerText()
+      if (trustStateFromWorkbench(body) === "restricted") {
+        return "FAIL: workspace remained in Restricted Mode after the trust control was used"
+      }
+    }
+    const iframeInventory = await page.locator("iframe").evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        className: (node as HTMLIFrameElement).className,
+        id: (node as HTMLIFrameElement).id,
+        src: String((node as HTMLIFrameElement).src || "").split("?")[0].slice(0, 160),
+      })),
+    ).catch((error) => [{ error: error instanceof Error ? error.message : String(error) }])
+    writeEvidence(evidencePath, "iframes.json", JSON.stringify(iframeInventory, null, 2))
+    const iframe = page.locator("iframe.webview, iframe.webview-internal").last()
+    const iframeVisible = await iframe.isVisible({ timeout: 20000 }).catch(() => false)
+    if (!iframeVisible) await openAgentSurface(session.app, log)
+    const surface: ChatSurface = scenario.driver === "electron-chat"
+      ? {
+          page,
+          root: page.frameLocator("iframe.webview").last(),
+          locator: (selector: string) => page.locator(selector),
+        }
+      : await requireChat(session, 15000, log)
+    log.record("composer-ready", iframeVisible ? "iframe-visible" : "resolved")
+    if (scenario.driver !== "electron-chat") {
+      await screenshot(session, evidencePath, "chat.png", scenario.driver === "review")
+    }
+    if (scenario.id === "LIFE-FIRST") return firstLaunchDetail(surface, scenario.expected)
     if (scenario.id === "UX-TRUST") return trustDetail(session)
-    if (scenario.id === "UX-KEYS") return keysDetail(frame)
-    if (scenario.id === "UX-MODELS") return modelsDetail(session, scenario.expected)
-    if (scenario.id === "UX-WIDE") return wideDetail(session, frame)
-    if (scenario.id === "LIFE-MODEL") return modelPersistenceDetail(session, frame, scenario, context)
+    if (scenario.id === "UX-KEYS") return keysDetail(surface)
+    if (scenario.id === "UX-MODELS") return modelsDetail(session, log, scenario.expected)
+    if (scenario.id === "UX-WIDE") return wideDetail(session, surface, log)
+    if (scenario.id === "LIFE-MODEL") return modelPersistenceDetail(session, surface, scenario, context, log)
     if (scenario.driver === "review" && !scenario.prompt) {
-      await screenshot(session, evidencePath, "review.png")
+      await screenshot(session, evidencePath, "review.png", true)
       return "Screenshot captured for human review."
     }
     if (!scenario.prompt && scenario.driver !== "electron-chat" && scenario.driver !== "review") {
       return `FAIL: no electron flow for ${scenario.id}`
     }
-    return chatDetail(session, frame, scenario, context, before, evidencePath)
+    return chatDetail(session, surface, scenario, context, before, evidencePath, log)
   } finally {
+    writeEvidence(evidencePath, "webview-lifecycle-summary.json", JSON.stringify(log.snapshot(session.app), null, 2))
     await session.close().catch(() => undefined)
   }
 }
@@ -385,7 +343,7 @@ function sandboxDetail(session: LabSession): string {
 async function crashDetail(session: LabSession, userData: string): Promise<string> {
   const settings = join(userData, "User", "settings.json")
   process.kill(session.pid, "SIGKILL")
-  await sleep(500)
+  await new Promise((resolve) => setTimeout(resolve, 500))
   JSON.parse(readFileSync(settings, "utf8"))
   return "Profile settings.json is still valid JSON after SIGKILL."
 }
@@ -397,29 +355,29 @@ function staleDetail(session: LabSession, workspace: string, before: Record<stri
   return "Killing the window left the fixture bytes unchanged."
 }
 
-async function secondRepoDetail(firstWorkspace: string, before: Record<string, string>, context: RunContext): Promise<string> {
+async function secondRepoDetail(firstWorkspace: string, sharedUserData: string, before: Record<string, string>, context: RunContext): Promise<string> {
   const dirs = freshRunDir("ovsc-accept-second-")
   materializeFixture("bug", dirs.workspace)
   const session = await launchLab({
-    userData: dirs.userData,
+    userData: sharedUserData,
     workspace: dirs.workspace,
     repositoryRoot: context.repositoryRoot,
   })
   await session.close()
   const problems = filesystemProblems(firstWorkspace, before, { filesUnchanged: true })
   if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
-  return "A second isolated repository launch left the first fixture unchanged."
+  return "A second isolated repository launched with the shared lab profile and left the first fixture unchanged."
 }
 
-async function firstLaunchDetail(frame: Frame, expected: ScenarioExpected): Promise<string> {
-  await frame.locator("#empty-state").waitFor({ state: "visible", timeout: 15000 })
-  await frame.locator("#composer").waitFor({ state: "visible", timeout: 15000 })
+async function firstLaunchDetail(surface: ChatSurface, expected: ScenarioExpected): Promise<string> {
+  await surface.locator("#empty-state").waitFor({ state: "visible", timeout: 15000 })
+  await surface.locator("#composer").waitFor({ state: "visible", timeout: 15000 })
   const started = Date.now()
   let text = ""
   while (Date.now() - started < 15000) {
-    text = await frame.locator("#empty-state").innerText()
+    text = await surface.locator("#empty-state").innerText()
     if (failuresForText(text, expected).length === 0) break
-    await sleep(400)
+    await new Promise((resolve) => setTimeout(resolve, 200))
   }
   const problems = failuresForText(text, expected)
   if (problems.length > 0) return `FAIL: ${problems.join("; ")}. empty-state: ${JSON.stringify(text).slice(0, 300)}`
@@ -427,101 +385,136 @@ async function firstLaunchDetail(frame: Frame, expected: ScenarioExpected): Prom
 }
 
 async function trustDetail(session: LabSession): Promise<string> {
-  const text = await session.page.locator("body").innerText()
-  if (!text.includes("Restricted Mode") && !text.includes("Trust")) {
+  const page = await workbenchPage(session.app)
+  const text = await page.locator("body").innerText()
+  if (trustStateFromWorkbench(text) === "unknown" && !text.includes("Trust")) {
     return "FAIL: missing Restricted Mode or a trust prompt"
   }
   return "Untrusted folder shows a trust restriction."
 }
 
-async function keysDetail(frame: Frame): Promise<string> {
-  const composer = frame.locator("#composer")
+async function keysDetail(surface: ChatSurface): Promise<string> {
+  const composer = surface.locator("#composer")
   await composer.click()
   await composer.fill("line")
   await composer.press("Shift+Enter")
-  await composer.type("two")
+  await composer.pressSequentially("two")
   const value = await composer.inputValue()
-  const running = await frame.locator("#cancel-btn").isVisible().catch(() => false)
+  const running = await surface.locator("#cancel-btn").isVisible().catch(() => false)
   if (running) return "FAIL: Shift+Enter started a turn"
   if (!value.includes("\n")) return `FAIL: composer value has no newline: ${JSON.stringify(value)}`
   await composer.fill("")
   return "Shift+Enter inserted a newline and did not send."
 }
 
-async function modelsDetail(session: LabSession, expected: ScenarioExpected): Promise<string> {
-  const frame = await liveComposer(session)
-  await frame.locator("#models-btn").click({ timeout: 10000 })
-  await sleep(500)
-  const text = await (await liveComposer(session)).locator("#model-manager").innerText()
+async function modelsDetail(session: LabSession, log: WebviewLifecycleLog, expected: ScenarioExpected): Promise<string> {
+  const surface = await resolveChatSurface(session.app, 15000, log, session.page)
+  await surface.locator("#models-btn").click({ timeout: 10000 })
+  const next = await resolveChatSurface(session.app, 10000, log, surface.page)
+  await next.locator("#model-manager").waitFor({ state: "visible", timeout: 10000 })
+  const text = await next.locator("#model-manager").innerText()
   const problems = failuresForText(text, expected)
   if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
   return "Model manager shows the endpoint and selected model."
 }
 
-async function wideDetail(session: LabSession, frame: Frame): Promise<string> {
-  await frame.locator("#overflow-menu summary").click()
-  await frame.locator("#wide-chat-btn").click()
-  await sleep(1500)
-  const frames = session.app.windows().flatMap((page) => page.frames())
-  let composers = 0
-  for (const candidate of frames) {
-    composers += await candidate.locator("#composer").count().catch(() => 0)
-  }
-  if (composers < 1) return "FAIL: wider chat did not leave a composer on screen"
-  return `Wider chat left ${composers} composer surface(s).`
+async function wideDetail(session: LabSession, surface: ChatSurface, log: WebviewLifecycleLog): Promise<string> {
+  await surface.locator("#overflow-menu summary").click()
+  await surface.locator("#wide-chat-btn").click()
+  const next = await resolveChatSurface(session.app, 15000, log, surface.page)
+  const visible = await next.locator("#composer").isVisible().catch(() => false)
+  if (!visible) return "FAIL: wider chat did not leave a composer on screen"
+  return "Wider chat left a composer surface."
 }
 
-async function modelPersistenceDetail(session: LabSession, frame: Frame, scenario: AcceptanceScenario, context: RunContext): Promise<string> {
-  await selectModel(frame, scenario.model)
+async function modelPersistenceDetail(
+  session: LabSession,
+  surface: ChatSurface,
+  scenario: AcceptanceScenario,
+  context: RunContext,
+  log: WebviewLifecycleLog,
+): Promise<string> {
+  await selectModel(surface, scenario.model)
   const userData = session.userData
   const workspace = session.workspace
   await session.close()
   const again = await launchLab({ userData, workspace, repositoryRoot: context.repositoryRoot })
+  const againLog = log
+  againLog.attachApp(again.app)
   try {
-    const next = await requireComposer(again, 30000)
+    const next = await requireChat(again, 30000, againLog)
     const value = await next.locator("#model-selector").inputValue()
     if (value !== scenario.model) return `FAIL: model selector is ${value}`
     if (existsSync(join(workspace, ".open-vs-code", "models.json"))) return "FAIL: workspace models.json was created"
-    return `Model selector kept ${value} after restart.`
-  } finally {
     await again.close()
+    const second = freshRunDir("ovsc-accept-model-repo-")
+    materializeFixture("bug", second.workspace)
+    const otherRepo = await launchLab({
+      userData,
+      workspace: second.workspace,
+      repositoryRoot: context.repositoryRoot,
+    })
+    try {
+      const other = await requireChat(otherRepo, 30000, againLog)
+      const otherValue = await other.locator("#model-selector").inputValue()
+      if (otherValue !== scenario.model) return `FAIL: shared profile model selector is ${otherValue} in the second repository`
+      if (existsSync(join(second.workspace, ".open-vs-code", "models.json"))) return "FAIL: second repository models.json was created"
+      return `Model selector kept ${value} after restart and in a second repository on the same isolated profile.`
+    } finally {
+      await otherRepo.close()
+    }
+  } finally {
+    await again.close().catch(() => undefined)
   }
 }
 
 async function chatDetail(
   session: LabSession,
-  frame: Frame,
+  surface: ChatSurface,
   scenario: AcceptanceScenario,
   context: RunContext,
   before: Record<string, string>,
   evidencePath: string,
+  log: WebviewLifecycleLog,
 ): Promise<string> {
-  await selectMode(frame, scenario.mode)
-  frame = await selectModel(frame, scenario.model)
-  const refreshed = await composerFrame(session.app, 10000)
-  if (refreshed) frame = refreshed
-  if (scenario.id === "SAFE-CANCEL") {
-    frame = await sendPrompt(session, scenario.prompt, frame)
-    frame = await liveComposer(session)
-    await frame.locator("#cancel-btn").click({ timeout: scenario.timeoutMs })
-    await frame.locator("#composer").waitFor({ state: "visible", timeout: 30000 })
+  let current = surface
+  let text = ""
+  if (scenario.id === "SAFE-CANCEL" && scenario.prompt) {
+    const sent = await sendPrompt(session, scenario.prompt, log, current)
+    writeEvidence(evidencePath, "send.json", JSON.stringify(sent.result, null, 2))
+    if (sent.result.ack !== "acknowledged") return `FAIL: Send not acknowledged (${sent.result.ack}): ${sent.result.detail}`
+    current = await resolveChatSurface(session.app, 10000, log, sent.surface.page)
+    await current.locator("#cancel-btn").click({ timeout: scenario.timeoutMs })
+    await current.locator("#composer").waitFor({ state: "visible", timeout: 30000 })
   } else if (scenario.prompt) {
-    frame = await sendPrompt(session, scenario.prompt, frame)
-    const first = await waitForAssistant(session, scenario.timeoutMs)
-    frame = first.frame
+    const sent = await sendPrompt(session, scenario.prompt, log, current)
+    writeEvidence(evidencePath, "send.json", JSON.stringify(sent.result, null, 2))
+    await screenshot(session, evidencePath, "chat.png", false)
+    if (sent.result.ack === "not_attempted") return `FAIL: Send not attempted: ${sent.result.detail}`
+    if (sent.result.ack === "unknown") return `BLOCKED: Send outcome unknown; not retrying: ${sent.result.detail}`
+    if (sent.result.clicks > 2) return `FAIL: Send was clicked ${sent.result.clicks} times`
     if (scenario.approval !== "none") {
-      frame = await liveComposer(session)
-      await clickDecision(frame, session, scenario, context.repositoryRoot)
+      assertApprovalTarget(session.workspace, context.repositoryRoot, scenario.approval)
+      current = await resolveChatSurface(session.app, 15000, log, sent.surface.page)
+      await waitForApproval(current, scenario.timeoutMs)
+      await clickDecision(current, scenario.approval, scenario.timeoutMs)
     }
+    const first = await waitForTurnAssistant(session, scenario.prompt, scenario.timeoutMs, log, sent.surface.page)
+    current = first.surface
+    text = first.text
     if (scenario.followUp) {
-      await waitForAssistant(session, scenario.timeoutMs)
-      frame = await sendPrompt(session, scenario.followUp)
-      frame = (await waitForAssistant(session, scenario.timeoutMs)).frame
+      const follow = await sendPrompt(session, scenario.followUp, log)
+      writeEvidence(evidencePath, "send-followup.json", JSON.stringify(follow.result, null, 2))
+      if (follow.result.ack !== "acknowledged") return `FAIL: follow-up Send ${follow.result.ack}: ${follow.result.detail}`
+      const second = await waitForTurnAssistant(session, scenario.followUp, scenario.timeoutMs, log, follow.surface.page)
+      current = second.surface
+      text = second.text
     }
   }
-  const text = await assistantText(frame)
+  if (!text && scenario.prompt) text = await assistantTextForTurn(current, scenario.prompt)
   writeEvidence(evidencePath, "assistant.txt", text)
-  await screenshot(session, evidencePath, "after-prompt.png")
+  writeEvidence(evidencePath, "messages.json", JSON.stringify(await readMessages(current), null, 2))
+  await screenshot(session, evidencePath, "after-prompt.png", true)
   const problems = [
     ...failuresForText(text, scenario.expected),
     ...filesystemProblems(session.workspace, before, scenario.expected),
@@ -529,6 +522,15 @@ async function chatDetail(
   if (scenario.id === "SAFE-APPROVE") {
     const source = readFileSync(join(session.workspace, "src", "add.js"), "utf8")
     if (source.includes("a + b + 1")) problems.push("src/add.js still returns a + b + 1")
+  }
+  if (scenario.id === "CONV-PING") {
+    const ping = classifyPingContent(text)
+    writeEvidence(evidencePath, "ping-classification.json", JSON.stringify({
+      ...ping,
+      send: JSON.parse(readFileSync(join(evidencePath, "send.json"), "utf8")),
+    }, null, 2))
+    if (!ping.transportTextPresent) problems.push("transport: model reply did not contain pong")
+    if (ping.protocolLeak) problems.push("protocol leak: <tool_call> remains visible on the installed binary")
   }
   if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
   if (scenario.driver === "review") return "Checks that can be decided from the workspace passed. Screenshot is ready for review."

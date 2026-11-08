@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { _electron as electron, type ElectronApplication, type Frame, type Page } from "playwright-core"
+import { _electron as electron, type ElectronApplication, type Page } from "playwright-core"
 import { assertIsolatedPath, assertLabWorkspace, chromeSandboxMode } from "./safety.ts"
 
 export interface LabSession {
@@ -166,59 +166,18 @@ export async function waitForWorkbench(app: ElectronApplication, timeoutMs = 600
 export async function livePage(app: ElectronApplication): Promise<Page> {
   const windows = app.windows()
   if (windows.length > 0) return windows[windows.length - 1]!
+  const next = await app.waitForEvent("window", { timeout: 10000 }).catch(() => null)
+  if (next) return next
   throw new Error("No live Electron window remains")
-}
-
-export async function openAgentSurface(app: ElectronApplication): Promise<void> {
-  if (await composerFrame(app, 2000)) return
-  const page = await livePage(app)
-  await page.keyboard.press("Control+Alt+b").catch(() => undefined)
-  if (await composerFrame(app, 3000)) return
-  await page.keyboard.press("Escape").catch(() => undefined)
-  await page.keyboard.press("Control+Shift+P")
-  const palette = page.locator(".quick-input-widget input")
-  await palette.waitFor({ timeout: 10000 })
-  await palette.fill("Open VS Code Agent")
-  await page.keyboard.press("Enter")
-  if (await composerFrame(app, 4000)) return
-  const again = await livePage(app)
-  await again.keyboard.press("Control+Shift+P")
-  const palette2 = again.locator(".quick-input-widget input")
-  await palette2.waitFor({ timeout: 10000 })
-  await palette2.fill("Agent: Ask")
-  await again.keyboard.press("Enter")
-}
-
-export async function composerFrame(app: ElectronApplication, timeoutMs: number): Promise<Frame | null> {
-  const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    const windows = app.windows()
-    if (windows.length === 0) {
-      await app.waitForEvent("window", { timeout: 400 }).catch(() => null)
-      continue
-    }
-    for (const page of windows) {
-      for (const frame of page.frames()) {
-        const count = await frame.locator("#composer").count().catch(() => 0)
-        if (count > 0) return frame
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 400))
-  }
-  return null
-}
-
-export async function assistantText(frame: Frame): Promise<string> {
-  return frame.locator(".message.assistant .message-body").allTextContents().then((parts) => parts.join("\n")).catch(() => "")
 }
 
 export async function trustFolder(page: Page, trust: "trusted" | "untrusted" | "n/a"): Promise<void> {
   if (trust !== "trusted") return
   const button = page.locator(".monaco-button").filter({ hasText: /^(Trust|Yes, I trust the authors)$/ }).first()
-  if (await button.isVisible().catch(() => false)) {
-    await button.click()
-    await page.waitForTimeout(500)
-  }
+  const visible = await button.isVisible({ timeout: 4000 }).catch(() => false)
+  if (!visible) return
+  await button.click({ timeout: 5000 })
+  await page.getByText("Restricted Mode").waitFor({ state: "hidden", timeout: 15000 }).catch(() => undefined)
 }
 
 export function readCmdline(pid: number): string[] {

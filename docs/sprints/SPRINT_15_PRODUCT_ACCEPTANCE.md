@@ -34,15 +34,19 @@ The installed package is still `0.1.0-rc.12` from `6417724105`. That binary stil
 | LIFE-ROLLBACK | PASS | `open-vs-code_0.1.0-rc.11_amd64.deb` is on disk |
 | LIFE-SANDBOX | PASS | argv has no `--no-sandbox`; `chrome-sandbox` is `4755`; isolated `--user-data-dir` |
 | LIFE-FIRST | PASS | Restricted Mode empty-state; composer; `qwen3-coder:30b` Ready |
-| CONV-PING | FAIL | Blocker: Playwright loses the chat webview frame before Send. Screenshots show Ready. No assistant reply was collected in this session. |
+| CONV-PING | FAIL | Tooling. Playwright Electron closes the workbench `Page` when the `vscode-webview://` OOPIF attaches. Send was not acknowledged. Ten consecutive cycles were not started. |
 
 `NOT_RUN` for the other 39 scenarios is not a pass.
 
 ## CONV-PING classification
 
-Cause: **tooling** (Playwright Electron vs VS Code webview), not a model refusal.
+Cause: **tooling** (Playwright Electron vs VS Code webview OOPIF), not a model refusal.
 
-The workbench opens. The composer is visible. After the first screenshot, `#composer` detaches. Bounded retries (more than three) did not produce a sent prompt. Assertions were not weakened.
+Instrumented lifecycle (`webview-lifecycle.jsonl`): the guest loads `index.html`, then `fake.html` as `pending-frame`. About 20ms after the harness observes that guest, both frames detach and Playwright emits `window-closed` for `workbench.html`. Screenshots still show Restricted Mode, Ask, and `Ready · qwen3-coder:30b`. A detached frame is not a model failure.
+
+The installed process is not treated as crashed. `app.windows()` later reports a window with the same webview UUID. Holding Playwright `Frame` objects and calling `contentFrame()` / inner locators is what loses the driver.
+
+Harness fixes landed: send ack states, turn-correlated assistant text, explicit `.open-vs-code/` allowlist, shared-profile persistence path, approval waits for `#btn-approve`, required-screenshot errors, `--live` arg forwarding. Deterministic lab tests: 10 pass. Live Send is still blocked. Protocol `normalizeWireResponse` unit tests: 20 pass; that fix is not in rc.12. No package was installed.
 
 ## Release
 
