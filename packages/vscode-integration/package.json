@@ -94,6 +94,10 @@
         "title": "Open VS Code: Select Local Model"
       },
       {
+        "command": "open-vs-code.openWideChat",
+        "title": "Open VS Code: Open Wider Chat"
+      },
+      {
         "command": "open-vs-code.enableWorkflow",
         "title": "Open VS Code: Enable Structured Workflow"
       },

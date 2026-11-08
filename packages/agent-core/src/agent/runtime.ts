@@ -61,6 +61,11 @@ export interface CreateAgentRuntimeOptions {
   providerOverride?: ModelProvider;
   routingConfigOverride?: RoutingConfiguration;
   /**
+   * When set, a missing override does not read `.open-vs-code/models.json`.
+   * The extension sets this so an untrusted workspace file cannot redirect inference.
+   */
+  skipWorkspaceRoutingFile?: boolean;
+  /**
    * Portable Skills Runtime (Sprint 5A, ADR-029). Disabled by default until the HALO A/B benchmark
    * is recorded. When disabled, the frozen ADR-014 `.agents/skills` path behaves exactly as in V1;
    * when enabled, it replaces that path (the two are never active together).
@@ -146,7 +151,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   let routingConfig: RoutingConfiguration | undefined;
 
   if (!provider) {
-    const config = options.routingConfigOverride ?? (await loadRoutingConfig(options.workspaceRoot));
+    const config = options.routingConfigOverride
+      ?? (options.skipWorkspaceRoutingFile ? null : await loadRoutingConfig(options.workspaceRoot));
     if (config) routingConfig = config;
     if (!config) {
       throw new Error("No model routing configuration found.");

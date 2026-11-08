@@ -265,6 +265,10 @@ export interface ConnectionSnapshotInput {
   readonly installedModels?: readonly string[];
   readonly selectedModel?: string;
   readonly endpoint?: string;
+  readonly routingSource?: "workspace-override" | "global" | "discovered" | "none";
+  readonly workspaceOverrideActive?: boolean;
+  readonly autocompleteModel?: string;
+  readonly workspaceTrusted?: boolean;
 }
 
 export interface AttachmentRequest {
@@ -343,11 +347,19 @@ export function deriveConnectionStatus(input: ConnectionSnapshotInput): Connecti
     .filter((name) => typeof name === "string" && name.trim().length > 0)
     .map((name) => name.trim())
     .slice(0, 64);
+  const detail = input.workspaceOverrideActive
+    ? [status.detail, "Workspace models.json override is active."].filter(Boolean).join(" ")
+    : status.detail;
   return {
     ...status,
+    ...(detail ? { detail } : {}),
     ...(installed.length ? { installedModels: installed } : {}),
     ...(input.selectedModel ? { selectedModel: input.selectedModel } : {}),
     ...(input.endpoint ? { endpoint: input.endpoint } : {}),
+    ...(input.routingSource ? { routingSource: input.routingSource } : {}),
+    ...(input.workspaceOverrideActive ? { workspaceOverrideActive: true } : {}),
+    ...(input.autocompleteModel ? { autocompleteModel: input.autocompleteModel } : {}),
+    ...(input.workspaceTrusted === false ? { workspaceTrusted: false } : {}),
   };
 }
 
@@ -367,11 +379,11 @@ function deriveConnectionStatusBody(input: ConnectionSnapshotInput): ConnectionS
     };
   }
 
-  if (input.lastError === "missing-config" || input.configStatus === "missing") {
+  if ((input.lastError === "missing-config" || input.configStatus === "missing") && input.lastError !== "disconnected" && input.lastError !== "model-unavailable") {
     return {
       state: "missing-config",
       backend,
-      detail: "No model configuration found (.open-vs-code/models.json)",
+      detail: "No model selected. Choose one in Models. A workspace models.json file is optional.",
       healthChecked: false,
       actionable: "create-config",
     };

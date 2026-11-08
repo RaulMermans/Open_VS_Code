@@ -593,7 +593,7 @@ export function renderConnectionStatus(container: any, connection: any, doc?: an
   if (postMessage) {
     onClick(wrap, function () {
       if (status.actionable === "check-connection") postMessage({ type: "chat.checkConnection" });
-      else postMessage({ type: "ui.openModelConfig" });
+      else postMessage({ type: "modelManager.open" });
     });
   }
   container.appendChild(wrap);
@@ -1054,14 +1054,14 @@ export function renderConfirmationSummary(
   btnReject.id = 'btn-reject';
   btnReject.type = 'button';
   btnReject.textContent = 'Reject';
-  setAttr(btnReject, 'aria-label', 'Reject this action');
+  setAttr(btnReject, 'aria-label', conf.preparedCommand ? 'Do not run this command' : 'Reject this file change');
 
   const btnApprove = d.createElement('button');
   btnApprove.className = 'btn-approve';
   btnApprove.id = 'btn-approve';
   btnApprove.type = 'button';
   btnApprove.textContent = conf.preparedCommand ? 'Run' : 'Approve';
-  setAttr(btnApprove, 'aria-label', conf.preparedCommand ? 'Run this command' : 'Approve this change');
+  setAttr(btnApprove, 'aria-label', conf.preparedCommand ? 'Run this command' : 'Approve this file change');
 
   let btnDiff: any = null;
   if (conf.mutationId) {
@@ -3598,6 +3598,162 @@ export function renderIntegrationsHub(container: any, state: any, doc?: any, pos
   return hub;
 }
 
+export function renderTrustNotice(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var trusted = !state || state.workspaceTrusted !== false;
+  var notice = state && state.modelManager && state.modelManager.trustNotice;
+  var sig = trusted ? "trusted" : "untrusted:" + (notice || "");
+  if (container.__trustSig === sig && container.firstChild) return container.firstChild;
+  container.__trustSig = sig;
+  container.innerHTML = "";
+  if (trusted) return null;
+  var d = docOf(doc);
+  var banner = d.createElement("div");
+  banner.className = "trust-banner";
+  setAttr(banner, "role", "status");
+  var text = d.createElement("p");
+  setText(text, notice || "This folder is not trusted. Ask can read. Agent and Debug stay unavailable until you trust the folder.");
+  banner.appendChild(text);
+  if (postMessage) {
+    var button = d.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    setText(button, "Manage Workspace Trust");
+    setAttr(button, "aria-label", "Manage Workspace Trust. This does not trust the folder automatically.");
+    onClick(button, function () { postMessage({ type: "ui.manageTrust" }); });
+    banner.appendChild(button);
+  }
+  container.appendChild(banner);
+  return banner;
+}
+
+export function renderModelManager(container: any, snapshot: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var open = !!(snapshot && snapshot.open);
+  var sig = open ? JSON.stringify(snapshot) : "closed";
+  if (container.__modelSig === sig && (container.firstChild || !open)) return container.firstChild || null;
+  container.__modelSig = sig;
+  container.innerHTML = "";
+  if (!open) return null;
+  var d = docOf(doc);
+  var panel = d.createElement("section");
+  panel.className = "model-manager";
+  setAttr(panel, "aria-label", "Model manager");
+  var title = d.createElement("h2");
+  setText(title, "Models");
+  panel.appendChild(title);
+  var notice = d.createElement("p");
+  setText(notice, (snapshot && snapshot.notice) || "");
+  panel.appendChild(notice);
+  var status = d.createElement("p");
+  var statusText = snapshot && snapshot.endpointError
+    ? "Offline at " + snapshot.endpoint + ". " + snapshot.endpointError
+    : snapshot && snapshot.endpointReachable
+      ? "Connected to " + snapshot.endpoint + "."
+      : "Not connected.";
+  if (snapshot && snapshot.workspaceOverrideActive) statusText += " Workspace override is active.";
+  if (snapshot && snapshot.workspaceOverrideIgnored) statusText += " Workspace file ignored because the folder is untrusted.";
+  setText(status, statusText);
+  panel.appendChild(status);
+  appendModelSelect(d, panel, postMessage, "Chat and Agent", snapshot && snapshot.installedModels, snapshot && snapshot.chatModel, "modelManager.setChat");
+  appendModelSelect(d, panel, postMessage, "Autocomplete", snapshot && snapshot.installedModels, snapshot && snapshot.autocompleteModel, "modelManager.setAutocomplete");
+  var endpointLabel = d.createElement("label");
+  setText(endpointLabel, "Endpoint");
+  var endpoint = d.createElement("input");
+  endpoint.type = "text";
+  endpoint.value = (snapshot && snapshot.endpoint) || "";
+  setAttr(endpoint, "aria-label", "Local inference endpoint");
+  endpointLabel.appendChild(endpoint);
+  panel.appendChild(endpointLabel);
+  appendManagerButton(d, panel, postMessage, "Save endpoint", function () {
+    if (postMessage) postMessage({ type: "modelManager.setEndpoint", endpoint: endpoint.value || "" });
+  });
+  appendManagerButton(d, panel, postMessage, "Test connection", function () {
+    if (postMessage) postMessage({ type: "modelManager.test" });
+  });
+  if (snapshot && snapshot.workspaceOverridePresent && snapshot.workspaceTrusted) {
+    appendManagerButton(d, panel, postMessage, snapshot.workspaceOverrideActive ? "Use global models" : "Use workspace models.json", function () {
+      if (postMessage) postMessage({ type: snapshot.workspaceOverrideActive ? "modelManager.suspendOverride" : "modelManager.useOverride" });
+    });
+  }
+  appendManagerButton(d, panel, postMessage, "Open workspace file", function () {
+    if (postMessage) postMessage({ type: "ui.openModelConfig" });
+  });
+  var advanced = d.createElement("details");
+  var summary = d.createElement("summary");
+  setText(summary, "Advanced routing");
+  advanced.appendChild(summary);
+  var advancedInput = d.createElement("textarea");
+  setAttr(advancedInput, "aria-label", "Advanced routing JSON");
+  advancedInput.placeholder = "Optional routing JSON. Saved globally. It does not edit the project.";
+  advanced.appendChild(advancedInput);
+  appendManagerButton(d, advanced, postMessage, "Save advanced routing", function () {
+    if (postMessage) postMessage({ type: "modelManager.setAdvanced", text: advancedInput.value || "" });
+  });
+  if (snapshot && snapshot.advancedActive) {
+    appendManagerButton(d, advanced, postMessage, "Clear advanced routing", function () {
+      if (postMessage) postMessage({ type: "modelManager.clearAdvanced" });
+    });
+  }
+  panel.appendChild(advanced);
+  var tokenLabel = d.createElement("label");
+  setText(tokenLabel, snapshot && snapshot.credentialConfigured ? "Endpoint token (stored securely)" : "Endpoint token (optional)");
+  var token = d.createElement("input");
+  token.type = "password";
+  token.value = "";
+  setAttr(token, "aria-label", "Local endpoint token. Stored in secure storage only.");
+  token.placeholder = snapshot && snapshot.credentialConfigured ? "A token is already stored" : "Stored in secure storage, never in a project file";
+  tokenLabel.appendChild(token);
+  panel.appendChild(tokenLabel);
+  appendManagerButton(d, panel, postMessage, "Save token", function () {
+    if (postMessage) postMessage({ type: "modelManager.setCredential", token: token.value || "" });
+  });
+  appendManagerButton(d, panel, postMessage, "Close", function () {
+    if (postMessage) postMessage({ type: "modelManager.close" });
+  });
+  container.appendChild(panel);
+  return panel;
+}
+
+function appendModelSelect(d: any, parent: any, postMessage: any, labelText: string, models: any, selected: any, messageType: string): void {
+  var label = d.createElement("label");
+  setText(label, labelText);
+  var select = d.createElement("select");
+  setAttr(select, "aria-label", labelText);
+  var names = models || [];
+  if (!names.length) {
+    var empty = d.createElement("option");
+    empty.value = "";
+    setText(empty, "No models discovered");
+    select.appendChild(empty);
+    select.disabled = true;
+  }
+  for (var i = 0; i < names.length; i++) {
+    var option = d.createElement("option");
+    option.value = names[i];
+    setText(option, names[i]);
+    if (names[i] === selected) option.selected = true;
+    select.appendChild(option);
+  }
+  if (postMessage) {
+    select.addEventListener("change", function () {
+      if (!select.value) return;
+      var message: any = { type: messageType, name: select.value };
+      postMessage(message);
+    });
+  }
+  label.appendChild(select);
+  parent.appendChild(label);
+}
+
+function appendManagerButton(d: any, parent: any, postMessage: any, label: string, run: () => void): void {
+  var button = d.createElement("button");
+  button.type = "button";
+  button.className = "secondary";
+  setText(button, label);
+  setAttr(button, "aria-label", label);
+  if (postMessage) onClick(button, run);
+  parent.appendChild(button);
+}
+
 export function webviewRenderRuntime(): string {
   return [
     "var MAX_CODE_CHARS = " + MAX_CODE_CHARS + ";",
@@ -3623,6 +3779,10 @@ export function webviewRenderRuntime(): string {
     renderActivityTimeline.toString(),
     renderContextChips.toString(),
     renderConnectionStatus.toString(),
+    renderTrustNotice.toString(),
+    renderModelManager.toString(),
+    appendModelSelect.toString(),
+    appendManagerButton.toString(),
     formatDuration.toString(),
     formatBytes.toString(),
     formatArgs.toString(),

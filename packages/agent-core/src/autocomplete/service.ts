@@ -136,7 +136,7 @@ export interface AutocompleteServiceOptions {
 }
 
 export class AutocompleteService {
-  readonly #gateway: AutocompleteGateway
+  #gateway: AutocompleteGateway
   readonly #debounceMs: number
   readonly #timeoutMs: number
   readonly #scheduler: AutocompleteScheduler
@@ -177,6 +177,11 @@ export class AutocompleteService {
 
   // Disposed flag (deactivation)
   #disposed = false
+
+  /** Swap the routed gateway after a global model change. In-flight requests keep their own signal. */
+  replaceGateway(gateway: AutocompleteGateway): void {
+    this.#gateway = gateway
+  }
 
   constructor(options: AutocompleteServiceOptions) {
     this.#gateway = options.gateway

@@ -67,6 +67,30 @@ export interface ConnectionStatus {
   selectedModel?: string;
   /** Local inference base URL. Never a cloud endpoint. */
   endpoint?: string;
+  routingSource?: "workspace-override" | "global" | "discovered" | "none";
+  workspaceOverrideActive?: boolean;
+  autocompleteModel?: string;
+  workspaceTrusted?: boolean;
+}
+
+export interface ModelManagerSnapshot {
+  source: "workspace-override" | "global" | "discovered" | "none";
+  endpoint: string;
+  endpointReachable: boolean;
+  endpointError?: string;
+  installedModels: readonly string[];
+  chatModel?: string;
+  autocompleteModel?: string;
+  workspaceOverridePresent: boolean;
+  workspaceOverrideActive: boolean;
+  workspaceOverrideIgnored: boolean;
+  workspaceConfigInvalid: boolean;
+  workspaceTrusted: boolean;
+  credentialConfigured: boolean;
+  advancedActive: boolean;
+  notice: string;
+  trustNotice?: string;
+  open?: boolean;
 }
 
 export interface FileSearchHit {
@@ -229,6 +253,8 @@ export interface WebviewState {
   reviews?: ReviewRecordDto[];
   error?: string;
   connection?: ConnectionStatus;
+  modelManager?: ModelManagerSnapshot;
+  workspaceTrusted?: boolean;
   integrations?: IntegrationManagerState;
   integrationsOpen?: boolean;
 }
@@ -246,6 +272,20 @@ export type WebviewToHostMessage =
   | { type: "ui.copyCode"; text: string }
   | { type: "ui.openFile"; path: string }
   | { type: "ui.openModelConfig" }
+  | { type: "modelManager.open" }
+  | { type: "modelManager.close" }
+  | { type: "modelManager.refresh" }
+  | { type: "modelManager.setChat"; name: string }
+  | { type: "modelManager.setAutocomplete"; name: string }
+  | { type: "modelManager.setEndpoint"; endpoint: string }
+  | { type: "modelManager.test" }
+  | { type: "modelManager.suspendOverride" }
+  | { type: "modelManager.useOverride" }
+  | { type: "modelManager.setAdvanced"; text: string }
+  | { type: "modelManager.clearAdvanced" }
+  | { type: "modelManager.setCredential"; token: string }
+  | { type: "ui.manageTrust" }
+  | { type: "ui.openWideChat" }
   | { type: "ui.selectModel" }
   | { type: "ui.applyModel"; name: string }
   | { type: "context.attach"; target: "current-file" | "selection" }
@@ -457,6 +497,60 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
 
     case "ui.openModelConfig":
       return { type: "ui.openModelConfig" };
+
+    case "modelManager.open":
+      return { type: "modelManager.open" };
+
+    case "modelManager.close":
+      return { type: "modelManager.close" };
+
+    case "modelManager.refresh":
+      return { type: "modelManager.refresh" };
+
+    case "modelManager.test":
+      return { type: "modelManager.test" };
+
+    case "modelManager.suspendOverride":
+      return { type: "modelManager.suspendOverride" };
+
+    case "modelManager.useOverride":
+      return { type: "modelManager.useOverride" };
+
+    case "modelManager.clearAdvanced":
+      return { type: "modelManager.clearAdvanced" };
+
+    case "modelManager.setChat":
+    case "modelManager.setAutocomplete": {
+      if (typeof raw.name !== "string") return null;
+      const name = raw.name.trim();
+      if (!/^[A-Za-z0-9_.:@+-]{1,128}$/.test(name)) return null;
+      return raw.type === "modelManager.setChat"
+        ? { type: "modelManager.setChat", name }
+        : { type: "modelManager.setAutocomplete", name };
+    }
+
+    case "modelManager.setEndpoint": {
+      if (typeof raw.endpoint !== "string") return null;
+      const endpoint = raw.endpoint.trim();
+      if (!endpoint || endpoint.length > 200) return null;
+      return { type: "modelManager.setEndpoint", endpoint };
+    }
+
+    case "modelManager.setAdvanced": {
+      if (typeof raw.text !== "string" || raw.text.length > 64000) return null;
+      return { type: "modelManager.setAdvanced", text: raw.text };
+    }
+
+    case "modelManager.setCredential": {
+      if (typeof raw.token !== "string" || raw.token.length > 4096) return null;
+      return { type: "modelManager.setCredential", token: raw.token };
+    }
+
+    case "ui.manageTrust":
+      return { type: "ui.manageTrust" };
+
+    case "ui.openWideChat":
+      return { type: "ui.openWideChat" };
 
     case "ui.selectModel":
       return { type: "ui.selectModel" };

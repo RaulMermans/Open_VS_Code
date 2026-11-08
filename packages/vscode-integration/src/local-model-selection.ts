@@ -1,6 +1,7 @@
 import type { ModelDeployment, ModelDescriptor, RoutingConfiguration } from "@open-vs-code/agent-core"
 
 export const CHAT_MODEL_DEPLOYMENT_ID = "open-vs-code-chat"
+export const AUTOCOMPLETE_MODEL_DEPLOYMENT_ID = "open-vs-code-autocomplete"
 export const PREFERRED_CODING_MODEL = "qwen3-coder:30b"
 export const PREFERRED_AUTOCOMPLETE_MODEL = "qwen2.5-coder:7b"
 
@@ -142,6 +143,51 @@ export function buildStarterRoutingConfig(installed: readonly string[]): Routing
       default: ["local-chat"],
       autocomplete: ["local-fim"],
     },
+  }
+}
+
+/**
+ * Point the autocomplete route at one local model.
+ * Chat, coding, and any other route stay as configured.
+ */
+export function applyAutocompleteModelSelection(config: RoutingConfiguration, servedModelName: string): RoutingConfiguration {
+  const name = servedModelName.trim()
+  if (!name) throw new Error("MODEL_NAME_REQUIRED")
+  const provider = config.providers.find((entry) => entry.kind === "openai_compatible_local" && entry.baseUrl)
+  if (!provider) throw new Error("NO_LOCAL_PROVIDER")
+  const modelId = `local-fim-${slugModelId(name)}`
+  const model: ModelDescriptor = {
+    id: modelId,
+    displayName: name,
+    family: "local",
+    contextWindow: 32768,
+    capabilities: ["toolUse", "coding", "autocomplete", "fim"],
+    specialization: "coding",
+    provenance: "Selected from the local inference endpoint",
+    modelName: name,
+    fimStrategy: "qwen",
+  }
+  const deployment: ModelDeployment = {
+    id: AUTOCOMPLETE_MODEL_DEPLOYMENT_ID,
+    providerId: provider.id,
+    modelId,
+    modelName: name,
+    enabled: true,
+    priority: 100,
+    fimStrategy: "qwen",
+  }
+  const routes: Record<string, readonly string[]> = {}
+  for (const [key, value] of Object.entries(config.routes)) {
+    if (!value) continue
+    routes[key] = key === "autocomplete" ? [AUTOCOMPLETE_MODEL_DEPLOYMENT_ID] : [...value]
+  }
+  routes.autocomplete = [AUTOCOMPLETE_MODEL_DEPLOYMENT_ID]
+  return {
+    ...(config.$schema ? { $schema: config.$schema } : {}),
+    providers: config.providers,
+    models: [...config.models.filter((entry) => entry.id !== modelId), model],
+    deployments: [...config.deployments.filter((entry) => entry.id !== AUTOCOMPLETE_MODEL_DEPLOYMENT_ID), deployment],
+    routes,
   }
 }
 

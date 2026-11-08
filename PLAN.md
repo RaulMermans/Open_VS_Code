@@ -1,3 +1,10 @@
+Sprint 14C.1 — Global model management
+STATUS: IMPLEMENTED_NOT_INSTALLED
+  - Chat and autocomplete use extension storage. A trusted `.open-vs-code/models.json` remains an explicit override and is not rewritten.
+  - An untrusted workspace file cannot change the inference endpoint. Agent and Debug stay unavailable until the user trusts the folder.
+  - Starter creation no longer opens the model file. VS Code may still restore a tab that was already open.
+  - vscode-integration tests: 311 passed. Typecheck passed for agent-core, ide-adapter, and vscode-integration. No new package was installed. Details are in `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
+
 Sprint 14B.2 — Clean release and real GUI acceptance
 STATUS: PARTIALLY_VERIFIED
   - A review supports an outcome only when its run id matches the turn. A missing run id matches nothing. Applied paths on the current runner result are still listed.
