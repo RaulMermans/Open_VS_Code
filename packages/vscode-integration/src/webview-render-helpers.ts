@@ -325,7 +325,7 @@ function activityCategory(act: any): string {
     return "explore";
   }
   if (kind === "context") return "understand";
-  if (kind === "model") return "review";
+  if (kind === "model") return act && act.planning ? "plan" : "consult";
   if (kind === "task") {
     if (label === "Starting task") return "understand";
     return "outcome";
@@ -359,7 +359,7 @@ function outcomeTitle(items: any[]): string {
   return label || "Completed";
 }
 
-function groupTitle(category: string, items: any[], seenEdit: boolean): string {
+function groupTitle(category: string, items: any[]): string {
   var status = activityGroupStatus(items);
   if (category === "approval") {
     if (status === "pending") return "Waiting for approval";
@@ -380,11 +380,11 @@ function groupTitle(category: string, items: any[], seenEdit: boolean): string {
     if (status === "cancelled") return "Edit cancelled";
     return "Edited files";
   }
-  if (category === "review" && status === "pending" && !seenEdit) return "Planning changes";
   var titles: Record<string, string> = {
     understand: "Understanding the request",
-    explore: "Exploring the codebase",
-    read: "Reading relevant files",
+    explore: "Exploring the repository",
+    read: "Reading files",
+    consult: "Consulting the model",
     plan: "Planning changes",
     edit: "Editing files",
     approval: "Waiting for approval",
@@ -412,16 +412,14 @@ function groupDetail(items: any[]): string {
 }
 
 export function summarizeActivities(activities: any[]): Array<{ category: string; title: string; status: string; count: number; detail: string }> {
-  var groups: Array<{ category: string; items: any[]; seenEdit: boolean }> = [];
+  var groups: Array<{ category: string; items: any[] }> = [];
   var list = activities || [];
-  var seenEdit = false;
   for (var i = 0; i < list.length; i++) {
     var act = list[i];
     var category = activityCategory(act);
     var current = groups[groups.length - 1];
     if (current && current.category === category) current.items.push(act);
-    else groups.push({ category: category, items: [act], seenEdit: seenEdit });
-    if (category === "edit") seenEdit = true;
+    else groups.push({ category: category, items: [act] });
   }
   var summarized = [];
   for (var g = 0; g < groups.length; g++) {
@@ -429,7 +427,7 @@ export function summarizeActivities(activities: any[]): Array<{ category: string
     if (!group) continue;
     summarized.push({
       category: group.category,
-      title: groupTitle(group.category, group.items, group.seenEdit),
+      title: groupTitle(group.category, group.items),
       status: activityGroupStatus(group.items),
       count: group.items.length,
       detail: group.category === "edit" || group.category === "read" ? groupDetail(group.items) : "",
@@ -501,6 +499,7 @@ export function renderActivityTimeline(container: any, activities: any[], doc?: 
     rawLabel.className = "activity-label";
     var line = act.label || act.kind || "activity";
     if (act.summary) line += " — " + act.summary;
+    if (act.runId && line.indexOf(act.runId) === -1) line += " — " + act.runId;
     setText(rawLabel, line);
     row.appendChild(rawLabel);
     rawList.appendChild(row);

@@ -36,6 +36,10 @@ export interface ChatActivity {
   status: "pending" | "completed" | "failed" | "cancelled";
   toolName?: string;
   summary?: string;
+  /** Agent run that produced this row. Presentation only. */
+  runId?: string;
+  /** True only when this turn's task mode is PLAN. */
+  planning?: boolean;
 }
 
 export interface ChatContextChip {
@@ -150,6 +154,10 @@ export interface ReviewRecordDto {
   verifiedBy?: { id: string; command: string; status: ReviewRecordStatus };
   /** False when no retained output exists in this window (e.g. a restored command row). */
   outputAvailable?: boolean;
+  /** Agent task id that created this row. Absent on records saved before run correlation. */
+  runId?: string;
+  /** package.json script name when this command came from a known script. */
+  scriptName?: string;
 }
 
 /** Stable conversation id; the only form accepted from the webview or used as a file name. */

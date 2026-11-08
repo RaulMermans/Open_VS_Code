@@ -93,8 +93,8 @@ Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`; ADR-026 (Sprint 7D amendmen
 The authority map is unchanged. No new agent, permission, or provider method.
 
 - The runner appends `CONVERSATIONAL_RESPONSE_GUIDANCE` to the existing operating guidelines. It does not add a second model call.
-- `formatTerminalTaskMessage` may append a verified-outcome block built from `appliedMutations` and review rows. It does not infer files or tests from the model's prose.
-- The webview shows grouped activity titles and keeps the raw event labels in a collapsed technical-details list.
+- `formatTerminalTaskMessage` may append a verified-outcome block built from `appliedMutations` and review rows for the current run id. It does not infer files or tests from the model's prose. A command is a test, lint, typecheck, or other check from its script name or command text. A successful command with no test identity is not reported as a passing test.
+- The webview shows grouped activity titles and keeps the raw event labels in a collapsed technical-details list. "Planning changes" is used only when the turn's task mode is PLAN.
 - Token streaming stays deferred. `ModelProvider.complete` still returns one `ModelResponse`.
 
 Record: `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`.

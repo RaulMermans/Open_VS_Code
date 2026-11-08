@@ -88,6 +88,12 @@ export class ChatController {
   /** Mutations applied since the last approved verification, for the review ledger. */
   private _appliedSinceVerification: string[] = [];
   private _approvedMutations = new Set<string>();
+  /** Run id of the turn in progress. Reviews created before task.started use the turn stamp. */
+  private _activeRunId?: string;
+  /** Isolates reviews when a turn ends before task.started reports an id. */
+  private _turnStamp?: string;
+  /** PLAN mode was reported by task.started for this turn. */
+  private _planEvidence = false;
   private _lastTerminalSignature = '';
   private _outputChannel?: { appendLine: (s: string) => void; show: (preserveFocus?: boolean) => void; dispose: () => void };
   /** Sprint 7C: visible history for this workspace. Undefined means history is not saved. */
@@ -433,6 +439,7 @@ export class ChatController {
         kind: 'command',
         status: 'pending',
         command: entry.command,
+        scriptName: typeof pc.scriptName === 'string' ? pc.scriptName : undefined,
         verifies: this._appliedSinceVerification.length ? this._appliedSinceVerification.slice() : undefined,
       });
     }
@@ -976,9 +983,14 @@ export class ChatController {
 
   private upsertReview(record: ReviewRecordDto): void {
     const reviews = this.state.reviews || (this.state.reviews = []);
-    const index = reviews.findIndex((r) => r.id === record.id && r.kind === record.kind);
-    if (index >= 0) reviews[index] = { ...reviews[index], ...record };
-    else reviews.push(record);
+    const stamped: ReviewRecordDto = !record.runId && (this._activeRunId || this._turnStamp)
+      ? { ...record, runId: this._activeRunId || this._turnStamp }
+      : record;
+    const index = reviews.findIndex((r) => r.id === stamped.id && r.kind === stamped.kind);
+    if (index >= 0) {
+      const previous = reviews[index]!;
+      reviews[index] = { ...previous, ...stamped, runId: stamped.runId || previous.runId };
+    } else reviews.push(stamped);
     while (reviews.length > MAX_REVIEW_RECORDS) {
       const evictable = reviews.findIndex((r) => r.status !== 'pending' && r.status !== 'running');
       reviews.splice(evictable >= 0 ? evictable : 0, 1);
@@ -1092,6 +1104,9 @@ export class ChatController {
     this.state.activeTurn = true;
     this._turnStartedAt = performance.now();
     this._cancelRequestedAt = 0;
+    this._activeRunId = undefined;
+    this._turnStamp = "turn-" + this.generateId();
+    this._planEvidence = false;
     this.state.activities = [];
     this.state.pendingConfirmation = undefined;
     this.state.activeTerminal = undefined;
@@ -1298,12 +1313,14 @@ export class ChatController {
       }
       this.state.connection = deriveConnectionStatus(this._connectionInput);
       
+      const runId = this._activeRunId || this._turnStamp;
       const terminal = formatTerminalTaskMessage({
         status: result.status,
         failureReason: result.failureReason,
         finalAnswer: result.finalAnswer,
         appliedMutations: result.appliedMutations,
         reviews: this.state.reviews,
+        runId,
       });
       const terminalMsg: ChatMessage = {
         id: this.generateId(),
@@ -1402,8 +1419,13 @@ export class ChatController {
   }
   
   private handleAgentEvent(ev: AgentEvent) {
+    if (ev.type === 'task.started') {
+      const task = (ev.payload as { task?: { id?: unknown; mode?: unknown } } | undefined)?.task;
+      const taskId = typeof task?.id === 'string' ? task.id : ev.taskId;
+      this.recordRunId(taskId);
+      if (task?.mode === 'PLAN') this._planEvidence = true;
+    }
     this.pushActivity(ev);
-    if (ev.type === 'task.started') this.recordRunId((ev.payload as any)?.task?.id);
     if (ev.type === 'tool.requested') {
       this.sendState();
     } else if (ev.type === 'tool.completed' || ev.type === 'tool.failed' || ev.type === 'tool.rejected') {
@@ -1632,6 +1654,19 @@ export class ChatController {
   private pushActivity(ev: { type?: string; payload?: any }): void {
     const activity = activityFromAgentEvent(ev, this.generateId());
     if (!activity) return;
+    if (activity.kind === 'model' && this._planEvidence) activity.planning = true;
+    if (activity.kind === 'verification') {
+      for (let i = this.state.activities.length - 1; i >= 0; i--) {
+        const prior = this.state.activities[i];
+        if (prior?.kind !== 'verification') continue;
+        if (prior.status !== 'pending') break;
+        if (activity.status !== 'pending') prior.status = activity.status;
+        prior.label = activity.label;
+        if (activity.summary) prior.summary = activity.summary;
+        if (activity.runId) prior.runId = activity.runId;
+        return;
+      }
+    }
     if (activity.status !== 'pending' && (activity.kind === 'tool' || activity.kind === 'model')) {
       for (let i = this.state.activities.length - 1; i >= 0; i--) {
         const prior = this.state.activities[i];
@@ -1640,6 +1675,8 @@ export class ChatController {
         prior.label = activity.label;
         prior.toolName = activity.toolName || prior.toolName;
         if (activity.summary) prior.summary = activity.summary;
+        if (activity.runId) prior.runId = activity.runId;
+        if (activity.planning) prior.planning = true;
         return;
       }
     }
@@ -1814,6 +1851,13 @@ export class ChatController {
 
   private recordRunId(raw: unknown): void {
     if (typeof raw !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(raw)) return;
+    this._activeRunId = raw;
+    const stamp = this._turnStamp;
+    for (const record of this.state.reviews || []) {
+      if ((record.status === 'pending' || record.status === 'running') && (!record.runId || record.runId === stamp)) {
+        record.runId = raw;
+      }
+    }
     if (this._meta.runIds.includes(raw)) return;
     this._meta.runIds = [...this._meta.runIds, raw].slice(-MAX_RUN_IDS);
     this.persistConversation();
@@ -1870,6 +1914,9 @@ export class ChatController {
     this._appliedSinceVerification = [];
     this._approvedMutations.clear();
     this._lastTerminalSignature = '';
+    this._activeRunId = undefined;
+    this._turnStamp = undefined;
+    this._planEvidence = false;
   }
 
   private startFreshConversation(seed: ChatMessage[] = []): void {

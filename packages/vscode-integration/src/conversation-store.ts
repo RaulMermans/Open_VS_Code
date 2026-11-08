@@ -197,6 +197,8 @@ function sanitizeReview(raw: any): ReviewRecordDto | null {
   if (raw.exitCode === null || optionalInt(raw.exitCode) !== undefined) review.exitCode = raw.exitCode;
   if (typeof raw.durationMs === 'number' && Number.isFinite(raw.durationMs)) review.durationMs = raw.durationMs;
   if (typeof raw.detail === 'string') review.detail = clip(redact(oneLine(raw.detail)), 300);
+  if (typeof raw.runId === 'string' && RUN_ID_PATTERN.test(raw.runId)) review.runId = raw.runId;
+  if (typeof raw.scriptName === 'string' && /^[A-Za-z0-9:_-]{1,64}$/.test(raw.scriptName)) review.scriptName = raw.scriptName;
   if (Array.isArray(raw.verifies)) {
     const ids = raw.verifies.filter((v: unknown) => typeof v === 'string' && ITEM_ID_PATTERN.test(v)).slice(0, MAX_REVIEWS);
     if (ids.length) review.verifies = ids;
