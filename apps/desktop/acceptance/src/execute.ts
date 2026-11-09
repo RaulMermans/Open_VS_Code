@@ -4,6 +4,7 @@ import { join, resolve } from "node:path"
 import type { AcceptanceScenario, ScenarioExpected } from "./catalog.ts"
 import {
   assistantTextForTurn,
+  attachChatSurface,
   clickDecision,
   readMessages,
   openAgentSurface,
@@ -279,24 +280,25 @@ async function runElectron(scenario: AcceptanceScenario, context: RunContext, ev
         return "FAIL: workspace remained in Restricted Mode after the trust control was used"
       }
     }
-    const iframeInventory = await page.locator("iframe").evaluateAll((nodes) =>
-      nodes.map((node) => ({
-        className: (node as HTMLIFrameElement).className,
-        id: (node as HTMLIFrameElement).id,
-        src: String((node as HTMLIFrameElement).src || "").split("?")[0].slice(0, 160),
-      })),
-    ).catch((error) => [{ error: error instanceof Error ? error.message : String(error) }])
-    writeEvidence(evidencePath, "iframes.json", JSON.stringify(iframeInventory, null, 2))
-    const iframe = page.locator("iframe.webview, iframe.webview-internal").last()
-    const iframeVisible = await iframe.isVisible({ timeout: 20000 }).catch(() => false)
-    if (!iframeVisible) await openAgentSurface(session.app, log)
-    const surface: ChatSurface = scenario.driver === "electron-chat"
-      ? {
-          page,
-          root: page.frameLocator("iframe.webview").last(),
-          locator: (selector: string) => page.locator(selector),
-        }
-      : await requireChat(session, 15000, log)
+    let iframeVisible = false
+    if (!scenario.prompt) {
+      const iframeInventory = await page.locator("iframe").evaluateAll((nodes) =>
+        nodes.map((node) => ({
+          className: (node as HTMLIFrameElement).className,
+          id: (node as HTMLIFrameElement).id,
+          src: String((node as HTMLIFrameElement).src || "").split("?")[0].slice(0, 160),
+        })),
+      ).catch((error) => [{ error: error instanceof Error ? error.message : String(error) }])
+      writeEvidence(evidencePath, "iframes.json", JSON.stringify(iframeInventory, null, 2))
+      const iframe = page.locator("iframe.webview, iframe.webview-internal").last()
+      iframeVisible = await iframe.isVisible({ timeout: 20000 }).catch(() => false)
+      if (!iframeVisible) await openAgentSurface(session.app, log)
+    } else {
+      writeEvidence(evidencePath, "iframes.json", "[]\n")
+    }
+    const surface = scenario.prompt
+      ? attachChatSurface(session.app, page)
+      : await resolveChatSurface(session.app, 20000, log, page)
     log.record("composer-ready", iframeVisible ? "iframe-visible" : "resolved")
     if (scenario.driver !== "electron-chat") {
       await screenshot(session, evidencePath, "chat.png", scenario.driver === "review")
@@ -499,9 +501,13 @@ async function chatDetail(
       await waitForApproval(current, scenario.timeoutMs)
       await clickDecision(current, scenario.approval, scenario.timeoutMs)
     }
-    const first = await waitForTurnAssistant(session, scenario.prompt, scenario.timeoutMs, log, sent.surface.page)
-    current = first.surface
-    text = first.text
+    if (sent.result.assistantText) {
+      text = sent.result.assistantText
+    } else {
+      const first = await waitForTurnAssistant(session, scenario.prompt, scenario.timeoutMs, log, sent.surface.page)
+      current = first.surface
+      text = first.text
+    }
     if (scenario.followUp) {
       const follow = await sendPrompt(session, scenario.followUp, log)
       writeEvidence(evidencePath, "send-followup.json", JSON.stringify(follow.result, null, 2))

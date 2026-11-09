@@ -228,18 +228,43 @@ function parseConcatenatedToolCallObjects(source: string): ToolCall[] | null {
   return calls.length > 1 ? calls : null
 }
 
-const PROTOCOL_ENVELOPE = /<tool_call\b|<\/tool_call>|<function=|<\/function>|<parameter=/i
+const UNPARSED_ENVELOPE_START = /<tool_call\b|<function=[A-Za-z0-9_.:-]+>/i
 
 /**
  * A local model sometimes appends an unfinished tool envelope after the answer.
- * That envelope is protocol, not prose. Text before the first marker stays.
- * The marker and everything after it is dropped here, before the runner stores
- * the assistant message. This is the parse boundary, not a display filter.
+ * Only an opening tool envelope is protocol. A closing tag or parameter tag
+ * quoted in an answer stays, because that text is not a call.
+ * Text before the opening marker stays. The marker and everything after it is
+ * dropped here, before the runner stores the assistant message.
  */
 export function separateUnparsedProtocolEnvelope(content: string): { readonly content: string; readonly discarded: boolean } {
-  const match = PROTOCOL_ENVELOPE.exec(content)
+  const match = UNPARSED_ENVELOPE_START.exec(content)
   if (match?.index === undefined) return { content, discarded: false }
   return { content: content.slice(0, match.index).trim(), discarded: true }
+}
+
+/**
+ * Qwen-family replies sometimes wrap private reasoning in think tags.
+ * Fenced code is left intact so an answer can show the syntax.
+ * The removed text is not returned.
+ */
+export function separateHiddenReasoning(content: string): { readonly content: string; readonly discarded: boolean } {
+  const hiddenBlock = /<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi
+  const hiddenOpen = /<(think|thinking|reasoning)\b[^>]*>/i
+  const parts = content.split(/(```[\s\S]*?```)/g)
+  let discarded = false
+  const next = parts.map((part, index) => {
+    if (index % 2 === 1) return part
+    const withoutBlocks = part.replace(hiddenBlock, () => {
+      discarded = true
+      return ""
+    })
+    const open = hiddenOpen.exec(withoutBlocks)
+    if (open?.index === undefined) return withoutBlocks
+    discarded = true
+    return withoutBlocks.slice(0, open.index)
+  }).join("")
+  return { content: next.trim(), discarded }
 }
 
 function scanJsonObjectEnd(text: string, start: number): number | null {
@@ -381,12 +406,16 @@ export function normalizeWireResponse(payload: unknown, fallbackModel = "unknown
     }
   }
 
+  const hidden = separateHiddenReasoning(content)
+  content = hidden.content
   const separated = separateUnparsedProtocolEnvelope(content)
   content = separated.content
-  if (separated.discarded && !content.trim() && toolCalls.length === 0) {
+  if ((separated.discarded || hidden.discarded) && !content.trim() && toolCalls.length === 0) {
     throw new ModelProviderError(
       "MALFORMED_RESPONSE",
-      "Assistant message contained an incomplete tool-call envelope and no answer",
+      separated.discarded
+        ? "Assistant message contained an incomplete tool-call envelope and no answer"
+        : "Assistant message contained hidden reasoning and no answer",
     )
   }
 
@@ -405,6 +434,10 @@ export function normalizeWireResponse(payload: unknown, fallbackModel = "unknown
   if (typeof record.system_fingerprint === "string") metadata.systemFingerprint = record.system_fingerprint
   if (typeof choice.index === "number") metadata.choiceIndex = choice.index
   if (separated.discarded) metadata.protocolEnvelopeDiscarded = true
+  if (hidden.discarded) metadata.reasoningDiscarded = true
+  if (typeof messageRecord.reasoning_content === "string" || typeof messageRecord.thinking === "string") {
+    metadata.reasoningPresent = true
+  }
 
   const model = typeof record.model === "string" && record.model.trim() ? record.model.trim() : fallbackModel
 

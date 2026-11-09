@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { runInNewContext } from "node:vm"
+import { GUEST_RUNTIME } from "./src/guest-bridge.ts"
 import { loadCatalog } from "./src/catalog.ts"
 import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./src/safety.ts"
 import { notRun } from "./src/execute.ts"
@@ -141,6 +143,107 @@ test("CONV-PING transport success is not a content pass when a tool envelope rem
 
 test("a trust-required scenario can detect Restricted Mode before Send", () => {
   assert.equal(trustStateFromWorkbench("Restricted Mode\nAsk"), "restricted")
+})
+
+test("guest bridge fills and clicks the composer without attaching a frame", async () => {
+  assert.equal(GUEST_RUNTIME.includes("contentFrame"), false)
+  const clicked: string[] = []
+  const elements = new Map<string, FakeEl>()
+  class FakeEl {
+    value = ""
+    textContent = ""
+    innerText = ""
+    className = ""
+    selectionStart = 0
+    selectionEnd = 0
+    constructor(readonly id: string) {}
+    click(): void {
+      clicked.push(this.id)
+      if (this.id === "send-btn") {
+        elements.get("composer")!.value = ""
+      }
+    }
+    getClientRects(): unknown[] {
+      return [{}]
+    }
+    dispatchEvent(): void {}
+    querySelector(selector: string): FakeEl | null {
+      if (selector === ".message-body") return this
+      return null
+    }
+  }
+  const composer = new FakeEl("composer")
+  composer.value = ""
+  const send = new FakeEl("send-btn")
+  const status = new FakeEl("connection-status")
+  status.innerText = "Ready · qwen3-coder:30b"
+  elements.set("composer", composer)
+  elements.set("send-btn", send)
+  elements.set("connection-status", status)
+  const sandbox = {
+    document: {
+      getElementById: (id: string) => elements.get(id) ?? null,
+      querySelector: (selector: string) => elements.get(selector.slice(1)) ?? null,
+      querySelectorAll: () => [],
+    },
+    window: { getComputedStyle: () => ({ display: "block", visibility: "visible" }) },
+    Event,
+    KeyboardEvent: class KeyboardEvent {
+      constructor(readonly type: string, readonly init: Record<string, unknown> = {}) {
+        void type
+        void init
+      }
+    },
+  }
+  const fill = runInNewContext(`(${GUEST_RUNTIME})(${JSON.stringify({ op: "fill", selector: "#composer", value: "pong" })})`, sandbox) as { ok?: boolean; value?: string }
+  assert.equal(fill.ok, true)
+  assert.equal(fill.value, "pong")
+  const click = runInNewContext(`(${GUEST_RUNTIME})(${JSON.stringify({ op: "click", selector: "#send-btn" })})`, sandbox) as { ok?: boolean; value?: string }
+  assert.equal(click.ok, true)
+  assert.deepEqual(clicked, ["send-btn"])
+  assert.equal(composer.value, "")
+  runInNewContext(`(${GUEST_RUNTIME})(${JSON.stringify({ op: "fill", selector: "#composer", value: "line" })})`, sandbox)
+  const shifted = runInNewContext(`(${GUEST_RUNTIME})(${JSON.stringify({ op: "press", selector: "#composer", key: "Shift+Enter" })})`, sandbox) as { value?: string }
+  assert.equal(shifted.value, "line\n")
+  const messages: { role: string; text: string; classList: { contains: (name: string) => boolean }; querySelector: () => { textContent: string } }[] = []
+  sandbox.document.querySelectorAll = ((selector: string) => selector === ".message" ? messages : []) as typeof sandbox.document.querySelectorAll
+  send.click = () => {
+    clicked.push(send.id)
+    composer.value = ""
+    const user = { role: "user", text: "pong", classList: { contains: (name: string) => name === "user" }, querySelector: () => ({ textContent: "pong" }) }
+    const assistant = { role: "assistant", text: "pong", classList: { contains: (name: string) => name === "assistant" }, querySelector: () => ({ textContent: "pong" }) }
+    messages.push(user, assistant)
+  }
+  const waits: Array<() => void> = []
+  Object.assign(sandbox, {
+    setInterval: (callback: () => void) => {
+      waits.push(callback)
+      queueMicrotask(callback)
+      return 1
+    },
+    clearInterval: () => undefined,
+  })
+  const submitted = await runInNewContext(`(${GUEST_RUNTIME})(${JSON.stringify({ op: "submit", value: "pong", timeoutMs: 1000 })})`, sandbox) as { ok?: boolean; text?: string }
+  assert.equal(submitted.ok, true)
+  assert.equal(submitted.text, "pong")
+  const read = runInNewContext(`(${GUEST_RUNTIME})(${JSON.stringify({ op: "read", selector: "#connection-status" })})`, sandbox) as { visible?: boolean; text?: string }
+  assert.equal(read.visible, true)
+  assert.match(read.text ?? "", /qwen3-coder:30b/)
+})
+
+test("send waits until the webview document has stayed open", async () => {
+  const { WebviewLifecycleLog, waitForSettledWebview } = await import("./src/chat-surface.ts")
+  const root = mkdtempSync(join(tmpdir(), "ovsc-settle-"))
+  const log = new WebviewLifecycleLog(join(root, "lifecycle.jsonl"))
+  log.record("frame-navigated", "vscode-webview://agent/index.html name=active")
+  const pending = waitForSettledWebview(log, 4000)
+  await new Promise((resolve) => setTimeout(resolve, 1600))
+  await pending
+  log.record("frame-detached", "vscode-webview://agent/index.html name=active")
+  log.record("frame-navigated", "vscode-webview://agent/index.html name=active")
+  const again = waitForSettledWebview(log, 4000)
+  await new Promise((resolve) => setTimeout(resolve, 1600))
+  await again
 })
 
 test("webview detach plus attach after Send is an unexpected reload", () => {
