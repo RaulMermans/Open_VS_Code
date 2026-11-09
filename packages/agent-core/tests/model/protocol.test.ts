@@ -153,6 +153,78 @@ test("protocol normalizer keeps prose and drops an unclosed tool envelope", () =
   assert.equal(normalized.message.content.includes("<tool_call"), false)
 })
 
+test("protocol normalizer keeps an answer that quotes tool-tag syntax", () => {
+  const content = "Close the example with </function> after <parameter=path>."
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+  })
+  assert.equal(normalized.message.content, content)
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.metadata?.protocolEnvelopeDiscarded, undefined)
+})
+
+test("protocol normalizer drops an unclosed function envelope and keeps the answer", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "Answer first.\n<function=read_file>\n<parameter=path>\nREADME.md",
+      },
+      finish_reason: "stop",
+    }],
+  })
+  assert.equal(normalized.message.content, "Answer first.")
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.metadata?.protocolEnvelopeDiscarded, true)
+})
+
+test("protocol normalizer removes hidden reasoning and keeps the answer", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "<think>do not show this plan</think>\n\npong",
+        reasoning_content: "also private",
+      },
+      finish_reason: "stop",
+    }],
+  })
+  assert.equal(normalized.message.content, "pong")
+  assert.equal(normalized.message.content.includes("do not show"), false)
+  assert.equal(JSON.stringify(normalized).includes("also private"), false)
+  assert.equal(normalized.metadata?.reasoningDiscarded, true)
+  assert.equal(normalized.metadata?.reasoningPresent, true)
+})
+
+test("protocol normalizer keeps a fenced example of a think tag", () => {
+  const content = "The model may emit this fence:\n```xml\n<think>keep</think>\n```\n<think>hide</think>\nDone."
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+  })
+  assert.match(normalized.message.content, /<think>keep<\/think>/)
+  assert.equal(normalized.message.content.includes("hide"), false)
+  assert.match(normalized.message.content, /Done\.$/)
+})
+
+test("protocol normalizer rejects hidden reasoning with no answer", () => {
+  assert.throws(() => normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: { role: "assistant", content: "<think>secret-plan</think>" },
+      finish_reason: "stop",
+    }],
+  }), (err) => {
+    return err instanceof ModelProviderError
+      && err.code === "MALFORMED_RESPONSE"
+      && err.message.includes("hidden reasoning")
+      && !err.message.includes("secret-plan")
+  })
+})
+
 test("protocol normalizer rejects an incomplete tool envelope with no answer", () => {
   assert.throws(() => normalizeWireResponse({
     model: "qwen3-coder:30b",

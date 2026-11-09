@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import type { ElectronApplication, FrameLocator, Locator, Page } from "playwright-core"
+import type { ElectronApplication, Page } from "playwright-core"
+import { queryGuest, type GuestOp } from "./guest-bridge.ts"
 import {
   classifySendAck,
   redactUrl,
@@ -11,10 +12,22 @@ import {
 } from "./oracles.ts"
 import { livePage, type LabSession } from "./session.ts"
 
+export interface ChatControl {
+  isVisible(options?: { timeout?: number }): Promise<boolean>
+  inputValue(options?: { timeout?: number }): Promise<string>
+  innerText(options?: { timeout?: number }): Promise<string>
+  selectOption(value: string, options?: { timeout?: number }): Promise<void>
+  click(options?: { timeout?: number }): Promise<void>
+  waitFor(options?: { state?: string; timeout?: number }): Promise<void>
+  fill(value: string): Promise<void>
+  press(key: string): Promise<void>
+  pressSequentially(text: string): Promise<void>
+}
+
 export interface ChatSurface {
   readonly page: Page
-  readonly root: FrameLocator
-  readonly locator: (selector: string) => Locator
+  readonly app: ElectronApplication
+  readonly locator: (selector: string) => ChatControl
 }
 
 export interface SendResult {
@@ -25,6 +38,8 @@ export interface SendResult {
   readonly userVisible: boolean
   readonly reloadAfterSend: boolean
   readonly detail: string
+  readonly assistantText?: string
+  readonly messages?: ChatMessage[]
 }
 
 function sleep(ms: number): Promise<void> {
@@ -102,67 +117,65 @@ export async function workbenchPage(app: ElectronApplication, timeoutMs = 30000)
   throw new Error("The installed workbench did not appear")
 }
 
-async function composerVisible(root: FrameLocator, timeoutMs: number): Promise<boolean> {
-  return root.locator("#composer").isVisible({ timeout: timeoutMs }).catch(() => false)
+function guestControl(app: ElectronApplication, selector: string): ChatControl {
+  const read = () => queryGuest(app, { op: "read", selector })
+  const act = (op: GuestOp) => queryGuest(app, op)
+  return {
+    async isVisible(options) {
+      const timeout = options?.timeout ?? 0
+      const started = Date.now()
+      do {
+        const result = await read()
+        if (result?.visible) return true
+        if (timeout <= 0) return false
+        await sleep(150)
+      } while (Date.now() - started < timeout)
+      return false
+    },
+    async inputValue() {
+      return (await read())?.value ?? ""
+    },
+    async innerText() {
+      return (await read())?.text ?? ""
+    },
+    async selectOption(value) {
+      const result = await act({ op: "select", selector, value })
+      if (!result?.ok) throw new Error(`Could not select ${selector}`)
+    },
+    async click() {
+      const result = await act({ op: "click", selector })
+      if (!result?.ok) throw new Error(`Could not click ${selector}`)
+    },
+    async waitFor(options) {
+      const visible = await this.isVisible({ timeout: options?.timeout ?? 10000 })
+      if (!visible) throw new Error(`${selector} did not become visible`)
+    },
+    async fill(value) {
+      const result = await act({ op: "fill", selector, value })
+      if (!result?.ok) throw new Error(`Could not fill ${selector}. ${result?.text ?? "no result"}`)
+    },
+    async press(key) {
+      const result = await act({ op: "press", selector, key })
+      if (!result?.ok) throw new Error(`Could not press ${key} in ${selector}`)
+    },
+    async pressSequentially(text) {
+      const current = (await read())?.value ?? ""
+      const result = await act({ op: "fill", selector, value: current + text })
+      if (!result?.ok) throw new Error(`Could not type into ${selector}`)
+    },
+  }
 }
 
-async function candidateRoots(page: Page): Promise<FrameLocator[]> {
-  const webviews = page.locator("iframe.webview")
-  const count = await webviews.count().catch(() => 0)
-  const roots: FrameLocator[] = []
-  for (let index = 0; index < count; index += 1) {
-    const outer = webviews.nth(index).contentFrame()
-    roots.push(outer.locator("iframe#active-frame").contentFrame())
-    roots.push(outer)
-  }
-  return roots
+export function attachChatSurface(app: ElectronApplication, page: Page): ChatSurface {
+  return guestSurface(app, page)
 }
 
-async function surfaceFromFrames(page: Page): Promise<ChatSurface | null> {
-  let frames: ReturnType<Page["frames"]> = []
-  try {
-    frames = page.frames()
-  } catch {
-    return null
+function guestSurface(app: ElectronApplication, page: Page): ChatSurface {
+  return {
+    page,
+    app,
+    locator: (selector: string) => guestControl(app, selector),
   }
-  for (const frame of frames) {
-    try {
-      if (frame.isDetached()) continue
-      const url = frame.url()
-      if (frame === page.mainFrame() || url === "about:blank") continue
-      if (!/vscode-webview|webview/i.test(url) && frame.name() !== "pending-frame") continue
-      const visible = await frame.locator("#composer").isVisible({ timeout: 200 }).catch(() => false)
-      if (!visible) continue
-      return {
-        page,
-        root: page.frameLocator("iframe.webview").last().contentFrame(),
-        locator: (selector: string) => frame.locator(selector),
-      }
-    } catch {
-      continue
-    }
-  }
-  return null
-}
-
-function candidatePages(app: ElectronApplication, preferred?: Page): Page[] {
-  const open = safeWindows(app)
-  const pages: Page[] = []
-  const add = (page: Page | undefined, keepClosed: boolean) => {
-    if (!page) return
-    if (pages.includes(page)) return
-    if (!keepClosed) {
-      try {
-        if (page.isClosed()) return
-      } catch {
-        return
-      }
-    }
-    pages.push(page)
-  }
-  add(preferred, true)
-  for (const page of open) add(page, false)
-  return pages
 }
 
 export async function resolveChatSurface(
@@ -172,41 +185,22 @@ export async function resolveChatSurface(
   preferred?: Page,
 ): Promise<ChatSurface> {
   const started = Date.now()
-  let last = "no windows"
+  let page = preferred
+  let last = "no guest diagnostic"
   while (Date.now() - started < timeoutMs) {
-    let pages = candidatePages(app, preferred)
-    if (pages.length === 0) {
-      const next = await app.waitForEvent("window", { timeout: 400 }).catch(() => null)
-      if (next) {
-        log?.attachPage(next)
-        pages = [next]
-      } else {
-        last = "Playwright reports zero windows"
-        await sleep(150)
-        continue
-      }
+    if (!page || page.isClosed()) {
+      page = await workbenchPage(app, 1000).catch(() => undefined)
     }
-    for (const page of pages) {
-      log?.attachPage(page)
-      const roots = await candidateRoots(page).catch(() => [])
-      for (const root of roots) {
-        if (await composerVisible(root, 400)) {
-          return {
-            page,
-            root,
-            locator: (selector: string) => root.locator(selector),
-          }
-        }
-      }
-      const fromFrames = await surfaceFromFrames(page)
-      if (fromFrames) return fromFrames
+    const composer = await queryGuest(app, { op: "read", selector: "#composer" })
+    if (composer?.visible && page) {
+      log?.record("composer-ready", "guest-bridge")
+      return guestSurface(app, page)
     }
-    last = `windows=${pages.length}`
-    await sleep(150)
+    if (composer?.text) last = composer.text
+    await sleep(200)
   }
-  const snapshot = log?.snapshot(app)
-  const urls = snapshot?.frames.map((frame) => `${frame.name}:${frame.url}`).join(" | ") || "(none)"
-  throw new Error(`The Agent composer was not found. ${last}. Frames: ${urls}`)
+  log?.record("guest-bridge", last)
+  throw new Error(`The Agent composer was not found through the Electron guest bridge. ${last}`)
 }
 
 export async function openAgentSurface(app: ElectronApplication, log?: WebviewLifecycleLog): Promise<void> {
@@ -227,21 +221,9 @@ export async function requireChat(session: LabSession, timeoutMs: number, log?: 
   return resolveChatSurface(session.app, timeoutMs, log, session.page)
 }
 
-export async function waitForAgentIframe(page: Page, timeoutMs: number): Promise<Locator> {
-  const iframe = page.locator("iframe.webview").last()
-  await iframe.waitFor({ state: "visible", timeout: timeoutMs })
-  return iframe
-}
-
-export async function submitFromWorkbench(page: Page, prompt: string, log: WebviewLifecycleLog): Promise<void> {
-  const iframe = await waitForAgentIframe(page, 20000)
-  const box = await iframe.boundingBox()
-  if (!box) throw new Error("Agent webview iframe has no bounding box")
-  await page.mouse.click(box.x + Math.min(120, box.width / 2), box.y + box.height - 88)
-  await page.keyboard.press("Control+A").catch(() => undefined)
-  await page.keyboard.type(prompt, { delay: 5 })
-  await page.keyboard.press("Enter")
-  log.record("send-click", `workbench keyboard enter at ${Math.round(box.x)},${Math.round(box.y)}`)
+export async function readMessages(surface: ChatSurface): Promise<ChatMessage[]> {
+  const result = await queryGuest(surface.app, { op: "messages" })
+  return result?.messages ?? []
 }
 
 export async function waitForReadyModel(surface: ChatSurface, timeoutMs: number): Promise<void> {
@@ -255,20 +237,6 @@ export async function waitForReadyModel(surface: ChatSurface, timeoutMs: number)
   throw new Error(`Local model did not become ready. Last status: ${JSON.stringify(last)}`)
 }
 
-export async function readMessages(surface: ChatSurface): Promise<ChatMessage[]> {
-  return surface.locator("body").evaluate(() => {
-    const nodes = Array.from(document.querySelectorAll(".message"))
-    return nodes.map((node) => {
-      const role = node.classList.contains("assistant")
-        ? "assistant"
-        : node.classList.contains("user")
-          ? "user"
-          : "other"
-      const body = node.querySelector(".message-body")
-      return { role, text: (body?.textContent ?? "").trim() }
-    })
-  }).catch(() => [])
-}
 
 export async function assistantTextForTurn(surface: ChatSurface, prompt: string): Promise<string> {
   return turnAssistantText(await readMessages(surface), prompt)
@@ -291,13 +259,18 @@ export async function selectModel(surface: ChatSurface, model: string): Promise<
   await selector.selectOption(model, { timeout: 5000 })
 }
 
-async function waitUntil(check: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+export async function waitForSettledWebview(log: WebviewLifecycleLog, timeoutMs = 25000): Promise<void> {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    if (await check()) return true
-    await sleep(150)
+    const navigated = log.events.filter((event) => event.kind === "frame-navigated" && event.detail.includes("/index.html"))
+    const last = navigated.at(-1)
+    const detachedAfter = last
+      ? log.events.some((event) => event.at > last.at && event.kind === "frame-detached" && event.detail.includes("/index.html"))
+      : false
+    if (last && !detachedAfter && Date.now() - last.at >= 1500) return
+    await sleep(200)
   }
-  return false
+  throw new Error("Agent webview did not stay open long enough to send")
 }
 
 export async function sendPrompt(
@@ -306,67 +279,39 @@ export async function sendPrompt(
   log: WebviewLifecycleLog,
   existing?: ChatSurface,
 ): Promise<{ surface: ChatSurface; result: SendResult }> {
-  let surface = existing ?? await requireChat(session, 20000, log)
+  const surface = existing ?? attachChatSurface(session.app, session.page)
   const beforeSend = Date.now()
   let clicks = 0
   let clickError: string | undefined
+  let assistantText = ""
+  let messages: ChatMessage[] = []
+  let composerValueAfter = ""
   try {
-    const page = await workbenchPage(session.app, 5000).catch(() => surface.page)
-    await submitFromWorkbench(page, prompt, log)
+    await waitForSettledWebview(log)
+    log.record("webview-settled", "index.html stayed open")
+    // One guest script only. A second executeJavaScript on the webview frame
+    // closes the Playwright debugger, so the reply has to come back from this call.
+    const submitted = await queryGuest(session.app, { op: "submit", value: prompt, timeoutMs: 170000 })
+    if (!submitted?.ok) throw new Error(submitted?.text || "submit was not accepted")
+    assistantText = submitted.text ?? ""
+    messages = submitted.messages ?? []
+    composerValueAfter = submitted.value ?? ""
     clicks = 1
+    log.record("send-click", "guest-bridge submit")
   } catch (error) {
     clickError = error instanceof Error ? error.message : String(error)
-    log.record("send-click", `error ${clickError}`)
-    const page = await workbenchPage(session.app, 8000).catch(() => null)
-    if (page && clicks === 0) {
-      try {
-        await submitFromWorkbench(page, prompt, log)
-        clicks = 1
-        clickError = undefined
-      } catch (retryError) {
-        clickError = retryError instanceof Error ? retryError.message : String(retryError)
-      }
-    }
+    log.record("send-click", `error ${clickError.slice(0, 500)}`)
   }
-
-  await sleep(1500)
-  surface = await resolveChatSurface(session.app, 8000, log, surface.page).catch(() => surface)
-  let composerValueAfter = await surface.locator("#composer").inputValue().catch(() => "")
-  let users = (await readMessages(surface)).filter((message) => message.role === "user").map((message) => message.text)
-  let ack = classifySendAck({
+  const users = messages.filter((message) => message.role === "user").map((message) => message.text)
+  const ack = classifySendAck({
     prompt,
     composerValue: composerValueAfter,
     userMessages: users,
     sendClicked: clicks > 0,
     clickError,
   })
-  const settled = ack !== "not_attempted"
-  if (ack === "not_attempted" && clicks === 1 && composerValueAfter.trim() === prompt.trim()) {
-    try {
-      await surface.locator("#send-btn").click({ timeout: 5000 })
-      clicks += 1
-      log.record("send-click", "clicked after proving the first click was not accepted")
-      clickError = undefined
-    } catch (error) {
-      clickError = error instanceof Error ? error.message : String(error)
-    }
-    await waitUntil(async () => {
-      surface = await resolveChatSurface(session.app, 2000, log, surface.page).catch(() => surface)
-      composerValueAfter = await surface.locator("#composer").inputValue().catch(() => prompt)
-      users = (await readMessages(surface)).filter((message) => message.role === "user").map((message) => message.text)
-      return userAlreadyPresent(users, prompt) || composerValueAfter.trim() === ""
-    }, 8000)
-    composerValueAfter = await surface.locator("#composer").inputValue().catch(() => "")
-    users = (await readMessages(surface)).filter((message) => message.role === "user").map((message) => message.text)
-    ack = classifySendAck({
-      prompt,
-      composerValue: composerValueAfter,
-      userMessages: users,
-      sendClicked: clicks > 0,
-      clickError,
-    })
-  }
   const reloadAfterSend = log.events.some((event) => event.at >= beforeSend && (event.kind === "frame-detached" || event.kind === "frame-attached"))
+  const detail = `${ack === "not_attempted" ? `send ${ack}; controls did not settle` : `send ${ack}`}${clickError ? ` (${clickError.slice(0, 240)})` : ""}`
   return {
     surface,
     result: {
@@ -376,7 +321,9 @@ export async function sendPrompt(
       composerValueAfter,
       userVisible: userAlreadyPresent(users, prompt),
       reloadAfterSend: reloadAfterSend && ack !== "not_attempted",
-      detail: settled ? `send ${ack}` : `send ${ack}; controls did not settle within 12s`,
+      detail,
+      assistantText,
+      messages,
     },
   }
 }
