@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop is `0.1.0-rc.13`. Release decision on 2026-11-09: NO-GO for the full V1 gate. Protocol normalization is unit-tested and installed. A DevTools Ask turn returned `pong`. Playwright `CONV-PING` still fails because attaching to the Agent webview closes the workbench. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop is `0.1.0-rc.13`. Release decision on 2026-11-09: NO-GO for the full V1 gate. The acceptance lab now drives the Agent webview through a loopback CDP connection to `#active-frame`, not Playwright's Electron attach. Ten isolated Ask pings returned `pong`. One Agent coding task fixed `src/add.js` and the lab's `node --test` passed; the installed runtime still reported `MAX_TURNS_EXCEEDED`. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 
 Sprint 14C.1A — Global model hardening and desktop acceptance. Status: `PARTIALLY_VERIFIED`. `0.1.0-rc.12` from `6417724105` is installed. Playwright opened that binary with the sandbox enabled. An untrusted folder kept the global route, and `qwen3-coder:30b` answered `pong`. Wider chat, a second repository, and a live-profile restart were not walked. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
 

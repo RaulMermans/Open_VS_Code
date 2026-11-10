@@ -65,11 +65,10 @@ export function classifySendAck(input: {
 }): SendAck {
   const prompt = input.prompt.trim()
   if (userTurnExists(input.userMessages, prompt)) return "acknowledged"
-  const composer = input.composerValue.trim()
-  if (input.sendClicked && composer.length === 0 && !input.clickError) return "acknowledged"
   if (!input.sendClicked) return "not_attempted"
-  if (composer === prompt || composer.includes(prompt)) return "not_attempted"
-  if (input.clickError) return "unknown"
+  const composer = input.composerValue.trim()
+  if (composer.length > 0 && (composer === prompt || composer.includes(prompt))) return "not_attempted"
+  // A cleared composer is not proof that Send created a user turn.
   return "unknown"
 }
 
@@ -79,6 +78,10 @@ export function userTurnExists(userMessages: readonly string[], prompt: string):
 }
 
 export function turnAssistantText(messages: readonly ChatMessage[], prompt: string): string {
+  return turnReplyText(messages, prompt, false)
+}
+
+export function turnReplyText(messages: readonly ChatMessage[], prompt: string, includeOther = true): string {
   const needle = prompt.trim()
   let lastUser = -1
   for (let index = 0; index < messages.length; index += 1) {
@@ -90,7 +93,7 @@ export function turnAssistantText(messages: readonly ChatMessage[], prompt: stri
   for (let index = lastUser + 1; index < messages.length; index += 1) {
     const message = messages[index]!
     if (message.role === "user") break
-    if (message.role === "assistant") parts.push(message.text)
+    if (message.role === "assistant" || (includeOther && message.role === "other" && message.text.trim())) parts.push(message.text)
   }
   return parts.join("\n")
 }

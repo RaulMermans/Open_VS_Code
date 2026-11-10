@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runInNewContext } from "node:vm"
+import { CDP_TURN_RUNTIME, assertLocalDebuggerUrl, confirmationAllowed, debuggerBindProblems, interpretCdpTurn } from "./src/cdp-turn.ts"
 import { GUEST_RUNTIME } from "./src/guest-bridge.ts"
 import { loadCatalog } from "./src/catalog.ts"
 import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./src/safety.ts"
@@ -103,6 +104,12 @@ test("send acknowledgement distinguishes missing, accepted, and unknown outcomes
     userMessages: [],
     sendClicked: true,
   }), "not_attempted")
+  assert.equal(classifySendAck({
+    prompt: "pong",
+    composerValue: "",
+    userMessages: [],
+    sendClicked: true,
+  }), "unknown")
   assert.equal(classifySendAck({
     prompt: "pong",
     composerValue: "",
@@ -244,6 +251,245 @@ test("send waits until the webview document has stayed open", async () => {
   const again = waitForSettledWebview(log, 4000)
   await new Promise((resolve) => setTimeout(resolve, 1600))
   await again
+})
+
+test("an empty composer is not a completed CDP submission", () => {
+  const prompt = "Reply with the single word pong. Do not call tools."
+  const taskId = "run:CONV-PING"
+  const interpreted = interpretCdpTurn({
+    taskId,
+    prompt,
+    workspace: "/tmp/ovsc-fixture",
+    raw: {
+      found: true,
+      taskId,
+      sendClicks: 1,
+      composerValue: "",
+      messages: [],
+      timedOut: true,
+    },
+  })
+  assert.equal(interpreted.ack, "unknown")
+  assert.equal(interpreted.userCount, 0)
+  assert.equal(interpreted.problems.some((problem) => problem.includes("timed out")), true)
+})
+
+test("a CDP turn binds one user message and its assistant reply to the task id", () => {
+  const prompt = "Reply with the single word pong. Do not call tools."
+  const taskId = "run:CONV-PING#1"
+  const interpreted = interpretCdpTurn({
+    taskId,
+    prompt,
+    workspace: "/tmp/ovsc-fixture",
+    raw: {
+      found: true,
+      taskId,
+      sendClicks: 1,
+      composerValue: "",
+      messages: [
+        { role: "user", text: prompt },
+        { role: "assistant", text: "pong" },
+      ],
+    },
+  })
+  assert.equal(interpreted.ack, "acknowledged")
+  assert.equal(interpreted.userCount, 1)
+  assert.equal(interpreted.assistant, "pong")
+  assert.deepEqual(interpreted.problems, [])
+  const mismatched = interpretCdpTurn({
+    taskId,
+    prompt,
+    workspace: "/tmp/ovsc-fixture",
+    raw: { found: true, taskId: "other", sendClicks: 1, messages: [{ role: "user", text: prompt }, { role: "assistant", text: "pong" }] },
+  })
+  assert.equal(mismatched.problems.some((problem) => problem.includes("task id")), true)
+})
+
+test("fixture approval rejects a path outside the disposable workspace", () => {
+  assert.equal(confirmationAllowed("File src/add.js", "/tmp/ovsc-fixture"), true)
+  assert.equal(confirmationAllowed("File /tmp/ovsc-fixture/src/add.js", "/tmp/ovsc-fixture"), true)
+  assert.equal(confirmationAllowed("File ../escape.txt", "/tmp/ovsc-fixture"), false)
+  assert.equal(confirmationAllowed("File /home/raul/secret.txt", "/tmp/ovsc-fixture"), false)
+  assert.throws(() => assertLocalDebuggerUrl("ws://0.0.0.0:9222/devtools/page/1"))
+  assert.equal(assertLocalDebuggerUrl("ws://127.0.0.1:9222/devtools/page/1").hostname, "127.0.0.1")
+  assert.deepEqual(debuggerBindProblems(["127.0.0.1"]), [])
+  assert.deepEqual(debuggerBindProblems(["wildcard"]), ["debug port is not limited to loopback"])
+})
+
+test("the CDP page script clicks Send once and reads the inner frame", async () => {
+  const prompt = "Reply with the single word pong. Do not call tools."
+  const messages: Array<{ className: string; text: string; classList: { contains: (name: string) => boolean }; querySelector: () => { textContent: string } }> = []
+  const clicks: string[] = []
+  class FakeEl {
+    value = ""
+    disabled = false
+    textContent = ""
+    innerText = ""
+    options: Array<{ value: string }> = []
+    selectionStart = 0
+    selectionEnd = 0
+    constructor(readonly id: string) {}
+    click(): void {
+      clicks.push(this.id)
+      if (this.id === "send-btn") {
+        this.value = ""
+        composer.value = ""
+        const user = message("user", prompt)
+        const assistant = message("assistant", "pong")
+        messages.push(user, assistant)
+      }
+    }
+    getClientRects(): unknown[] {
+      return this.id === "cancel-btn" ? [] : [{}]
+    }
+    dispatchEvent(): void {}
+    closest(): null {
+      return null
+    }
+  }
+  function message(role: string, text: string) {
+    return {
+      className: role,
+      text,
+      classList: { contains: (name: string) => name === role },
+      querySelector: () => ({ textContent: text }),
+    }
+  }
+  const composer = new FakeEl("composer")
+  const send = new FakeEl("send-btn")
+  const status = new FakeEl("connection-status")
+  status.innerText = "Ready · qwen3-coder:30b"
+  const model = new FakeEl("model-selector")
+  model.value = "qwen3-coder:30b"
+  model.options = [{ value: "qwen3-coder:30b" }]
+  const mode = new FakeEl("mode-selector")
+  mode.value = "ASK"
+  const elements = new Map<string, FakeEl>([
+    ["composer", composer],
+    ["send-btn", send],
+    ["connection-status", status],
+    ["model-selector", model],
+    ["mode-selector", mode],
+  ])
+  const doc = {
+    getElementById: (id: string) => elements.get(id) ?? null,
+    querySelectorAll: (selector: string) => selector === ".message" ? messages : [],
+    querySelector: () => null,
+  }
+  const sandbox = {
+    document: { getElementById: (id: string) => id === "active-frame" ? { contentDocument: doc } : null },
+    Event,
+    setInterval: (callback: () => void) => {
+      for (let tick = 0; tick < 4; tick += 1) queueMicrotask(callback)
+      return 1
+    },
+    clearInterval: () => undefined,
+  }
+  const result = await runInNewContext(`(${CDP_TURN_RUNTIME})(${JSON.stringify({
+    taskId: "run:CONV-PING",
+    prompt,
+    mode: "ASK",
+    model: "qwen3-coder:30b",
+    timeoutMs: 1000,
+    decision: "none",
+    workspace: "/tmp/ovsc-fixture",
+  })})`, sandbox) as { sendClicks?: number; taskId?: string; assistant?: string; userCount?: number; frame?: string }
+  assert.equal(result.sendClicks, 1)
+  assert.deepEqual(clicks, ["send-btn"])
+  assert.equal(result.taskId, "run:CONV-PING")
+  assert.equal(result.userCount, 1)
+  assert.equal(result.assistant, "pong")
+  assert.equal(result.frame, "active-frame")
+  assert.equal(CDP_TURN_RUNTIME.includes("contentFrame"), false)
+  assert.equal(CDP_TURN_RUNTIME.includes("active-frame"), true)
+})
+
+test("a visible completion without the assistant class still belongs to the current turn", () => {
+  const prompt = "Fix src/add.js only"
+  const interpreted = interpretCdpTurn({
+    taskId: "run:CODE-BUG",
+    prompt,
+    workspace: "/tmp/ovsc-fixture",
+    raw: {
+      found: true,
+      taskId: "run:CODE-BUG",
+      sendClicks: 1,
+      composerValue: "",
+      messages: [
+        { role: "user", text: prompt },
+        { role: "other", text: "Changed: src/add.js." },
+      ],
+    },
+  })
+  assert.equal(interpreted.ack, "acknowledged")
+  assert.equal(interpreted.userCount, 1)
+  assert.equal(interpreted.assistant, "Changed: src/add.js.")
+  assert.deepEqual(interpreted.problems, [])
+})
+
+test("a disabled Agent mode is not clicked and is not retried as a send", async () => {
+  const prompt = "Fix src/add.js"
+  const messages: unknown[] = []
+  const clicks: string[] = []
+  class FakeEl {
+    value = ""
+    disabled = false
+    textContent = ""
+    innerText = "Ready · qwen3-coder:30b"
+    options: Array<{ value: string; disabled?: boolean }> = []
+    constructor(readonly id: string) {}
+    click(): void {
+      clicks.push(this.id)
+    }
+    getClientRects(): unknown[] {
+      return [{}]
+    }
+    dispatchEvent(): void {}
+    closest(): null {
+      return null
+    }
+  }
+  const composer = new FakeEl("composer")
+  const send = new FakeEl("send-btn")
+  const status = new FakeEl("connection-status")
+  const model = new FakeEl("model-selector")
+  model.value = "qwen3-coder:30b"
+  model.options = [{ value: "qwen3-coder:30b" }]
+  const mode = new FakeEl("mode-selector")
+  mode.value = "ASK"
+  mode.options = [{ value: "ASK" }, { value: "BUILD", disabled: true }]
+  const elements = new Map<string, FakeEl>([
+    ["composer", composer],
+    ["send-btn", send],
+    ["connection-status", status],
+    ["model-selector", model],
+    ["mode-selector", mode],
+  ])
+  const doc = {
+    getElementById: (id: string) => elements.get(id) ?? null,
+    querySelectorAll: () => messages,
+    querySelector: () => null,
+  }
+  const result = await runInNewContext(`(${CDP_TURN_RUNTIME})(${JSON.stringify({
+    taskId: "run:CODE-BUG",
+    prompt,
+    mode: "BUILD",
+    model: "qwen3-coder:30b",
+    timeoutMs: 1000,
+    decision: "approve",
+    workspace: "/tmp/ovsc-fixture",
+  })})`, {
+    document: { getElementById: (id: string) => id === "active-frame" ? { contentDocument: doc } : null },
+    Event,
+    setInterval: (callback: () => void) => {
+      queueMicrotask(callback)
+      return 1
+    },
+    clearInterval: () => undefined,
+  }) as { sendClicks?: number; reason?: string }
+  assert.equal(result.sendClicks, 0)
+  assert.deepEqual(clicks, [])
+  assert.match(result.reason ?? "", /trusted/)
 })
 
 test("webview detach plus attach after Send is an unexpected reload", () => {

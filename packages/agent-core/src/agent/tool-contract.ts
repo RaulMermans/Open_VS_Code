@@ -106,8 +106,9 @@ export function excludedEditPaths(instruction: string): string[] {
  */
 export function requiredEditPaths(instruction: string, explicitPaths: readonly string[]): string[] {
   let paths = [...explicitPaths]
-  const only = instruction.match(new RegExp(String.raw`\b(?:fix|change|edit|modify|update)\s+only\s+${EDIT_PATH}`, "i"))
-  const captured = only?.[1]
+  const onlyBefore = instruction.match(new RegExp(String.raw`\b(?:fix|change|edit|modify|update)\s+only\s+${EDIT_PATH}`, "i"))
+  const onlyAfter = instruction.match(new RegExp(String.raw`\b(?:fix|change|edit|modify|update)\s+${EDIT_PATH}\s+only\b`, "i"))
+  const captured = onlyBefore?.[1] ?? onlyAfter?.[1]
   if (captured) {
     const target = captured.replace(/^\.\//, "")
     const matched = explicitPaths.filter((path) => pathsReferToSameFile(path, target))

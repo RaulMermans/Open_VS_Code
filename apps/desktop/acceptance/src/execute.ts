@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process"
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -18,6 +19,8 @@ import {
   workbenchPage,
   type ChatSurface,
 } from "./chat-surface.ts"
+import { captureWorkbenchWhenReady, launchCdpApp, runCdpTurn, sampleFrames, trustWorkspace, writePng, type CdpApp } from "./cdp-driver.ts"
+import { interpretCdpTurn } from "./cdp-turn.ts"
 import { classifyPingContent, gitCleanProblems, sourceDigest, trustStateFromWorkbench } from "./oracles.ts"
 import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./safety.ts"
 import {
@@ -190,8 +193,13 @@ function causeFor(scenario: AcceptanceScenario, detail: string): FailureCause {
 async function runScenario(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
   if (scenario.driver === "unit") return runUnit(scenario, context.repositoryRoot)
   if (scenario.driver === "artifact") return runArtifact(scenario, context)
+  if (scenario.driver === "electron-chat" && scenario.prompt && !PLAYWRIGHT_CHAT_IDS.has(scenario.id)) {
+    return runCdpChat(scenario, context, evidencePath)
+  }
   return runElectron(scenario, context, evidencePath)
 }
+
+const PLAYWRIGHT_CHAT_IDS = new Set(["SAFE-CANCEL", "LIFE-MODEL", "LIFE-HISTORY"])
 
 function runUnit(scenario: AcceptanceScenario, repositoryRoot: string): string {
   if (scenario.id === "SAFE-NO-SILENT") {
@@ -541,6 +549,143 @@ async function chatDetail(
   if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
   if (scenario.driver === "review") return "Checks that can be decided from the workspace passed. Screenshot is ready for review."
   return text.slice(0, 500) || "Chat turn finished and the oracle matched."
+}
+
+async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const dirs = freshRunDir(`ovsc-cdp-${scenario.id}-`)
+  materializeFixture(scenario.fixture, dirs.workspace)
+  const before = workspaceDigest(dirs.workspace)
+  writeEvidence(evidencePath, "workspace.txt", dirs.workspace)
+  if (scenario.id === "CODE-BUG") {
+    const initial = spawnSync("node", ["--test"], { cwd: dirs.workspace, encoding: "utf8", timeout: 60000 })
+    writeEvidence(evidencePath, "initial-test.txt", `${initial.stdout ?? ""}${initial.stderr ?? ""}\nexit ${initial.status}\n`)
+    if (initial.status === 0) return "FAIL: the disposable fixture test already passed before the agent ran"
+  }
+  const app = await launchCdpApp({
+    userData: dirs.userData,
+    workspace: dirs.workspace,
+    repositoryRoot: context.repositoryRoot,
+  })
+  try {
+    writeEvidence(evidencePath, "argv.txt", app.argv.join("\n"))
+    writeEvidence(evidencePath, "launch.json", JSON.stringify({
+      binary: app.binary,
+      pid: app.pid,
+      port: app.port,
+      sandboxMode: app.sandboxMode,
+      profile: app.userData,
+      driver: "cdp",
+    }, null, 2))
+    await saveShot(app, evidencePath, "window.png")
+    if (scenario.trust === "trusted") {
+      const trust = await trustWorkspace(app)
+      writeEvidence(evidencePath, "trust.json", JSON.stringify(trust, null, 2))
+      if (trust.restricted) return "FAIL: workspace remained in Restricted Mode after the trust control was used"
+    }
+    if (scenario.approval !== "none") assertApprovalTarget(dirs.workspace, context.repositoryRoot, scenario.approval)
+    const taskId = `${context.runId}:${scenario.id}${context.cycle ? `#${context.cycle}` : ""}`
+    let text = ""
+    try {
+      const first = await oneCdpTurn(app, scenario, scenario.prompt!, taskId, dirs.workspace, evidencePath, "send.json")
+      if (first.blocked) return first.blocked
+      text = first.text
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      writeEvidence(evidencePath, "frames.jsonl", `${JSON.stringify(await sampleFrames(app))}\n`)
+      return `BLOCKED: CDP turn did not finish; not retrying: ${message}`
+    }
+    if (scenario.followUp) {
+      const follow = await oneCdpTurn(app, scenario, scenario.followUp, `${taskId}:follow`, dirs.workspace, evidencePath, "send-followup.json")
+      if (follow.blocked) return follow.blocked
+      text = follow.text
+    }
+    await saveShot(app, evidencePath, "after-prompt.png")
+    const problems = [
+      ...failuresForText(text, scenario.expected),
+      ...filesystemProblems(dirs.workspace, before, scenario.expected),
+    ]
+    if (scenario.id === "SAFE-APPROVE") {
+      const source = readFileSync(join(dirs.workspace, "src", "add.js"), "utf8")
+      if (source.includes("a + b + 1")) problems.push("src/add.js still returns a + b + 1")
+    }
+    if (scenario.id === "CONV-PING") {
+      const ping = classifyPingContent(text)
+      writeEvidence(evidencePath, "ping-classification.json", JSON.stringify({
+        ...ping,
+        taskId,
+        send: JSON.parse(readFileSync(join(evidencePath, "send.json"), "utf8")),
+      }, null, 2))
+      if (!ping.transportTextPresent) problems.push("transport: model reply did not contain pong")
+      if (ping.protocolLeak) problems.push("protocol leak: tool-call markup remains visible")
+    }
+    if (scenario.expected.command || scenario.group === "coding") {
+      const diff = spawnSync("git", ["diff", "--"], { cwd: dirs.workspace, encoding: "utf8" })
+      writeEvidence(evidencePath, "git-diff.patch", diff.stdout || "")
+      writeEvidence(evidencePath, "git-status.txt", gitPorcelain(dirs.workspace))
+    }
+    if (scenario.expected.command) {
+      const oracle = spawnSync(scenario.expected.command.cmd, [...scenario.expected.command.args], {
+        cwd: dirs.workspace,
+        encoding: "utf8",
+        timeout: 60000,
+      })
+      writeEvidence(evidencePath, "oracle-test.txt", `${oracle.stdout ?? ""}${oracle.stderr ?? ""}\nexit ${oracle.status}\n`)
+    }
+    if (scenario.group === "coding") {
+      const oracleText = existsSync(join(evidencePath, "oracle-test.txt")) ? readFileSync(join(evidencePath, "oracle-test.txt"), "utf8") : ""
+      const exit = oracleText.match(/exit (-?\d+)\s*$/)?.[1]
+      writeEvidence(evidencePath, "solved.json", JSON.stringify({
+        taskId,
+        solved: problems.length === 0 && exit === String(scenario.expected.command?.exitCode ?? ""),
+        modelClaim: text.slice(0, 500),
+        independentExit: exit ?? null,
+      }, null, 2))
+    }
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return text.slice(0, 500) || "Chat turn finished and the oracle matched."
+  } finally {
+    await app.close().catch(() => undefined)
+  }
+}
+
+async function oneCdpTurn(
+  app: CdpApp,
+  scenario: AcceptanceScenario,
+  prompt: string,
+  taskId: string,
+  workspace: string,
+  evidencePath: string,
+  evidenceName: string,
+): Promise<{ text: string; blocked?: string }> {
+  const turn = await runCdpTurn(app, {
+    taskId,
+    prompt,
+    mode: scenario.mode,
+    model: scenario.model,
+    timeoutMs: scenario.timeoutMs,
+    decision: scenario.approval,
+    workspace,
+  })
+  writeEvidence(evidencePath, "frames.jsonl", turn.frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n")
+  const interpreted = interpretCdpTurn({ taskId, prompt, workspace, raw: turn.raw })
+  const payload = { taskId, targetUrl: turn.targetUrl, raw: turn.raw, interpreted }
+  writeEvidence(evidencePath, evidenceName, JSON.stringify(payload, null, 2))
+  writeEvidence(evidencePath, evidenceName === "send.json" ? "messages.json" : "messages-followup.json", JSON.stringify(turn.raw.messages ?? [], null, 2))
+  writeEvidence(evidencePath, evidenceName === "send.json" ? "assistant.txt" : "assistant-followup.txt", interpreted.assistant)
+  if (interpreted.problems.length > 0) return { text: interpreted.assistant, blocked: `FAIL: ${interpreted.problems.join("; ")}` }
+  if (interpreted.ack === "not_attempted") return { text: "", blocked: `FAIL: Send not attempted: ${turn.raw.reason || "composer was not submitted"}` }
+  if (interpreted.ack !== "acknowledged") return { text: "", blocked: `BLOCKED: Send outcome unknown; not retrying: ${turn.raw.reason || "empty composer is not a submission"}` }
+  if (interpreted.userCount !== 1) return { text: interpreted.assistant, blocked: `FAIL: expected one user turn, saw ${interpreted.userCount}` }
+  if (!interpreted.assistant.trim()) return { text: "", blocked: "FAIL: the submitted user turn has no assistant reply" }
+  return { text: interpreted.assistant }
+}
+
+async function saveShot(app: CdpApp, evidencePath: string, name: string): Promise<void> {
+  try {
+    writePng(join(evidencePath, name), await captureWorkbenchWhenReady(app))
+  } catch (error) {
+    writeEvidence(evidencePath, `${name}.error.txt`, error instanceof Error ? error.message : String(error))
+  }
 }
 
 export function notRun(scenario: AcceptanceScenario, evidenceRoot: string): ScenarioResult {

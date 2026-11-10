@@ -149,6 +149,10 @@ test("a file named only as context is not a required edit", () => {
   const mentioned = ["src/sum.mjs", "test/sum.test.mjs"]
   assert.deepEqual(requiredEditPaths(instruction, mentioned), ["src/sum.mjs"])
   assert.deepEqual(
+    requiredEditPaths("test/add.test.js fails. Fix src/add.js only, so node --test passes. Do not change the test.", ["src/add.js", "test/add.test.js"]),
+    ["src/add.js"],
+  )
+  assert.deepEqual(
     requiredEditPaths("Change the prefix in both src/item.mjs and test/item.test.mjs, then run the tests.", ["src/item.mjs", "test/item.test.mjs"]),
     ["src/item.mjs", "test/item.test.mjs"],
   )

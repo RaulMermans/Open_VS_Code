@@ -1,8 +1,8 @@
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
   - Permanent lab: `apps/desktop/acceptance/`, 46 scenarios, isolated temp profiles, sandbox left on, no silent approvals on real projects.
-  - 2026-11-09 on `sprint/v1-product-convergence`: protocol normalizer keeps quoted `</function>` text and strips hidden reasoning (25 unit tests). Installed desktop is `0.1.0-rc.13` from a dirty package. A DevTools drive of Ask mode returned `pong` with no tool envelope. Playwright `CONV-PING` still FAIL, tooling. Full V1 gate remains NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
-  - CONV-PING still FAIL in the Playwright lab: Electron drops the workbench page when the vscode-webview OOPIF attaches.
+  - 2026-11-09 on `sprint/v1-product-convergence`: the lab drives installed `0.1.0-rc.13` through loopback CDP and `#active-frame`. CONV-PING passed 10/10 on fresh profiles (`pong`, one Send, no tool envelope). CODE-BUG's independent `node --test` passed after one approved edit to `src/add.js`; the installed runtime still reported `MAX_TURNS_EXCEEDED`. Full V1 gate remains NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - Playwright's Electron attach still drops the workbench when the vscode-webview OOPIF attaches. Chat scenarios do not use that path.
   - Protocol parse drops an unfinished tool envelope. That correction is in the installed `0.1.0-rc.13` extension. Full gate: FAIL. See `docs/releases/V1_LIVE_ACCEPTANCE.md`.
 
 Sprint 14C.1A — Global model hardening and desktop acceptance
