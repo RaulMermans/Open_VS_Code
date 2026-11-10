@@ -2,7 +2,7 @@
 
 Date: 2026-11-09. Branch: `sprint/v1-product-convergence`. Starting revision: `c1d8bc0ee14b46d7b87d5d65bb70c609ffb13a8b`.
 
-**Release decision: NO-GO for the full V1 gate.** Personal V1 is not ready. Public beta is not ready. The installed desktop is now `open-vs-code 0.1.0-rc.13`, and a live Ask turn on that build returned `pong` with no tool envelope. The rest of the gate is still open.
+**Release decision: NO-GO for the full V1 gate.** Personal V1 is not ready. Public beta is not ready. The installed desktop is `open-vs-code 0.1.0-rc.13`. A CDP driver now repeats the DevTools path that reads `#active-frame`. Ten Ask pings returned `pong`. One coding task left `src/add.js` correct and `node --test` passed. The rest of the gate is still open.
 
 ## Gate
 
@@ -12,8 +12,8 @@ Date: 2026-11-09. Branch: `sprint/v1-product-convergence`. Starting revision: `c
 | Unauthorized writes | Not run live | No coding scenario was driven through the GUI. |
 | Unapproved dangerous execution | Not run live | Same. |
 | False verification claims | Not run live | No verification scenario was executed. |
-| Protocol leakage | Live check passed for the pong prompt. Other prompts not run. | Installed extension is `0.1.0-rc.13` and contains `normalizeWireResponse`. Live assistant text was `pong`. |
-| Core GUI journeys | One journey passed outside the Playwright lab | Playwright `CONV-PING` still FAIL (tooling). Direct DevTools drive of the same prompt passed. 45 catalog scenarios NOT_RUN. |
+| Protocol leakage | Ten live Ask pings passed. Other prompts not run. | Each reply was `pong` with no tool-call markup. Evidence `apps/desktop/acceptance/evidence/2026-11-09T20-59-17-644Z`. |
+| Core GUI journeys | CONV-PING 10/10 and one coding task observed | CDP driver, not Playwright. CODE-BUG evidence `apps/desktop/acceptance/evidence/2026-11-09T21-24-54-294Z/CODE-BUG`. Remaining catalog scenarios NOT_RUN. |
 | Held-out coding ≥ 90% | Not measured | No same-model run. See `docs/evals/V1_CODING_BENCHMARK.md`. |
 | Persistence and recovery | Not run | |
 | Build and package integrity | Dirty package built and installed | `apps/desktop/dist/open-vs-code_0.1.0-rc.13_amd64.deb`. Stamp `gitDirty: true`, commit `c1d8bc0`. Archive SHA-256 `d88f8b75691ee02cdd7e40bfb5cacf98cf06432095e480becc958aad9a4b5be8`. |
@@ -26,7 +26,7 @@ Date: 2026-11-09. Branch: `sprint/v1-product-convergence`. Starting revision: `c
 | --- | --- |
 | Opening-only tool-envelope split, and removal of hidden reasoning from the answer | Unit verified |
 | Guest webview script (fill, click, in-page wait) | Unit verified against a fake DOM |
-| Live send through the installed GUI | Verified once on rc.13. Ask mode, `qwen3-coder:30b`, reply `pong` in 5.5s. Evidence `apps/desktop/acceptance/evidence/2026-11-09-live-cdp-ping/result.json` |
+| Live send through the installed GUI | Ten CDP Ask pings and one Agent coding turn on rc.13. The coding diff is `return a + b + 1` to `return a + b`. Independent `node --test` exited 0. The installed runtime text still said `MAX_TURNS_EXCEEDED`. |
 | Same-model coding benchmark versus OpenCode | Not verified. OpenCode is not installed |
 | Package built from this branch | Built with `OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE=1`. Not a clean-tree release. |
 | Installed GUI after this protocol change | Installed over rc.12. `chrome-sandbox` remains `4755` `root:root`. |
@@ -55,12 +55,13 @@ Live DevTools result on the installed rc.13 build, disposable profile `/tmp/ovsc
 ## Unresolved risks
 
 - The installed package was built from a dirty tree. It is not a clean release artifact.
+- Installed rc.13 still parses `Fix src/add.js only` as a request to edit `test/add.test.js`, so a correct patch can end as `MAX_TURNS_EXCEEDED`. The working tree recognizes that wording. It is not installed.
 - Local coding quality of `qwen3-coder:30b` versus OpenCode is unknown.
 - Agent shell commands are not OS-sandboxed. Electron's sandbox does not cover them.
 - The archive hash is recorded above. A clean-tree rebuild and a rollback drill were not run.
 
 ## What a later session can do without re-deciding the architecture
 
-1. Point the acceptance lab at the DevTools driver that reached `#active-frame`, so catalog scenarios stop depending on Playwright's Electron attach.
-2. Drive the remaining critical scenarios on disposable profiles. One pong reply does not close the security or coding gates.
+1. Drive the remaining critical scenarios on disposable profiles. Ten pings and one coding task do not close the security gate.
+2. Ship the `Fix <file> only` completion correction in a package before treating the agent's own success text as reliable.
 3. Install OpenCode only with an explicit request, pin the same model digest, and run the twelve-task set.

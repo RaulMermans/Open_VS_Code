@@ -27,7 +27,7 @@ npm run accept:lab -- --live all
 
 Without `--live`, the command runs the unit and package-artifact scenarios and records every other scenario as `NOT_RUN`. `NOT_RUN` is not a pass.
 
-From the repository root, `npm run accept:lab -- --live CONV-PING` now forwards `--live` into the desktop workspace. `--live CONV-PING` is still a known harness failure: the workbench and composer appear (Restricted Mode, `Ready · qwen3-coder:30b`), then Playwright closes its workbench page when the `vscode-webview://` OOPIF attaches, before Send is acknowledged. Do not treat a screenshot of an empty composer as a completed chat turn. Use `--repeat=10` only after Send is stable.
+Chat scenarios open the installed binary with a loopback debug port and drive `#active-frame` through Chrome DevTools. They do not use Playwright's Electron attachment. A turn counts only when the transcript has the submitted user message and the assistant reply for that task id. An empty composer is not Send acknowledgement, and an ambiguous send is not retried. `--repeat=10` reruns one selected scenario on a fresh profile each time.
 
 `--live smoke` also opens the installed app for the sandbox check, the fresh-profile check, and one real `qwen3-coder:30b` reply.
 
