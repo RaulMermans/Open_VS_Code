@@ -61,17 +61,68 @@ exec "$ELECTRON" "$@"
  * `open-vs-code.desktop`. The packaged binary is named `open-vs-code`.
  * `codium` stays as a symlink for the CLI.
  */
+const LINUX_DESKTOP_ID = 'open-vs-code.desktop';
+const BUNDLED_IDENTITY_FILES = ['resources/app/out/main.js', 'resources/app/out/cli.js'];
+
 export function rewriteElectronDesktopIdentity(payloadDir: string): void {
   const packageJsonPath = join(payloadDir, 'resources', 'app', 'package.json');
+  if (!existsSync(packageJsonPath)) throw new Error(`Linux desktop identity rewrite missing ${packageJsonPath}`);
   const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { name?: string; desktopName?: string };
-  manifest.desktopName = 'open-vs-code.desktop';
+  manifest.desktopName = LINUX_DESKTOP_ID;
   writeFileSync(packageJsonPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  for (const relative of ['resources/app/out/main.js', 'resources/app/out/cli.js']) {
+  for (const relative of BUNDLED_IDENTITY_FILES) {
     const bundled = join(payloadDir, relative);
-    if (!existsSync(bundled)) continue;
+    if (!existsSync(bundled)) throw new Error(`Linux desktop identity rewrite missing ${relative}`);
     const source = readFileSync(bundled, 'utf8');
-    const rewritten = source.replaceAll('"desktopName":"codium.desktop"', '"desktopName":"open-vs-code.desktop"');
+    const rewritten = source
+      .replaceAll('"desktopName":"codium.desktop"', `"desktopName":"${LINUX_DESKTOP_ID}"`)
+      .replaceAll('"desktopName": "codium.desktop"', `"desktopName": "${LINUX_DESKTOP_ID}"`);
     if (rewritten !== source) writeFileSync(bundled, rewritten);
+  }
+  assertLinuxDesktopIdentity(payloadDir);
+}
+
+/** The payload is not packagable unless Electron and the launcher agree on one desktop id. */
+export function assertLinuxDesktopIdentity(payloadDir: string): void {
+  const problems: string[] = [];
+  const packageJsonPath = join(payloadDir, 'resources', 'app', 'package.json');
+  let desktopName = '';
+  try {
+    const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { desktopName?: unknown };
+    desktopName = typeof manifest.desktopName === 'string' ? manifest.desktopName : '';
+  } catch (error) {
+    problems.push(`package.json unreadable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (desktopName !== LINUX_DESKTOP_ID) problems.push(`desktopName is "${desktopName}", expected ${LINUX_DESKTOP_ID}`);
+  if (existsSync(packageJsonPath) && readFileSync(packageJsonPath, 'utf8').includes('codium.desktop')) {
+    problems.push('package.json still names codium.desktop');
+  }
+  for (const relative of BUNDLED_IDENTITY_FILES) {
+    const bundled = join(payloadDir, relative);
+    if (!existsSync(bundled)) {
+      problems.push(`missing ${relative}`);
+      continue;
+    }
+    const text = readFileSync(bundled, 'utf8');
+    if (text.includes('codium.desktop')) problems.push(`${relative} still names codium.desktop`);
+    if (!text.includes(LINUX_DESKTOP_ID)) problems.push(`${relative} does not name ${LINUX_DESKTOP_ID}`);
+  }
+  const desktopFile = join(payloadDir, 'open-vs-code.desktop');
+  if (existsSync(desktopFile)) {
+    const entry = readFileSync(desktopFile, 'utf8');
+    if (!entry.includes('StartupWMClass=open-vs-code')) problems.push('desktop entry StartupWMClass is not open-vs-code');
+    if (!entry.includes('Icon=open-vs-code')) problems.push('desktop entry Icon is not open-vs-code');
+    if (!entry.includes('Name=Open VS Code')) problems.push('desktop entry Name is not Open VS Code');
+  }
+  const launcher = join(payloadDir, 'bin', 'open-vs-code');
+  if (existsSync(launcher)) {
+    const script = readFileSync(launcher, 'utf8');
+    if (!script.includes('CHROME_DESKTOP="open-vs-code.desktop"')) problems.push('launcher does not export open-vs-code.desktop');
+    if (!script.includes('ELECTRON="$ROOT/open-vs-code"')) problems.push('launcher does not execute the open-vs-code binary');
+    if (script.includes('--no-sandbox')) problems.push('launcher disables the Electron sandbox');
+  }
+  if (problems.length > 0) {
+    throw new Error(`Linux desktop identity postcondition failed:\n- ${problems.join('\n- ')}`);
   }
 }
 function publishLinuxElectronIdentity(payloadDir: string, electronName: string): void {
@@ -250,6 +301,10 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
   }
   cpSync(join(DESKTOP_ROOT, 'branding', 'open-vs-code.desktop'), join(payloadDir, 'open-vs-code.desktop'));
   installPayloadIcon(payloadDir);
+  assertLinuxDesktopIdentity(payloadDir);
+  if (!existsSync(join(payloadDir, 'open-vs-code.png'))) {
+    throw new Error('Linux desktop identity postcondition failed: payload icon open-vs-code.png is missing');
+  }
 
   const archiveName = `${payloadName}.tar.gz`;
   const archivePath = join(distDir, archiveName);
