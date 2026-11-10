@@ -64,6 +64,8 @@ export class VerificationEngine {
 
     const startTime = Date.now()
 
+    // A repository without package.json verifies through node --test. There is no script hash to check.
+    if (prepared.packageJsonPath) {
     // Check for stale verification
     let currentPackageJsonContent: string
     try {
@@ -102,6 +104,7 @@ export class VerificationEngine {
         stderr: `Script '${prepared.scriptName}' was modified since preparation`,
         durationMs: Date.now() - startTime,
       }
+    }
     }
 
     // Verify CWD is within workspaceRoot using authoritative containment check

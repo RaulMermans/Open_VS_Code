@@ -24,6 +24,35 @@ test("Verification Discovery - valid action", async () => {
   }
 })
 
+test("Verification Discovery - node --test when the repository has no package.json", async () => {
+  const tmpDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-")))
+  try {
+    await fs.mkdir(path.join(tmpDir, "test"))
+    await fs.writeFile(path.join(tmpDir, "test", "add.test.js"), "import test from 'node:test'\ntest('ok', () => {})\n")
+    const command = await discoverVerificationCommand(tmpDir, "TEST")
+    assert.match(command.executable, /node$/)
+    assert.deepEqual(command.args, ["--test"])
+    assert.equal(command.packageJsonPath, "")
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const result = await engine.execute({
+      verificationId: "node-test-fallback",
+      action: "TEST",
+      executable: command.executable,
+      args: command.args,
+      cwd: tmpDir,
+      timeoutMs: 10000,
+      commandPreview: `${command.executable} --test`,
+      packageJsonPath: "",
+      packageJsonHash: "",
+      scriptName: "",
+      scriptBody: "",
+    })
+    assert.equal(result.status, "PASS")
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
 test("Verification Discovery - missing action", async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
   try {
