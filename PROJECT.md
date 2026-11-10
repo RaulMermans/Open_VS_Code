@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop is still `0.1.0-rc.13`. One rebuilt-extension gate passed 15 of 17 coding and safety scenarios. CODE-REFACTOR and CODE-RECOVER failed. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop is still `0.1.0-rc.13`. The current unpacked extension passed CODE-REFACTOR and CODE-RECOVER after earlier failures, and failed CODE-MULTI on the same run. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 
 Sprint 14C.1A — Global model hardening and desktop acceptance. Status: `PARTIALLY_VERIFIED`. `0.1.0-rc.12` from `6417724105` is installed. Playwright opened that binary with the sandbox enabled. An untrusted folder kept the global route, and `qwen3-coder:30b` answered `pong`. Wider chat, a second repository, and a live-profile restart were not walked. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
 

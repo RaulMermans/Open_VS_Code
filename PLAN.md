@@ -1,7 +1,7 @@
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
   - Permanent lab: `apps/desktop/acceptance/`, 46 scenarios, isolated temp profiles, sandbox left on, no silent approvals on real projects.
-  - 2026-11-10 rc.15 acceptance: installed driver remains `0.1.0-rc.13`. One rebuilt-extension gate (`2026-11-10T17-01-11-820Z`) passed 15 of 17 coding and safety scenarios. CODE-REFACTOR and CODE-RECOVER failed. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - 2026-11-10 rc.15 acceptance: installed driver remains `0.1.0-rc.13`. The current unpacked extension (`2026-11-10T17-44-22-671Z`) passed 15 of 16 coding and critical safety scenarios. CODE-MULTI failed. CODE-REFACTOR and CODE-RECOVER passed on that extension after earlier failures. Five coding repeats and a new package were not run. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
   - Playwright's Electron attach still drops the workbench when the vscode-webview OOPIF attaches. Chat scenarios do not use that path.
   - Protocol parse drops an unfinished tool envelope. That correction is in the installed `0.1.0-rc.13` extension. Full gate: FAIL. See `docs/releases/V1_LIVE_ACCEPTANCE.md`.
 

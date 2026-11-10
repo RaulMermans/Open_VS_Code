@@ -66,7 +66,9 @@ function truncateBounded(text: string, maxLength = MAX_SUMMARY_SNIPPET_LENGTH): 
 export function verificationFailureExcerpt(output: string, maxLength = MAX_SUMMARY_SNIPPET_LENGTH): string {
   const sanitized = redactRuntimeEvalSecrets(output).trim()
   if (!sanitized) return ""
-  const marker = sanitized.search(/AssertionError|Expected values|ERR_ASSERTION|not strictly equal|# fail [1-9]/i)
+  const errorMarker = sanitized.search(/AssertionError|Expected values|ERR_ASSERTION|not strictly equal|is not defined|ReferenceError|TypeError|SyntaxError|\berror:/i)
+  const summaryMarker = sanitized.search(/# fail [1-9]/i)
+  const marker = errorMarker >= 0 ? errorMarker : summaryMarker
   const start = marker >= 0 ? Math.max(0, marker - 80) : Math.max(0, sanitized.length - maxLength)
   const end = Math.min(sanitized.length, start + maxLength)
   const slice = sanitized.slice(start, end).trim()

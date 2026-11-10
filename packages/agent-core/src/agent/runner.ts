@@ -134,6 +134,7 @@ interface Session {
   contractFaults?: Map<string, number>
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
+  completedExploration?: Set<string>
   lastAssistantText?: string
   /** One "answer now" nudge has already been sent for a non-editing task. */
   conversationAnswerNudged?: boolean
@@ -565,7 +566,10 @@ export class AgentRunner {
               diffSummary: (reviewable.reviewPayload as any)?.summary || "",
               operation: mutationOperation(pending.prepared.name),
             })
-            if (result.status === "APPLIED") session.evidenceCollector.resolveRecoveredToolContractFailures()
+            if (result.status === "APPLIED") {
+              session.evidenceCollector.resolveRecoveredToolContractFailures()
+              if (!isVerification) session.completedExploration?.clear()
+            }
           }
           observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })
           session.observations.push(observation)
@@ -1316,33 +1320,26 @@ export class AgentRunner {
       this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
       return false
     }
-    if (
-      session.taskProfile.requiresCodeChange
-      && (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text")
-      && session.toolCalls.some((call) =>
-        (call.name === "list_directory" || call.name === "find_files" || call.name === "search_text" || call.name === "read_file")
-        && (call.outcome === "COMPLETED" || call.outcome === "FAILED"))
-    ) {
-      const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
-      const target = pending.length > 0 ? pending.join(", ") : "the requested file"
-      const parents = pending.length > 0 && pending.every((path) => isTestArtifactPath(path))
-        ? " create_file creates a missing parent directory."
-        : ""
-      this.#addErrorObservation(prepared, "EDIT_REQUIRED", `Stop exploring. Create or update ${target} now. Use create_file when that file does not exist.${parents}`, "DENIED")
-      return false
+    if (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text") {
+      const seen = session.completedExploration
+      if (seen?.has(signature)) {
+        const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+        const target = pending.length > 0 ? ` Create or update ${pending.join(", ")} if that is the requested change.` : ""
+        this.#addErrorObservation(prepared, "EDIT_REQUIRED", `That lookup already completed.${target} Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference.`, "DENIED")
+        return false
+      }
     }
     if (prepared.name === "create_file") {
       const createdPath = String((prepared.arguments as { path?: unknown }).path ?? "")
       const createdContent = String((prepared.arguments as { content?: unknown }).content ?? "")
       const implementation = session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path))
-      const rewritten = rewriteMissingImports(createdPath, createdContent, implementation)
-      if (rewritten !== createdContent) {
-        ;(prepared.arguments as { content: string }).content = rewritten
-      }
-      const missingImports = await missingRelativeImports(session.input.workspaceRoot, createdPath, String((prepared.arguments as { content?: unknown }).content ?? ""))
+      const missingImports = await missingRelativeImports(session.input.workspaceRoot, createdPath, createdContent)
       if (missingImports.length > 0) {
-        const located = implementation.length > 0 ? ` The implementation file is ${implementation.join(", ")}.` : ""
-        this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", `These imports do not exist: ${missingImports.join(", ")}.${located} Import the file that is already in the workspace.`, "DENIED")
+        const hints = missingImports.map((specifier) => {
+          const suggestion = suggestedRelativeImport(createdPath, specifier, implementation)
+          return suggestion ? `${specifier} (the named file is ${suggestion})` : specifier
+        })
+        this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", `These imports do not exist: ${hints.join(", ")}. Import a file that is already in the workspace.`, "DENIED")
         return false
       }
     }
@@ -1572,6 +1569,11 @@ export class AgentRunner {
       observation = createToolObservation({ toolName: prepared.name, callId: prepared.id, output, maxContentBytes: this.#observationMaxBytes })
       session.observations.push(observation)
       session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "COMPLETED", truncated: observation.truncated })
+      if (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text") {
+        const seen = session.completedExploration ?? new Set<string>()
+        seen.add(signature)
+        session.completedExploration = seen
+      }
       session.evidenceLedger.recordObservation(
         prepared.name,
         prepared.id,
@@ -1596,6 +1598,7 @@ export class AgentRunner {
       }
 
       if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
+        session.completedExploration?.clear()
         session.evidenceCollector.recordMutationOutcome({
           mutationId: prepared.id,
           path: (prepared.arguments as any)?.targetFile || (prepared.arguments as any)?.path || "",
@@ -2818,16 +2821,13 @@ function stringField(value: unknown, key: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-function rewriteMissingImports(filePath: string, content: string, implementationPaths: readonly string[]): string {
-  return content.replace(/(from|import)\s*(\(?\s*)(['"])(\.[^'"]+)(['"])/g, (full, keyword: string, open: string, quote: string, specifier: string, end: string) => {
-    const wanted = basename(specifier)
-    const match = implementationPaths.find((path) => basename(path) === wanted)
-    if (!match) return full
-    let next = relative(dirname(filePath), match).replaceAll("\\", "/")
-    if (!next.startsWith(".")) next = `./${next}`
-    if (next === specifier) return full
-    return `${keyword} ${open}${quote}${next}${end}`
-  })
+function suggestedRelativeImport(filePath: string, specifier: string, implementationPaths: readonly string[]): string | undefined {
+  const wanted = basename(specifier)
+  const matches = implementationPaths.filter((path) => basename(path) === wanted)
+  if (matches.length !== 1 || !matches[0]) return undefined
+  let next = relative(dirname(filePath), matches[0]).replaceAll("\\", "/")
+  if (!next.startsWith(".")) next = `./${next}`
+  return next === specifier ? undefined : next
 }
 
 async function missingRelativeImports(workspaceRoot: string, filePath: string, content: string): Promise<string[]> {

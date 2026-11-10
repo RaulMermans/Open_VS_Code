@@ -1,3 +1,4 @@
+import { danglingRenamedBinding } from "../agent/tool-contract.ts"
 import { MutationEngine, type MutationEngineOptions } from "./mutation-engine.ts"
 import { type MutationRequest, MutationFailure } from "./mutation-contracts.ts"
 import { ToolRegistry, type ToolRegistration } from "./registry.ts"
@@ -62,6 +63,10 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
         }
 
         const prepared = await engine.preparePatch(request)
+        const dangling = danglingRenamedBinding(prepared.beforeContent ?? "", prepared.proposedContent)
+        if (dangling) {
+          throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${prepared.path} still calls it. Update that call in the same patch.`)
+        }
         let consumed = false
 
         return {
