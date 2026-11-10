@@ -6,8 +6,9 @@ import test from "node:test"
 
 import { AgentRunner } from "../../src/agent/runner.ts"
 import type { AgentResult } from "../../src/contracts/agent.ts"
-import { classifyTaskProfile, isSocialTurn } from "../../src/agent/task-profile.ts"
+import { classifyTaskProfile, forbidsAllEdits, isSocialTurn } from "../../src/agent/task-profile.ts"
 import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, requiredEditPaths } from "../../src/agent/tool-contract.ts"
+import { verificationFailureExcerpt } from "../../src/runtime-evals/evidence.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
@@ -188,6 +189,24 @@ test("a file the user said not to edit is not required", () => {
   assert.doesNotMatch(verdict.summary, /did not include/)
 })
 
+test("using a file and leaving the test unchanged does not require those paths", () => {
+  const instruction = "src/greet.js should return Hello plus the trimmed name by using formatName from src/format.js. Make test/greet.test.js pass without editing the test."
+  const mentioned = ["src/greet.js", "src/format.js", "test/greet.test.js"]
+  assert.deepEqual(requiredEditPaths(instruction, mentioned), ["src/greet.js"])
+  const verdict = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: requiredEditPaths(instruction, mentioned),
+    mutations: [{ path: "src/greet.js", status: "APPLIED", at: "2026-11-10T00:00:01.000Z", operation: "patch" }],
+    verifications: [{ status: "PASS", at: "2026-11-10T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verdict.accept, true)
+  assert.match(verdict.summary, /src\/greet\.js/)
+  assert.doesNotMatch(verdict.summary, /did not include/)
+})
+
 test("Fix src/add.js only does not require the referenced test, and still requires verification", () => {
   const instruction = "test/add.test.js fails. Fix src/add.js only, so node --test passes. Do not change the test."
   const mentioned = ["src/add.js", "test/add.test.js"]
@@ -330,6 +349,131 @@ test("ask and plan tasks are not required to mutate", () => {
   assert.equal(classifyTaskProfile("Update src/add.ts", "PLAN").requiresCodeChange, false)
   assert.equal(classifyTaskProfile("Fix the implementation in src/add.ts", "BUILD").requiresCodeChange, true)
   assert.equal(classifyTaskProfile("What does this project do?", "BUILD").requiresCodeChange, false)
+  assert.equal(forbidsAllEdits("Run the tests. Do not edit files. If they fail, say they failed."), true)
+  assert.equal(classifyTaskProfile("Run the tests. Do not edit files. If they fail, say they failed.", "BUILD").requiresCodeChange, false)
+  assert.equal(classifyTaskProfile("Fix src/add.js only, so node --test passes. Do not change the test.", "BUILD").requiresCodeChange, true)
+})
+
+test("a request not to edit files denies the patch before approval", async () => {
+  const root = await workspace()
+  const before = await readFile(join(root, "src/add.ts"), "utf8")
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }]),
+    response("The tests fail. I did not edit any files."),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Run the tests. Do not edit files. If they fail, say they failed.", "BUILD")
+    assert.equal(result.toolCalls[0]?.outcome, "DENIED")
+    assert.notEqual(result.status, "PAUSED")
+    assert.equal(await readFile(join(root, "src/add.ts"), "utf8"), before)
+    assert.equal(result.toolCalls.some((call) => call.outcome === "APPLIED"), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a repeated test run is refused until the code changes", async () => {
+  const root = await workspace()
+  const header = `${"TAP version 13\n".repeat(40)}not ok 1 - greet\n`
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }]),
+    response("", [{ id: "verify-1", name: "run_verification", arguments: {} }]),
+    (request) => {
+      assert.match(JSON.stringify(request.messages), /Hello, Ada/)
+      return response("", [{ id: "verify-2", name: "run_verification", arguments: {} }])
+    },
+    (request) => {
+      assert.match(JSON.stringify(request.messages), /Change the code before running the tests again/)
+      return response("The comma is still missing.")
+    },
+  ])
+  const failing = verificationTool("FAIL")
+  failing.execute = async () => ({
+    status: "FAIL",
+    exitCode: 1,
+    stdout: `${header}Expected values to be strictly equal:\n+ 'Hello Ada'\n- 'Hello, Ada'\n`,
+    stderr: "",
+  })
+  try {
+    const { result } = await runTask(provider, root, "Fix src/add.ts only. Do not change the test.", "BUILD", 8, [failing])
+    const verifications = result.toolCalls.filter((call) => call.name === "run_verification")
+    assert.equal(verifications[0]?.outcome, "COMPLETED")
+    assert.ok(verifications.length >= 2)
+    assert.ok(verifications.slice(1).every((call) => call.outcome === "DENIED"))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a node test failure excerpt keeps the assertion", () => {
+  const header = "TAP version 13\n".repeat(40)
+  const excerpt = verificationFailureExcerpt(`${header}Expected values to be strictly equal:\n+ 'Hello Ada'\n- 'Hello, Ada'\n# fail 1\n`)
+  assert.match(excerpt, /Hello, Ada/)
+  assert.ok(excerpt.indexOf("Expected values") >= 0)
+  assert.ok(excerpt.indexOf("Expected values") < 120)
+})
+
+test("a second directory listing is refused while the requested file is missing", async () => {
+  const root = await workspace()
+  const listTool: ToolRegistration = {
+    definition: { name: "list_directory", description: "List one directory.", action: "read_repository", inputSchema: { type: "object" } },
+    validate: () => ({}),
+    execute: async () => ({ entries: ["hello.ts"] }),
+  }
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "list-1", name: "list_directory", arguments: {} }]),
+    response("", [{ id: "list-2", name: "list_directory", arguments: {} }]),
+    (request) => {
+      assert.match(JSON.stringify(request.messages), /Create or update test\/greeting\.test\.js/)
+      return response("The test file is not written yet.")
+    },
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Add test/greeting.test.js that uses node:test and asserts greeting('Ada') is Hello, Ada. Do not change hello.ts.", "BUILD", 8, [listTool])
+    const listed = result.toolCalls.filter((call) => call.name === "list_directory")
+    assert.equal(listed[0]?.outcome, "COMPLETED")
+    assert.ok(listed.slice(1).every((call) => call.outcome === "DENIED"))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a new test that imports the implementation under the wrong path is corrected", async () => {
+  const root = await workspace()
+  await writeFile(join(root, "hello.ts"), "export function greeting(name: string): string {\n  return `Hello, ${name}`\n}\n")
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "bad", name: "create_file", arguments: { path: "test/greeting.test.js", content: "import { greeting } from \"../src/hello.ts\"\n" } }]),
+    response("", [{ id: "verify", name: "run_verification", arguments: {} }]),
+    response("The test file is written."),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Add test/greeting.test.js that uses node:test and asserts greeting('Ada') is Hello, Ada. Do not change hello.ts.", "BUILD", 8, [verificationTool("PASS")])
+    assert.equal(result.toolCalls.find((call) => call.name === "create_file")?.outcome, "COMPLETED")
+    const written = await readFile(join(root, "test/greeting.test.js"), "utf8")
+    assert.match(written, /from \"\.\.\/hello\.ts\"/)
+    assert.doesNotMatch(written, /src\/hello/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("adding a test names that file and does not forbid a test-only edit", async () => {
+  const root = await workspace()
+  const instruction = "Add test/greeting.test.js that uses node:test and asserts greeting('Ada') is Hello, Ada. Do not change hello.ts."
+  const provider = new ScriptedModelProvider([
+    (request) => {
+      assert.match(request.messages[0]!.content, /Create or update only test\/greeting\.test\.js/)
+      assert.doesNotMatch(request.messages[0]!.content, /test-only edit does not finish/)
+      assert.doesNotMatch(request.messages[0]!.content, /test-file edit alone does not/)
+      return response("The test file is not written yet.")
+    },
+  ])
+  try {
+    const { result } = await runTask(provider, root, instruction, "BUILD", 1)
+    assert.equal(result.failureReason, "MAX_TURNS_EXCEEDED")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test("exposes apply_patch and create_file and withholds modify_file", async () => {

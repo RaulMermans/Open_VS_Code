@@ -87,10 +87,10 @@ export function isTestArtifactPath(path: string): boolean {
  */
 const EDIT_PATH = String.raw`((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)`
 
-/** Paths named after "do not edit" (and the same verbs). */
+/** Paths named after "do not edit" or "without editing". */
 export function excludedEditPaths(instruction: string): string[] {
   const negated: string[] = []
-  const denial = new RegExp(String.raw`\b(?:do not|don't|never)\s+(?:edit|modify|change|update|touch|alter)\s+${EDIT_PATH}`, "gi")
+  const denial = new RegExp(String.raw`\b(?:do not|don't|never|without)\s+(?:edit(?:ing)?|modify(?:ing)?|change|changing|update|updating|touch(?:ing)?|alter(?:ing)?)\s+${EDIT_PATH}`, "gi")
   for (const match of instruction.matchAll(denial)) {
     const named = match[1]
     if (named) negated.push(named.replace(/^\.\//, ""))
@@ -114,10 +114,32 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
     const matched = explicitPaths.filter((path) => pathsReferToSameFile(path, target))
     if (matched.length > 0) paths = matched
   }
-  const negated = excludedEditPaths(instruction)
-  if (negated.length === 0) return paths
-  const kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
+  const negated = [
+    ...excludedEditPaths(instruction),
+    ...dependencyPaths(instruction),
+  ]
+  let kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
+  if (/\bwithout\s+(?:editing|changing|modifying|updating)\s+the\s+tests?\b/i.test(instruction)) {
+    const withoutTests = kept.filter((path) => !isTestArtifactPath(path))
+    if (withoutTests.length > 0) kept = withoutTests
+  }
   return kept.length > 0 ? kept : paths
+}
+
+/** A path cited as "from src/format.js" is context unless an edit verb names it. */
+function dependencyPaths(instruction: string): string[] {
+  const cited: string[] = []
+  const fromPath = new RegExp(String.raw`\bfrom\s+${EDIT_PATH}`, "gi")
+  const editPath = new RegExp(String.raw`\b(?:fix|change|edit|modify|update|rename)\s+(?:only\s+)?${EDIT_PATH}`, "gi")
+  const edited = new Set<string>()
+  for (const match of instruction.matchAll(editPath)) {
+    if (match[1]) edited.add(match[1].replace(/^\.\//, "").toLowerCase())
+  }
+  for (const match of instruction.matchAll(fromPath)) {
+    const named = match[1]?.replace(/^\.\//, "")
+    if (named && !edited.has(named.toLowerCase())) cited.push(named)
+  }
+  return cited
 }
 
 export function implementationChangeRequired(instruction: string, explicitPaths: readonly string[]): boolean {

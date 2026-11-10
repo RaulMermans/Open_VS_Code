@@ -35,6 +35,9 @@ export interface InterpretedTurn {
  * The inner Agent page is `#active-frame`'s contentDocument. One evaluation
  * clicks Send at most once.
  */
+/** Edit, test, and one repair round. A repeated card still stops the turn. */
+const MAX_FIXTURE_CONFIRMATIONS = 8
+
 export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
   const frame = document.getElementById("active-frame");
   const doc = frame && frame.contentDocument;
@@ -193,6 +196,23 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
         phase = "wait";
         return;
       }
+      if (op.decision === "none") {
+        const reject = doc.getElementById("btn-reject");
+        const rejectVisible = !!(reject && !reject.disabled && reject.getClientRects && reject.getClientRects().length > 0);
+        if (rejectVisible) {
+          const card = readCard();
+          const cardId = card && card.id ? card.id : "reject";
+          if (lastDecisionText !== cardId) {
+            reject.click();
+            rejectionClicks += 1;
+            approvalNotes.push("rejected because this scenario does not approve");
+            lastDecisionText = cardId;
+            holdForRun = true;
+            sawRunningAfterDecision = false;
+            stable = 0;
+          }
+        }
+      }
       if ((op.decision === "approve" || op.decision === "reject") && !approvalBlocked) {
         const button = doc.getElementById(op.decision === "approve" ? "btn-approve" : "btn-reject");
         const visible = !!(button && !button.disabled && button.getClientRects && button.getClientRects().length > 0);
@@ -208,7 +228,7 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
                 return finish({ reason: permit.reason || "confirmation was not fixture-scoped" });
               }
               if (lastDecisionText !== card.id) {
-                if (approvalClicks + rejectionClicks >= 4) {
+                if (approvalClicks + rejectionClicks >= ${MAX_FIXTURE_CONFIRMATIONS}) {
                   approvalBlocked = true;
                   return finish({ reason: "approval cap" });
                 }
