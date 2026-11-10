@@ -3,6 +3,7 @@ import { createServer } from "node:net"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { permitConfirmation, type StructuredConfirmation } from "./confirmation-allow.ts"
 import { assertLocalDebuggerUrl, CDP_TURN_RUNTIME, debuggerBindProblems, type CdpTurnRaw } from "./cdp-turn.ts"
 import { redactUrl } from "./oracles.ts"
 import { assertIsolatedPath, assertLabWorkspace, chromeSandboxMode } from "./safety.ts"
@@ -192,7 +193,7 @@ async function connectMatching(port: number, predicate: (value: unknown) => bool
           const composer = doc && doc.getElementById("composer");
           return { composer: !!(composer) };
         })()`, 5000)
-        if (predicate(value)) return { socket, url: targetUrl(target) }
+        if (predicate(value)) return { socket, url: targetUrl(target), webSocketDebuggerUrl: target.webSocketDebuggerUrl }
       } catch (error) {
         last = error instanceof Error ? error.message : String(error)
       }
@@ -344,7 +345,7 @@ const TRUST_EXPRESSION = `(() => {
   const trustedNow = /You trust this folder|In a Trusted Folder|trust has been granted/i.test(body);
   const restricted = !trustedNow && (/Restricted Mode/i.test(body) || nodes.some((node) => /Restricted Mode/i.test(label(node))));
   const plain = (node) => String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim();
-  const trustButton = nodes.find((node) => visible(node) && /^(Trust|Yes, I trust the authors)$/i.test(plain(node)));
+  const trustButton = nodes.find((node) => visible(node) && /^(Trust|Trust Folder|Yes, I trust the authors)$/i.test(plain(node)));
   if (trustButton) {
     trustButton.click();
     return { clicked: true, kind: "trust", restricted: restricted, label: plain(trustButton).slice(0, 80) };
@@ -354,6 +355,11 @@ const TRUST_EXPRESSION = `(() => {
     bannerManage.click();
     return { clicked: true, kind: "manage", restricted: true, label: "Manage" };
   }
+  const statusRestricted = ALLOW_STATUS ? nodes.find((node) => visible(node) && node.classList && node.classList.contains("statusbar-item") && /Restricted Mode/i.test(label(node))) : null;
+  if (statusRestricted) {
+    statusRestricted.click();
+    return { clicked: true, kind: "statusbar", restricted: true, label: "Restricted Mode" };
+  }
   return { clicked: false, kind: "none", restricted: restricted, text: body.slice(0, 400) };
 })()`
 
@@ -361,8 +367,9 @@ export async function trustWorkspace(app: CdpApp): Promise<{ clicked: boolean; r
   let clicked = false
   let restricted = true
   let detail = ""
+  let allowStatus = true
   const started = Date.now()
-  while (Date.now() - started < 20000) {
+  while (Date.now() - started < 30000) {
     const pages = await workbenchTargets(app)
     let sawWorkbench = false
     for (const page of pages) {
@@ -372,10 +379,12 @@ export async function trustWorkspace(app: CdpApp): Promise<{ clicked: boolean; r
         const marker = await evaluate(socket, `Boolean(document.querySelector(".monaco-workbench"))`, 5000)
         if (marker !== true) continue
         sawWorkbench = true
-        const snapshot = await evaluate(socket, TRUST_EXPRESSION, 5000) as { clicked?: boolean; kind?: string; restricted?: boolean; label?: string; text?: string }
+        const expression = TRUST_EXPRESSION.replace("ALLOW_STATUS", allowStatus ? "true" : "false")
+        const snapshot = await evaluate(socket, expression, 5000) as { clicked?: boolean; kind?: string; restricted?: boolean; label?: string; text?: string }
         restricted = snapshot?.restricted === true
         detail = snapshot?.label || snapshot?.text || detail
         if (snapshot?.clicked) clicked = true
+        if (snapshot?.kind === "statusbar") allowStatus = false
       } finally {
         socket.close()
       }
@@ -425,6 +434,44 @@ export async function sampleFrames(app: CdpApp): Promise<FrameSample> {
   }
 }
 
+async function superviseConfirmations(webSocketDebuggerUrl: string, request: CdpTurnRequest, stopped: () => boolean): Promise<void> {
+  if (request.decision === "none") return
+  const socket = await CdpSocket.connect(webSocketDebuggerUrl)
+  const seen = new Set<string>()
+  try {
+    while (!stopped()) {
+      const pending = await evaluate(socket, `window.__ovscLab && window.__ovscLab.pending`, 4000).catch(() => null) as StructuredConfirmation | null
+      if (pending && pending.id && !seen.has(pending.id)) {
+        const verdict = permitConfirmation({
+          confirmation: {
+            id: String(pending.id || ""),
+            kind: pending.kind === "command" || pending.kind === "mutation" ? pending.kind : "unknown",
+            operation: String(pending.operation || ""),
+            path: String(pending.path || ""),
+            cwd: String(pending.cwd || ""),
+            executable: String(pending.executable || ""),
+            args: String(pending.args || ""),
+            command: String(pending.command || ""),
+          },
+          workspace: request.workspace,
+          decision: request.decision,
+        })
+        seen.add(pending.id)
+        await evaluate(socket, `window.__ovscLab.permit = ${JSON.stringify({
+          id: pending.id,
+          allow: verdict.permit,
+          action: request.decision,
+          reason: verdict.reason,
+          resolved: verdict.resolved,
+        })}`, 4000).catch(() => undefined)
+      }
+      await sleep(300)
+    }
+  } finally {
+    socket.close()
+  }
+}
+
 export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<{ raw: CdpTurnRaw; frames: FrameSample[]; targetUrl: string }> {
   const frames: FrameSample[] = []
   const sampler = setInterval(() => {
@@ -444,7 +491,11 @@ export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<
       decision: request.decision,
       workspace: request.workspace,
     })})`
+    let stopped = false
+    const supervisor = superviseConfirmations(connected.webSocketDebuggerUrl, request, () => stopped)
     const raw = await evaluate(socket, expression, request.timeoutMs + 20000) as CdpTurnRaw
+    stopped = true
+    await supervisor.catch(() => undefined)
     frames.push(await sampleFrames(app))
     return { raw, frames, targetUrl: connected.url }
   } finally {

@@ -3,6 +3,7 @@ export type SendAck = "not_attempted" | "acknowledged" | "unknown"
 export interface ChatMessage {
   readonly role: "user" | "assistant" | "other"
   readonly text: string
+  readonly status?: string
 }
 
 const PERMITTED_RUNTIME_FILES = new Set([
