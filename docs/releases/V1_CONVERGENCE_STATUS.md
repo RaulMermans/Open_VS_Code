@@ -1,6 +1,23 @@
 # V1 convergence status
 
-Date: 2026-11-10. Branch: `sprint/v1-product-convergence`. Candidate source: `07feb285f560de75cc035caf3a0c93dd63959184`.
+Date: 2026-11-10. Branch: `sprint/v1-milestone-1-foundation`.
+
+**Milestone 1 verdict: PARTIALLY_VERIFIED. Personal V1: NO-GO. Public beta: NO-GO.**
+
+## This pass
+
+| Item | Result |
+| --- | --- |
+| False verification PASS | Fixed in source. `recordedVerificationStatus` returns `PASS` only for the exact status `PASS`. Missing, malformed, timed-out, cancelled, stale, and execution-error results stay non-PASS. `assessCodingCompletion` does not accept an edit when the latest verification is one of those. A runner test applies a patch, returns a verification object with no status, and does not complete. Coding reliability suite: 48/48. |
+| Coding completion on the live model | Not re-run. CODE-MULTI, CODE-REFACTOR, and CODE-RECOVER remain the last unpacked results in the scorecard below. No fixture-specific patch was added. |
+| Structured message history | Not adopted. `AgentRunner` still sends one recompiled user message (`messages: [{ role: "user", content }]`). The pinned OpenCode note already says to keep that shape until a same-model benchmark shows the message shape is the failure. That benchmark was not run. |
+| SAFE-VERIFY approval count | The chat host approves only when `confirmationId` equals the pending confirmation. Ask and Plan still deny writes before approval. The earlier rc.15 case with zero recorded clicks and a mutated file was on the packaged extension; the later rebuilt extension rejected that verification and left the fixture clean. This pass did not replay the live scenario. |
+| Linux identity | The installed rc.13 binary is already named `open-vs-code`, `StartupWMClass=open-vs-code`, and the icon is in the hicolor cache. Launching it still created systemd scope `app-codium-312356` because `resources/app/package.json` has `"desktopName": "codium.desktop"`. A disposable copy with that field rewritten to `open-vs-code.desktop` created `app-open-vs-code-314318`. The installed tree was not edited. GNOME Shell screenshot D-Bus returned access denied, so the dock pixels were not captured. A new deb was not built or installed. |
+| Rollback | Installed driver remains `0.1.0-rc.13`. Deb SHA-256 `18d629b7436ecbeaf7eb7b125ce971a1601544039ad622c4a0219b80c11e3119`. `chrome-sandbox` stays `4755` `root:root`. |
+
+## Earlier rc.15 record
+
+Candidate source at the time of the rc.15 package: `07feb285f560de75cc035caf3a0c93dd63959184`.
 
 **Personal V1: NO-GO. Public beta: NO-GO.** The installed desktop is still `open-vs-code 0.1.0-rc.13`. `sudo -n` cannot install `0.1.0-rc.15`. The CDP lab ran the unpacked candidate at `/tmp/ovsc-rc15/open-vs-code`. Its `chrome-sandbox` is a symlink to the installed helper; the helper bytes match and the mode is `4755`.
 

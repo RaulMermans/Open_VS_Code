@@ -54,12 +54,26 @@ exec "$ELECTRON" "$@"
 }
 
 /**
- * GNOME matches a Wayland window to a launcher by app id. This Electron build
- * sets that id from the real executable name (`/proc/self/exe`), not from
- * `--class` or CHROME_DESKTOP. The upstream file is `codium`, which does not
- * match `open-vs-code.desktop`, so the dock shows a generic gear. The packaged
- * binary is named `open-vs-code`. `codium` stays as a symlink for the CLI.
+ * GNOME matches a Wayland window to a launcher by app id. Renaming the
+ * executable is not enough: Electron still reads `desktopName` from
+ * `resources/app/package.json`. Upstream leaves that as `codium.desktop`, so
+ * systemd registers `app-codium` and the dock shows a gear beside
+ * `open-vs-code.desktop`. The packaged binary is named `open-vs-code`.
+ * `codium` stays as a symlink for the CLI.
  */
+export function rewriteElectronDesktopIdentity(payloadDir: string): void {
+  const packageJsonPath = join(payloadDir, 'resources', 'app', 'package.json');
+  const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { name?: string; desktopName?: string };
+  manifest.desktopName = 'open-vs-code.desktop';
+  writeFileSync(packageJsonPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  for (const relative of ['resources/app/out/main.js', 'resources/app/out/cli.js']) {
+    const bundled = join(payloadDir, relative);
+    if (!existsSync(bundled)) continue;
+    const source = readFileSync(bundled, 'utf8');
+    const rewritten = source.replaceAll('"desktopName":"codium.desktop"', '"desktopName":"open-vs-code.desktop"');
+    if (rewritten !== source) writeFileSync(bundled, rewritten);
+  }
+}
 function publishLinuxElectronIdentity(payloadDir: string, electronName: string): void {
   if (electronName === 'open-vs-code') return;
   const source = join(payloadDir, electronName);
@@ -227,6 +241,7 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
     join(payloadDir, "resources", "app", "open-vs-code-release.json"),
     `${JSON.stringify(releaseStamp, null, 2)}\n`,
   );
+  rewriteElectronDesktopIdentity(payloadDir);
   publishLinuxElectronIdentity(payloadDir, electronName);
   writeLinuxLauncher(join(payloadDir, 'bin'), 'open-vs-code');
   const sandboxHelper = join(payloadDir, 'chrome-sandbox');

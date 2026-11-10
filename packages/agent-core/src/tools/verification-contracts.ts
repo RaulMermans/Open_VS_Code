@@ -2,6 +2,21 @@ export type VerificationAction = "TEST" | "TYPECHECK" | "LINT" | "BUILD"
 
 export type VerificationStatus = "PASS" | "FAIL" | "TIMEOUT" | "CANCELLED" | "EXECUTION_ERROR" | "STALE_VERIFICATION"
 
+/** PASS only for an exact successful status. Missing or malformed results are execution errors. */
+export function recordedVerificationStatus(status: unknown): VerificationStatus {
+  switch (status) {
+    case "PASS":
+    case "FAIL":
+    case "TIMEOUT":
+    case "CANCELLED":
+    case "EXECUTION_ERROR":
+    case "STALE_VERIFICATION":
+      return status
+    default:
+      return "EXECUTION_ERROR"
+  }
+}
+
 export interface PreparedVerification {
   readonly verificationId: string
   readonly action: VerificationAction

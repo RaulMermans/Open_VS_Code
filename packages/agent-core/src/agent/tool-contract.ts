@@ -252,8 +252,10 @@ export function assessCodingCompletion(input: {
       }
     }
     const followed = verificationAfterMutation(input.mutations, input.verifications, input.explicitPaths)
-    if (input.scheduledVerification !== "PASSED" && followed !== "PASS") {
+    const scheduledPass = input.scheduledVerification === "PASSED" && followed !== "FAIL" && followed !== "INCOMPLETE"
+    if (!scheduledPass && followed !== "PASS") {
       const failed = followed === "FAIL" || lastVerification?.status === "FAIL"
+      const detail = verificationDetail(lastVerification?.status)
       return {
         accept: false,
         editsSatisfied: true,
@@ -261,7 +263,7 @@ export function assessCodingCompletion(input: {
         failureReason: failed ? "VERIFICATION_FAILED" : "INCOMPLETE",
         summary: failed
           ? `${changed} ${approval} Tests failed. The edit is not complete.`
-          : `${changed} ${approval} Tests did not run after the edit. Incomplete: verification is still required.`,
+          : `${changed} ${approval} ${detail}`,
       }
     }
   }
@@ -291,17 +293,29 @@ export function requestsExistingFileEdit(instruction: string): boolean {
 }
 
 function describeTests(scheduled: "PASSED" | "UNAVAILABLE" | "NOT_RUN" | undefined, lastStatus: string | undefined): string {
-  if (scheduled === "PASSED" || lastStatus === "PASS") return "Tests passed."
+  if (lastStatus === "PASS") return "Tests passed."
+  if (scheduled === "PASSED" && lastStatus === undefined) return "Tests passed."
   if (scheduled === "UNAVAILABLE") return "Tests did not run."
   if (lastStatus === "FAIL") return "Tests failed."
+  if (lastStatus === "TIMEOUT" || lastStatus === "CANCELLED" || lastStatus === "EXECUTION_ERROR" || lastStatus === "STALE_VERIFICATION") {
+    return verificationDetail(lastStatus)
+  }
   return "Tests did not run."
+}
+
+function verificationDetail(status: string | undefined): string {
+  if (status === "TIMEOUT") return "Tests timed out. Incomplete: verification is still required."
+  if (status === "CANCELLED") return "Verification was cancelled. Incomplete: verification is still required."
+  if (status === "STALE_VERIFICATION") return "Verification was stale. Incomplete: verification is still required."
+  if (status === "EXECUTION_ERROR") return "Verification did not complete. Incomplete: verification is still required."
+  return "Tests did not run after the edit. Incomplete: verification is still required."
 }
 
 function verificationAfterMutation(
   mutations: readonly MutationFact[],
   verifications: readonly VerificationFact[],
   explicitPaths: readonly string[],
-): "PASS" | "FAIL" | "NONE" {
+): "PASS" | "FAIL" | "NONE" | "INCOMPLETE" {
   const relevant = mutations.filter((mutation) =>
     mutation.status === "APPLIED"
     && (explicitPaths.length === 0 || explicitPaths.some((wanted) => pathsReferToSameFile(mutation.path, wanted))),
@@ -311,7 +325,9 @@ function verificationAfterMutation(
   const later = verifications.filter((verification) => verification.at >= lastMutation.at)
   const last = later.at(-1)
   if (!last) return "NONE"
-  return last.status === "PASS" ? "PASS" : "FAIL"
+  if (last.status === "PASS") return "PASS"
+  if (last.status === "FAIL") return "FAIL"
+  return "INCOMPLETE"
 }
 
 /**

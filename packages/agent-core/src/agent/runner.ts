@@ -34,6 +34,7 @@ import { RuntimeEvalAnalytics } from "../runtime-evals/analytics.ts"
 import { RuntimeEvidenceCollector } from "../runtime-evals/evidence.ts"
 import type { RuntimeEvalCheckpoint, RuntimeEvalResult } from "../runtime-evals/contracts.ts"
 import type { VerificationEngine } from "../tools/verification-engine.ts"
+import { recordedVerificationStatus } from "../tools/verification-contracts.ts"
 import { discoverVerificationCommand } from "../tools/verification-discovery.ts"
 import { readRepositoryFile } from "../tools/read-file.ts"
 import { searchText } from "../tools/search-text.ts"
@@ -519,11 +520,12 @@ export class AgentRunner {
               executionId: reviewable.id,
               result,
             })
+            const verificationStatus = recordedVerificationStatus(result.status)
             session.evidenceCollector.recordVerificationOutcome({
               executionId: reviewable.id,
               action: (pending.prepared.arguments as any)?.action || "TEST",
-              status: result.status,
-              failedTestCount: (result as any).failedTests ?? (result.status === "FAIL" ? 1 : 0),
+              status: verificationStatus,
+              failedTestCount: typeof (result as any).failedTests === "number" ? (result as any).failedTests : verificationStatus === "PASS" ? 0 : 1,
               totalTestCount: (result as any).totalTests,
               stdout: result.stdout,
               stderr: result.stderr,
@@ -1613,12 +1615,12 @@ export class AgentRunner {
         }
       } else if (prepared.definition.action === "run_known_test") {
         const res = output as any
-        const status = res?.status === "PASS" ? "PASS" : res?.status === "FAIL" ? "FAIL" : "PASS"
+        const status = recordedVerificationStatus(res?.status)
         session.evidenceCollector.recordVerificationOutcome({
           executionId: prepared.id,
           action: (prepared.arguments as any)?.action || "TEST",
           status,
-          failedTestCount: res?.failedTests ?? (status === "FAIL" ? 1 : 0),
+          failedTestCount: typeof res?.failedTests === "number" ? res.failedTests : status === "PASS" ? 0 : 1,
           totalTestCount: res?.totalTests,
           stdout: res?.stdout,
           stderr: res?.stderr,
@@ -2379,11 +2381,12 @@ export class AgentRunner {
             executionId: reviewable.id,
             result,
           })
+          const verificationStatus = recordedVerificationStatus(result.status)
           session.evidenceCollector.recordVerificationOutcome({
             executionId: reviewable.id,
             action: "TEST",
-            status: result.status,
-            failedTestCount: result.failedTests ?? (result.status === "FAIL" ? 1 : 0),
+            status: verificationStatus,
+            failedTestCount: typeof result.failedTests === "number" ? result.failedTests : verificationStatus === "PASS" ? 0 : 1,
             totalTestCount: result.totalTests,
             stdout: result.stdout,
             stderr: result.stderr,
@@ -2542,11 +2545,12 @@ export class AgentRunner {
           executionId: verifId,
           result,
         })
-        const failedCount = (result as any).failedTests ?? (result.status === "FAIL" ? 1 : 0)
+        const verificationStatus = recordedVerificationStatus(result.status)
+        const failedCount = typeof (result as any).failedTests === "number" ? (result as any).failedTests : verificationStatus === "PASS" ? 0 : 1
         session.evidenceCollector.recordVerificationOutcome({
           executionId: verifId,
           action: "TEST",
-          status: result.status,
+          status: verificationStatus,
           failedTestCount: failedCount,
           totalTestCount: (result as any).totalTests,
           stdout: result.stdout,
@@ -2611,7 +2615,7 @@ export class AgentRunner {
   #verificationWaitingOnEdit(session: Session): boolean {
     const evidence = session.evidenceCollector.getEvidence()
     const last = evidence.verificationOutcomes.at(-1)
-    if (!last || last.status === "PASS") return false
+    if (!last || last.status !== "FAIL") return false
     return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && mutation.timestamp > last.timestamp)
   }
 

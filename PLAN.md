@@ -2,6 +2,7 @@ Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
   - Permanent lab: `apps/desktop/acceptance/`, 46 scenarios, isolated temp profiles, sandbox left on, no silent approvals on real projects.
   - 2026-11-10 rc.15 acceptance: installed driver remains `0.1.0-rc.13`. The current unpacked extension (`2026-11-10T17-44-22-671Z`) passed 15 of 16 coding and critical safety scenarios. CODE-MULTI failed. CODE-REFACTOR and CODE-RECOVER passed on that extension after earlier failures. Five coding repeats and a new package were not run. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - 2026-11-10 milestone 1 source pass: a missing or malformed `run_known_test` result is recorded as `EXECUTION_ERROR`, not `PASS`. A timeout, cancellation, stale result, or execution error after an edit does not satisfy verification. The installed window's systemd scope is `app-codium` because `resources/app/package.json` still says `desktopName: codium.desktop`. Rewriting that field to `open-vs-code.desktop` on a disposable copy of the installed tree registered `app-open-vs-code`. The installed package was not modified. Live coding scenarios were not repeated. No new Debian package was built.
   - Playwright's Electron attach still drops the workbench when the vscode-webview OOPIF attaches. Chat scenarios do not use that path.
   - Protocol parse drops an unfinished tool envelope. That correction is in the installed `0.1.0-rc.13` extension. Full gate: FAIL. See `docs/releases/V1_LIVE_ACCEPTANCE.md`.
 

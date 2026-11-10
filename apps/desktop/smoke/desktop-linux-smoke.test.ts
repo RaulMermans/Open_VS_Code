@@ -25,6 +25,8 @@ describe('Linux x64 desktop package', { skip: process.platform !== 'linux' }, ()
     const product = JSON.parse(readFileSync(join(PAYLOAD, 'resources', 'app', 'product.json'), 'utf8'));
     assert.equal(product.nameShort, 'Open VS Code');
     assert.equal(product.applicationName, 'open-vs-code');
+    const electronPackage = JSON.parse(readFileSync(join(PAYLOAD, 'resources', 'app', 'package.json'), 'utf8'));
+    assert.equal(electronPackage.desktopName, 'open-vs-code.desktop');
     assert.equal(product.dataFolderName, '.open-vs-code-desktop');
     assert.equal(product.enableTelemetry, false);
     assert.ok(
