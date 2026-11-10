@@ -999,6 +999,9 @@ export function renderConfirmationSummary(
   setAttr(div, 'role', 'alertdialog');
   setAttr(div, 'aria-label', conf.riskLabel || 'Approval required');
   setAttr(div, 'data-confirmation-id', conf.id || '');
+  setAttr(div, 'data-operation', conf.preparedCommand ? 'command' : ((conf.mutation && conf.mutation.operation) || (conf.mutationId ? 'patch' : '')));
+  setAttr(div, 'data-path', conf.path || '');
+  setAttr(div, 'data-cwd', (conf.preparedCommand && conf.preparedCommand.cwd) || '');
 
   const title = d.createElement('div');
   title.style.fontWeight = 'bold';

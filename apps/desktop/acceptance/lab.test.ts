@@ -4,7 +4,9 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runInNewContext } from "node:vm"
+import { permitConfirmation, resolveInsideWorkspace } from "./src/confirmation-allow.ts"
 import { CDP_TURN_RUNTIME, assertLocalDebuggerUrl, confirmationAllowed, debuggerBindProblems, interpretCdpTurn } from "./src/cdp-turn.ts"
+import { assessJourney } from "./src/journey.ts"
 import { GUEST_RUNTIME } from "./src/guest-bridge.ts"
 import { loadCatalog } from "./src/catalog.ts"
 import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./src/safety.ts"
@@ -379,6 +381,7 @@ test("the CDP page script clicks Send once and reads the inner frame", async () 
   const sandbox = {
     document: { getElementById: (id: string) => id === "active-frame" ? { contentDocument: doc } : null },
     Event,
+    window: {},
     setInterval: (callback: () => void) => {
       for (let tick = 0; tick < 4; tick += 1) queueMicrotask(callback)
       return 1
@@ -425,6 +428,50 @@ test("a visible completion without the assistant class still belongs to the curr
   assert.equal(interpreted.userCount, 1)
   assert.equal(interpreted.assistant, "Changed: src/add.js.")
   assert.deepEqual(interpreted.problems, [])
+})
+
+test("a correct edit that exhausted the turn budget is not an end-to-end pass", () => {
+  const journey = assessJourney({
+    expectsAgentCompletion: true,
+    text: "Task failed (MAX_TURNS_EXCEEDED): Changed: src/add.js. Tests did not run.",
+    activities: [],
+    messageStatuses: ["failed"],
+    commandExit: 0,
+    expectedExit: 0,
+    filesystemProblems: [],
+    approvalBlocked: false,
+  })
+  assert.equal(journey.codeCorrect, true)
+  assert.equal(journey.independentTestsPassed, true)
+  assert.equal(journey.agentCompleted, false)
+  assert.equal(journey.verificationReportedTruthfully, true)
+  assert.equal(journey.endToEndSuccess, false)
+  assert.equal(journey.failureReason, "MAX_TURNS_EXCEEDED")
+})
+
+test("approval uses the structured path, not a mention of a path in prose", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "ovsc-allow-"))
+  const inside = resolveInsideWorkspace(workspace, "src/add.js")
+  assert.equal(inside?.endsWith("/src/add.js"), true)
+  assert.equal(resolveInsideWorkspace(workspace, "../escape.txt"), null)
+  const allowed = permitConfirmation({
+    confirmation: { id: "c1", kind: "mutation", operation: "patch", path: "src/add.js", cwd: "", executable: "", args: "", command: "" },
+    workspace,
+    decision: "approve",
+  })
+  assert.equal(allowed.permit, true)
+  const prose = permitConfirmation({
+    confirmation: { id: "", kind: "unknown", operation: "", path: "", cwd: "", executable: "", args: "", command: "" },
+    workspace,
+    decision: "approve",
+  })
+  assert.equal(prose.permit, false)
+  const destructive = permitConfirmation({
+    confirmation: { id: "c2", kind: "command", operation: "command", path: "", cwd: workspace, executable: "rm", args: "-rf .", command: "rm -rf ." },
+    workspace,
+    decision: "approve",
+  })
+  assert.equal(destructive.permit, false)
 })
 
 test("a disabled Agent mode is not clicked and is not retried as a send", async () => {
@@ -480,6 +527,7 @@ test("a disabled Agent mode is not clicked and is not retried as a send", async 
     workspace: "/tmp/ovsc-fixture",
   })})`, {
     document: { getElementById: (id: string) => id === "active-frame" ? { contentDocument: doc } : null },
+    window: {},
     Event,
     setInterval: (callback: () => void) => {
       queueMicrotask(callback)

@@ -3,6 +3,7 @@ import { createServer } from "node:net"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { permitConfirmation, type StructuredConfirmation } from "./confirmation-allow.ts"
 import { assertLocalDebuggerUrl, CDP_TURN_RUNTIME, debuggerBindProblems, type CdpTurnRaw } from "./cdp-turn.ts"
 import { redactUrl } from "./oracles.ts"
 import { assertIsolatedPath, assertLabWorkspace, chromeSandboxMode } from "./safety.ts"
@@ -192,7 +193,7 @@ async function connectMatching(port: number, predicate: (value: unknown) => bool
           const composer = doc && doc.getElementById("composer");
           return { composer: !!(composer) };
         })()`, 5000)
-        if (predicate(value)) return { socket, url: targetUrl(target) }
+        if (predicate(value)) return { socket, url: targetUrl(target), webSocketDebuggerUrl: target.webSocketDebuggerUrl }
       } catch (error) {
         last = error instanceof Error ? error.message : String(error)
       }
@@ -425,6 +426,44 @@ export async function sampleFrames(app: CdpApp): Promise<FrameSample> {
   }
 }
 
+async function superviseConfirmations(webSocketDebuggerUrl: string, request: CdpTurnRequest, stopped: () => boolean): Promise<void> {
+  if (request.decision === "none") return
+  const socket = await CdpSocket.connect(webSocketDebuggerUrl)
+  const seen = new Set<string>()
+  try {
+    while (!stopped()) {
+      const pending = await evaluate(socket, `window.__ovscLab && window.__ovscLab.pending`, 4000).catch(() => null) as StructuredConfirmation | null
+      if (pending && pending.id && !seen.has(pending.id)) {
+        const verdict = permitConfirmation({
+          confirmation: {
+            id: String(pending.id || ""),
+            kind: pending.kind === "command" || pending.kind === "mutation" ? pending.kind : "unknown",
+            operation: String(pending.operation || ""),
+            path: String(pending.path || ""),
+            cwd: String(pending.cwd || ""),
+            executable: String(pending.executable || ""),
+            args: String(pending.args || ""),
+            command: String(pending.command || ""),
+          },
+          workspace: request.workspace,
+          decision: request.decision,
+        })
+        seen.add(pending.id)
+        await evaluate(socket, `window.__ovscLab.permit = ${JSON.stringify({
+          id: pending.id,
+          allow: verdict.permit,
+          action: request.decision,
+          reason: verdict.reason,
+          resolved: verdict.resolved,
+        })}`, 4000).catch(() => undefined)
+      }
+      await sleep(300)
+    }
+  } finally {
+    socket.close()
+  }
+}
+
 export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<{ raw: CdpTurnRaw; frames: FrameSample[]; targetUrl: string }> {
   const frames: FrameSample[] = []
   const sampler = setInterval(() => {
@@ -444,7 +483,11 @@ export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<
       decision: request.decision,
       workspace: request.workspace,
     })})`
+    let stopped = false
+    const supervisor = superviseConfirmations(connected.webSocketDebuggerUrl, request, () => stopped)
     const raw = await evaluate(socket, expression, request.timeoutMs + 20000) as CdpTurnRaw
+    stopped = true
+    await supervisor.catch(() => undefined)
     frames.push(await sampleFrames(app))
     return { raw, frames, targetUrl: connected.url }
   } finally {

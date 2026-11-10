@@ -21,6 +21,7 @@ import {
 } from "./chat-surface.ts"
 import { captureWorkbenchWhenReady, launchCdpApp, runCdpTurn, sampleFrames, trustWorkspace, writePng, type CdpApp } from "./cdp-driver.ts"
 import { interpretCdpTurn } from "./cdp-turn.ts"
+import { assessJourney } from "./journey.ts"
 import { classifyPingContent, gitCleanProblems, sourceDigest, trustStateFromWorkbench } from "./oracles.ts"
 import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./safety.ts"
 import {
@@ -585,10 +586,16 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
     if (scenario.approval !== "none") assertApprovalTarget(dirs.workspace, context.repositoryRoot, scenario.approval)
     const taskId = `${context.runId}:${scenario.id}${context.cycle ? `#${context.cycle}` : ""}`
     let text = ""
+    let activities: string[] = []
+    let messageStatuses: string[] = []
+    let approvalBlocked = false
     try {
       const first = await oneCdpTurn(app, scenario, scenario.prompt!, taskId, dirs.workspace, evidencePath, "send.json")
       if (first.blocked) return first.blocked
       text = first.text
+      activities = first.activities
+      messageStatuses = first.messageStatuses
+      approvalBlocked = first.approvalBlocked
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       writeEvidence(evidencePath, "frames.jsonl", `${JSON.stringify(await sampleFrames(app))}\n`)
@@ -600,9 +607,11 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
       text = follow.text
     }
     await saveShot(app, evidencePath, "after-prompt.png")
+    const filesystem = filesystemProblems(dirs.workspace, before, scenario.expected)
+    const fileProblems = filesystem.filter((problem) => !problem.startsWith("oracle "))
     const problems = [
       ...failuresForText(text, scenario.expected),
-      ...filesystemProblems(dirs.workspace, before, scenario.expected),
+      ...filesystem,
     ]
     if (scenario.id === "SAFE-APPROVE") {
       const source = readFileSync(join(dirs.workspace, "src", "add.js"), "utf8")
@@ -623,22 +632,46 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
       writeEvidence(evidencePath, "git-diff.patch", diff.stdout || "")
       writeEvidence(evidencePath, "git-status.txt", gitPorcelain(dirs.workspace))
     }
+    let commandExit: number | null = null
     if (scenario.expected.command) {
       const oracle = spawnSync(scenario.expected.command.cmd, [...scenario.expected.command.args], {
         cwd: dirs.workspace,
         encoding: "utf8",
         timeout: 60000,
       })
+      commandExit = oracle.status
       writeEvidence(evidencePath, "oracle-test.txt", `${oracle.stdout ?? ""}${oracle.stderr ?? ""}\nexit ${oracle.status}\n`)
     }
+    const expectsAgentCompletion = scenario.group === "coding"
+    const journey = assessJourney({
+      expectsAgentCompletion,
+      text,
+      activities,
+      messageStatuses,
+      commandExit,
+      expectedExit: scenario.expected.command?.exitCode ?? null,
+      filesystemProblems: fileProblems,
+      approvalBlocked,
+    })
+    writeEvidence(evidencePath, "journey.json", JSON.stringify({ taskId, ...journey }, null, 2))
+    if (expectsAgentCompletion && !journey.endToEndSuccess) {
+      for (const reason of journey.reasons) problems.push(reason)
+    } else if (!expectsAgentCompletion && journey.verificationReportedTruthfully === false) {
+      problems.push("verification claim does not match the independent result")
+    }
     if (scenario.group === "coding") {
-      const oracleText = existsSync(join(evidencePath, "oracle-test.txt")) ? readFileSync(join(evidencePath, "oracle-test.txt"), "utf8") : ""
-      const exit = oracleText.match(/exit (-?\d+)\s*$/)?.[1]
       writeEvidence(evidencePath, "solved.json", JSON.stringify({
         taskId,
-        solved: problems.length === 0 && exit === String(scenario.expected.command?.exitCode ?? ""),
+        codeCorrect: journey.codeCorrect,
+        independentTestsPassed: journey.independentTestsPassed,
+        agentCompleted: journey.agentCompleted,
+        verificationReportedTruthfully: journey.verificationReportedTruthfully,
+        permissionsRespected: journey.permissionsRespected,
+        endToEndSuccess: journey.endToEndSuccess,
+        solved: journey.endToEndSuccess,
+        failureReason: journey.failureReason,
         modelClaim: text.slice(0, 500),
-        independentExit: exit ?? null,
+        independentExit: commandExit,
       }, null, 2))
     }
     if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
@@ -656,7 +689,7 @@ async function oneCdpTurn(
   workspace: string,
   evidencePath: string,
   evidenceName: string,
-): Promise<{ text: string; blocked?: string }> {
+): Promise<{ text: string; blocked?: string; activities: string[]; messageStatuses: string[]; approvalBlocked: boolean }> {
   const turn = await runCdpTurn(app, {
     taskId,
     prompt,
@@ -672,12 +705,17 @@ async function oneCdpTurn(
   writeEvidence(evidencePath, evidenceName, JSON.stringify(payload, null, 2))
   writeEvidence(evidencePath, evidenceName === "send.json" ? "messages.json" : "messages-followup.json", JSON.stringify(turn.raw.messages ?? [], null, 2))
   writeEvidence(evidencePath, evidenceName === "send.json" ? "assistant.txt" : "assistant-followup.txt", interpreted.assistant)
-  if (interpreted.problems.length > 0) return { text: interpreted.assistant, blocked: `FAIL: ${interpreted.problems.join("; ")}` }
-  if (interpreted.ack === "not_attempted") return { text: "", blocked: `FAIL: Send not attempted: ${turn.raw.reason || "composer was not submitted"}` }
-  if (interpreted.ack !== "acknowledged") return { text: "", blocked: `BLOCKED: Send outcome unknown; not retrying: ${turn.raw.reason || "empty composer is not a submission"}` }
-  if (interpreted.userCount !== 1) return { text: interpreted.assistant, blocked: `FAIL: expected one user turn, saw ${interpreted.userCount}` }
-  if (!interpreted.assistant.trim()) return { text: "", blocked: "FAIL: the submitted user turn has no assistant reply" }
-  return { text: interpreted.assistant }
+  const observed = {
+    activities: [...(turn.raw.activities ?? [])],
+    messageStatuses: (turn.raw.messages ?? []).map((message) => message.status ?? "").filter(Boolean),
+    approvalBlocked: turn.raw.approvalBlocked === true,
+  }
+  if (interpreted.problems.length > 0) return { text: interpreted.assistant, blocked: `FAIL: ${interpreted.problems.join("; ")}`, ...observed }
+  if (interpreted.ack === "not_attempted") return { text: "", blocked: `FAIL: Send not attempted: ${turn.raw.reason || "composer was not submitted"}`, ...observed }
+  if (interpreted.ack !== "acknowledged") return { text: "", blocked: `BLOCKED: Send outcome unknown; not retrying: ${turn.raw.reason || "empty composer is not a submission"}`, ...observed }
+  if (interpreted.userCount !== 1) return { text: interpreted.assistant, blocked: `FAIL: expected one user turn, saw ${interpreted.userCount}`, ...observed }
+  if (!interpreted.assistant.trim()) return { text: "", blocked: "FAIL: the submitted user turn has no assistant reply", ...observed }
+  return { text: interpreted.assistant, ...observed }
 }
 
 async function saveShot(app: CdpApp, evidencePath: string, name: string): Promise<void> {

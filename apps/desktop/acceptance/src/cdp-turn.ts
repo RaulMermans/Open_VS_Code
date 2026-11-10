@@ -18,6 +18,7 @@ export interface CdpTurnRaw {
   readonly readyText?: string
   readonly approvalNotes?: string[]
   readonly approvalBlocked?: boolean
+  readonly activities?: readonly string[]
   readonly frame?: string
 }
 
@@ -55,8 +56,45 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
         ? "user"
         : "other";
     const body = node.querySelector(".message-body");
-    return { role: role, text: ((body && body.textContent) || "").trim() };
+    const statusMatch = String(node.className || "").match(/is-(failed|completed|rejected|cancelled)/);
+    return { role: role, text: ((body && body.textContent) || "").trim(), status: statusMatch ? statusMatch[1] : "" };
   });
+  const readCard = () => {
+    const card = doc.querySelector(".confirmation-card");
+    if (!card) return null;
+    const rows = {};
+    const rowNodes = card.querySelectorAll(".terminal-row");
+    for (let index = 0; index < rowNodes.length; index += 1) {
+      const row = rowNodes[index];
+      const labelNode = row.querySelector(".terminal-row-label");
+      const valueNode = row.querySelector(".terminal-row-value");
+      const label = ((labelNode && labelNode.textContent) || "").trim();
+      const value = ((valueNode && valueNode.textContent) || "").trim();
+      if (label) rows[label] = value;
+    }
+    const commandNode = card.querySelector(".terminal-command-box");
+    const command = ((commandNode && commandNode.textContent) || "").trim();
+    const summary = ((card.innerText || "")).trim();
+    const marked = summary.match(/\\((patch|create|delete|command)\\)/i);
+    const operation = card.getAttribute("data-operation")
+      || (marked ? marked[1].toLowerCase() : "")
+      || (rows["New file"] ? "create" : "")
+      || (rows["File"] ? "patch" : "")
+      || (command ? "command" : "");
+    const path = card.getAttribute("data-path") || rows["File"] || rows["New file"] || "";
+    const id = card.getAttribute("data-confirmation-id") || path || command;
+    return {
+      id: id,
+      kind: command || operation === "command" ? "command" : path ? "mutation" : "unknown",
+      operation: operation,
+      path: path,
+      cwd: card.getAttribute("data-cwd") || rows["Directory"] || "",
+      executable: rows["Executable"] || "",
+      args: rows["Arguments"] || "",
+      command: command,
+    };
+  };
+  window.__ovscLab = window.__ovscLab || { pending: null, permit: null };
   const prompt = String(op.prompt || "");
   const countUsers = (messages) => messages.filter((message) => message.role === "user" && message.text.indexOf(prompt) !== -1).length;
   const assistantFor = (messages) => {
@@ -73,16 +111,6 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
       if (message.role === "assistant" || message.role === "other") parts.push(message.text);
     }
     return parts.join("\\n");
-  };
-  const foreignAbsolute = (note, workspace) => {
-    const matches = String(note || "").match(/(^|\\s)(\\/[^\\s]+)/g) || [];
-    for (let index = 0; index < matches.length; index += 1) {
-      const token = matches[index].trim();
-      if (token.length < 2) continue;
-      if (!workspace) return true;
-      if (token !== workspace && token.indexOf(workspace + "/") !== 0) return true;
-    }
-    return false;
   };
   return new Promise((resolve) => {
     const started = Date.now();
@@ -125,6 +153,7 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
           readyText: readyText,
           approvalNotes: approvalNotes,
           approvalBlocked: approvalBlocked,
+          activities: Array.from(doc.querySelectorAll(".activity-label")).map((node) => (node.textContent || "").trim()).filter(Boolean).slice(0, 40),
           frame: "active-frame",
         }, extra || {}));
       };
@@ -168,27 +197,32 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
         const button = doc.getElementById(op.decision === "approve" ? "btn-approve" : "btn-reject");
         const visible = !!(button && !button.disabled && button.getClientRects && button.getClientRects().length > 0);
         if (visible) {
-          const actions = button.closest ? button.closest(".confirmation-actions") : null;
-          const card = actions && actions.parentElement ? actions.parentElement : button.parentElement;
-          const note = ((card && (card.innerText || card.textContent)) || "").trim().slice(0, 500);
-          if (note !== lastDecisionText) {
-            if (approvalClicks + rejectionClicks >= 4) {
-              approvalBlocked = true;
-              return finish({ reason: "approval cap" });
+          const card = readCard();
+          if (card && card.id) {
+            window.__ovscLab.pending = card;
+            const permit = window.__ovscLab.permit;
+            if (permit && permit.id === card.id && permit.action === op.decision) {
+              if (!permit.allow) {
+                approvalBlocked = true;
+                approvalNotes.push(card.path || card.command || card.id);
+                return finish({ reason: permit.reason || "confirmation was not fixture-scoped" });
+              }
+              if (lastDecisionText !== card.id) {
+                if (approvalClicks + rejectionClicks >= 4) {
+                  approvalBlocked = true;
+                  return finish({ reason: "approval cap" });
+                }
+                button.click();
+                if (op.decision === "approve") approvalClicks += 1;
+                else rejectionClicks += 1;
+                approvalNotes.push(permit.reason || card.path || card.id);
+                lastDecisionText = card.id;
+                window.__ovscLab.permit = null;
+                holdForRun = true;
+                sawRunningAfterDecision = false;
+                stable = 0;
+              }
             }
-            if (note.indexOf("../") !== -1 || note.indexOf("..\\\\") !== -1 || foreignAbsolute(note, String(op.workspace || ""))) {
-              approvalBlocked = true;
-              approvalNotes.push(note);
-              return finish({ reason: "confirmation path is outside the fixture" });
-            }
-            button.click();
-            if (op.decision === "approve") approvalClicks += 1;
-            else rejectionClicks += 1;
-            approvalNotes.push(note);
-            lastDecisionText = note;
-            holdForRun = true;
-            sawRunningAfterDecision = false;
-            stable = 0;
           }
         }
       }

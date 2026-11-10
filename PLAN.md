@@ -1,7 +1,7 @@
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
   - Permanent lab: `apps/desktop/acceptance/`, 46 scenarios, isolated temp profiles, sandbox left on, no silent approvals on real projects.
-  - 2026-11-09 on `sprint/v1-product-convergence`: the lab drives installed `0.1.0-rc.13` through loopback CDP and `#active-frame`. CONV-PING passed 10/10 on fresh profiles (`pong`, one Send, no tool envelope). CODE-BUG's independent `node --test` passed after one approved edit to `src/add.js`; the installed runtime still reported `MAX_TURNS_EXCEEDED`. Full V1 gate remains NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - 2026-11-10: `requiredEditPaths` accepts `Fix src/add.js only` without requiring `test/add.test.js`, and verification is still required. The lab journey splits code, tests, agent completion, verification truth, and permissions. A `MAX_TURNS_EXCEEDED` coding turn is not an end-to-end pass. Eight critical safety scenarios passed on installed rc.13. Personal V1 remains NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
   - Playwright's Electron attach still drops the workbench when the vscode-webview OOPIF attaches. Chat scenarios do not use that path.
   - Protocol parse drops an unfinished tool envelope. That correction is in the installed `0.1.0-rc.13` extension. Full gate: FAIL. See `docs/releases/V1_LIVE_ACCEPTANCE.md`.
 

@@ -188,6 +188,55 @@ test("a file the user said not to edit is not required", () => {
   assert.doesNotMatch(verdict.summary, /did not include/)
 })
 
+test("Fix src/add.js only does not require the referenced test, and still requires verification", () => {
+  const instruction = "test/add.test.js fails. Fix src/add.js only, so node --test passes. Do not change the test."
+  const mentioned = ["src/add.js", "test/add.test.js"]
+  assert.deepEqual(requiredEditPaths(instruction, mentioned), ["src/add.js"])
+  assert.deepEqual(
+    requiredEditPaths("Do not change the test.", mentioned),
+    mentioned,
+  )
+  assert.deepEqual(
+    requiredEditPaths("Update src/format.js and src/greet.js so the greeting stays trimmed.", ["src/format.js", "src/greet.js"]),
+    ["src/format.js", "src/greet.js"],
+  )
+  const applied = [{ path: "src/add.js", status: "APPLIED" as const, at: "2026-11-09T00:00:01.000Z", operation: "patch" as const }]
+  const unverified = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: requiredEditPaths(instruction, mentioned),
+    mutations: applied,
+    verifications: [],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "NOT_RUN",
+  })
+  assert.equal(unverified.accept, false)
+  assert.equal(unverified.failureReason, "INCOMPLETE")
+  assert.doesNotMatch(unverified.summary, /test\/add\.test\.js/)
+  assert.match(unverified.summary, /Tests did not run/)
+  const incomplete = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: mentioned,
+    mutations: [{ path: "test/add.test.js", status: "APPLIED", at: "2026-11-09T00:00:01.000Z", operation: "patch" }],
+    verifications: [{ status: "PASS", at: "2026-11-09T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(incomplete.accept, false)
+  assert.match(incomplete.summary, /implementation was not modified|did not include/)
+  const verified = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: requiredEditPaths(instruction, mentioned),
+    mutations: applied,
+    verifications: [{ status: "PASS", at: "2026-11-09T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verified.accept, true)
+})
+
 test("an edit with no applied change cannot report success", () => {
   const verdict = assessCodingCompletion({
     requiresCodeChange: true,
