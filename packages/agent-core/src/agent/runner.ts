@@ -23,9 +23,9 @@ import { type PreparedToolCall, ToolRegistry, ToolRegistryError } from "../tools
 import type { LoadedSkill } from "../context/skills.ts"
 import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
-import { classifyTaskProfile, isSocialTurn, type TaskProfile } from "./task-profile.ts"
+import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
+import { assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -39,8 +39,8 @@ import { readRepositoryFile } from "../tools/read-file.ts"
 import { searchText } from "../tools/search-text.ts"
 import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts"
 import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
-import { join } from "node:path"
-import { readFile } from "node:fs/promises"
+import { join, dirname, normalize, relative, isAbsolute, basename } from "node:path"
+import { access, readFile } from "node:fs/promises"
 import { MAX_NON_PROGRESS_RECOVERIES, type ProgressSignal, type ProgressThresholds } from "../progress/contracts.ts"
 import { DirectProgressGuard, dedupeObservations, type DirectNonProgressEvidence } from "../progress/direct-guard.ts"
 import { boundRecoveryText, buildNonProgressReport, buildRecoveryPlan, classifyStall, describeSignals, formatNonProgressReport, runDiagnosticCheck, stallNotice, type FailureCapture } from "../progress/recovery.ts"
@@ -955,8 +955,12 @@ export class AgentRunner {
       const verificationOutstanding = Boolean(codingAssessment?.editsSatisfied && !codingAssessment.verificationSatisfied)
       const fileChangeGuidance = mutationToolGuidance(tools.map((tool) => tool.name))
 
+      const requestedPaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+      const testOnlyRequest = requestedPaths.length > 0 && requestedPaths.every((path) => isTestArtifactPath(path))
       const dynamicBanner = editOutstanding
-        ? `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. A test-only edit does not finish a behavior change. Use apply_patch for an existing file and create_file only for a new file.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
+        ? testOnlyRequest
+          ? `\n\n[EDIT REQUIRED]\nCreate or update only ${requestedPaths.join(", ")}. Do not modify other files. Use create_file when that file does not exist yet.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
+          : `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. A test-only edit does not finish a behavior change. Use apply_patch for an existing file and create_file only for a new file.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
         : verificationOutstanding
           ? "\n\n[VERIFICATION REQUIRED]\nThe requested edit is applied. Run the tests before answering. Do not finish while verification is outstanding."
           : directReply
@@ -970,7 +974,9 @@ export class AgentRunner {
               : ""
 
       const phaseInstruction = editOutstanding
-        ? `Apply the requested edit. Inspect the repository when needed, then call apply_patch or create_file. Strategy: ${session.taskProfile.toolGuidance}`
+        ? testOnlyRequest
+          ? `Create or update only ${requestedPaths.join(", ")}. Use create_file when that file does not exist, and apply_patch when it already exists. Do not modify other files. Strategy: ${session.taskProfile.toolGuidance}`
+          : `Apply the requested edit. Inspect the repository when needed, then call apply_patch or create_file. Strategy: ${session.taskProfile.toolGuidance}`
         : verificationOutstanding
           ? "Run the project tests now. Inspection alone is not completion, and the edit is not complete until verification has run."
           : directReply
@@ -982,7 +988,9 @@ export class AgentRunner {
             : `Phase 1 - Investigation: Use tools to inspect the repository. Strategy: ${session.taskProfile.toolGuidance}`
 
       const completionLine = editOutstanding
-        ? "Completion: Do not finish until the requested implementation edit is prepared for approval. A test run or a test-file edit alone does not apply the requested behavior change."
+        ? testOnlyRequest
+          ? `Completion: Do not finish until ${requestedPaths.join(", ")} is prepared for approval. That file is the requested change.`
+          : "Completion: Do not finish until the requested implementation edit is prepared for approval. A test run or a test-file edit alone does not apply the requested behavior change."
         : verificationOutstanding
           ? "Completion: Do not finish until the tests have run after the edit."
           : "Completion: When you have sufficient evidence from the observations to answer, output your answer directly without calling more tools."
@@ -1106,12 +1114,16 @@ export class AgentRunner {
         }
         if (codingVerdict && !codingVerdict.editsSatisfied && session.continuationAttempts < this.#maxContinuations) {
           session.continuationAttempts += 1
+          const gatePaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+          const gateTestOnly = gatePaths.length > 0 && gatePaths.every((path) => isTestArtifactPath(path))
           session.observations.push(createToolObservation({
             toolName: "coding_gate",
             callId: `edit-gate-${session.continuationAttempts}`,
             error: {
               category: "EDIT_REQUIRED",
-              message: "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+              message: gateTestOnly
+                ? `[EDIT REQUIRED]\nCreate or update only ${gatePaths.join(", ")}. Use create_file when that file does not exist. A prose answer is not enough.`
+                : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
             },
             maxContentBytes: this.#observationMaxBytes,
           }))
@@ -1298,6 +1310,42 @@ export class AgentRunner {
     }
     const signature = `${prepared.name}\0${stableValue(prepared.arguments)}`
     const effectiveAction = prepared.effectiveAction ?? prepared.definition.action
+    if (effectiveAction === "run_known_test" && this.#verificationWaitingOnEdit(session)) {
+      const last = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
+      const detail = last?.failureSummary ? `\n${last.failureSummary}` : ""
+      this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
+      return false
+    }
+    if (
+      session.taskProfile.requiresCodeChange
+      && (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text")
+      && session.toolCalls.some((call) =>
+        (call.name === "list_directory" || call.name === "find_files" || call.name === "search_text" || call.name === "read_file")
+        && (call.outcome === "COMPLETED" || call.outcome === "FAILED"))
+    ) {
+      const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+      const target = pending.length > 0 ? pending.join(", ") : "the requested file"
+      const parents = pending.length > 0 && pending.every((path) => isTestArtifactPath(path))
+        ? " create_file creates a missing parent directory."
+        : ""
+      this.#addErrorObservation(prepared, "EDIT_REQUIRED", `Stop exploring. Create or update ${target} now. Use create_file when that file does not exist.${parents}`, "DENIED")
+      return false
+    }
+    if (prepared.name === "create_file") {
+      const createdPath = String((prepared.arguments as { path?: unknown }).path ?? "")
+      const createdContent = String((prepared.arguments as { content?: unknown }).content ?? "")
+      const implementation = session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path))
+      const rewritten = rewriteMissingImports(createdPath, createdContent, implementation)
+      if (rewritten !== createdContent) {
+        ;(prepared.arguments as { content: string }).content = rewritten
+      }
+      const missingImports = await missingRelativeImports(session.input.workspaceRoot, createdPath, String((prepared.arguments as { content?: unknown }).content ?? ""))
+      if (missingImports.length > 0) {
+        const located = implementation.length > 0 ? ` The implementation file is ${implementation.join(", ")}.` : ""
+        this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", `These imports do not exist: ${missingImports.join(", ")}.${located} Import the file that is already in the workspace.`, "DENIED")
+        return false
+      }
+    }
     const permission = this.#permission(effectiveAction)
     if (permission === "DENY") {
       try {
@@ -1335,6 +1383,11 @@ export class AgentRunner {
     if (permission === "CONFIRM") {
       let reviewable: import("../tools/registry.ts").ReviewableExecution | undefined
       if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
+        if (forbidsAllEdits(session.input.task.instruction)) {
+          const message = "The request said not to edit files."
+          this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
+          return false
+        }
         const target = String((prepared.arguments as { path?: unknown; targetFile?: unknown }).path
           ?? (prepared.arguments as { targetFile?: unknown }).targetFile
           ?? "")
@@ -2552,6 +2605,13 @@ export class AgentRunner {
     return { message: fault.message, category: fault.category, stop: false }
   }
 
+  #verificationWaitingOnEdit(session: Session): boolean {
+    const evidence = session.evidenceCollector.getEvidence()
+    const last = evidence.verificationOutcomes.at(-1)
+    if (!last || last.status === "PASS") return false
+    return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && mutation.timestamp > last.timestamp)
+  }
+
   #codingGoalVerdict(): CodingCompletion | undefined {
     const session = this.#requiredSession()
     if (!session.taskProfile.requiresCodeChange) return undefined
@@ -2756,4 +2816,45 @@ function stringField(value: unknown, key: string): string | undefined {
   if (typeof field !== "string") return undefined
   const trimmed = field.trim()
   return trimmed.length > 0 ? trimmed : undefined
+}
+
+function rewriteMissingImports(filePath: string, content: string, implementationPaths: readonly string[]): string {
+  return content.replace(/(from|import)\s*(\(?\s*)(['"])(\.[^'"]+)(['"])/g, (full, keyword: string, open: string, quote: string, specifier: string, end: string) => {
+    const wanted = basename(specifier)
+    const match = implementationPaths.find((path) => basename(path) === wanted)
+    if (!match) return full
+    let next = relative(dirname(filePath), match).replaceAll("\\", "/")
+    if (!next.startsWith(".")) next = `./${next}`
+    if (next === specifier) return full
+    return `${keyword} ${open}${quote}${next}${end}`
+  })
+}
+
+async function missingRelativeImports(workspaceRoot: string, filePath: string, content: string): Promise<string[]> {
+  const specifiers = new Set<string>()
+  for (const match of content.matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
+    if (match[1]) specifiers.add(match[1])
+  }
+  const missing: string[] = []
+  for (const specifier of specifiers) {
+    const base = normalize(join(workspaceRoot, dirname(filePath), specifier))
+    const relativeToWorkspace = relative(workspaceRoot, base)
+    if (!relativeToWorkspace || relativeToWorkspace.startsWith("..") || isAbsolute(relativeToWorkspace)) {
+      missing.push(specifier)
+      continue
+    }
+    const candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, `${base}.cjs`, join(base, "index.ts"), join(base, "index.js")]
+    let found = false
+    for (const candidate of candidates) {
+      try {
+        await access(candidate)
+        found = true
+        break
+      } catch {
+        found = false
+      }
+    }
+    if (!found) missing.push(specifier)
+  }
+  return missing
 }

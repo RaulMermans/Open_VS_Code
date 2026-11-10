@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import * as fs from "node:fs/promises"
 import * as crypto from "node:crypto"
+import * as path from "node:path"
 import { StringDecoder } from "node:string_decoder"
 import { PreparedVerification, VerificationResult, VerificationStatus } from "./verification-contracts.ts"
 import { resolveRepositoryPath } from "./path-safety.ts"
@@ -66,10 +67,22 @@ export class VerificationEngine {
 
     // A repository without package.json verifies through node --test. There is no script hash to check.
     if (prepared.packageJsonPath) {
+    let packageJsonPath = prepared.packageJsonPath
+    try {
+      packageJsonPath = await resolveRepositoryPath(this.options.workspaceRoot, prepared.packageJsonPath, "file")
+    } catch (error) {
+      return {
+        status: "EXECUTION_ERROR",
+        exitCode: null,
+        stdout: "",
+        stderr: `package.json validation failed: ${(error as Error).message}`,
+        durationMs: Date.now() - startTime,
+      }
+    }
     // Check for stale verification
     let currentPackageJsonContent: string
     try {
-      currentPackageJsonContent = await fs.readFile(prepared.packageJsonPath, "utf-8")
+      currentPackageJsonContent = await fs.readFile(packageJsonPath, "utf-8")
     } catch (error) {
       return {
         status: "EXECUTION_ERROR",
@@ -111,6 +124,8 @@ export class VerificationEngine {
     let resolvedCwd: string
     try {
       resolvedCwd = await resolveRepositoryPath(this.options.workspaceRoot, prepared.cwd, "directory")
+      await assertExecutableContained(this.options.workspaceRoot, prepared.executable)
+      await assertArgsContained(this.options.workspaceRoot, prepared.args)
     } catch (error) {
       return {
         status: "EXECUTION_ERROR",
@@ -122,7 +137,7 @@ export class VerificationEngine {
     }
 
     const env: Record<string, string> = {
-      PATH: process.env.PATH || "",
+      PATH: absolutePathEntries(process.env.PATH || ""),
       NODE_ENV: process.env.NODE_ENV || "test",
     }
     // Include npm_config_* variables
@@ -212,8 +227,14 @@ export class VerificationEngine {
         let stderr = overrideStderr !== undefined ? overrideStderr : stderrBuf.toString("utf-8")
         if (stderrTruncated && overrideStderr === undefined) stderr += "\n[STDERR TRUNCATED]"
 
+        let finalStatus = status
+        if (finalStatus === "PASS" && isNodeTestCommand(prepared.args) && !nodeTestReportedPass(stdout, stderr, stdoutTruncated || stderrTruncated)) {
+          finalStatus = "FAIL"
+          stderr += "\nNode test run did not report a passing test."
+        }
+
         resolve({
-          status,
+          status: finalStatus,
           exitCode,
           stdout,
           stderr,
@@ -255,4 +276,57 @@ export class VerificationEngine {
       })
     })
   }
+}
+
+function absolutePathEntries(pathEnv: string): string {
+  return pathEnv.split(path.delimiter).filter((entry) => path.isAbsolute(entry)).join(path.delimiter)
+}
+
+async function assertExecutableContained(workspaceRoot: string, executable: string): Promise<void> {
+  if (executable.includes("\0")) throw new Error("Executable path is invalid")
+  if (!executable.includes("/") && !executable.includes("\\") && !executable.includes("..")) return
+  if (path.isAbsolute(executable)) {
+    const root = await fs.realpath(workspaceRoot)
+    let real: string
+    try {
+      real = await fs.realpath(executable)
+    } catch (error) {
+      throw new Error(`Executable was not found: ${executable}`, { cause: error })
+    }
+    const rel = path.relative(root, real)
+    if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
+      throw new Error(`Executable resolves inside the workspace: ${executable}`)
+    }
+    return
+  }
+  await resolveRepositoryPath(workspaceRoot, executable, "file")
+}
+
+async function assertArgsContained(workspaceRoot: string, args: readonly string[]): Promise<void> {
+  for (const arg of args) {
+    if (!isPathArg(arg)) continue
+    await resolveRepositoryPath(workspaceRoot, arg)
+  }
+}
+
+function isPathArg(arg: string): boolean {
+  if (arg.startsWith("-") && !arg.includes("..") && !arg.includes("/") && !arg.includes("\\")) return false
+  return arg.includes("/") || arg.includes("\\") || arg.startsWith(".") || path.isAbsolute(arg)
+}
+
+function isNodeTestCommand(args: readonly string[]): boolean {
+  return args.includes("--test")
+}
+
+function nodeTestReportedPass(stdout: string, stderr: string, truncated: boolean): boolean {
+  if (truncated) return false
+  const text = `${stdout}\n${stderr}`
+  const tests = [...text.matchAll(/(?:#|ℹ)\s+tests\s+(\d+)/g)]
+  const fails = [...text.matchAll(/(?:#|ℹ)\s+fail\s+(\d+)/g)]
+  const cancelled = [...text.matchAll(/(?:#|ℹ)\s+cancelled\s+(\d+)/g)]
+  if (tests.length === 0 || fails.length === 0) return false
+  const testCount = Number(tests.at(-1)?.[1])
+  const failCount = Number(fails.at(-1)?.[1])
+  const cancelledCount = cancelled.length === 0 ? 0 : Number(cancelled.at(-1)?.[1])
+  return testCount > 0 && failCount === 0 && cancelledCount === 0
 }

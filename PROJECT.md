@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop is `0.1.0-rc.13`. Release decision: NO-GO for Personal V1. Candidate `0.1.0-rc.15` completed CODE-BUG twice from an unpacked binary: `src/add.js` lost the extra `+ 1`, the agent ran `node --test`, and the task completed. Installing that package needs a sudo password. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop is still `0.1.0-rc.13`. One rebuilt-extension gate passed 15 of 17 coding and safety scenarios. CODE-REFACTOR and CODE-RECOVER failed. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 
 Sprint 14C.1A — Global model hardening and desktop acceptance. Status: `PARTIALLY_VERIFIED`. `0.1.0-rc.12` from `6417724105` is installed. Playwright opened that binary with the sandbox enabled. An untrusted folder kept the global route, and `qwen3-coder:30b` answered `pong`. Wider chat, a second repository, and a live-profile restart were not walked. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
 

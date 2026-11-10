@@ -37,6 +37,13 @@ test("classifyTaskProfile classifies FILE_DISCOVERY tasks correctly", () => {
   assert.ok(profile.allowedTools.includes("find_files"))
 })
 
+test("adding a test file is test authoring, not a diagnosis", () => {
+  const profile = classifyTaskProfile("Add test/greeting.test.js that uses node:test and asserts greeting('Ada') is Hello, Ada. Do not change hello.ts.", "BUILD")
+  assert.equal(profile.category, "TEST_AUTHORING")
+  assert.equal(profile.requiresCodeChange, true)
+  assert.match(profile.toolGuidance, /test\/greeting\.test\.js/)
+})
+
 test("classifyTaskProfile classifies TEST_DIAGNOSIS tasks correctly", () => {
   const profile = classifyTaskProfile("Inspect the test file in tests/ and implementation in src/ to diagnose why the test fails.")
   assert.equal(profile.category, "TEST_DIAGNOSIS")

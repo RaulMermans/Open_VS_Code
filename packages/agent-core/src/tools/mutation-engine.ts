@@ -86,25 +86,37 @@ export async function resolveWritePath(
     return resolved
   }
 
-  // File should NOT exist - verify parent directory containment
+  // File should NOT exist. A missing parent inside the workspace is created on apply.
+  // An existing parent that resolves outside the workspace is rejected.
   const parentDir = dirname(candidate)
-  let resolvedParent: string
-  try {
-    resolvedParent = await realpath(parentDir)
-  } catch {
-    throw new MutationFailure("PARENT_NOT_FOUND", `Parent directory does not exist: ${requestedPath}`)
+  let cursor = parentDir
+  const missing: string[] = []
+  while (true) {
+    try {
+      const resolvedParent = await realpath(cursor)
+      if (!isContainedPath(root, resolvedParent)) {
+        throw new MutationFailure("SYMLINK_ESCAPE", `Parent directory resolves outside workspace: ${requestedPath}`)
+      }
+      const resolvedCandidate = join(resolvedParent, ...missing.slice().reverse(), basename(candidate))
+      if (!isContainedPath(root, resolvedCandidate)) {
+        throw new MutationFailure("PATH_ESCAPE", `Resolved path escapes workspace: ${requestedPath}`)
+      }
+      return resolvedCandidate
+    } catch (error) {
+      if (error instanceof MutationFailure) throw error
+      const missingParent = error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+      if (!missingParent) throw error
+      if (cursor === root || cursor === dirname(cursor)) {
+        throw new MutationFailure("PARENT_NOT_FOUND", `Parent directory does not exist: ${requestedPath}`)
+      }
+      missing.push(basename(cursor))
+      const next = dirname(cursor)
+      if (!isContainedPath(root, next)) {
+        throw new MutationFailure("OUTSIDE_WORKSPACE", `Path is outside workspace: ${requestedPath}`)
+      }
+      cursor = next
+    }
   }
-  if (!isContainedPath(root, resolvedParent)) {
-    throw new MutationFailure("SYMLINK_ESCAPE", `Parent directory resolves outside workspace: ${requestedPath}`)
-  }
-
-  // Ensure the final candidate path under the resolved parent is still contained
-  const resolvedCandidate = join(resolvedParent, candidate.slice(parentDir.length))
-  if (!isContainedPath(root, resolvedCandidate)) {
-    throw new MutationFailure("PATH_ESCAPE", `Resolved path escapes workspace: ${requestedPath}`)
-  }
-
-  return resolvedCandidate
 }
 
 // --- Policy Checks ---

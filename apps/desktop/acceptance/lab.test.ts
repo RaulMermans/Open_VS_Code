@@ -449,6 +449,24 @@ test("a correct edit that exhausted the turn budget is not an end-to-end pass", 
   assert.equal(journey.failureReason, "MAX_TURNS_EXCEEDED")
 })
 
+test("node --test with zero tests is not an independent pass", () => {
+  const journey = assessJourney({
+    expectsAgentCompletion: true,
+    text: "Task failed (MAX_TURNS_EXCEEDED): No files were changed. Tests did not run.",
+    activities: [],
+    messageStatuses: ["failed"],
+    commandExit: 0,
+    commandOutput: "# tests 0\n# fail 0\n",
+    expectedExit: 0,
+    filesystemProblems: [],
+    approvalBlocked: false,
+  })
+  assert.equal(journey.independentTestsPassed, false)
+  assert.equal(journey.codeCorrect, false)
+  assert.equal(journey.endToEndSuccess, false)
+  assert.ok(journey.reasons.some((reason) => reason.includes("zero tests")))
+})
+
 test("approval uses the structured path, not a mention of a path in prose", () => {
   const workspace = mkdtempSync(join(tmpdir(), "ovsc-allow-"))
   const inside = resolveInsideWorkspace(workspace, "src/add.js")

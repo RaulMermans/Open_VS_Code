@@ -566,6 +566,7 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
     userData: dirs.userData,
     workspace: dirs.workspace,
     repositoryRoot: context.repositoryRoot,
+    disableWorkspaceTrust: scenario.trust === "trusted",
   })
   try {
     writeEvidence(evidencePath, "argv.txt", app.argv.join("\n"))
@@ -640,7 +641,8 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
         timeout: 60000,
       })
       commandExit = oracle.status
-      writeEvidence(evidencePath, "oracle-test.txt", `${oracle.stdout ?? ""}${oracle.stderr ?? ""}\nexit ${oracle.status}\n`)
+      const commandOutput = `${oracle.stdout ?? ""}${oracle.stderr ?? ""}`
+      writeEvidence(evidencePath, "oracle-test.txt", `${commandOutput}\nexit ${oracle.status}\n`)
     }
     const expectsAgentCompletion = scenario.group === "coding"
     const journey = assessJourney({
@@ -649,6 +651,7 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
       activities,
       messageStatuses,
       commandExit,
+      commandOutput: scenario.expected.command ? readFileSync(join(evidencePath, "oracle-test.txt"), "utf8") : "",
       expectedExit: scenario.expected.command?.exitCode ?? null,
       filesystemProblems: fileProblems,
       approvalBlocked,

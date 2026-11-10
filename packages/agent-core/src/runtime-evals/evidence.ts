@@ -62,6 +62,17 @@ function truncateBounded(text: string, maxLength = MAX_SUMMARY_SNIPPET_LENGTH): 
   return sanitized.slice(0, maxLength) + " [TRUNCATED]"
 }
 
+/** Keep the assertion, not the reporter header. Node's TAP header can fill a short excerpt before the expected value appears. */
+export function verificationFailureExcerpt(output: string, maxLength = MAX_SUMMARY_SNIPPET_LENGTH): string {
+  const sanitized = redactRuntimeEvalSecrets(output).trim()
+  if (!sanitized) return ""
+  const marker = sanitized.search(/AssertionError|Expected values|ERR_ASSERTION|not strictly equal|# fail [1-9]/i)
+  const start = marker >= 0 ? Math.max(0, marker - 80) : Math.max(0, sanitized.length - maxLength)
+  const end = Math.min(sanitized.length, start + maxLength)
+  const slice = sanitized.slice(start, end).trim()
+  return start > 0 || end < sanitized.length ? `${slice} [TRUNCATED]` : slice
+}
+
 export interface RuntimeEvidenceCollectorOptions {
   readonly runId: string
   readonly taskGoal: string
@@ -261,7 +272,7 @@ export class RuntimeEvidenceCollector {
   }): void {
     this.#verificationCount++
     const combinedOutput = `${verification.stdout ?? ""}\n${verification.stderr ?? ""}`
-    const failureSummary = verification.status !== "PASS" ? truncateBounded(combinedOutput, 300) : undefined
+    const failureSummary = verification.status !== "PASS" ? verificationFailureExcerpt(combinedOutput, 500) : undefined
     const failureHash = failureSummary ? deterministicHash(`${verification.action}:${verification.status}:${failureSummary}`) : undefined
 
     const record: BoundedVerificationOutcome = {

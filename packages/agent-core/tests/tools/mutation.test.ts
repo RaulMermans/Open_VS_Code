@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, writeFile, readFile, mkdir, symlink, rm, stat } from "node:fs/promises"
+import { mkdtemp, writeFile, readFile, mkdir, symlink, rm, stat, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -198,13 +198,11 @@ test("resolveWritePath rejects new file with symlinked parent escape", async () 
   }
 })
 
-test("resolveWritePath rejects missing parent directory", async () => {
+test("resolveWritePath accepts a missing parent inside the workspace", async () => {
   const ws = await createTempWorkspace()
   try {
-    await assert.rejects(
-      resolveWritePath(ws, "nonexistent/subdir/file.txt", { mustExist: false }),
-      (err: MutationFailure) => err.code === "PARENT_NOT_FOUND",
-    )
+    const resolved = await resolveWritePath(ws, "nonexistent/subdir/file.txt", { mustExist: false })
+    assert.equal(resolved, join(await realpath(ws), "nonexistent", "subdir", "file.txt"))
   } finally {
     await rm(ws, { recursive: true })
   }
@@ -340,6 +338,23 @@ test("prepareCreate and apply creates new file", async () => {
 
     const content = await readFile(join(ws, "new-module.ts"), "utf8")
     assert.equal(content, "export const x = 42\n")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("prepareCreate and apply creates a missing parent directory", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "test/greeting.test.js",
+      content: "import test from \"node:test\"\n",
+    })
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "APPLIED")
+    assert.equal(await readFile(join(ws, "test/greeting.test.js"), "utf8"), "import test from \"node:test\"\n")
   } finally {
     await rm(ws, { recursive: true })
   }

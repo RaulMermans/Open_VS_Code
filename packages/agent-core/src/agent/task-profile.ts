@@ -1,4 +1,5 @@
 import type { AgentMode } from "../contracts/agent.ts"
+import { isTestArtifactPath, requiredEditPaths } from "./tool-contract.ts"
 
 export type TaskCategory =
   | "ORIENTATION"
@@ -7,6 +8,7 @@ export type TaskCategory =
   | "CONFIG_DISCOVERY"
   | "DEPENDENCY_QUERY"
   | "TEST_DIAGNOSIS"
+  | "TEST_AUTHORING"
   | "CONTROL_FLOW"
   | "ARCHITECTURE"
   | "CROSS_FILE_REASONING"
@@ -69,11 +71,24 @@ export function isSocialTurn(instruction: string): boolean {
   return /^(?:hi|hey|hello|hola|hey there|good morning|good afternoon|good evening|thanks|thank you|ok|okay|yo|sup|buenas|buenos dias|buenos días)[.!?\s]*$/i.test(head)
 }
 
+const NEGATED_EDIT = String.raw`\b(?:do not|don't|never|without)\s+(?:editing|edit|modifying|modify|changing|change|updating|update|touching|touch|altering|alter|writing|write)\b[^.!\n]*`
+
+/** The user forbade every file edit, as in "Do not edit files." A named exception still counts as an edit request. */
+export function forbidsAllEdits(instruction: string): boolean {
+  const head = instruction.split("[Attached context]")[0] ?? instruction
+  return /\b(?:do not|don't|never|without)\s+(?:editing|edit|modifying|modify|changing|change|updating|update|writing|write)\s+(?:any\s+)?(?:files?|anything|code)\b/i.test(head)
+}
+
+function withoutNegatedEditClauses(instruction: string): string {
+  return instruction.replace(new RegExp(NEGATED_EDIT, "gi"), " ")
+}
+
 export function requestsCodeEdit(instruction: string): boolean {
-  if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch|change|edit|rename|replace)\b/i.test(instruction)) return true
-  if (/\b(?:make|ensure)\b/i.test(instruction) && /\b(?:test|tests|function|file|return|keep|export)\b/i.test(instruction)) return true
-  return /\b(?:add|reject|remove|delete|create|write)\b/i.test(instruction)
-    && /\b(?:file|test|tests|function|implementation|code|method|body|title|export)\b/i.test(instruction)
+  const head = withoutNegatedEditClauses(instruction.split("[Attached context]")[0] ?? instruction)
+  if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch|change|edit|rename|replace)\b/i.test(head)) return true
+  if (/\b(?:make|ensure)\b/i.test(head) && /\b(?:test|tests|function|file|return|keep|export)\b/i.test(head)) return true
+  return /\b(?:add|reject|remove|delete|create|write)\b/i.test(head)
+    && /\b(?:file|test|tests|function|implementation|code|method|body|title|export)\b/i.test(head)
 }
 
 export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"): TaskProfile {
@@ -134,6 +149,23 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
       toolGuidance: "Use find_files with a glob pattern (e.g. **/*.ts or *.ts) to find matching files across the repository.",
       requiresCodeChange,
       explicitFilePaths: explicitFiles,
+    }
+  }
+
+  if (requiresCodeChange) {
+    const editPaths = requiredEditPaths(instruction, explicitFiles)
+    if (editPaths.length > 0 && editPaths.every((path) => isTestArtifactPath(path))) {
+      const named = editPaths.join(", ")
+      return {
+        category: "TEST_AUTHORING",
+        allowedTools: ["read_file", "list_directory", "create_file", "apply_patch", "run_verification"],
+        recommendedInitialTools: ["read_file", "create_file"],
+        defaultTurnBudget: 6,
+        evidenceRequirements: [],
+        toolGuidance: `Create or update only ${named}. Use create_file when that file does not exist, and apply_patch when it already exists. create_file creates a missing parent directory. Do not try to create the directory first. Do not modify any other file.`,
+        requiresCodeChange,
+        explicitFilePaths: explicitFiles,
+      }
     }
   }
 

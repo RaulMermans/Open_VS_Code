@@ -208,6 +208,7 @@ export async function launchCdpApp(input: {
   userData: string
   workspace: string
   repositoryRoot: string
+  disableWorkspaceTrust?: boolean
 }): Promise<CdpApp> {
   const userData = assertIsolatedPath(input.userData, "Acceptance profile")
   const workspace = assertLabWorkspace(input.workspace, input.repositoryRoot)
@@ -226,6 +227,7 @@ export async function launchCdpApp(input: {
     "--skip-release-notes",
     "--no-first-run",
     "--disable-updates",
+    ...(input.disableWorkspaceTrust ? ["--disable-workspace-trust"] : []),
     workspace,
   ]
   if (args.some((arg) => arg === "--no-sandbox" || arg.startsWith("--no-sandbox="))) {
