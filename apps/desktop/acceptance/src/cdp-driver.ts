@@ -345,7 +345,7 @@ const TRUST_EXPRESSION = `(() => {
   const trustedNow = /You trust this folder|In a Trusted Folder|trust has been granted/i.test(body);
   const restricted = !trustedNow && (/Restricted Mode/i.test(body) || nodes.some((node) => /Restricted Mode/i.test(label(node))));
   const plain = (node) => String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim();
-  const trustButton = nodes.find((node) => visible(node) && /^(Trust|Yes, I trust the authors)$/i.test(plain(node)));
+  const trustButton = nodes.find((node) => visible(node) && /^(Trust|Trust Folder|Yes, I trust the authors)$/i.test(plain(node)));
   if (trustButton) {
     trustButton.click();
     return { clicked: true, kind: "trust", restricted: restricted, label: plain(trustButton).slice(0, 80) };
@@ -355,6 +355,11 @@ const TRUST_EXPRESSION = `(() => {
     bannerManage.click();
     return { clicked: true, kind: "manage", restricted: true, label: "Manage" };
   }
+  const statusRestricted = ALLOW_STATUS ? nodes.find((node) => visible(node) && node.classList && node.classList.contains("statusbar-item") && /Restricted Mode/i.test(label(node))) : null;
+  if (statusRestricted) {
+    statusRestricted.click();
+    return { clicked: true, kind: "statusbar", restricted: true, label: "Restricted Mode" };
+  }
   return { clicked: false, kind: "none", restricted: restricted, text: body.slice(0, 400) };
 })()`
 
@@ -362,8 +367,9 @@ export async function trustWorkspace(app: CdpApp): Promise<{ clicked: boolean; r
   let clicked = false
   let restricted = true
   let detail = ""
+  let allowStatus = true
   const started = Date.now()
-  while (Date.now() - started < 20000) {
+  while (Date.now() - started < 30000) {
     const pages = await workbenchTargets(app)
     let sawWorkbench = false
     for (const page of pages) {
@@ -373,10 +379,12 @@ export async function trustWorkspace(app: CdpApp): Promise<{ clicked: boolean; r
         const marker = await evaluate(socket, `Boolean(document.querySelector(".monaco-workbench"))`, 5000)
         if (marker !== true) continue
         sawWorkbench = true
-        const snapshot = await evaluate(socket, TRUST_EXPRESSION, 5000) as { clicked?: boolean; kind?: string; restricted?: boolean; label?: string; text?: string }
+        const expression = TRUST_EXPRESSION.replace("ALLOW_STATUS", allowStatus ? "true" : "false")
+        const snapshot = await evaluate(socket, expression, 5000) as { clicked?: boolean; kind?: string; restricted?: boolean; label?: string; text?: string }
         restricted = snapshot?.restricted === true
         detail = snapshot?.label || snapshot?.text || detail
         if (snapshot?.clicked) clicked = true
+        if (snapshot?.kind === "statusbar") allowStatus = false
       } finally {
         socket.close()
       }
