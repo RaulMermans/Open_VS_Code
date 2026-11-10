@@ -8,6 +8,7 @@ import { AgentRunner } from "../../src/agent/runner.ts"
 import type { AgentResult } from "../../src/contracts/agent.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn } from "../../src/agent/task-profile.ts"
 import { assessCodingCompletion, describeToolContractFault, implementationChangeRequired, requiredEditPaths } from "../../src/agent/tool-contract.ts"
+import { recordedVerificationStatus } from "../../src/tools/verification-contracts.ts"
 import { verificationFailureExcerpt } from "../../src/runtime-evals/evidence.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
@@ -254,6 +255,48 @@ test("Fix src/add.js only does not require the referenced test, and still requir
     scheduledVerification: "PASSED",
   })
   assert.equal(verified.accept, true)
+})
+
+test("only an exact PASS counts as successful verification", () => {
+  for (const status of ["FAIL", "TIMEOUT", "CANCELLED", "EXECUTION_ERROR", "STALE_VERIFICATION", "UNKNOWN", "", undefined, null, 0]) {
+    assert.notEqual(recordedVerificationStatus(status), "PASS")
+  }
+  assert.equal(recordedVerificationStatus("PASS"), "PASS")
+  assert.equal(recordedVerificationStatus("TIMEOUT"), "TIMEOUT")
+  const applied = [{ path: "src/add.ts", status: "APPLIED" as const, at: "2026-11-10T00:00:01.000Z", operation: "patch" as const }]
+  for (const status of ["TIMEOUT", "CANCELLED", "EXECUTION_ERROR", "STALE_VERIFICATION", "UNKNOWN"]) {
+    const verdict = assessCodingCompletion({
+      requiresCodeChange: true,
+      explicitPaths: ["src/add.ts"],
+      mutations: applied,
+      verifications: [{ status, at: "2026-11-10T00:00:02.000Z" }],
+      verificationRequired: true,
+      userRejectedMutation: false,
+      scheduledVerification: "PASSED",
+    })
+    assert.equal(verdict.accept, false, status)
+    assert.equal(verdict.verificationSatisfied, false, status)
+    assert.doesNotMatch(verdict.summary, /Tests passed/)
+  }
+})
+
+test("a missing verification result does not complete a coding task", async () => {
+  const root = await workspace()
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "patch", name: "apply_patch", arguments: { path: "src/add.ts", search: "return left - right", replace: "return left + right" } }]),
+    response("", [{ id: "verify", name: "run_verification", arguments: {} }]),
+    response("Tests passed. The edit is done."),
+  ])
+  const missing = verificationTool("FAIL")
+  missing.execute = async () => ({ exitCode: null, stdout: "", stderr: "" })
+  try {
+    const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 6, [missing])
+    assert.notEqual(result.status, "COMPLETED")
+    assert.doesNotMatch(result.finalAnswer ?? "", /Tests passed/)
+    assert.match(await readFile(join(root, "src/add.ts"), "utf8"), /return left \+ right/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test("an edit with no applied change cannot report success", () => {

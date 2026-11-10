@@ -73,7 +73,9 @@ ExTester drives a webview by switching into its frame (`tests/test-project/src/t
 
 twinny keeps fill-in-the-middle separate from chat (`src/webview/hooks/useProviders.ts`). Open VS Code already routes autocomplete on its own path. Recommendation: **ADOPT PATTERN** only as a reminder to keep those model choices independent. No twinny code was copied.
 
-## Decision gate
+## Linux application id
+
+No new clone. The installed `0.1.0-rc.13` tree was enough. `resources/app/package.json` sets `"desktopName": "codium.desktop"` while `open-vs-code.desktop` uses `StartupWMClass=open-vs-code`. Launching that binary created systemd scope `app-codium`. Rewriting `desktopName` to `open-vs-code.desktop` on a disposable copy created `app-open-vs-code`. Electron's `desktopName` package field is the identity GNOME matches. The executable rename and `CHROME_DESKTOP` do not override it. No Electron or VSCodium source was copied.
 
 ## Decision gate
 
