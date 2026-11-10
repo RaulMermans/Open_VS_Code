@@ -2,7 +2,7 @@
 
 Date: 2026-11-09. Branch: `sprint/v1-product-convergence`. Starting revision: `c1d8bc0ee14b46d7b87d5d65bb70c609ffb13a8b`.
 
-**Release decision: NO-GO for the full V1 gate.** Personal V1 is not ready. Public beta is not ready. The installed desktop is `open-vs-code 0.1.0-rc.13`. A CDP driver now repeats the DevTools path that reads `#active-frame`. Ten Ask pings returned `pong`. One coding task left `src/add.js` correct and `node --test` passed. The rest of the gate is still open.
+**Release decision: NO-GO for Personal V1.** The installed desktop is still `open-vs-code 0.1.0-rc.13`. A clean `0.1.0-rc.14` package exists and was not installed. The completion fix is in that package, not in the running app. Post-install CODE-BUG repeats and a safety run against rc.14 were not executed.
 
 ## Gate
 
@@ -16,8 +16,8 @@ Date: 2026-11-09. Branch: `sprint/v1-product-convergence`. Starting revision: `c
 | Core GUI journeys | CONV-PING 10/10. CODE-BUG is not an end-to-end pass. | On 2026-11-10 the journey oracle failed CODE-BUG: tests exited 1 and the agent reported `MAX_TURNS_EXCEEDED`. Evidence `apps/desktop/acceptance/evidence/2026-11-10T15-11-13-949Z/CODE-BUG`. |
 | Held-out coding ≥ 90% | Not measured | No same-model run. See `docs/evals/V1_CODING_BENCHMARK.md`. |
 | Persistence and recovery | Not run | |
-| Build and package integrity | Dirty package built and installed | `apps/desktop/dist/open-vs-code_0.1.0-rc.13_amd64.deb`. Stamp `gitDirty: true`, commit `c1d8bc0`. Archive SHA-256 `d88f8b75691ee02cdd7e40bfb5cacf98cf06432095e480becc958aad9a4b5be8`. |
-| Rollback | Package kept, drill not run | Previous deb remains at `apps/desktop/dist/open-vs-code_0.1.0-rc.12_amd64.deb`. |
+| Build and package integrity | Clean candidate built, not installed | `0.1.0-rc.14` from `f9edd564e7`, `gitDirty: false`. Debian SHA-256 `29c5dc23819bc4b06cf82e54ab7837a882f402f231290cec276779db4cf86e31`. Installed driver remains dirty `0.1.0-rc.13`. |
+| Rollback | Packages kept, drill not run | Installed driver is `0.1.0-rc.13`. `0.1.0-rc.12` and `0.1.0-rc.14` debs are on disk and were not installed in this session. |
 | Visual UX | Not accepted | No before/after review. |
 
 ## Verification labels
