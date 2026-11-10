@@ -362,11 +362,13 @@ test("a request not to edit files denies the patch before approval", async () =>
     response("The tests fail. I did not edit any files."),
   ])
   try {
-    const { result } = await runTask(provider, root, "Run the tests. Do not edit files. If they fail, say they failed.", "BUILD")
+    const { runner, result } = await runTask(provider, root, "Run the tests. Do not edit files. If they fail, say they failed.", "BUILD")
     assert.equal(result.toolCalls[0]?.outcome, "DENIED")
     assert.notEqual(result.status, "PAUSED")
     assert.equal(await readFile(join(root, "src/add.ts"), "utf8"), before)
     assert.equal(result.toolCalls.some((call) => call.outcome === "APPLIED"), false)
+    assert.equal(classifyTaskProfile("Run the tests. Do not edit files. If they fail, say they failed.", "BUILD").toolGuidance.includes("apply_patch"), false)
+    await assert.rejects(() => runner.resume("APPROVE"), /cannot resume|not waiting/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -405,6 +407,36 @@ test("a repeated test run is refused until the code changes", async () => {
   }
 })
 
+test("a rename patch that still calls the old binding is refused", async () => {
+  const root = await workspace()
+  await writeFile(join(root, "src/scale.ts"), "export function scale(values) {\n  return values.length\n}\n")
+  const original = "import { scale } from \"../src/scale.ts\"\n\ntest(\"scale\", () => {\n  scale([1])\n})\n"
+  await writeFile(join(root, "test/scale.test.js"), original)
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "bad", name: "apply_patch", arguments: { path: "test/scale.test.js", search: "import { scale } from \"../src/scale.ts\"", replace: "import { scaleAll } from \"../src/scale.ts\"" } }]),
+    (request) => {
+      assert.match(JSON.stringify(request.messages), /still calls it/)
+      return response("", [{ id: "good", name: "apply_patch", arguments: { path: "test/scale.test.js", search: original, replace: "import { scaleAll } from \"../src/scale.ts\"\n\ntest(\"scale\", () => {\n  scaleAll([1])\n})\n" } }])
+    },
+    response("The call was updated."),
+  ])
+  try {
+    const { result } = await runTask(provider, root, "Rename the exported function scale to scaleAll in src/scale.ts and update test/scale.test.js.", "BUILD")
+    const patches = result.toolCalls.filter((call) => call.name === "apply_patch")
+    assert.equal(patches[0]?.outcome, "FAILED")
+    assert.equal(patches[1]?.outcome, "COMPLETED")
+    assert.match(await readFile(join(root, "test/scale.test.js"), "utf8"), /scaleAll\(\[1\]\)/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a node test failure excerpt keeps a missing identifier", () => {
+  const stack = `${"    at Test.run (node:internal/test_runner/test:1047:25)\n".repeat(12)}# tests 1\n# fail 1\n`
+  const excerpt = verificationFailureExcerpt(`not ok 1 - scale\n  error: 'scale is not defined'\n  code: 'ERR_TEST_FAILURE'\n${stack}`)
+  assert.match(excerpt, /scale is not defined/)
+})
+
 test("a node test failure excerpt keeps the assertion", () => {
   const header = "TAP version 13\n".repeat(40)
   const excerpt = verificationFailureExcerpt(`${header}Expected values to be strictly equal:\n+ 'Hello Ada'\n- 'Hello, Ada'\n# fail 1\n`)
@@ -438,20 +470,49 @@ test("a second directory listing is refused while the requested file is missing"
   }
 })
 
-test("a new test that imports the implementation under the wrong path is corrected", async () => {
+test("a new test that imports a missing path is refused and names the existing file", async () => {
   const root = await workspace()
   await writeFile(join(root, "hello.ts"), "export function greeting(name: string): string {\n  return `Hello, ${name}`\n}\n")
   const provider = new ScriptedModelProvider([
     response("", [{ id: "bad", name: "create_file", arguments: { path: "test/greeting.test.js", content: "import { greeting } from \"../src/hello.ts\"\n" } }]),
-    response("", [{ id: "verify", name: "run_verification", arguments: {} }]),
-    response("The test file is written."),
+    (request) => {
+      assert.match(JSON.stringify(request.messages), /do not exist/)
+      assert.match(JSON.stringify(request.messages), /\.\.\/hello\.ts/)
+      return response("The import path was wrong, so the file was not written.")
+    },
   ])
   try {
-    const { result } = await runTask(provider, root, "Add test/greeting.test.js that uses node:test and asserts greeting('Ada') is Hello, Ada. Do not change hello.ts.", "BUILD", 8, [verificationTool("PASS")])
-    assert.equal(result.toolCalls.find((call) => call.name === "create_file")?.outcome, "COMPLETED")
-    const written = await readFile(join(root, "test/greeting.test.js"), "utf8")
-    assert.match(written, /from \"\.\.\/hello\.ts\"/)
-    assert.doesNotMatch(written, /src\/hello/)
+    const { result } = await runTask(provider, root, "Add test/greeting.test.js that uses node:test and asserts greeting('Ada') is Hello, Ada. Do not change hello.ts.", "BUILD")
+    assert.equal(result.toolCalls.find((call) => call.name === "create_file")?.outcome, "DENIED")
+    await assert.rejects(readFile(join(root, "test/greeting.test.js"), "utf8"))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a different lookup stays available after one directory listing", async () => {
+  const root = await workspace()
+  const listTool: ToolRegistration = {
+    definition: { name: "list_directory", description: "List one directory.", action: "read_repository", inputSchema: { type: "object" } },
+    validate: (args) => args,
+    execute: async () => ({ entries: ["add.ts"] }),
+  }
+  const searchTool: ToolRegistration = {
+    definition: { name: "search_text", description: "Search text.", action: "read_repository", inputSchema: { type: "object" } },
+    validate: (args) => args,
+    execute: async () => ({ matches: [] }),
+  }
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "list", name: "list_directory", arguments: { path: "." } }]),
+    response("", [{ id: "search", name: "search_text", arguments: { query: "scale" } }]),
+    response("The implementation is in src/scale.ts."),
+  ])
+  try {
+    const instruction = "Rename the exported function scale to scaleAll in src/scale.ts and update test/scale.test.js so the tests still pass."
+    const { result } = await runTask(provider, root, instruction, "BUILD", 8, [listTool, searchTool])
+    assert.equal(result.toolCalls.find((call) => call.name === "search_text")?.outcome, "COMPLETED")
+    assert.notEqual(classifyTaskProfile(instruction, "BUILD").category, "TEST_DIAGNOSIS")
+    assert.notEqual(classifyTaskProfile("Make node --test pass by fixing the implementation of add. If your first change is wrong, read the test failure and correct it. Do not change the test.", "BUILD").category, "TEST_DIAGNOSIS")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

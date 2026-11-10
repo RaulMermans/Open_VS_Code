@@ -169,8 +169,8 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
     }
   }
 
-  // 3. Test Diagnosis
-  if (/\b(?:failing|diagnose|assertion|error message|why.*failing)\b/i.test(text) || (/\b(?:test|tests)\b/i.test(text) && !/\b(?:find|list)\b/i.test(text))) {
+  // 3. Test Diagnosis. A request that asks for a code change is not a read-only diagnosis.
+  if (!requiresCodeChange && (/\b(?:failing|diagnose|assertion|error message|why.*failing)\b/i.test(text) || (/\b(?:test|tests)\b/i.test(text) && !/\b(?:find|list)\b/i.test(text)))) {
     return {
       category: "TEST_DIAGNOSIS",
       allowedTools: ["search_text", "read_file", "find_files"],

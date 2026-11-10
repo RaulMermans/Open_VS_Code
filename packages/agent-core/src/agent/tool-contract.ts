@@ -314,6 +314,65 @@ function verificationAfterMutation(
   return last.status === "PASS" ? "PASS" : "FAIL"
 }
 
+/**
+ * A patch that drops an imported binding and still calls it. The name comes from
+ * the file, so a rename has to update the call in the same patch.
+ */
+export function danglingRenamedBinding(before: string, after: string): string | undefined {
+  const kept = new Set([...importedBindings(after), ...declaredBindings(after)])
+  const calls = calledBindings(after)
+  for (const name of importedBindings(before)) {
+    if (!kept.has(name) && calls.has(name)) return name
+  }
+  return undefined
+}
+
+function importedBindings(source: string): Set<string> {
+  const names = new Set<string>()
+  for (const match of source.matchAll(/import\s+(?:type\s+)?([\s\S]*?)\s+from\s+['"][^'"]+['"]/g)) {
+    const clause = match[1] ?? ""
+    const brace = clause.match(/\{([^}]*)\}/)
+    if (brace?.[1]) {
+      for (const part of brace[1].split(",")) {
+        const alias = part.trim().split(/\s+as\s+/i).pop()?.trim() ?? ""
+        if (/^[$A-Za-z_][\w$]*$/.test(alias)) names.add(alias)
+      }
+    }
+    const head = clause.replace(/\{[^}]*\}/g, " ").trim()
+    const local = head.match(/^(?:\*\s+as\s+)?([$A-Za-z_][\w$]*)/)
+    if (local?.[1] && local[1] !== "type") names.add(local[1])
+  }
+  return names
+}
+
+function declaredBindings(source: string): Set<string> {
+  const names = new Set<string>()
+  for (const match of source.matchAll(/\b(?:function|class)\s+([$A-Za-z_][\w$]*)/g)) {
+    if (match[1]) names.add(match[1])
+  }
+  for (const match of source.matchAll(/\b(?:const|let|var)\s+([$A-Za-z_][\w$]*)/g)) {
+    if (match[1]) names.add(match[1])
+  }
+  return names
+}
+
+function calledBindings(source: string): Set<string> {
+  const stripped = source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/.*$/gm, " ")
+    .replace(/(['"`])(?:\\.|(?!\1).)*\1/g, " ")
+  const names = new Set<string>()
+  const keywords = new Set(["if", "for", "while", "switch", "catch", "function", "return", "import"])
+  for (const match of stripped.matchAll(/(?<![\w$])([$A-Za-z_][\w$]*)\s*\(/g)) {
+    const name = match[1]
+    if (!name || keywords.has(name)) continue
+    const at = match.index ?? 0
+    if (/\bfunction\s+$/.test(stripped.slice(Math.max(0, at - 16), at))) continue
+    names.add(name)
+  }
+  return names
+}
+
 export function mutationToolGuidance(toolNames: readonly string[]): string {
   if (!toolNames.includes("apply_patch") && !toolNames.includes("create_file")) return ""
   return [
