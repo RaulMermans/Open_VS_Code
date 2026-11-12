@@ -359,8 +359,33 @@ function outcomeTitle(items: any[]): string {
   return label || "Completed";
 }
 
+function activityFiles(items: any[]): string[] {
+  var seen: Record<string, boolean> = {};
+  var paths: string[] = [];
+  for (var i = 0; i < items.length; i++) {
+    var act = items[i];
+    var kind = act && act.kind;
+    if (kind !== "tool" && kind !== "mutation") continue;
+    var summary = act && act.summary;
+    if (typeof summary !== "string") continue;
+    var path = summary.trim();
+    if (!path || path.length > 80 || path.indexOf("\n") !== -1) continue;
+    if (!seen[path]) {
+      seen[path] = true;
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+function fileCountPhrase(count: number, inspected: boolean): string {
+  if (count <= 0) return "";
+  return " — " + String(count) + " " + (count === 1 ? "file" : "files") + (inspected ? " inspected" : "");
+}
+
 function groupTitle(category: string, items: any[]): string {
   var status = activityGroupStatus(items);
+  var files = activityFiles(items);
   if (category === "approval") {
     if (status === "pending") return "Waiting for approval";
     if (status === "failed") return "Permission denied";
@@ -369,33 +394,37 @@ function groupTitle(category: string, items: any[]): string {
   }
   if (category === "outcome") return outcomeTitle(items);
   if (category === "checks") {
-    if (status === "pending") return "Running checks";
-    if (status === "failed") return "Checks failed";
-    if (status === "cancelled") return "Checks cancelled";
-    return "Checks finished";
+    if (status === "pending") return "Verifying";
+    if (status === "failed") return "Verification failed";
+    if (status === "cancelled") return "Verification cancelled";
+    return "Verification finished";
   }
   if (category === "edit") {
-    if (status === "pending") return "Editing files";
-    if (status === "failed") return "Edit failed";
-    if (status === "cancelled") return "Edit cancelled";
-    return "Edited files";
+    var editBase = status === "pending" ? "Implementing changes" : status === "failed" ? "Edit failed" : status === "cancelled" ? "Edit cancelled" : "Implemented changes";
+    return editBase + fileCountPhrase(files.length, false);
   }
-  var titles: Record<string, string> = {
-    understand: "Understanding the request",
-    explore: "Exploring the repository",
-    read: "Reading files",
-    consult: "Consulting the model",
-    plan: "Planning changes",
-    edit: "Editing files",
-    approval: "Waiting for approval",
-    checks: "Running checks",
-    review: "Reviewing results",
-    outcome: "Completed",
-  };
-  var base = titles[category] || "Working";
-  if (status === "failed") return base + " failed";
-  if (status === "cancelled") return base + " cancelled";
-  return base;
+  if (category === "explore") {
+    var exploreBase = status === "failed" ? "Exploring repository failed" : status === "cancelled" ? "Exploring repository cancelled" : status === "pending" ? "Exploring repository" : "Explored repository";
+    return exploreBase + fileCountPhrase(files.length, true);
+  }
+  if (category === "read") {
+    var readBase = status === "failed" ? "Reading files failed" : status === "cancelled" ? "Reading files cancelled" : status === "pending" ? "Reading files" : "Read files";
+    return readBase + fileCountPhrase(files.length, false);
+  }
+  if (category === "consult") {
+    if (status === "failed") return "Model request failed";
+    if (status === "cancelled") return "Thinking cancelled";
+    if (status === "pending") return "Thinking";
+    return "Model replied";
+  }
+  if (category === "plan") {
+    if (status === "failed") return "Planning failed";
+    if (status === "cancelled") return "Planning cancelled";
+    return "Planning changes";
+  }
+  if (category === "understand") return "Understanding the request";
+  if (category === "review") return "Reviewing results";
+  return "Working";
 }
 
 function groupDetail(items: any[]): string {
@@ -411,27 +440,51 @@ function groupDetail(items: any[]): string {
   return shown;
 }
 
+function pushActivityGroup(summarized: Array<{ category: string; title: string; status: string; count: number; detail: string }>, category: string, items: any[]): void {
+  var showPaths = category === "edit" || category === "read" || category === "explore";
+  summarized.push({
+    category: category,
+    title: groupTitle(category, items),
+    status: activityGroupStatus(items),
+    count: items.length,
+    detail: showPaths ? groupDetail(items) : "",
+  });
+}
+
 export function summarizeActivities(activities: any[]): Array<{ category: string; title: string; status: string; count: number; detail: string }> {
-  var groups: Array<{ category: string; items: any[] }> = [];
+  var summarized: Array<{ category: string; title: string; status: string; count: number; detail: string }> = [];
   var list = activities || [];
-  for (var i = 0; i < list.length; i++) {
-    var act = list[i];
-    var category = activityCategory(act);
-    var current = groups[groups.length - 1];
-    if (current && current.category === category) current.items.push(act);
-    else groups.push({ category: category, items: [act] });
+  var segments: Array<{ items: any[]; outcome: any }> = [];
+  var segment: any[] = [];
+  for (var n = 0; n < list.length; n++) {
+    var item = list[n];
+    if (activityCategory(item) === "outcome") {
+      segments.push({ items: segment, outcome: item });
+      segment = [];
+    } else {
+      segment.push(item);
+    }
   }
-  var summarized = [];
-  for (var g = 0; g < groups.length; g++) {
-    var group = groups[g];
-    if (!group) continue;
-    summarized.push({
-      category: group.category,
-      title: groupTitle(group.category, group.items),
-      status: activityGroupStatus(group.items),
-      count: group.items.length,
-      detail: group.category === "edit" || group.category === "read" ? groupDetail(group.items) : "",
-    });
+  if (segment.length) segments.push({ items: segment, outcome: null });
+  for (var s = 0; s < segments.length; s++) {
+    var part = segments[s];
+    if (!part) continue;
+    var buckets: Array<{ category: string; items: any[] }> = [];
+    for (var i = 0; i < part.items.length; i++) {
+      var act = part.items[i];
+      var category = activityCategory(act);
+      var bucket = null;
+      for (var b = 0; b < buckets.length; b++) {
+        if (buckets[b] && buckets[b].category === category) bucket = buckets[b];
+      }
+      if (bucket) bucket.items.push(act);
+      else buckets.push({ category: category, items: [act] });
+    }
+    for (var g = 0; g < buckets.length; g++) {
+      var group = buckets[g];
+      if (group) pushActivityGroup(summarized, group.category, group.items);
+    }
+    if (part.outcome) pushActivityGroup(summarized, "outcome", [part.outcome]);
   }
   return summarized;
 }
@@ -476,7 +529,6 @@ export function renderActivityTimeline(container: any, activities: any[], doc?: 
     label.className = "activity-label";
     var text = item.title;
     if (item.detail) text += ": " + item.detail;
-    if (item.count > 1) text += " (" + String(item.count) + ")";
     setText(label, text);
     li.appendChild(mark);
     li.appendChild(label);
@@ -1015,6 +1067,12 @@ export function renderConfirmationSummary(
 
   div.appendChild(title);
   div.appendChild(summary);
+  if (conf.mutationId && !conf.responding) {
+    var proposed = d.createElement('div');
+    proposed.className = 'review-detail';
+    setText(proposed, 'Proposed — nothing is written until you approve this change.');
+    div.appendChild(proposed);
+  }
   if (conf.preparedCommand) {
     var pc = conf.preparedCommand;
     var cmdBox = d.createElement('div');
@@ -3813,8 +3871,11 @@ export function webviewRenderRuntime(): string {
     activityCategory.toString(),
     activityGroupStatus.toString(),
     outcomeTitle.toString(),
+    activityFiles.toString(),
+    fileCountPhrase.toString(),
     groupTitle.toString(),
     groupDetail.toString(),
+    pushActivityGroup.toString(),
     summarizeActivities.toString(),
     renderActivityTimeline.toString(),
     renderContextChips.toString(),

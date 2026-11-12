@@ -131,15 +131,16 @@ test("activity groups real events and keeps the raw trace collapsed", () => {
   assert.equal(groups[0]?.title, "Understanding the request");
   const reading = groups.find((group) => group.category === "read");
   assert.equal(reading?.status, "failed");
+  assert.equal(reading?.title, "Reading files failed — 2 files");
   assert.match(reading?.detail || "", /src\/a\.ts/);
   assert.match(reading?.detail || "", /src\/b\.ts/);
-  assert.equal(groups.find((group) => group.category === "consult")?.title, "Consulting the model");
+  assert.equal(groups.find((group) => group.category === "consult")?.title, "Thinking");
   assert.equal(groups.some((group) => group.title === "Planning changes"), false);
 
   const root = new MockElement("div");
   renderActivityTimeline(root, activities, mockDoc());
   const summaryText = labels(root, "activity-label").join("\n");
-  assert.match(summaryText, /Reading files failed/);
+  assert.match(summaryText, /Reading files failed — 2 files/);
   assert.match(summaryText, /read_file failed — src\/b\.ts/);
   const trace = root.querySelector("details");
   assert.equal(trace?.className, "activity-trace");
@@ -270,13 +271,40 @@ test("two sequential tasks keep the earlier run's files and checks out of the la
   assert.doesNotMatch(pastClaim.content, /Tests passed/);
 });
 
+test("interleaved reads and model waits collapse to one line per kind", () => {
+  const groups = summarizeActivities([
+    { id: "s", kind: "task", label: "Starting task", status: "completed" },
+    { id: "e1", kind: "tool", label: "grep completed", status: "completed", toolName: "grep", summary: "src/a.ts" },
+    { id: "m1", kind: "model", label: "Waiting for the model", status: "completed" },
+    { id: "e2", kind: "tool", label: "grep completed", status: "completed", toolName: "grep", summary: "src/b.ts" },
+    { id: "m2", kind: "model", label: "Waiting for the model", status: "pending" },
+    { id: "w1", kind: "mutation", label: "Editing src/a.ts", status: "pending", summary: "src/a.ts" },
+    { id: "w2", kind: "mutation", label: "Editing src/c.ts", status: "pending", summary: "src/c.ts" },
+    { id: "w3", kind: "mutation", label: "Editing src/d.ts", status: "completed", summary: "src/d.ts" },
+  ]);
+  assert.equal(groups.filter((group) => group.category === "explore").length, 1);
+  assert.equal(groups.find((group) => group.category === "explore")?.title, "Explored repository — 2 files inspected");
+  assert.equal(groups.find((group) => group.category === "consult")?.title, "Thinking");
+  assert.equal(groups.find((group) => group.category === "edit")?.title, "Implementing changes — 3 files");
+  const root = new MockElement("div");
+  renderActivityTimeline(root, groups.length ? [
+    { id: "e1", kind: "tool", label: "grep completed", status: "completed", toolName: "grep", summary: "src/a.ts" },
+    { id: "m1", kind: "model", label: "Waiting for the model", status: "completed" },
+    { id: "e2", kind: "tool", label: "grep completed", status: "completed", toolName: "grep", summary: "src/b.ts" },
+  ] : [], mockDoc());
+  const summaryText = labels(root, "activity-label").join("\n");
+  assert.match(summaryText, /Explored repository — 2 files inspected/);
+  assert.match(summaryText, /grep completed — src\/a\.ts/);
+  assert.equal(root.querySelector("details")?.open, false);
+});
+
 test("planning is titled only when the activity carries plan evidence", () => {
   const ask = summarizeActivities([
     { id: "m", kind: "model", label: "Waiting for the model", status: "pending" },
-    { id: "g", kind: "tool", label: "Running grep", status: "completed", toolName: "grep" },
+    { id: "g", kind: "tool", label: "Running grep", status: "pending", toolName: "grep" },
   ]);
-  assert.equal(ask.find((group) => group.category === "consult")?.title, "Consulting the model");
-  assert.equal(ask.find((group) => group.category === "explore")?.title, "Exploring the repository");
+  assert.equal(ask.find((group) => group.category === "consult")?.title, "Thinking");
+  assert.equal(ask.find((group) => group.category === "explore")?.title, "Exploring repository");
   assert.equal(ask.some((group) => group.title === "Planning changes"), false);
 
   const plan = summarizeActivities([

@@ -94,7 +94,8 @@ The authority map is unchanged. No new agent, permission, or provider method.
 
 - The runner appends `CONVERSATIONAL_RESPONSE_GUIDANCE` to the existing operating guidelines. It does not add a second model call.
 - `formatTerminalTaskMessage` may append a verified-outcome block built from `appliedMutations` and review rows whose `runId` matches the current turn. A review with no run id, or a different run id, does not support that block. It does not infer files or tests from the model's prose. A command is a test, lint, typecheck, or other check from its script name or command text. A successful command with no test identity is not reported as a passing test. An unsupported-claim note matches a past report such as "tests passed", and leaves "tests pass" and "tests will pass" alone.
-- The webview shows grouped activity titles and keeps the raw event labels in a collapsed technical-details list. "Planning changes" is used only when the turn's task mode is PLAN.
-- Token streaming stays deferred. `ModelProvider.complete` still returns one `ModelResponse`.
+- The webview shows one summary line per activity kind inside a task. File work names the real paths: "Exploring repository — N files inspected", "Reading files — N files", "Implementing changes — N files". A model wait is "Thinking" until that call finishes, then "Model replied". "Planning changes" is used only when the turn's task mode is PLAN. The raw event labels stay in a collapsed technical-details list.
+- A file approval card says the change is proposed and is not written until that card is approved. The Approve click still posts the confirmation id already bound to that card.
+- Token streaming stays deferred. `ModelProvider` exposes `complete()` and no delta method. Ollama is called through that single response. A character-by-character animation would invent stream events the provider did not send.
 
 Record: `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`.
