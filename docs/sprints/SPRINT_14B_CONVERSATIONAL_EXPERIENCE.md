@@ -48,7 +48,7 @@ There is no second summarization call. Coding tools, ASK denial, PLAN approval, 
 
 ## Activity
 
-`summarizeActivities` folds consecutive events into the titles Understanding the request, Exploring the repository, Reading files, Consulting the model, Planning changes, Editing files, Waiting for approval, Running checks, Reviewing results, and Completed / Failed / Cancelled / Blocked. Planning changes appears only when the activity is marked from a PLAN-mode task. A failed event keeps the group failed. Counts are the number of real events in the group. Repeated verification lifecycle events update one row. The technical list is a `<details>` element that starts closed, and it keeps the run id.
+`summarizeActivities` keeps one line per activity kind inside a task. Titles name the work and, when the events carry paths, the file count: Exploring repository — N files inspected, Reading files — N files, Implementing changes — N files. A model wait is Thinking until it finishes, then Model replied. Planning changes appears only when the activity is marked from a PLAN-mode task. A failed event keeps the group failed. The technical list is a `<details>` element that starts closed, and it keeps every event label and the run id.
 
 ## Sprint 14B.1
 

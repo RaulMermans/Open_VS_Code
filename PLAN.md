@@ -1,3 +1,10 @@
+Milestone 2 — Agent workspace presentation
+STATUS: IN_PROGRESS
+  - Activity summaries merge one kind of work inside a task. File counts come from tool and mutation paths already on those events. A model wait reads "Thinking" until that call finishes. The technical trace stays collapsed and still lists every event.
+  - An approval card for a file says the change is proposed and is not written until that card is approved. The click still sends the confirmation id on the card.
+  - Streaming stays deferred. `ModelProvider` has `complete()` only. Ollama returns one response. No character-by-character simulation was added.
+  - Installed `0.1.0-rc.16` was not replaced. These presentation changes are in the working tree.
+
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
   - Permanent lab: `apps/desktop/acceptance/`, 46 scenarios, isolated temp profiles, sandbox left on, no silent approvals on real projects.

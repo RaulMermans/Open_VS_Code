@@ -30,7 +30,9 @@
 
 ## Current sprint
 
-Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. The installed desktop is still `0.1.0-rc.13`. The current unpacked extension passed CODE-REFACTOR and CODE-RECOVER after earlier failures, and failed CODE-MULTI on the same run. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+Milestone 2 — Agent workspace presentation. Status: `IN_PROGRESS`. Installed desktop is `0.1.0-rc.16` and was not replaced. Activity summaries now use one line per kind of work inside a task, with file counts taken from real tool and mutation paths. Streaming stays deferred because `ModelProvider.complete` returns one response. Personal V1 remains NO-GO until the new presentation is exercised on a candidate package. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
+
+Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 
 Sprint 14C.1A — Global model hardening and desktop acceptance. Status: `PARTIALLY_VERIFIED`. `0.1.0-rc.12` from `6417724105` is installed. Playwright opened that binary with the sandbox enabled. An untrusted folder kept the global route, and `qwen3-coder:30b` answered `pong`. Wider chat, a second repository, and a live-profile restart were not walked. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
 

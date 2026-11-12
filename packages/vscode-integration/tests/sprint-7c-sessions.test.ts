@@ -1114,8 +1114,8 @@ describe("Sprint 14B.1 task evidence", () => {
     assert.equal(fx.state().reviews.some((review: any) => review.runId === "run-one" && review.path === "src/a.ts"), true);
     const titles = summarizeActivities(fx.state().activities).map((group) => group.title);
     assert.equal(titles.includes("Planning changes"), false);
-    assert.equal(titles.includes("Reading files"), true);
-    assert.equal(titles.includes("Consulting the model"), true);
+    assert.equal(titles.includes("Read files — 1 file"), true);
+    assert.equal(titles.some((title) => title === "Thinking" || title === "Model replied"), true);
 
     await fx.controller.flushPersistence();
     const saved = await fx.st.read(fx.state().conversationId);
