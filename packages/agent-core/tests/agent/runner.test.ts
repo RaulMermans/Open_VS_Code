@@ -100,7 +100,7 @@ test("turns unknown and invalid calls into observations without executing a tool
 test("pauses for confirmation, executes only after approval, and resumes", async () => {
   let executions = 0
   const registration: ToolRegistration = {
-    definition: { name: "inspect_sensitive", description: "Inspect synthetic data.", action: "run_known_test", inputSchema: {} },
+    definition: { name: "inspect_sensitive", description: "Inspect synthetic data.", action: "git_commit", inputSchema: {} },
     validate: (value) => {
       if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length) throw new TypeError("no arguments expected")
       return {}
@@ -175,11 +175,23 @@ test("terminates model failure, maximum turns, and repeated non-progress distinc
   assert.equal(modelFailure.status, "FAILED")
   assert.equal(modelFailure.failureReason, "MODEL_ERROR")
 
-  const maxTurns = await createRunner(new ScriptedModelProvider([
+  const limited = createRunner(new ScriptedModelProvider([
     response("read", [{ id: "one", name: "read_file", arguments: { path: "README.md" } }]),
-  ])).run(input({ maxTurns: 1 }))
+    (request) => {
+      const blob = request.messages.map((message) => message.content).join("\n")
+      assert.match(blob, /README|read_file|observation|continuation/s)
+      return response("Finished from the preserved observations.")
+    },
+    response("Finished from the preserved observations."),
+  ]))
+  const maxTurns = await limited.run(input({ maxTurns: 1 }))
   assert.equal(maxTurns.failureReason, "MAX_TURNS_EXCEEDED")
   assert.equal(maxTurns.events.at(-1)!.type, "task.max_turns")
+  assert.equal(maxTurns.toolCalls[0]?.name, "read_file")
+  const continued = await limited.continueFromLimit(2)
+  assert.equal(continued.status, "COMPLETED")
+  assert.equal(continued.toolCalls[0]?.name, "read_file")
+  assert.match(continued.finalAnswer ?? "", /Finished from the preserved observations/)
 
   const repeated = Array.from({ length: 3 }, (_, index) => response("again", [
     { id: `repeat-${index}`, name: "read_file", arguments: { path: "README.md" } },

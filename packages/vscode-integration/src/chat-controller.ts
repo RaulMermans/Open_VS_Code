@@ -706,13 +706,13 @@ export class ChatController {
               const tEntry = this.terminalReviewController.getByExecutionId(termId);
               if (tEntry) this.syncTerminalState(tEntry);
             }
+            if (message.action === 'REJECT' && mutId) {
+              await this.setMutationStatus(mutId, 'REJECTED', USER_REJECTION_MESSAGE);
+              this.diffReviewController.clearReview(mutId);
+            }
             this.sendState();
             const resolver = this._confirmationResolver;
             this._confirmationResolver = undefined;
-            if (message.action === 'REJECT' && mutId) {
-              this.setMutationStatus(mutId, 'REJECTED', USER_REJECTION_MESSAGE);
-              this.diffReviewController.clearReview(mutId);
-            }
             this._confirmationInFlight = false;
             resolver(message.action);
           }
@@ -760,7 +760,7 @@ export class ChatController {
         break;
       case 'ui.openDiff':
         if (isDiffPreviewStatus(this.diffReviewController.getStatus(message.mutationId))) {
-          this.diffReviewController.openDiff(message.mutationId, message.path, message.isCreate);
+          await this.diffReviewController.openDiff(message.mutationId, message.path, message.isCreate);
         }
         break;
       case 'ui.copyCode':
@@ -1076,10 +1076,13 @@ export class ChatController {
   }
 
   /** The one place a mutation's review status changes, so the diff registry and ledger agree. */
-  private setMutationStatus(mutationId: string, status: ReviewStatus, detail?: string): void {
+  private async setMutationStatus(mutationId: string, status: ReviewStatus, detail?: string): Promise<void> {
     this.diffReviewController?.setStatus?.(mutationId, status);
     if (status === 'REJECTED' || status === 'CANCELLED') {
-      this.diffReviewController?.closeDiffEditors?.(mutationId);
+      const closer = this.diffReviewController?.closeDiffEditors;
+      if (typeof closer === 'function') {
+        await Promise.resolve(closer.call(this.diffReviewController, mutationId));
+      }
     }
     const record = this.findReview(mutationId, 'mutation');
     if (!record) return;

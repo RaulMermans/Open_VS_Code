@@ -551,6 +551,13 @@ function renderOutcomeBody(body: any, content: string, d: any, postMessage?: (ms
   var card = d.createElement("div");
   card.className = "outcome-card" + (rejected ? " is-rejected" : " is-verified");
   setAttr(card, "role", "status");
+  setAttr(card, "data-outcome", rejected ? "rejected" : "verified");
+  if (!rejected) {
+    var heading = d.createElement("div");
+    heading.className = "outcome-title";
+    setText(heading, "Task completed.");
+    card.appendChild(heading);
+  }
   var lines = facts.split("\n");
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
@@ -888,8 +895,6 @@ export function renderTerminalOutput(
   cmdBox.className = 'terminal-command-box';
   setAttr(cmdBox, 'aria-label', 'Command line');
   setText(cmdBox, term.command || '');
-  card.appendChild(cmdBox);
-
   var meta = d.createElement('div');
   meta.className = 'terminal-meta';
   if (term.executable) appendMetaRow(d, meta, 'Executable', term.executable, true);
@@ -898,7 +903,19 @@ export function renderTerminalOutput(
   appendMetaRow(d, meta, 'Source', term.provenance || '');
   if (term.scriptName && term.scriptBody) appendMetaRow(d, meta, 'Script', term.scriptBody, true);
   appendMetaRow(d, meta, 'Time limit', formatDuration(term.timeoutMs));
-  card.appendChild(meta);
+  if (finished) {
+    var details = d.createElement('details');
+    details.className = 'terminal-details';
+    var summary = d.createElement('summary');
+    setText(summary, 'Command details');
+    details.appendChild(summary);
+    details.appendChild(cmdBox);
+    details.appendChild(meta);
+    card.appendChild(details);
+  } else {
+    card.appendChild(cmdBox);
+    card.appendChild(meta);
+  }
 
   var elapsedEl = null;
   if (running && typeof term.startedAt === 'number') {
@@ -1113,10 +1130,13 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
         openBtn.className = 'btn-reject review-action';
         openBtn.type = 'button';
         var showApplied = r.status === 'applied' || r.status === 'verified';
-        setText(openBtn, showApplied ? 'Changes' : 'Open');
-        setAttr(openBtn, 'aria-label', (showApplied ? 'Show changes in ' : 'Open ') + r.path);
-        onClick(openBtn, function (mid: string) { return function () { send({ type: 'review.openChange', mutationId: mid }); }; }(r.id));
-        li.appendChild(openBtn);
+        var historical = r.status === 'rejected' || r.status === 'cancelled' || r.status === 'interrupted';
+        if (!historical) {
+          setText(openBtn, showApplied ? 'Changes' : 'Open');
+          setAttr(openBtn, 'aria-label', (showApplied ? 'Show changes in ' : 'Open ') + r.path);
+          onClick(openBtn, function (mid: string) { return function () { send({ type: 'review.openChange', mutationId: mid }); }; }(r.id));
+          li.appendChild(openBtn);
+        }
       } else if (r.kind === 'command' && r.status !== 'pending' && r.status !== 'rejected' && r.outputAvailable !== false) {
         var outBtn = d.createElement('button');
         outBtn.className = 'btn-reject review-action';

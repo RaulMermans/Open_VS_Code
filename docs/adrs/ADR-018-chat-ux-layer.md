@@ -110,4 +110,14 @@ The authority map is unchanged. No new agent, permission, or provider method. St
 - Completed coding turns show a compact outcome card (changed files, tests passed vs not executed). Finished command output stays collapsed until the user opens it.
 - `MAX_TURNS_EXCEEDED` is presented as a stop with finished work, unfinished work, and a recovery notice. Writes are not replayed.
 
-Installed `0.1.0-rc.16` was not replaced. Presentation polish is in `ff96af72e1`. Clean candidate `0.1.0-rc.18` is not installed. Packaged CDP on `/tmp/ovsc-rc18` (`2026-11-13T08-51-11-683Z`) passed the objective Wider Chat, activity, diff, reject, verify, and history GUI checks. Appearance still needs a person. Review copies: `apps/desktop/acceptance/review/m2-rc18-visual-2026-11-13/`.
+Installed `0.1.0-rc.16` was not replaced. Presentation polish is in `ff96af72e1`. Clean candidate `0.1.0-rc.18` is not installed.
+
+Milestone 3 coding comparison (2026-11-13, overlay still not installed): same-digest `qwen3-coder:30b` 12-task live harness scored Open VS Code 11/12 vs OpenCode 3/12. Native tool messages stay opt-in.
+
+Milestone 3 visual corrections (unpacked extension overlay, daily driver still rc.16):
+
+- Reject awaits `closeDiffEditors` (in-flight `vscode.diff` included). After reject the Review tab is gone, the ledger is Rejected, and Open is not offered on a rejected row.
+- Completed coding turns keep a compact outcome card (`Task completed`, changed files, tests passed/failed/not executed) in view; finished command metadata is inside collapsed details.
+- Acceptance applies real window bounds and records `innerWidth`/`outerWidth`. At 1100×800, Models, composer, and Wider Chat remain usable; the header wraps instead of overlapping.
+
+CDP: UX-DIFF `2026-11-13T09-19-14-047Z` objective pass (`NEEDS_REVIEW` appearance), UX-WIDE PASS, CODE-BUG PASS with `outcomeVisible: true`. Copies: `apps/desktop/acceptance/review/m3-visual-2026-11-13/`.

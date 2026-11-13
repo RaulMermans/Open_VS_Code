@@ -582,6 +582,9 @@ export class MutationEngine {
     }
 
     const currentHash = sha256(currentContent)
+    if (currentHash === prepared.resultHash) {
+      return this.#alreadyAppliedResult(prepared)
+    }
     if (currentHash !== prepared.baseHash) {
       return this.#failureResult(prepared, "STALE_BASE", `File changed since preparation (expected ${prepared.baseHash.slice(0, 12)}, got ${currentHash.slice(0, 12)})`)
     }
@@ -637,6 +640,10 @@ export class MutationEngine {
     // Verify file still doesn't exist
     try {
       await access(prepared.resolvedPath)
+      const existing = await readFile(prepared.resolvedPath)
+      if (sha256(existing.toString("utf8")) === prepared.resultHash) {
+        return this.#alreadyAppliedResult(prepared)
+      }
       return this.#failureResult(prepared, "FILE_EXISTS", `File now exists: ${prepared.path}`)
     } catch (error) {
       if (error instanceof MutationFailure) throw error
@@ -793,6 +800,17 @@ export class MutationEngine {
   }
 
   // --- Observation ---
+
+  #alreadyAppliedResult(prepared: PreparedMutation): MutationResult {
+    return {
+      id: prepared.id,
+      status: "APPLIED",
+      path: prepared.path,
+      operation: prepared.operation,
+      diff: prepared.diff,
+      observation: `${this.#formatObservation(prepared)}\nAlready at the proposed content; no write.`,
+    }
+  }
 
   #formatObservation(prepared: PreparedMutation): string {
     const op = prepared.operation === "patch" ? "Modified" : "Created"

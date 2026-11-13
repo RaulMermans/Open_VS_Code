@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { runInNewContext } from "node:vm"
 import { permitConfirmation, resolveInsideWorkspace } from "./src/confirmation-allow.ts"
 import { CDP_SURFACE_RUNTIME, CDP_TURN_RUNTIME, assertLocalDebuggerUrl, confirmationAllowed, debuggerBindProblems, interpretCdpTurn } from "./src/cdp-turn.ts"
+import { parseAcceptanceWindowSize } from "./src/cdp-driver.ts"
 import { assessJourney } from "./src/journey.ts"
 import { GUEST_RUNTIME } from "./src/guest-bridge.ts"
 import { loadCatalog, scenarioHarness } from "./src/catalog.ts"
@@ -556,6 +557,11 @@ test("a disabled Agent mode is not clicked and is not retried as a send", async 
   assert.equal(result.sendClicks, 0)
   assert.deepEqual(clicks, [])
   assert.match(result.reason ?? "", /trusted/)
+})
+
+test("acceptance window size is parsed independently of Electron launch flags", () => {
+  assert.deepEqual(parseAcceptanceWindowSize("1100,800"), { width: 1100, height: 800 })
+  assert.deepEqual(parseAcceptanceWindowSize("1440x900"), { width: 1440, height: 900 })
 })
 
 test("Agent Webview scenarios use CDP; workbench-only scenarios stay on Playwright", () => {

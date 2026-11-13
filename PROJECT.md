@@ -30,7 +30,9 @@
 
 ## Current sprint
 
-Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. Packaged CDP on `/tmp/ovsc-rc18` passed CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY. UX-ACTIVITY and UX-DIFF stay `NEEDS_REVIEW` for appearance. Visual copies: `apps/desktop/acceptance/review/m2-rc18-visual-2026-11-13/`. Streaming stays deferred. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
+Milestone 3 — Real coding intelligence. Status: `IN_PROGRESS`. Daily driver remains `0.1.0-rc.16`. The three rc.18 visual defects are closed on an unpacked extension overlay. Native tool-message encoding remains opt-in and now carries tool arguments. Idempotent mutation apply and `continueFromLimit` are in agent-core. Same-digest `qwen3-coder:30b` 12-task comparison: Open VS Code 11/12 vs OpenCode 3/12. Native encoding 4/4 on a compiled-passing subset; compiled-user stays default. Deterministic coding eval is 30/30. No new package. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-044-native-tool-messages.md`.
+
+Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. Packaged CDP on `/tmp/ovsc-rc18` passed CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY. UX-ACTIVITY and UX-DIFF stay `NEEDS_REVIEW` for appearance on that package. Visual copies: `apps/desktop/acceptance/review/m2-rc18-visual-2026-11-13/`. Streaming stays deferred. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
 
 Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 

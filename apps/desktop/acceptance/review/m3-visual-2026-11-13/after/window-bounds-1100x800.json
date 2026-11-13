@@ -1,0 +1,15 @@
+{
+  "requested": {
+    "width": 1100,
+    "height": 800
+  },
+  "actual": {
+    "innerWidth": 1100,
+    "innerHeight": 800,
+    "outerWidth": 1132,
+    "outerHeight": 842
+  },
+  "method": "resizeTo",
+  "modelsVisible": true,
+  "composerVisible": true
+}

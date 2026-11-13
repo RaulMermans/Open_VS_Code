@@ -1,4 +1,6 @@
 import { createToolObservation, type ToolObservation } from "./observations.ts"
+import { buildNativeToolMessages, resolveConversationEncoding, type ConversationEncoding } from "./native-tool-messages.ts"
+export type { ConversationEncoding }
 import { createAgentEvent, type AgentEventFactory, type AgentEventType } from "./events.ts"
 import { applyAgentEvent, initialAgentState } from "./state.ts"
 import { compileContext, type ContextCompilerInput } from "../context/compiler.ts"
@@ -65,6 +67,8 @@ export interface AgentRunnerInput {
   readonly signal?: AbortSignal
   readonly taskProfile?: TaskProfile
   readonly repairCycles?: number
+  /** Isolated A/B switch. Default remains a single compiled user message. */
+  readonly conversationEncoding?: ConversationEncoding
 }
 
 export interface AgentRunnerDependencies {
@@ -91,6 +95,7 @@ export interface AgentRunnerDependencies {
    * is then the only stall protection, exactly as before.
    */
   readonly progressMonitor?: { readonly enabled: boolean; readonly thresholds?: Partial<ProgressThresholds> }
+  readonly conversationEncoding?: ConversationEncoding
 }
 
 interface PendingConfirmation {
@@ -100,7 +105,7 @@ interface PendingConfirmation {
 }
 
 interface Session {
-  readonly input: AgentRunnerInput
+  input: AgentRunnerInput
   readonly taskProfile: TaskProfile
   readonly evidenceLedger: EvidenceLedger
   readonly evidenceCollector: RuntimeEvidenceCollector
@@ -152,6 +157,26 @@ export class AgentRunnerError extends Error {
     super(message)
     this.name = "AgentRunnerError"
     this.code = code
+  }
+}
+
+function toolArguments(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function recordCall(
+  prepared: { id: string; name: string; arguments?: unknown },
+  outcome: AgentToolCallRecord["outcome"],
+  truncated?: boolean,
+): AgentToolCallRecord {
+  const argumentsValue = toolArguments(prepared.arguments)
+  return {
+    id: prepared.id,
+    name: prepared.name,
+    outcome,
+    ...(truncated !== undefined ? { truncated } : {}),
+    ...(argumentsValue ? { arguments: argumentsValue } : {}),
   }
 }
 
@@ -211,6 +236,7 @@ export class AgentRunner {
   readonly #checkpointCoordinator?: CheckpointCoordinator | undefined
   readonly #performanceLedger?: ModelPerformanceLedger | undefined
   readonly #progressMonitor?: AgentRunnerDependencies["progressMonitor"] | undefined
+  readonly #conversationEncoding?: ConversationEncoding | undefined
   #session?: Session | undefined
 
   constructor(dependencies: AgentRunnerDependencies) {
@@ -233,6 +259,7 @@ export class AgentRunner {
     this.#checkpointCoordinator = dependencies.checkpointCoordinator
     this.#performanceLedger = dependencies.performanceLedger
     this.#progressMonitor = dependencies.progressMonitor
+    this.#conversationEncoding = dependencies.conversationEncoding
     if (!Number.isInteger(this.#nonProgressThreshold) || this.#nonProgressThreshold < 2) {
       throw new AgentRunnerError("INVALID_INPUT", "nonProgressThreshold must be an integer of at least 2")
     }
@@ -296,6 +323,36 @@ export class AgentRunner {
         return this.#result()
       }
     }
+    return this.#continue()
+  }
+
+  /**
+   * User-authorized continuation after MAX_TURNS_EXCEEDED.
+   * Keeps observations, tool records, and applied mutations. Does not replay them.
+   */
+  async continueFromLimit(additionalTurns: number): Promise<AgentResult> {
+    const session = this.#session
+    if (!session) throw new AgentRunnerError("NO_PENDING_CONFIRMATION", "No task has been started")
+    if (session.failureReason !== "MAX_TURNS_EXCEEDED") {
+      throw new AgentRunnerError("INVALID_INPUT", "continueFromLimit requires a turn-budget pause")
+    }
+    if (!Number.isInteger(additionalTurns) || additionalTurns <= 0) {
+      throw new AgentRunnerError("INVALID_INPUT", "additionalTurns must be a positive integer")
+    }
+    session.input = { ...session.input, maxTurns: session.input.maxTurns + additionalTurns }
+    delete session.failureReason
+    delete session.finalAnswer
+    session.state = {
+      ...session.state,
+      status: "OBSERVING",
+    }
+    const completed = this.#completedWorkNotice()
+    session.observations.push(createToolObservation({
+      toolName: "continuation",
+      callId: `continue-${session.turns}`,
+      output: completed,
+      maxContentBytes: this.#observationMaxBytes,
+    }))
     return this.#continue()
   }
 
@@ -573,9 +630,15 @@ export class AgentRunner {
               if (!isVerification) session.completedExploration?.clear()
             }
           }
-          observation = createToolObservation({ toolName: pending.prepared.name, callId: pending.prepared.id, output: result, maxContentBytes: this.#observationMaxBytes })
+          observation = createToolObservation({
+            toolName: pending.prepared.name,
+            callId: pending.prepared.id,
+            output: result,
+            maxContentBytes: this.#observationMaxBytes,
+            ...(toolArguments(pending.prepared.arguments) ? { arguments: toolArguments(pending.prepared.arguments) } : {}),
+          })
           session.observations.push(observation)
-          session.toolCalls.push({ id: pending.prepared.id, name: pending.prepared.name, outcome: reviewSucceeded ? "COMPLETED" : "FAILED", truncated: observation.truncated })
+          session.toolCalls.push(recordCall(pending.prepared, reviewSucceeded ? "COMPLETED" : "FAILED", observation.truncated))
           session.evidenceLedger.recordObservation(
             pending.prepared.name,
             pending.prepared.id,
@@ -891,16 +954,29 @@ export class AgentRunner {
       return this.#result()
     }
 
+    const working = latestCp.runtimeState.workingContext
+    for (const path of working?.completedPaths ?? []) {
+      evidenceCollector.recordMutationOutcome({
+        mutationId: `recovered:${path}`,
+        path,
+        status: "APPLIED",
+        diffSummary: "already applied before recovery",
+        operation: "patch",
+      })
+    }
+    const recoveredTask = latestCp.runtimeState.activeTask
+    const recoveredInstruction = recoveredTask?.instruction ?? instruction
+    const recoveredMode = (recoveredTask?.mode as AgentRunnerInput["task"]["mode"] | undefined) ?? mode
     this.#session = {
       input: {
         workspaceRoot: wsRoot,
-        task: { id: runId, instruction, mode },
-        maxTurns: 10,
+        task: { id: runId, instruction: recoveredInstruction, mode: recoveredMode },
+        maxTurns: Math.max(10, (latestCp.turnId ?? 0) + 8),
         contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
         projectInstructions: [],
         ...(options?.signal ? { signal: options.signal } : {}),
       },
-      taskProfile,
+      taskProfile: classifyTaskProfile(recoveredInstruction, recoveredMode),
       evidenceLedger: new EvidenceLedger(),
       evidenceCollector,
       evalEngine,
@@ -908,13 +984,25 @@ export class AgentRunner {
       evalLedger,
       evalAnalytics,
       evalResults: [],
-      state: initialAgentState(),
+      state: {
+        status: "OBSERVING",
+        task: { id: runId, instruction: recoveredInstruction, mode: recoveredMode },
+        events: [],
+      },
       turns: latestCp.turnId ?? 0,
       continuationAttempts: 0,
-      observations: [],
+      observations: [...(working?.observations ?? [])] as ToolObservation[],
       diagnostics: [],
-      toolCalls: [],
+      toolCalls: [...(working?.toolCalls ?? [])] as AgentToolCallRecord[],
       repeatedProgress: 0,
+    }
+    if (this.#session.observations.length === 0) {
+      this.#session.observations.push(createToolObservation({
+        toolName: "continuation",
+        callId: `recover-${runId}`,
+        output: this.#completedWorkNotice(),
+        maxContentBytes: this.#observationMaxBytes,
+      }))
     }
     return this.#continue()
   }
@@ -935,6 +1023,7 @@ export class AgentRunner {
         session.failureReason = "MAX_TURNS_EXCEEDED"
         this.#recordTurnExhaustion()
         this.#emit("task.max_turns", { message: `Maximum of ${session.input.maxTurns} model turns reached` })
+        await this.#persistTurnLimitCheckpoint()
         break
       }
 
@@ -1021,7 +1110,7 @@ export class AgentRunner {
           ...(session.input.learnedMemory && session.input.learnedMemory.length > 0 ? { learnedMemory: session.input.learnedMemory } : {}),
           ...(session.input.codeContext ? { codeContext: session.input.codeContext } : {}),
           ...(session.input.recentTurns ? { recentTurns: session.input.recentTurns } : {}),
-          observations: session.observations,
+          observations: this.#encodingFor(session) === "native-tool-messages" ? [] : session.observations,
           budget: session.input.contextBudget,
         })
       } catch (error) {
@@ -1043,7 +1132,9 @@ export class AgentRunner {
       session.consecutiveContextRequests = 0
 
       const request: ModelRequest = {
-        messages: [{ role: "user", content: promptContent }],
+        messages: this.#encodingFor(session) === "native-tool-messages"
+          ? buildNativeToolMessages({ promptContent, observations: session.observations, toolCalls: session.toolCalls })
+          : [{ role: "user", content: promptContent }],
         ...(session.input.signal ? { signal: session.input.signal } : {}),
         tools,
         metadata: {
@@ -1280,6 +1371,58 @@ export class AgentRunner {
       recoveryOutcome: guard.recoveryCount > 0 ? "NOT_RECOVERED" : "ESCALATED",
       finalBlocker: buildNonProgressReport(plan, session.observations.at(-1)?.content ?? "", plan.observedResult ?? ""),
       observationsDropped: session.nonProgress?.observationsDropped ?? 0,
+    }
+  }
+
+  #completedWorkNotice(): string {
+    const session = this.#requiredSession()
+    const completedCalls = session.toolCalls.filter((call) => call.outcome === "COMPLETED")
+    const applied = session.evidenceCollector.getEvidence().mutationOutcomes
+      .filter((mutation) => mutation.status === "APPLIED" && mutation.path.trim().length > 0)
+      .map((mutation) => mutation.path)
+    const uniquePaths = [...new Set(applied)]
+    const completed = completedCalls.length > 0
+      ? completedCalls.map((call) => call.name).join(", ")
+      : "none"
+    const files = uniquePaths.length > 0 ? uniquePaths.join(", ") : "none"
+    return [
+      "Continuing from a turn-budget checkpoint.",
+      `Completed tools: ${completed}.`,
+      `Applied files: ${files}.`,
+      "Do not repeat those operations. Finish remaining work only.",
+    ].join(" ")
+  }
+
+  async #persistTurnLimitCheckpoint(): Promise<void> {
+    const session = this.#requiredSession()
+    if (!this.#checkpointCoordinator) return
+    const observations = session.observations.slice(-8)
+    const toolCalls = session.toolCalls.slice(-16)
+    const completedPaths = [...new Set(
+      session.evidenceCollector.getEvidence().mutationOutcomes
+        .filter((mutation) => mutation.status === "APPLIED" && mutation.path.trim().length > 0)
+        .map((mutation) => mutation.path),
+    )].slice(-16)
+    try {
+      await this.#checkpointCoordinator.checkpoint({
+        runId: session.input.task.id,
+        reason: "PAUSED",
+        phase: "PLANNING",
+        turnId: session.turns,
+        evidenceVersion: session.turns + 1,
+        runtimeState: {
+          status: "FAILED",
+          pauseReason: "MAX_TURNS_EXCEEDED",
+          activeTask: {
+            id: session.input.task.id,
+            mode: session.input.task.mode,
+            instruction: session.input.task.instruction,
+          },
+          workingContext: { observations, toolCalls, completedPaths },
+        },
+      })
+    } catch {
+      // Continuation still works in-process without durability.
     }
   }
 
@@ -1568,9 +1711,15 @@ export class AgentRunner {
           postDurabilityError = err instanceof Error ? err : new Error(String(err))
         }
       }
-      observation = createToolObservation({ toolName: prepared.name, callId: prepared.id, output, maxContentBytes: this.#observationMaxBytes })
+      observation = createToolObservation({
+        toolName: prepared.name,
+        callId: prepared.id,
+        output,
+        maxContentBytes: this.#observationMaxBytes,
+        ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}),
+      })
       session.observations.push(observation)
-      session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome: "COMPLETED", truncated: observation.truncated })
+      session.toolCalls.push(recordCall(prepared, "COMPLETED", observation.truncated))
       if (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text") {
         const seen = session.completedExploration ?? new Set<string>()
         seen.add(signature)
@@ -1837,9 +1986,15 @@ export class AgentRunner {
 
   #addErrorObservation(prepared: PreparedToolCall, category: string, message: string, outcome: AgentToolCallRecord["outcome"]): void {
     const session = this.#requiredSession()
-    const observation = createToolObservation({ toolName: prepared.name, callId: prepared.id, error: { category, message }, maxContentBytes: this.#observationMaxBytes })
+    const observation = createToolObservation({
+      toolName: prepared.name,
+      callId: prepared.id,
+      error: { category, message },
+      maxContentBytes: this.#observationMaxBytes,
+      ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}),
+    })
     session.observations.push(observation)
-    session.toolCalls.push({ id: prepared.id, name: prepared.name, outcome, truncated: observation.truncated })
+    session.toolCalls.push(recordCall(prepared, outcome, observation.truncated))
   }
 
   /**
@@ -2693,6 +2848,10 @@ export class AgentRunner {
     }
     delete session.failureReason
     this.#emit("task.completed", { turns: session.turns })
+  }
+
+  #encodingFor(session: Session): ConversationEncoding {
+    return resolveConversationEncoding(session.input.conversationEncoding ?? this.#conversationEncoding)
   }
 
   #result(): AgentResult {

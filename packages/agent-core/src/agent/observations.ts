@@ -11,6 +11,7 @@ export interface ToolObservation {
   readonly truncated: boolean
   readonly provenance: ObservationProvenance
   readonly errorCategory?: string
+  readonly arguments?: Readonly<Record<string, unknown>>
 }
 
 export interface ToolObservationInput {
@@ -19,6 +20,7 @@ export interface ToolObservationInput {
   readonly output?: unknown
   readonly error?: { readonly category: string; readonly message: string }
   readonly maxContentBytes?: number
+  readonly arguments?: Readonly<Record<string, unknown>>
 }
 
 function collectPaths(value: unknown, paths: Set<string>, depth = 0): void {
@@ -103,5 +105,6 @@ export function createToolObservation(input: ToolObservationInput): ToolObservat
     truncated: bounded.truncated,
     provenance: { kind: "tool", paths: [...paths].toSorted() },
     ...(input.error ? { errorCategory: input.error.category } : {}),
+    ...(input.arguments ? { arguments: input.arguments } : {}),
   }
 }

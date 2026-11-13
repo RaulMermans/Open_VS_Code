@@ -53,6 +53,7 @@ export interface AgentToolCallRecord {
   readonly name: string
   readonly outcome: AgentToolCallOutcome
   readonly truncated?: boolean
+  readonly arguments?: Readonly<Record<string, unknown>>
 }
 
 export interface MutationReviewPayload {

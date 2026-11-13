@@ -26,6 +26,7 @@ import {
   closeWideChat,
   launchCdpApp,
   listAgentWebviews,
+  parseAcceptanceWindowSize,
   readWorkbench,
   relaunchCdpApp,
   runCdpTurn,
@@ -607,7 +608,9 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
       profile: app.userData,
       driver: "cdp",
       extensionsDir: acceptanceExtensionsDir() ?? null,
+      windowBounds: app.windowBounds ?? null,
     }, null, 2))
+    writeEvidence(evidencePath, "window-bounds.json", JSON.stringify(app.windowBounds ?? parseAcceptanceWindowSize(), null, 2))
     await saveShot(app, evidencePath, "window.png")
     if (scenario.trust === "trusted") {
       const trust = await trustWorkspace(app)
@@ -638,12 +641,26 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
       text = follow.text
     }
     await saveShot(app, evidencePath, "after-prompt.png", true)
+    const outcome = scenario.group === "coding"
+      ? await agentSurface(app, { op: "snapshot" }, "any").catch(() => null)
+      : null
+    if (outcome) {
+      writeEvidence(evidencePath, "outcome.json", JSON.stringify({
+        outcomeVisible: outcome.outcomeVisible === true,
+        outcomeText: outcome.outcomeText || "",
+        modelsVisible: outcome.modelsVisible === true,
+        composerVisible: outcome.composerVisible === true,
+      }, null, 2))
+    }
     const filesystem = filesystemProblems(dirs.workspace, before, scenario.expected)
     const fileProblems = filesystem.filter((problem) => !problem.startsWith("oracle "))
     const problems = [
       ...failuresForText(text, scenario.expected),
       ...filesystem,
     ]
+    if (scenario.id === "CODE-BUG" && outcome && /Changed:|Tests passed|Task completed/i.test(text) && outcome.outcomeVisible !== true) {
+      problems.push("completed coding result was not visible")
+    }
     if (scenario.id === "SAFE-APPROVE") {
       const source = readFileSync(join(dirs.workspace, "src", "add.js"), "utf8")
       if (source.includes("a + b + 1")) problems.push("src/add.js still returns a + b + 1")
@@ -795,7 +812,9 @@ async function startCdpSession(
     profile: app.userData,
     driver: "cdp",
     extensionsDir: acceptanceExtensionsDir() ?? null,
+    windowBounds: app.windowBounds ?? null,
   }, null, 2))
+  writeEvidence(evidencePath, "window-bounds.json", JSON.stringify(app.windowBounds ?? parseAcceptanceWindowSize(), null, 2))
   if (scenario.trust === "trusted") {
     const trust = await trustWorkspace(app)
     writeEvidence(evidencePath, "trust.json", JSON.stringify(trust, null, 2))
@@ -842,6 +861,14 @@ async function runCdpWide(scenario: AcceptanceScenario, context: RunContext, evi
     const usersSide = (afterSidebar.messages ?? []).filter((message) => message.role === "user" && message.text.includes(scenario.prompt)).length
     if (usersWide !== 1 || usersSide !== 1) problems.push(`expected one shared user turn, sidebar=${usersSide} wide=${usersWide}`)
     await saveShot(app, evidencePath, "wide-open.png", true)
+    const requested = parseAcceptanceWindowSize()
+    const actualWidth = app.windowBounds?.actual?.outerWidth || app.windowBounds?.actual?.innerWidth || 0
+    writeEvidence(evidencePath, "window-bounds.json", JSON.stringify({ ...app.windowBounds, modelsVisible: afterWide.modelsVisible === true, composerVisible: afterWide.composerVisible === true }, null, 2))
+    if (actualWidth > 0 && Math.abs(actualWidth - requested.width) > 160) {
+      problems.push(`window outer/inner width ${actualWidth} did not match requested ${requested.width}x${requested.height}`)
+    }
+    if (afterWide.modelsVisible !== true) problems.push("Models control was not visible in Wider Chat")
+    if (afterWide.composerVisible !== true) problems.push("composer was not usable in Wider Chat")
     const closed = await closeWideChat(app)
     writeEvidence(evidencePath, "close-wide.json", JSON.stringify({ closed }, null, 2))
     await waitForAgentViews(app, 1, 15000)
@@ -936,8 +963,15 @@ async function runCdpDiff(scenario: AcceptanceScenario, context: RunContext, evi
     const stillPending = await agentSurface(app, { op: "snapshot" }, "any")
     if (!stillPending.approveVisible && !stillPending.rejectVisible) return "FAIL: opening the diff dismissed the approval card"
     await agentSurface(app, { op: "click", selector: "#btn-reject" }, "any")
-    const settled = await waitAgentSurface(app, "any", (snap) => snap.approveVisible !== true && snap.rejectVisible !== true, 60000)
+    const settled = await waitAgentSurface(app, "any", (snap) => {
+      const rejected = (snap.reviews ?? []).some((row) => /rejected/i.test(row))
+        || (snap.messages ?? []).some((message) => /Change rejected/i.test(message.text))
+        || /Change rejected/i.test(snap.bodyText || "")
+      return snap.approveVisible !== true && snap.rejectVisible !== true && rejected
+    }, 60000).catch(async () => agentSurface(app, { op: "snapshot" }, "any"))
     writeEvidence(evidencePath, "messages.json", JSON.stringify(settled.messages ?? [], null, 2))
+    const afterReject = await waitForClosedReview(app, 8000)
+    writeEvidence(evidencePath, "workbench-after-reject.json", JSON.stringify(afterReject, null, 2))
     await saveShot(app, evidencePath, "after-prompt.png", true)
     const problems = filesystemProblems(dirs.workspace, before, scenario.expected)
     const sourceAfter = readFileSync(join(dirs.workspace, "src", "add.js"), "utf8")
@@ -948,8 +982,19 @@ async function runCdpDiff(scenario: AcceptanceScenario, context: RunContext, evi
     if (!workbench.diffEditor && !workbench.tabLabels.some((label) => /add\.js|Review/i.test(label))) {
       problems.push("VS Code did not show a diff editor for the proposed file")
     }
+    if (afterReject.diffEditor || afterReject.tabLabels.some((label) => /Open VS Code: Review/i.test(label))) {
+      problems.push("proposed Review tab remained open after reject")
+    }
+    if (settled.approveVisible || settled.rejectVisible) problems.push("approval controls remained after reject")
+    const rejectedVisible = (settled.reviews ?? []).some((row) => /rejected/i.test(row))
+      || (settled.messages ?? []).some((message) => /Change rejected/i.test(message.text))
+      || /Change rejected/i.test(settled.bodyText || "")
+    if (!rejectedVisible) problems.push("rejected state was not visible after reject")
+    if ((settled.reviews ?? []).some((row) => /\bOpen\b/i.test(row) && /rejected/i.test(row))) {
+      problems.push("rejected review remained actionable")
+    }
     if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
-    return "Open Diff showed the proposed src/add.js change without applying it; reject left the file unchanged."
+    return "Open Diff showed the proposed src/add.js change without applying it; reject left the file unchanged and closed the preview."
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
@@ -957,6 +1002,23 @@ async function runCdpDiff(scenario: AcceptanceScenario, context: RunContext, evi
   } finally {
     await app.close().catch(() => undefined)
   }
+}
+
+async function waitForClosedReview(app: CdpApp, timeoutMs: number): Promise<{ diffEditor: boolean; tabLabels: readonly string[]; text: string }> {
+  const started = Date.now()
+  let last = { diffEditor: false, tabLabels: [] as string[], text: "" }
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const snap = await readWorkbench(app)
+      last = { diffEditor: snap.diffEditor, tabLabels: [...snap.tabLabels], text: snap.text }
+      const reviewOpen = snap.diffEditor || snap.tabLabels.some((label) => /Open VS Code: Review/i.test(label))
+      if (!reviewOpen) return last
+    } catch {
+      // Workbench may still be attaching.
+    }
+    await sleep(200)
+  }
+  return last
 }
 
 async function waitForWorkbenchDiff(app: CdpApp, timeoutMs: number): Promise<{ diffEditor: boolean; tabLabels: readonly string[]; text: string }> {

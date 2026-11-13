@@ -17,6 +17,7 @@ import { assertIsolatedPath, assertLabWorkspace, chromeSandboxMode } from "./saf
 import { acceptanceBinary, prepareProfile } from "./session.ts"
 
 interface DebugTarget {
+  readonly id?: string
   readonly type?: string
   readonly url?: string
   readonly webSocketDebuggerUrl?: string
@@ -29,6 +30,12 @@ export interface FrameSample {
   readonly error?: string
 }
 
+export interface WindowBoundsEvidence {
+  readonly requested: { readonly width: number; readonly height: number }
+  readonly actual?: { readonly innerWidth?: number; readonly innerHeight?: number; readonly outerWidth?: number; readonly outerHeight?: number }
+  readonly method?: string
+}
+
 export interface CdpApp {
   readonly pid: number
   readonly userData: string
@@ -37,6 +44,7 @@ export interface CdpApp {
   readonly argv: string[]
   readonly sandboxMode: string
   readonly binary: string
+  windowBounds?: WindowBoundsEvidence
   close(): Promise<void>
 }
 
@@ -353,7 +361,7 @@ export async function launchCdpApp(input: {
     return fail(error instanceof Error ? error.message : String(error))
   }
   if (argv.includes("--no-sandbox")) return fail("Refusing to drive a process launched with --no-sandbox")
-  return {
+  const app: CdpApp = {
     pid,
     userData,
     workspace,
@@ -364,6 +372,96 @@ export async function launchCdpApp(input: {
     close: async () => {
       await stopProcess(pid)
     },
+  }
+  app.windowBounds = await applyAcceptanceWindowBounds(app)
+  return app
+}
+
+export function parseAcceptanceWindowSize(raw = process.env.OPEN_VS_CODE_ACCEPTANCE_WINDOW_SIZE): { width: number; height: number } {
+  const text = (raw || "1440,900").trim()
+  const parts = text.split(/[x,]/).map((part) => Number(part.trim()))
+  const width = Number.isFinite(parts[0]) && parts[0]! >= 800 ? Math.round(parts[0]!) : 1440
+  const height = Number.isFinite(parts[1]) && parts[1]! >= 600 ? Math.round(parts[1]!) : 900
+  return { width, height }
+}
+
+export async function applyAcceptanceWindowBounds(app: CdpApp): Promise<WindowBoundsEvidence> {
+  const requested = parseAcceptanceWindowSize()
+  const started = Date.now()
+  let last: WindowBoundsEvidence = { requested }
+  while (Date.now() - started < 8000) {
+    try {
+      const browserMethod = await setBoundsOnBrowserTarget(app, requested)
+      const applied = await withWorkbench(app, async (socket) => {
+        let method = browserMethod || "unknown"
+        if (!browserMethod) {
+          try {
+            const pages = await workbenchTargets(app)
+            const targetId = pages.find((page) => page.webSocketDebuggerUrl)?.id
+            const win = await socket.call("Browser.getWindowForTarget", targetId ? { targetId } : {}, 4000) as { windowId?: number }
+            if (typeof win?.windowId === "number") {
+              await socket.call("Browser.setWindowBounds", {
+                windowId: win.windowId,
+                bounds: {
+                  left: 40,
+                  top: 40,
+                  width: requested.width,
+                  height: requested.height,
+                  windowState: "normal",
+                },
+              }, 4000)
+              method = "Browser.setWindowBounds"
+            }
+          } catch {
+            method = "resizeTo"
+            await evaluate(socket, `window.resizeTo(${requested.width}, ${requested.height})`, 3000).catch(() => undefined)
+          }
+        }
+        await sleep(200)
+        const actual = await evaluate(socket, `({ innerWidth: window.innerWidth, innerHeight: window.innerHeight, outerWidth: window.outerWidth, outerHeight: window.outerHeight })`, 3000) as WindowBoundsEvidence["actual"]
+        return { requested, actual, method }
+      })
+      const width = applied?.actual?.outerWidth || applied?.actual?.innerWidth || 0
+      if (width && Math.abs(width - requested.width) <= 160) return applied!
+      if (applied) last = applied
+    } catch {
+      // Workbench may not be attached yet.
+    }
+    await sleep(250)
+  }
+  return last
+}
+
+async function setBoundsOnBrowserTarget(app: CdpApp, requested: { width: number; height: number }): Promise<string | undefined> {
+  let versionUrl = ""
+  try {
+    const version = await fetch(`http://127.0.0.1:${app.port}/json/version`)
+    if (!version.ok) return undefined
+    const payload = await version.json() as { webSocketDebuggerUrl?: string }
+    versionUrl = String(payload.webSocketDebuggerUrl || "")
+    if (!versionUrl) return undefined
+    const socket = await CdpSocket.connect(versionUrl)
+    try {
+      const pages = await workbenchTargets(app)
+      const targetId = pages[0]?.id
+      const win = await socket.call("Browser.getWindowForTarget", targetId ? { targetId } : {}, 4000) as { windowId?: number }
+      if (typeof win?.windowId !== "number") return undefined
+      await socket.call("Browser.setWindowBounds", {
+        windowId: win.windowId,
+        bounds: {
+          left: 40,
+          top: 40,
+          width: requested.width,
+          height: requested.height,
+          windowState: "normal",
+        },
+      }, 4000)
+      return "Browser.setWindowBounds"
+    } finally {
+      socket.close()
+    }
+  } catch {
+    return undefined
   }
 }
 
