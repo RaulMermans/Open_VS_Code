@@ -22,6 +22,14 @@ Validated overlay on the installed `0.1.0-rc.16` binary, extension from current 
 | Installed daily driver | `0.1.0-rc.16` (unchanged, rollback kept) |
 | Overlay | `/tmp/ovsc-m4-ext` |
 | Overlay `extension.js` SHA-256 | `1e58f155ede4af92f7c37ca2fa927253bc9a3488154ea8377b52d9e512a99ad5` |
+| rc.19 source | `b82d93b025`, `gitDirty: false` at package time |
+| Deb | `apps/desktop/dist/open-vs-code_0.1.0-rc.19_amd64.deb` |
+| Deb SHA-256 | `5298b0af8ae8978d993600a33da6bbdb93cf042bb1bc3ba20d85a0b96442dcc0` |
+| Archive SHA-256 | `478f783272825c8b4f94e660190d5f060bf62405f602cef0201e400cbfd2c8c0` |
+| Bundled extension SHA-256 | `1e58f155ede4af92f7c37ca2fa927253bc9a3488154ea8377b52d9e512a99ad5` (matches overlay) |
+| `desktopName` | `open-vs-code.desktop` |
+| Linux package smoke | 6/6 PASS |
+| Packaged CDP on the unpacked .deb | **Not run.** Overlay CDP used the same extension bytes on the installed rc.16 binary. |
 | Model | `qwen3-coder:30b` |
 | Architecture | VSCodium shell, Agent Core, ChatController, AgentSessionBridge, Ollama, Model Manager, PermissionGate, MutationEngine, checkpoints, CDP lab. No new orchestrator. Native tool messages remain experimental. |
 
@@ -102,7 +110,7 @@ Not claimed:
 | CODE-HELD-TS / CODE-HELD-PY this overlay | Model capability | FAIL this session. Previous overlay had HELD-TS PASS. Not treated as a critical integrity defect. |
 | `CODE-CONTINUE-RESTART` this session | Not run | Prior restart evidence retained. |
 | GitHub CI | Environment / gate | Not re-run. Public beta remains NO-GO. |
-| Packaged CDP on a new .deb | Pending until rc.19 is built from the recorded commit | Overlay CDP is not package-level proof. |
+| Packaged CDP on the unpacked rc.19 .deb | Not run | Extension bytes match the overlay that passed CDP. Full packaged-payload CDP is the remaining install-prep check if desired. |
 | Native tool messages | Experimental | Not promoted. |
 
 ## Install (authorization required)

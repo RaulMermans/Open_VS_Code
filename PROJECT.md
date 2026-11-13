@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Milestone 3 — Real coding intelligence. Status: `VERIFIED`. Continuation safety held on a real `MAX_TURNS_EXCEEDED` pause with explicit Continue and stale-file protection. The representative multi-file task completed under the production starting budget with one authorized Continue (`CODE-CONTINUE-COMPLETE` PASS, independent tests 3/3). A lab-only 2+8 Continue still does not finish that fixture. OpenCode comparison stays INVALID. Daily driver remains `0.1.0-rc.16`. See `PLAN.md` and `docs/releases/V1_CONVERGENCE_STATUS.md`.
+Milestone 3 — Real coding intelligence. Status: `VERIFIED`. Continuation safety held on a real `MAX_TURNS_EXCEEDED` pause with explicit Continue and stale-file protection. The representative multi-file task completed under the production starting budget with one authorized Continue (`CODE-CONTINUE-COMPLETE` PASS, independent tests 3/3). A lab-only 2+8 Continue still does not finish that fixture. OpenCode comparison stays INVALID. Daily driver remains `0.1.0-rc.16`. Clean Debian `0.1.0-rc.19` from `b82d93b025` is built and not installed. See `PLAN.md` and `docs/releases/V1_CONVERGENCE_STATUS.md`.
 
 Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. M2 presentation is in the M4 source line. UX-ACTIVITY and UX-DIFF appearance still need a person. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
 
