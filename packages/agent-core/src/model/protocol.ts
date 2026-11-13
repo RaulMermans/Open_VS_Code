@@ -44,6 +44,16 @@ export function formatWireMessages(messages: readonly ModelMessage[]): readonly 
     }
     if (message.toolCallId) formatted.tool_call_id = message.toolCallId
     if (message.name) formatted.name = message.name
+    if (message.toolCalls && message.toolCalls.length > 0) {
+      formatted.tool_calls = message.toolCalls.map((call) => ({
+        id: call.id,
+        type: "function",
+        function: {
+          name: call.name,
+          arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {}),
+        },
+      }))
+    }
     return formatted
   })
 }

@@ -5,7 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWebviewMessage } from "../src/chat-protocol.ts";
-import { renderReviewLedger } from "../src/webview-render-helpers.ts";
+import { renderReviewLedger, renderTerminalOutput } from "../src/webview-render-helpers.ts";
 import { prepareForRestore } from "../src/conversation-store.ts";
 
 const commandCalls: Array<{ id: string; args: any[] }> = [];
@@ -57,6 +57,7 @@ const originalRequire = (Module as any).prototype.require;
 let ChatController: any;
 let DiffReviewController: any;
 let isDiffPreviewStatus: (status: string | undefined) => boolean;
+let previewTabMatches: (tab: { label?: string; input?: unknown }, mutationId: string, title?: string) => boolean;
 
 class MockWebview {
   public messages: any[] = [];
@@ -94,6 +95,7 @@ before(async () => {
   const diffMod = await import("../src/diff-review-controller.ts");
   DiffReviewController = diffMod.DiffReviewController;
   isDiffPreviewStatus = diffMod.isDiffPreviewStatus;
+  previewTabMatches = diffMod.previewTabMatches;
   ChatController = (await import("../src/chat-controller.ts")).ChatController;
 });
 
@@ -203,6 +205,21 @@ test("opening a proposed diff does not approve the confirmation", async () => {
   const pending = fx.state().pendingConfirmation;
   assert.equal(pending.mutationId, "mut-m2");
   const diffsBefore = commandCalls.filter((call) => call.id === "vscode.diff").length;
+  mockVscode.window.tabGroups.all = [{
+    tabs: [{
+      label: "Open VS Code: Review src/a.ts",
+      input: {
+        original: { toString: () => "open-vs-code-diff:preview?id=mut-m2&side=before" },
+        modified: { toString: () => "open-vs-code-diff:preview?id=mut-m2&side=after" },
+      },
+    }],
+  }];
+  const closed: any[] = [];
+  mockVscode.window.tabGroups.close = async (tabs: any) => {
+    closed.push(tabs);
+    mockVscode.window.tabGroups.all = [{ tabs: [] }];
+    return true;
+  };
   await fx.view.webview.send({ type: "ui.openDiff", mutationId: "mut-m2", path: "src/a.ts", isCreate: false });
   assert.equal(fx.diff.getStatus("mut-m2"), "REVIEWING");
   assert.equal(fx.state().reviews[0].status, "pending");
@@ -213,6 +230,7 @@ test("opening a proposed diff does not approve the confirmation", async () => {
   await fx.view.webview.send({ type: "confirmation.respond", confirmationId: pending.id, action: "REJECT" });
   resolveGate();
   await send;
+  assert.equal(closed.length, 1);
   assert.equal(fx.diff.getStatus("mut-m2"), "REJECTED");
   assert.equal(fx.state().reviews[0].status, "rejected");
   const outcome = fx.state().messages.at(-1);
@@ -258,20 +276,108 @@ test("approve is distinct from applied, and a passing check is verified", async 
   assert.match(text, /Verified/);
 });
 
-test("rejecting a proposed diff closes its preview tab", () => {
+test("rejecting a proposed diff closes its preview tab", async () => {
   const closed: any[] = [];
   mockVscode.window.tabGroups.all = [{
     tabs: [{
+      label: "Open VS Code: Review src/add.js",
       input: {
-        original: { toString: () => "open-vs-code-diff:preview?id=mut-x&side=before" },
-        modified: { toString: () => "open-vs-code-diff:preview?id=mut-x&side=after" },
+        original: { toString: () => "open-vs-code-diff:preview?id%3Dmut-x&side=before" },
+        modified: { toString: () => "open-vs-code-diff:preview?id%3Dmut-x&side=after" },
       },
     }],
   }];
-  mockVscode.window.tabGroups.close = async (tabs: any) => { closed.push(tabs); return true; };
+  mockVscode.window.tabGroups.close = async (tabs: any) => {
+    closed.push(tabs);
+    mockVscode.window.tabGroups.all = [{ tabs: [] }];
+    return true;
+  };
   const diff = new DiffReviewController();
-  diff.closeDiffEditors("mut-x");
+  const closedOk = await diff.closeDiffEditors("mut-x");
   assert.equal(closed.length, 1);
+  assert.equal(closedOk, true);
+});
+
+test("closeDiffEditors waits for an in-flight open before closing", async () => {
+  let releaseOpen: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { releaseOpen = resolve; });
+  const previous = mockVscode.commands.executeCommand;
+  mockVscode.commands.executeCommand = async (id: string, ...args: any[]) => {
+    commandCalls.push({ id, args });
+    if (id === "vscode.diff") await gate;
+  };
+  mockVscode.window.tabGroups.all = [{ tabs: [] }];
+  const closed: any[] = [];
+  mockVscode.window.tabGroups.close = async (tabs: any) => {
+    closed.push(tabs);
+    mockVscode.window.tabGroups.all = [{ tabs: [] }];
+    return true;
+  };
+  try {
+    const diff = new DiffReviewController();
+    const opening = diff.openDiff("mut-late", "src/add.js", false);
+    const closing = diff.closeDiffEditors("mut-late");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    mockVscode.window.tabGroups.all = [{
+      tabs: [{
+        label: "Open VS Code: Review src/add.js",
+        input: {
+          original: { toString: () => "open-vs-code-diff:preview?id=mut-late&side=before" },
+          modified: { toString: () => "open-vs-code-diff:preview?id=mut-late&side=after" },
+        },
+      }],
+    }];
+    releaseOpen();
+    await opening;
+    assert.equal(await closing, true);
+    assert.equal(closed.length, 1);
+  } finally {
+    mockVscode.commands.executeCommand = previous;
+  }
+});
+
+test("preview tab matching covers encoded uris and review titles", () => {
+  assert.equal(previewTabMatches({
+    label: "Open VS Code: Review src/add.js",
+    input: { original: { toString: () => "open-vs-code-diff:preview?id%3Dmut-x&side=before" } },
+  }, "mut-x", "Open VS Code: Review src/add.js"), true);
+});
+
+test("finished command details stay collapsed", () => {
+  const root = new MockElement();
+  renderTerminalOutput(root, {
+    executionId: "v1",
+    command: "node --test test/add.test.js",
+    executable: "/usr/bin/node",
+    args: ["--test", "test/add.test.js"],
+    cwd: "/tmp/ws",
+    provenance: "Verification runner",
+    timeoutMs: 60000,
+    status: "SUCCEEDED",
+    exitCode: 0,
+    durationMs: 20,
+    isOutputVisible: false,
+  }, mockDoc());
+  const text = walk(root).map((node) => node.textContent).join("\n");
+  assert.match(text, /Command details/);
+  assert.match(text, /Executable/);
+  const details = walk(root).find((node) => node.tagName === "details");
+  assert.ok(details);
+  assert.equal(details?.attrs.open, undefined);
+});
+
+test("rejected review rows are not actionable", () => {
+  const root = new MockElement();
+  renderReviewLedger(root, [{
+    id: "mut-x",
+    kind: "mutation",
+    status: "rejected",
+    path: "src/add.js",
+    detail: "Change rejected — no files modified.",
+  }], mockDoc(), () => {});
+  const text = walk(root).map((node) => node.textContent).join("\n");
+  assert.match(text, /Rejected/);
+  assert.equal(walk(root).some((node) => node.tagName === "button" && node.textContent === "Open"), false);
 });
 
 test("an unused approval is interrupted on restore and is not replayed", () => {

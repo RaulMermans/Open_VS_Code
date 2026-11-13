@@ -289,6 +289,9 @@ export interface AgentSurfaceSnapshot {
   readonly rejectVisible?: boolean
   readonly bodyText?: string
   readonly reviews?: readonly string[]
+  readonly outcomeVisible?: boolean
+  readonly outcomeText?: string
+  readonly modelsVisible?: boolean
 }
 
 /**
@@ -320,6 +323,8 @@ export const CDP_SURFACE_RUNTIME = `function cdpSurface(op) {
     const approve = doc.getElementById("btn-approve");
     const reject = doc.getElementById("btn-reject");
     const diff = doc.getElementById("btn-diff");
+    const models = doc.getElementById("models-btn");
+    const outcome = doc.querySelector(".outcome-card");
     const trace = doc.querySelector(".activity-trace");
     const historyItems = Array.from(doc.querySelectorAll(".history-open")).map((node) => ({
       label: String(node.getAttribute("aria-label") || node.textContent || "").trim(),
@@ -346,6 +351,9 @@ export const CDP_SURFACE_RUNTIME = `function cdpSurface(op) {
       diffVisible: visible(diff),
       approveVisible: visible(approve) && !(approve && approve.disabled),
       rejectVisible: visible(reject) && !(reject && reject.disabled),
+      modelsVisible: visible(models),
+      outcomeVisible: visible(outcome),
+      outcomeText: outcome ? String(outcome.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500) : "",
       bodyText: String((doc.body && doc.body.innerText) || "").slice(0, 4000),
       reviews: Array.from(doc.querySelectorAll(".review-item")).map((node) => String(node.textContent || "").replace(/\\s+/g, " ").trim()).slice(0, 20),
     };

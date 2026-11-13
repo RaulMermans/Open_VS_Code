@@ -1,3 +1,10 @@
+Milestone 3 — Real coding intelligence
+STATUS: IN_PROGRESS
+  - M2 visual close (overlay, not installed): reject awaits preview close; outcome card visible (`CODE-BUG` 2026-11-13T09-20-06-924Z `outcomeVisible: true`); window bounds measured at 1100×800 (`UX-WIDE` 2026-11-13T09-19-14-047Z inner 1100×800). Copies: `apps/desktop/acceptance/review/m3-visual-2026-11-13/`.
+  - Edits: applying a patch or create whose bytes already match the proposal is `APPLIED` (no rewrite). Turn-budget stops stay resumable via `continueFromLimit` without dropping observations. Recovery restores bounded working context when a PAUSED checkpoint recorded it.
+  - Context: `compiled-user` remains default. Opt-in `native-tool-messages` now includes real tool arguments (ADR-044). Same-digest `qwen3-coder:30b` (`sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a`) 12-task comparison: Open VS Code 11/12 vs OpenCode `run --auto` 3/12 (`evals/results/m3-opencode-comparison.json`). Native encoding 4/4 on a compiled-passing subset (`evals/results/m3-opencode-comparison-native.json`); default stays compiled-user. Deterministic `eval:coding` 30/30.
+  - Daily driver remains `0.1.0-rc.16`. No package installed. Personal V1 remains NO-GO.
+
 Milestone 2 — Agent workspace presentation
 STATUS: PARTIALLY_VERIFIED
   - Activity summaries merge one kind of work inside a task. File counts come from tool and mutation paths already on those events. A model wait reads "Thinking" until that call finishes. Failures and retries stay visible. Interrupted is distinct. The technical trace stays collapsed and still lists every event.

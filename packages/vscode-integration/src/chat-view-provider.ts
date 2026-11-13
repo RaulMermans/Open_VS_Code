@@ -129,6 +129,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
             gap: 8px;
             padding: 8px 10px;
             border-bottom: 1px solid var(--vscode-sideBar-border, var(--vscode-widget-border, transparent));
@@ -137,7 +138,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .header-actions {
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
             gap: 4px;
+            flex-shrink: 0;
+            max-width: 100%;
+        }
+        #models-btn {
             flex-shrink: 0;
         }
         #header #conversation-bar { padding: 0; flex: 1; min-width: 0; }
@@ -209,13 +216,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .connection-status.is-timeout,
         .connection-status.is-unavailable { color: var(--vscode-editorWarning-foreground, #cca700); }
         #transcript {
-            flex-grow: 1;
+            flex: 1 1 30%;
             overflow-y: auto;
             padding: 10px;
             display: flex;
             flex-direction: column;
             gap: 10px;
-            min-height: 0;
+            min-height: 9rem;
         }
         .message {
             padding: 8px 10px;
@@ -281,6 +288,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             border-left: 3px solid var(--vscode-testing-iconPassed, #89d185);
             background: var(--vscode-editorWidget-background);
             border-radius: 4px;
+            scroll-margin-bottom: 16px;
         }
         .outcome-card.is-rejected {
             border-left-color: var(--vscode-editorWarning-foreground, #cca700);
@@ -433,6 +441,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             margin: 0 10px 10px;
             border-radius: 4px;
             flex-shrink: 0;
+        }
+        #terminal-container {
+            max-height: 28vh;
+            overflow: auto;
+            flex-shrink: 1;
+            min-height: 0;
+        }
+        .terminal-details {
+            margin-top: 6px;
+        }
+        .terminal-details > summary {
+            cursor: pointer;
+            color: var(--vscode-descriptionForeground);
+            font-size: 0.85em;
         }
         .terminal-command-box {
             background: var(--vscode-terminal-background, #1e1e1e);
@@ -599,10 +621,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         .activity-panel { padding-top: 2px; }
         @media (max-width: 420px) {
+            #header { align-items: flex-start; }
+            #models-btn, #wide-chat-btn, #new-chat-btn, #history-btn { min-height: 28px; }
             #controls { flex-direction: column; align-items: stretch; }
             #composer-actions { justify-content: flex-end; }
             #model-selector, #mode-selector { min-width: 0; width: 100%; flex-basis: auto; }
             .message { padding: 6px 8px; }
+            .confirmation-actions button { flex-basis: calc(50% - 8px); }
         }
         #composer-container {
             display: flex;
@@ -1426,7 +1451,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             renderRecoveryPanel(recoveryContainer, state.recovery, state.conversationTitle, document, vscode.postMessage);
             renderHistory();
             if (follow) {
-                transcript.scrollTop = transcript.scrollHeight;
+                var outcome = transcript.querySelector(".outcome-card:last-of-type");
+                if (outcome && typeof outcome.scrollIntoView === "function") {
+                    outcome.scrollIntoView({ block: "nearest" });
+                } else {
+                    transcript.scrollTop = transcript.scrollHeight;
+                }
                 scrollOnNextChange = false;
             }
             if (state.activeTurn) {

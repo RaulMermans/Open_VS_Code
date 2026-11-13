@@ -1,0 +1,148 @@
+{
+  "schema": "m3-opencode-comparison/v1",
+  "model": "qwen3-coder:30b",
+  "digest": "sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a",
+  "encoding": "native-tool-messages",
+  "provenance": {
+    "gitSha": "ba054244750a6ec8ee5d8a7f353d09511ddaccc7",
+    "worktreeClean": false,
+    "dirtyFiles": [
+      "M PLAN.md",
+      "M PROJECT.md",
+      "M apps/desktop/acceptance/lab.test.ts",
+      "M apps/desktop/acceptance/src/cdp-driver.ts",
+      "M apps/desktop/acceptance/src/cdp-turn.ts",
+      "M apps/desktop/acceptance/src/execute.ts",
+      "M docs/adrs/ADR-018-chat-ux-layer.md",
+      "M docs/adrs/DECISIONS.md",
+      "M evals/coding-agent/results/sprint-1k1-baseline.json",
+      "M evals/coding-agent/results/sprint-1k1-baseline.md",
+      "M package.json",
+      "M packages/agent-core/package.json",
+      "M packages/agent-core/src/agent/observations.ts",
+      "M packages/agent-core/src/agent/runner.ts",
+      "M packages/agent-core/src/contracts/agent.ts",
+      "M packages/agent-core/src/contracts/model.ts",
+      "M packages/agent-core/src/model/protocol.ts",
+      "M packages/agent-core/src/recovery/contracts.ts",
+      "M packages/agent-core/src/tools/mutation-engine.ts",
+      "M packages/agent-core/tests/agent/runner.test.ts",
+      "M packages/agent-core/tests/tools/mutation.test.ts",
+      "M packages/vscode-integration/src/chat-controller.ts",
+      "M packages/vscode-integration/src/chat-view-provider.ts",
+      "M packages/vscode-integration/src/diff-review-controller.ts",
+      "M packages/vscode-integration/src/webview-render-helpers.ts",
+      "M packages/vscode-integration/tests/sprint-14b-conversation-ux.test.ts",
+      "M packages/vscode-integration/tests/sprint-m2-agent-workspace.test.ts",
+      "?? apps/desktop/acceptance/review/m3-visual-2026-11-13/",
+      "?? docs/adrs/ADR-044-native-tool-messages.md",
+      "?? evals/results/m3-opencode-comparison.json",
+      "?? packages/agent-core/README.md",
+      "?? packages/agent-core/examples/",
+      "?? packages/agent-core/src/__pycache__/",
+      "?? packages/agent-core/src/add.js",
+      "?? packages/agent-core/src/add.py",
+      "?? packages/agent-core/src/agent/native-tool-messages.ts",
+      "?? packages/agent-core/src/app.js",
+      "?? packages/agent-core/src/area.js",
+      "?? packages/agent-core/src/clamp.js",
+      "?? packages/agent-core/src/counter.js",
+      "?? packages/agent-core/src/div.js",
+      "?? packages/agent-core/src/double.js",
+      "?? packages/agent-core/src/greet.js",
+      "?? packages/agent-core/src/label.js",
+      "?? packages/agent-core/src/math.js",
+      "?? packages/agent-core/src/parse.js",
+      "?? packages/agent-core/test-area.js",
+      "?? packages/agent-core/test/",
+      "?? packages/agent-core/tests/agent/native-tool-messages.test.ts",
+      "?? packages/agent-core/tests/counter.test.js",
+      "?? packages/agent-core/tests/evals/m3-opencode-comparison.ts"
+    ]
+  },
+  "endpoint": "http://127.0.0.1:11434/v1",
+  "createdAt": "2026-11-13T09:39:35.223Z",
+  "totals": {
+    "tasks": 4,
+    "ovscPass": 4,
+    "opencodePass": 0
+  },
+  "rows": [
+    {
+      "id": "T01-off-by-one",
+      "title": "Fix off-by-one add",
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 2,
+        "durationMs": 3727,
+        "pass": true,
+        "detail": "ok"
+      },
+      "opencode": {
+        "status": "SKIPPED",
+        "turns": 0,
+        "durationMs": 0,
+        "pass": false,
+        "detail": "skipped",
+        "stdout": ""
+      }
+    },
+    {
+      "id": "T04-rename",
+      "title": "Rename total to sumAll",
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 3903,
+        "pass": true,
+        "detail": "ok"
+      },
+      "opencode": {
+        "status": "SKIPPED",
+        "turns": 0,
+        "durationMs": 0,
+        "pass": false,
+        "detail": "skipped",
+        "stdout": ""
+      }
+    },
+    {
+      "id": "T08-early-return",
+      "title": "Guard divide by zero",
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 4632,
+        "pass": true,
+        "detail": "ok"
+      },
+      "opencode": {
+        "status": "SKIPPED",
+        "turns": 0,
+        "durationMs": 0,
+        "pass": false,
+        "detail": "skipped",
+        "stdout": ""
+      }
+    },
+    {
+      "id": "T12-expected",
+      "title": "Match test expected value",
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 2,
+        "durationMs": 3350,
+        "pass": true,
+        "detail": "ok"
+      },
+      "opencode": {
+        "status": "SKIPPED",
+        "turns": 0,
+        "durationMs": 0,
+        "pass": false,
+        "detail": "skipped",
+        "stdout": ""
+      }
+    }
+  ]
+}

@@ -1,40 +1,14 @@
 {
-  "name": "@open-vs-code/agent-core",
-  "version": "0.1.0",
-  "private": true,
+  "name": "agent-core",
+  "version": "1.0.0",
+  "description": "Core functionality for the agent system",
+  "main": "src/app.js",
   "type": "module",
-  "license": "MIT",
   "scripts": {
-    "test": "node --import tsx/esm --test --test-timeout=120000 --test-force-exit tests/agent/*.test.ts tests/context/*.test.ts tests/contracts/*.test.ts tests/mcp/*.test.ts tests/model/*.test.ts tests/modes/*.test.ts tests/packs/*.test.ts tests/tools/*.test.ts tests/browser/*.test.ts tests/runtime-evals/*.test.ts tests/recovery/*.test.ts tests/performance/*.test.ts tests/skills/*.test.ts tests/workflow/*.test.ts tests/progress/*.test.ts tests/learning/*.test.ts tests/design/*.test.ts tests/rea/*.test.ts tests/hygiene.test.ts",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint -c .oxlintrc.json --deny-warnings src tests/agent tests/browser tests/context tests/contracts tests/mcp tests/evals tests/model tests/modes tests/packs tests/tools tests/runtime-evals tests/recovery tests/performance tests/skills tests/workflow tests/progress tests/learning tests/design tests/rea tests/hygiene.test.ts",
-    "build": "tsc --noEmit",
-    "eval:model": "node --import tsx/esm tests/evals/run-benchmark-cli.ts",
-    "eval:models": "node --import tsx/esm tests/evals/run-benchmark-cli.ts",
-    "eval:coding": "node --import tsx/esm tests/evals/run-coding-eval.ts",
-    "eval:runtime": "node --import tsx/esm --test tests/runtime-evals/runtime-eval.test.ts",
-    "eval:recovery": "node --import tsx/esm --test tests/recovery/*.test.ts",
-    "eval:performance": "node --import tsx/esm --test tests/performance/*.test.ts",
-    "eval:skills": "node --import tsx/esm tests/evals/run-skill-eval.ts",
-    "eval:workflow": "node --import tsx/esm tests/evals/run-workflow-eval.ts",
-    "eval:progress": "node --import tsx/esm tests/evals/run-progress-eval.ts",
-    "eval:learning": "node --import tsx/esm tests/evals/run-learning-eval.ts"
+    "test": "node test-area.js",
+    "start": "node src/app.js"
   },
-  "devDependencies": {
-    "@types/node": "^24.12.4",
-    "oxlint": "^1.80.0",
-    "tsx": "^4.23.12",
-    "typescript": "5.9.3"
-  },
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "require": "./src/index.ts"
-    },
-    "./package.json": "./package.json"
-  },
-  "dependencies": {
-    "playwright-core": "^1.50.1"
-  }
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

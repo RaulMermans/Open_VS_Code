@@ -379,6 +379,7 @@ test("a verified coding result is a compact outcome card", () => {
   const root = new MockElement("div");
   renderChatMessage(root, { role: "assistant", content: formatted.content, status: "completed" }, mockDoc());
   assert.match(root.querySelector("outcome-card")?.className || "", /is-verified/);
+  assert.match(labels(root, "outcome-title").join("\n"), /Task completed/);
   const text = labels(root, "outcome-line").join("\n") + "\n" + labels(root, "file-ref").join("\n");
   assert.match(text, /Changed:/);
   assert.match(text, /src\/add\.ts/);

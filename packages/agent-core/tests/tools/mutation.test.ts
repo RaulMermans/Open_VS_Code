@@ -443,6 +443,45 @@ test("apply rejects stale base when file changed after preparation", async () =>
   }
 })
 
+test("apply treats an already-matching target as APPLIED without rewriting", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    await createFile(ws, "done.txt", "modified content")
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.preparePatch({
+      operation: "patch",
+      path: "done.txt",
+      patch: { search: "modified", replace: "modified" },
+    })
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "APPLIED")
+    assert.match(result.observation, /Already at the proposed content/)
+    const content = await readFile(join(ws, "done.txt"), "utf8")
+    assert.equal(content, "modified content")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("create treats identical existing content as APPLIED", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    await mkdir(join(ws, "src"), { recursive: true })
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "src/new.ts",
+      content: "export const x = 1\n",
+    })
+    await writeFile(join(ws, "src/new.ts"), "export const x = 1\n", "utf8")
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "APPLIED")
+    assert.equal(await readFile(join(ws, "src/new.ts"), "utf8"), "export const x = 1\n")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
 // --- Rollback ---
 
 test("rollback restores original content for patch", async () => {
