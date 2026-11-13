@@ -81,6 +81,26 @@ export class DiffReviewController implements vscode.TextDocumentContentProvider 
     }
   }
 
+  /** Close preview tabs for a mutation that is no longer pending. Does not change permission state. */
+  closeDiffEditors(mutationId: string): void {
+    const needle = "id=" + mutationId;
+    const groups = vscode.window?.tabGroups;
+    if (!groups || !Array.isArray(groups.all) || typeof groups.close !== "function") return;
+    const tabs: vscode.Tab[] = [];
+    for (const group of groups.all) {
+      for (const tab of group.tabs || []) {
+        const input = tab.input as { original?: vscode.Uri; modified?: vscode.Uri; uri?: vscode.Uri } | undefined;
+        const texts = [input?.original, input?.modified, input?.uri].map((uri) =>
+          uri && typeof uri.toString === "function" ? uri.toString() : "",
+        );
+        if (texts.some((text) => text.includes("open-vs-code-diff:") && text.includes(needle))) {
+          tabs.push(tab);
+        }
+      }
+    }
+    if (tabs.length) void groups.close(tabs, true);
+  }
+
   clearAll() {
     this.registry.clear();
     this.statuses.clear();

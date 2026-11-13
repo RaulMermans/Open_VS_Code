@@ -118,6 +118,10 @@
         "title": "Open VS Code: Show Conversation History"
       },
       {
+        "command": "open-vs-code.showAgentOutput",
+        "title": "Open VS Code: Show Agent Output"
+      },
+      {
         "command": "open-vs-code.newConversation",
         "title": "Open VS Code: New Conversation"
       },

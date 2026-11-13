@@ -247,11 +247,56 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         body.wide-chat #transcript { padding: 16px 24px 12px; }
         body.wide-chat #composer-container { padding: 12px 24px 16px; }
         body.wide-chat #composer {
-            min-height: 96px;
+            min-height: 44px;
             max-height: 280px;
         }
         body.wide-chat #wide-chat-btn { display: none; }
         body.wide-chat #reviews { max-height: 240px; }
+        body.companion #transcript,
+        body.companion #empty-state,
+        body.companion #reviews,
+        body.companion #terminal-container,
+        body.companion #recovery-container,
+        body.companion #model-manager,
+        body.companion #trust-banner {
+            flex: 0 0 0;
+            flex-grow: 0;
+            max-height: 0 !important;
+            min-height: 0 !important;
+            overflow: hidden;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+        body.companion #activities {
+            max-height: 28vh;
+            overflow: auto;
+        }
+        body.companion #wide-chat-btn { display: none; }
+        .outcome-card {
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-left: 3px solid var(--vscode-testing-iconPassed, #89d185);
+            background: var(--vscode-editorWidget-background);
+            border-radius: 4px;
+        }
+        .outcome-card.is-rejected {
+            border-left-color: var(--vscode-editorWarning-foreground, #cca700);
+        }
+        .outcome-title { font-weight: 600; }
+        .outcome-line, .outcome-file { margin-top: 4px; }
+        .message.is-rejected {
+            border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700);
+        }
+        .message.is-failed {
+            border-left: 3px solid var(--vscode-errorForeground, #f14c4c);
+        }
+        .review-item.is-rejected .review-status { color: var(--vscode-editorWarning-foreground, #cca700); }
+        .review-item.is-failed .review-status { color: var(--vscode-errorForeground, #f14c4c); }
+        .review-item.is-verified .review-status,
+        .review-item.is-applied .review-status { color: var(--vscode-testing-iconPassed, #89d185); }
         .trust-banner, .model-manager {
             margin: 8px 10px 0;
             padding: 8px;
@@ -569,7 +614,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         #composer {
             resize: vertical;
-            min-height: 72px;
+            min-height: 40px;
             max-height: 200px;
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
@@ -683,7 +728,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             border-radius: 10px;
             background: var(--vscode-badge-background);
             color: var(--vscode-badge-foreground);
-            flex-shrink: 0;
+            flex-shrink: 1;
+            min-width: 0;
+            max-width: 12em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .conversation-status.is-interrupted, .conversation-status.is-failed {
             background: var(--vscode-inputValidation-warningBackground, var(--vscode-badge-background));
@@ -1205,6 +1255,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             const message = event.data;
             switch (message.type) {
                 case 'chat.state':
+                    if (message.state) message.state.wideOpen = !!message.wideOpen;
                     updateState(message.state, message.transcript === 'unchanged');
                     break;
                 case 'terminal.updated':
@@ -1341,6 +1392,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // The host omits an unchanged transcript; keep the one already rendered.
             if (transcriptUnchanged) state.messages = (currentState && currentState.messages) || [];
             currentState = state;
+            if (document.body && document.body.classList) {
+                document.body.classList.toggle('companion', !!state.wideOpen && !document.body.classList.contains('wide-chat'));
+            }
             syncModeSelector(state);
             syncModeBadge(state);
             syncModelSelector(state.connection);

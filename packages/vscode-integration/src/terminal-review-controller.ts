@@ -182,6 +182,7 @@ export class TerminalReviewController {
       entry.isOutputVisible = true;
     }
     entry.status = status;
+    if (isFinishedTerminalStatus(status)) entry.isOutputVisible = false;
     this.onDidChangeEmitter?.fire(executionId);
     return true;
   }
@@ -271,6 +272,7 @@ export class TerminalReviewController {
     if (entry.status === 'CANCELLED' && entry.durationMs !== null) return;
 
     if (entry.status !== 'CANCELLED') entry.status = details.status;
+    if (isFinishedTerminalStatus(entry.status)) entry.isOutputVisible = false;
     entry.exitCode = details.exitCode ?? null;
     entry.exitSignal = details.exitSignal ?? null;
     entry.durationMs = details.durationMs ?? (entry.startedAt !== null ? Date.now() - entry.startedAt : null);

@@ -119,6 +119,9 @@ class VSCodeIdeHost implements IdeHost {
 
   async showOutput(message: string): Promise<void> {
     this.outputChannel.appendLine(message);
+  }
+
+  revealOutput(): void {
     this.outputChannel.show(true);
   }
 
@@ -306,6 +309,7 @@ class VSCodeIdeHost implements IdeHost {
           ? `Connected to ${probed.endpoint}. ${probed.installedModels.length} local model${probed.installedModels.length === 1 ? '' : 's'} available.`
           : (probed?.notice || 'Local inference has no model route.');
       await this.showOutput(line);
+      this.revealOutput();
       if (chatController) {
         if (probed) chatController.publishModelManager(probed);
         else chatController.setConnectionInput({ ...snapshot, haloHealthChecked: false, haloReachable: false });
@@ -315,6 +319,7 @@ class VSCodeIdeHost implements IdeHost {
     try {
       const reachable = await probeHalo(settings.coreUrl);
       await this.showOutput(reachable ? 'HALO reachable.' : 'HALO Core is unavailable.');
+      this.revealOutput();
       if (chatController) {
         const snapshot = await this.getConnectionSnapshot();
         chatController.setConnectionInput({
@@ -326,6 +331,7 @@ class VSCodeIdeHost implements IdeHost {
       }
     } catch {
       await this.showOutput('HALO Core is unreachable.');
+      this.revealOutput();
       if (chatController) {
         chatController.setConnectionInput({
           inferenceBackend: 'halo',
@@ -805,6 +811,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('open-vs-code.showConversationHistory', async () => {
       await showConversationHistory();
     }),
+    vscode.commands.registerCommand('open-vs-code.showAgentOutput', async () => {
+      host?.revealOutput();
+    }),
     vscode.commands.registerCommand('open-vs-code.newConversation', async () => {
       await chatController?.handleWebviewMessage({ type: 'chat.newConversation' });
       await vscode.commands.executeCommand('open-vs-code.chat.focus');
@@ -818,11 +827,13 @@ export function activate(context: vscode.ExtensionContext) {
       if (!token?.trim()) return;
       await context.secrets.store(HALO_TOKEN_SECRET_KEY, token.trim());
       await host?.showOutput('HALO application token saved to VS Code SecretStorage.');
+      host?.revealOutput();
     }),
     vscode.commands.registerCommand('open-vs-code.checkHaloConnection', async () => {
       const settings = haloSettings();
       if (settings.backend !== 'halo') {
         await host?.showOutput('HALO is not selected. Select the HALO inference backend to use it.');
+        host?.revealOutput();
         return;
       }
       try {
@@ -831,6 +842,7 @@ export function activate(context: vscode.ExtensionContext) {
       } catch {
         await host?.showOutput('HALO Core is unreachable.');
       }
+      host?.revealOutput();
     }),
     vscode.commands.registerCommand('open-vs-code.createStarterConfig', async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -1260,15 +1272,23 @@ function installAutocompleteGateway(config: RoutingConfiguration | null): void {
 
 let wideChatPanel: vscode.WebviewPanel | undefined;
 
+function preferredWideColumn(): vscode.ViewColumn {
+  const editor = vscode.window.activeTextEditor;
+  const scheme = editor?.document?.uri?.scheme;
+  if (scheme === 'file' || scheme === 'untitled') return vscode.ViewColumn.Beside;
+  return vscode.ViewColumn.One;
+}
+
 async function openWideChat(provider: ChatViewProvider): Promise<void> {
+  const column = preferredWideColumn();
   if (wideChatPanel) {
-    wideChatPanel.reveal(vscode.ViewColumn.Beside);
+    wideChatPanel.reveal(column);
     return;
   }
   wideChatPanel = vscode.window.createWebviewPanel(
     'open-vs-code.chat.wide',
     'Open VS Code Agent',
-    vscode.ViewColumn.Beside,
+    column,
     { enableScripts: true, retainContextWhenHidden: true },
   );
   wideChatPanel.webview.html = provider.htmlFor(wideChatPanel.webview, { wide: true });

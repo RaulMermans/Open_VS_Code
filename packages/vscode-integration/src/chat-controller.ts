@@ -119,7 +119,7 @@ export class ChatController {
     this.host = host;
     if (typeof arg2 === 'function') {
       this.bridgeFactory = arg2;
-      this.diffReviewController = { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => undefined } as any;
+      this.diffReviewController = { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => undefined, closeDiffEditors: () => {} } as any;
       this.terminalReviewController = new TerminalReviewController();
     } else {
       this.diffReviewController = arg2;
@@ -1078,6 +1078,9 @@ export class ChatController {
   /** The one place a mutation's review status changes, so the diff registry and ledger agree. */
   private setMutationStatus(mutationId: string, status: ReviewStatus, detail?: string): void {
     this.diffReviewController?.setStatus?.(mutationId, status);
+    if (status === 'REJECTED' || status === 'CANCELLED') {
+      this.diffReviewController?.closeDiffEditors?.(mutationId);
+    }
     const record = this.findReview(mutationId, 'mutation');
     if (!record) return;
     record.status = reviewStatusFromMutation(status);
@@ -1395,7 +1398,9 @@ export class ChatController {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
       
       this.state.activeTurn = false;
-      this.completePendingActivities(result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
+      const rejected = result.status === 'FAILED' && result.failureReason === 'REJECTED';
+      this.completePendingActivities(rejected ? 'cancelled' : result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
+      if (rejected) this.presentUserRejection();
       this.closeUndecided();
       this.state.pendingConfirmation = undefined;
       const identity = currentBridge.routeIdentity;
@@ -1426,7 +1431,7 @@ export class ChatController {
         role: terminal.lastStatus === 'completed' ? 'assistant' : 'system',
         content: terminal.content,
         timestamp: Date.now(),
-        status: terminal.lastStatus === 'rejected' ? 'cancelled' : terminal.lastStatus === 'failed' ? 'failed' : terminal.lastStatus === 'cancelled' ? 'cancelled' : 'completed',
+        status: terminal.lastStatus === 'rejected' ? 'rejected' : terminal.lastStatus === 'failed' ? 'failed' : terminal.lastStatus === 'cancelled' ? 'cancelled' : 'completed',
       };
       this.state.messages.push(terminalMsg);
       this.state.lastStatus = terminal.lastStatus;
@@ -1698,16 +1703,22 @@ export class ChatController {
     m.peakMessages = Math.max(m.peakMessages, this.state.messages.length);
     m.peakActivities = Math.max(m.peakActivities, this.state.activities.length);
     if (!this._webviewView && this._extraWebviews.size === 0) return;
-    // The transcript is most of each post (up to 200k characters). Agent events and
-    // context changes rarely touch it, so an unchanged transcript is not re-sent.
-    if (this.transcriptUnchanged()) {
-      const { messages: _omitted, ...rest } = this.state;
-      this.sendMessage({ type: 'chat.state', state: rest, transcript: 'unchanged' });
-      return;
+    const companion = this._extraWebviews.size > 0;
+    const omitted = this.transcriptUnchanged();
+    if (!omitted) {
+      this._sentTranscript = this.state.messages.map((msg) => ({ ...msg }));
+      m.transcriptPosts++;
     }
-    this._sentTranscript = this.state.messages.map((msg) => ({ ...msg }));
-    m.transcriptPosts++;
-    this.sendMessage({ type: 'chat.state', state: this.state });
+    const post = (webview: vscode.Webview, wideOpen: boolean) => {
+      if (omitted) {
+        const { messages: _omitted, ...rest } = this.state;
+        void webview.postMessage({ type: 'chat.state', state: rest, transcript: 'unchanged', wideOpen });
+        return;
+      }
+      void webview.postMessage({ type: 'chat.state', state: this.state, wideOpen });
+    };
+    if (this._webviewView) post(this._webviewView.webview, companion);
+    for (const webview of this._extraWebviews) post(webview, false);
   }
 
   private transcriptUnchanged(): boolean {
@@ -1761,6 +1772,7 @@ export class ChatController {
       dispose: () => {
         this._extraWebviews.delete(webview);
         listener.dispose();
+        this.sendState();
       },
     };
   }
@@ -1858,6 +1870,32 @@ export class ChatController {
   private completePendingActivities(status: ChatActivity['status']): void {
     for (const activity of this.state.activities) {
       if (activity.status === 'pending') activity.status = status;
+    }
+  }
+
+  /** User rejection is a decision. Keep permission ids; only relabel the timeline. */
+  private presentUserRejection(): void {
+    for (const activity of this.state.activities) {
+      if (activity.kind === 'task' && (activity.status === 'failed' || activity.label === 'Failed')) {
+        activity.status = 'cancelled';
+        activity.label = 'Change rejected';
+      }
+      if (activity.kind === 'approval' && (activity.status === 'failed' || activity.label === 'Permission denied')) {
+        activity.status = 'cancelled';
+        activity.label = 'Change rejected';
+      }
+      if (activity.kind === 'mutation' && activity.status === 'failed') {
+        activity.status = 'cancelled';
+        activity.label = 'Change rejected';
+      }
+    }
+    if (!this.state.activities.some((activity) => activity.label === 'Change rejected')) {
+      this.state.activities.push({
+        id: this.generateId(),
+        kind: 'task',
+        label: 'Change rejected',
+        status: 'cancelled',
+      });
     }
   }
 
