@@ -6,7 +6,8 @@ STATUS: PARTIALLY_VERIFIED
   - `MAX_TURNS_EXCEEDED` names finished work, unfinished work, and recovery. Nothing is written or replayed until a new request and a new approval.
   - Acceptance harness: Agent Webview scenarios use CDP (`cdp-webview`). Playwright stays on workbench-only checks. A missing webview is `BLOCKED` tooling, not a product failure.
   - Presentation polish after the rc.17 screenshot reject: Wider Chat makes the sidebar a compact companion (transcript stays in the DOM for sync), empty composer height is reduced, ordinary agent tasks append Output without revealing it, finished command output is collapsed, rejection is labeled “Change rejected — no files modified” and is not Failed, and completed coding turns show a compact outcome card. Permission ids and gates are unchanged. Streaming stays deferred.
-  - Clean Debian `0.1.0-rc.17` from `b5ed368eed` remains the previous candidate and is not installed. Installed daily driver remains `0.1.0-rc.16`. An `0.1.0-rc.18` package is next after this polish is committed.
+  - Clean Debian `0.1.0-rc.18` from `ff96af72e1`, SHA-256 `2e3d073417c35154d6118b0056c356d1a29b17ddba9c6db8b7e911b0bc2f7a6e`. Bundled extension SHA-256 `eb1e89b9fc007012b78367e600d25630a35801fd562b6b429ae9ffe795e5bd20` matches the built `extension.js`. It is not installed. Installed daily driver remains `0.1.0-rc.16`.
+  - Packaged CDP on `/tmp/ovsc-rc18` run `2026-11-13T08-51-11-683Z`: CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY PASS. UX-ACTIVITY and UX-DIFF met objective checks and remain `NEEDS_REVIEW`. Visual copies: `apps/desktop/acceptance/review/m2-rc18-visual-2026-11-13/`. A person has not signed appearance. Empty-editor dominance on coding tasks is still visible. Personal V1 remains NO-GO.
 
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
