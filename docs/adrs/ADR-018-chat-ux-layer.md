@@ -99,3 +99,14 @@ The authority map is unchanged. No new agent, permission, or provider method.
 - Token streaming stays deferred. `ModelProvider` exposes `complete()` and no delta method. Ollama is called through that single response. A character-by-character animation would invent stream events the provider did not send.
 
 Record: `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`.
+
+## Milestone 2 refinements (agent workspace)
+
+The authority map is unchanged. No new agent, permission, or provider method. Streaming stays deferred.
+
+- Sidebar and Wider Chat attach to one `ChatController`. A second send is refused while a turn is in flight. Composer draft is shared in memory and is not persisted. Opening a diff never resolves a confirmation id.
+- Review rows distinguish proposed, approved, rejected, applied, and verified. An unused approval is interrupted on restore and is not replayed.
+- Activity summaries still merge one kind of work inside a task. Failures and retries stay visible. Interrupted is a distinct status. The technical trace stays collapsed.
+- `MAX_TURNS_EXCEEDED` is presented as a stop with finished work, unfinished work, and a recovery notice. Writes are not replayed.
+
+Installed `0.1.0-rc.16` was not replaced. These changes are in the working tree and an isolated overlay at `/tmp/ovsc-m2`.

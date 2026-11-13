@@ -29,6 +29,15 @@ test("the chat page keeps one composer and asks, plans, and agents by their runt
   assert.doesNotMatch(html, /viewsContainers/)
 })
 
+test("wider chat is the same page with an editor layout class", () => {
+  const { ChatViewProvider } = require("../src/chat-view-provider.ts")
+  const provider = new ChatViewProvider({ fsPath: "/ext" } as any, { setWebviewView() {} } as any)
+  const html = provider.htmlFor({} as any, { wide: true })
+  assert.match(html, /class="wide-chat"/)
+  assert.match(html, /id="composer"/)
+  assert.match(html, /body\.wide-chat #wide-chat-btn \{ display: none; \}/)
+})
+
 test("connection status carries the probed local catalog without inventing readiness", () => {
   const offline = deriveConnectionStatus({
     inferenceBackend: "standalone-local",

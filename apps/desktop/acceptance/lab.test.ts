@@ -433,7 +433,7 @@ test("a visible completion without the assistant class still belongs to the curr
 test("a correct edit that exhausted the turn budget is not an end-to-end pass", () => {
   const journey = assessJourney({
     expectsAgentCompletion: true,
-    text: "Task failed (MAX_TURNS_EXCEEDED): Changed: src/add.js. Tests did not run.",
+    text: "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED). Changed: src/add.js. Tests did not run.",
     activities: [],
     messageStatuses: ["failed"],
     commandExit: 0,
@@ -452,7 +452,7 @@ test("a correct edit that exhausted the turn budget is not an end-to-end pass", 
 test("node --test with zero tests is not an independent pass", () => {
   const journey = assessJourney({
     expectsAgentCompletion: true,
-    text: "Task failed (MAX_TURNS_EXCEEDED): No files were changed. Tests did not run.",
+    text: "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED). No files were changed. Tests did not run.",
     activities: [],
     messageStatuses: ["failed"],
     commandExit: 0,

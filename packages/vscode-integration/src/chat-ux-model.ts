@@ -47,6 +47,9 @@ export function formatTerminalTaskMessage(result: TerminalTaskInput): { content:
   if (result.status === "FAILED" && result.failureReason === "REJECTED") {
     return { content: rejectedMessage(result), lastStatus: "rejected" }
   }
+  if (result.status === "FAILED" && result.failureReason === "MAX_TURNS_EXCEEDED") {
+    return { content: exhaustedMessage(result), lastStatus: "failed" }
+  }
   if (result.status === "FAILED") {
     const content = result.finalAnswer?.trim()
       ? `Task failed (${result.failureReason}): ${result.finalAnswer}`
@@ -59,6 +62,45 @@ export function formatTerminalTaskMessage(result: TerminalTaskInput): { content:
     content: appendVerified(answer, result),
     lastStatus: "completed",
   }
+}
+
+function exhaustedMessage(result: TerminalTaskInput): string {
+  const lines = [
+    "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).",
+    "Completed work is kept. Nothing else will be written or replayed until you send a new request.",
+  ]
+  const answer = stripBudgetPhrase(result.finalAnswer)
+  if (answer) lines.push("", answer)
+  const note = claimNote(result, outcomeFacts(result))
+  if (note) lines.push("", note)
+  const finished = outcomeFacts(result)
+  if (finished.length > 0) lines.push("", "What finished", ...finished)
+  const pending = pendingWork(result)
+  if (pending.length > 0) lines.push("", "Not finished", ...pending)
+  lines.push("", "Recovery status is available for this conversation. Continuing requires a fresh request and a new approval for any write.")
+  return lines.join("\n")
+}
+
+function stripBudgetPhrase(finalAnswer: string | undefined): string {
+  const answer = finalAnswer?.trim() || ""
+  if (!answer) return ""
+  return answer.replace(/\s*Stopped because the turn budget was exhausted\.?/gi, "").trim()
+}
+
+function pendingWork(result: TerminalTaskInput): string[] {
+  const reviews = taskReviews(result)
+  const unfinishedMutations = uniqueFactPaths(
+    reviews
+      .filter((review) => review.kind === "mutation" && (review.status === "pending" || review.status === "approved" || review.status === "cancelled" || review.status === "rejected"))
+      .map((review) => review.path),
+  ).filter((path) => !appliedFactPaths(result, reviews).includes(path))
+  const unfinishedChecks = reviews.filter((review) =>
+    review.kind === "command" && (review.status === "pending" || review.status === "cancelled" || review.status === "interrupted" || review.status === "rejected"),
+  )
+  const lines: string[] = []
+  for (const path of unfinishedMutations) lines.push("- change not applied: " + path)
+  if (unfinishedChecks.length > 0) lines.push("- verification did not complete")
+  return lines
 }
 
 function rejectedMessage(result: TerminalTaskInput): string {
@@ -564,6 +606,8 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
     status = "failed";
   } else if (ev.type.endsWith(".cancelled") || ev.type.endsWith(".rejected")) {
     status = "cancelled";
+  } else if (ev.type.endsWith(".interrupted")) {
+    status = "interrupted";
   }
 
   return {

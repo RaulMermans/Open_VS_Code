@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Milestone 2 — Agent workspace presentation. Status: `IN_PROGRESS`. Installed desktop is `0.1.0-rc.16` and was not replaced. Activity summaries now use one line per kind of work inside a task, with file counts taken from real tool and mutation paths. Streaming stays deferred because `ModelProvider.complete` returns one response. Personal V1 remains NO-GO until the new presentation is exercised on a candidate package. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
+Milestone 2 — Agent workspace presentation. Status: `IN_PROGRESS`. Installed desktop is `0.1.0-rc.16` and was not replaced. Sidebar and Wider Chat share one conversation. Review rows distinguish proposed, approved, rejected, applied, and verified. Activity summaries still merge one kind of work inside a task and keep failures visible. Exhausted turns name finished and unfinished work without replay. Isolated CDP on `/tmp/ovsc-m2` passed CONV-PING, CODE-BUG, and SAFE-REJECT. Wider Chat click, diff navigation, and history restart still fail on Playwright's Electron attach. Streaming stays deferred. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
 
 Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 

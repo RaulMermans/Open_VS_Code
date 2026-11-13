@@ -337,15 +337,18 @@ function activityGroupStatus(items: any[]): string {
   var pending = false;
   var failed = false;
   var cancelled = false;
+  var interrupted = false;
   for (var i = 0; i < items.length; i++) {
     var status = items[i] && items[i].status;
     if (status === "pending" || status === "running") pending = true;
     else if (status === "failed") failed = true;
     else if (status === "cancelled") cancelled = true;
+    else if (status === "interrupted") interrupted = true;
   }
   if (failed) return "failed";
   if (pending) return "pending";
   if (cancelled) return "cancelled";
+  if (interrupted) return "interrupted";
   return "completed";
 }
 
@@ -354,9 +357,21 @@ function outcomeTitle(items: any[]): string {
   var label = String(last.label || "");
   if (last.status === "failed" || label === "Failed") return "Failed";
   if (last.status === "cancelled" || label === "Cancelled") return "Cancelled";
+  if (last.status === "interrupted" || label === "Interrupted") return "Interrupted";
   if (label.toLowerCase().indexOf("blocked") !== -1) return "Blocked";
   if (label === "Completed" || last.status === "completed") return "Completed";
   return label || "Completed";
+}
+
+function groupRetryNote(items: any[]): string {
+  var failed = false;
+  var completed = false;
+  for (var i = 0; i < items.length; i++) {
+    var status = items[i] && items[i].status;
+    if (status === "failed") failed = true;
+    if (status === "completed") completed = true;
+  }
+  return failed && completed ? " · retry recorded" : "";
 }
 
 function activityFiles(items: any[]): string[] {
@@ -386,40 +401,45 @@ function fileCountPhrase(count: number, inspected: boolean): string {
 function groupTitle(category: string, items: any[]): string {
   var status = activityGroupStatus(items);
   var files = activityFiles(items);
+  var retry = groupRetryNote(items);
   if (category === "approval") {
     if (status === "pending") return "Waiting for approval";
     if (status === "failed") return "Permission denied";
     if (status === "cancelled") return "Approval rejected";
+    if (status === "interrupted") return "Approval interrupted";
     return "Approval granted";
   }
   if (category === "outcome") return outcomeTitle(items);
   if (category === "checks") {
     if (status === "pending") return "Verifying";
-    if (status === "failed") return "Verification failed";
+    if (status === "failed") return "Verification failed" + retry;
     if (status === "cancelled") return "Verification cancelled";
+    if (status === "interrupted") return "Verification interrupted";
     return "Verification finished";
   }
   if (category === "edit") {
-    var editBase = status === "pending" ? "Implementing changes" : status === "failed" ? "Edit failed" : status === "cancelled" ? "Edit cancelled" : "Implemented changes";
-    return editBase + fileCountPhrase(files.length, false);
+    var editBase = status === "pending" ? "Implementing changes" : status === "failed" ? "Edit failed" : status === "cancelled" ? "Edit cancelled" : status === "interrupted" ? "Edit interrupted" : "Implemented changes";
+    return editBase + fileCountPhrase(files.length, false) + (status === "failed" ? retry : "");
   }
   if (category === "explore") {
-    var exploreBase = status === "failed" ? "Exploring repository failed" : status === "cancelled" ? "Exploring repository cancelled" : status === "pending" ? "Exploring repository" : "Explored repository";
-    return exploreBase + fileCountPhrase(files.length, true);
+    var exploreBase = status === "failed" ? "Exploring repository failed" : status === "cancelled" ? "Exploring repository cancelled" : status === "interrupted" ? "Exploring repository interrupted" : status === "pending" ? "Exploring repository" : "Explored repository";
+    return exploreBase + fileCountPhrase(files.length, true) + (status === "failed" ? retry : "");
   }
   if (category === "read") {
-    var readBase = status === "failed" ? "Reading files failed" : status === "cancelled" ? "Reading files cancelled" : status === "pending" ? "Reading files" : "Read files";
-    return readBase + fileCountPhrase(files.length, false);
+    var readBase = status === "failed" ? "Reading files failed" : status === "cancelled" ? "Reading files cancelled" : status === "interrupted" ? "Reading files interrupted" : status === "pending" ? "Reading files" : "Read files";
+    return readBase + fileCountPhrase(files.length, false) + (status === "failed" ? retry : "");
   }
   if (category === "consult") {
-    if (status === "failed") return "Model request failed";
+    if (status === "failed") return "Model request failed" + retry;
     if (status === "cancelled") return "Thinking cancelled";
+    if (status === "interrupted") return "Thinking interrupted";
     if (status === "pending") return "Thinking";
     return "Model replied";
   }
   if (category === "plan") {
     if (status === "failed") return "Planning failed";
     if (status === "cancelled") return "Planning cancelled";
+    if (status === "interrupted") return "Planning interrupted";
     return "Planning changes";
   }
   if (category === "understand") return "Understanding the request";
@@ -891,10 +911,19 @@ function lineDelta(m: any): string {
   return parts.join(' ');
 }
 
-function reviewStatusLabel(status: string): string {
+function reviewStatusLabel(status: string, record?: any): string {
+  if (record && record.kind === 'mutation') {
+    if (status === 'pending') return 'Proposed';
+    if (status === 'approved') return 'Approved';
+    if (status === 'verified' || (status === 'applied' && record.verifiedBy && record.verifiedBy.status === 'succeeded')) return 'Verified';
+    if (status === 'applied') return 'Applied';
+    if (status === 'rejected') return 'Rejected';
+  }
   switch (status) {
     case 'pending': return 'Awaiting review';
+    case 'approved': return 'Approved';
     case 'applied': return 'Applied';
+    case 'verified': return 'Verified';
     case 'rejected': return 'Rejected';
     case 'cancelled': return 'Cancelled';
     case 'stale': return 'Stale — not applied';
@@ -920,9 +949,15 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
   var counts: Record<string, number> = {};
   for (var c = 0; c < list.length; c++) counts[list[c].status] = (counts[list[c].status] || 0) + 1;
   var summaryParts = [];
-  var order = ['pending', 'running', 'applied', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled', 'interrupted'];
+  var order = ['pending', 'approved', 'running', 'applied', 'verified', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled', 'interrupted'];
   for (var o = 0; o < order.length; o++) {
-    if (counts[order[o]]) summaryParts.push(counts[order[o]] + ' ' + reviewStatusLabel(order[o]).toLowerCase());
+    if (counts[order[o]]) {
+      var sample = null;
+      for (var s = 0; s < list.length; s++) {
+        if (list[s].status === order[o]) { sample = list[s]; break; }
+      }
+      summaryParts.push(counts[order[o]] + ' ' + reviewStatusLabel(order[o], sample).toLowerCase());
+    }
   }
 
   var details = d.createElement('details');
@@ -940,7 +975,8 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
     var r = list[i];
     if (r.kind === 'mutation' && r.status === 'applied') anyApplied = true;
     var li = d.createElement('li');
-    li.className = 'review-item is-' + r.status;
+    var displayStatus = (r.kind === 'mutation' && r.status === 'applied' && r.verifiedBy && r.verifiedBy.status === 'succeeded') ? 'verified' : r.status;
+    li.className = 'review-item is-' + displayStatus;
     var mark = d.createElement('span');
     mark.className = 'activity-mark';
     setAttr(mark, 'aria-hidden', 'true');
@@ -968,7 +1004,7 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
     }
     var state = d.createElement('span');
     state.className = 'review-status';
-    var stateText = reviewStatusLabel(r.status);
+    var stateText = reviewStatusLabel(r.status, r);
     if (r.kind === 'command' && r.exitCode !== undefined && r.exitCode !== null) stateText += ' · exit ' + r.exitCode;
     if (r.kind === 'command' && typeof r.durationMs === 'number') stateText += ' · ' + formatDuration(r.durationMs);
     setText(state, stateText);
@@ -1001,8 +1037,9 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
         var openBtn = d.createElement('button');
         openBtn.className = 'btn-reject review-action';
         openBtn.type = 'button';
-        setText(openBtn, r.status === 'applied' ? 'Changes' : 'Open');
-        setAttr(openBtn, 'aria-label', (r.status === 'applied' ? 'Show changes in ' : 'Open ') + r.path);
+        var showApplied = r.status === 'applied' || r.status === 'verified';
+        setText(openBtn, showApplied ? 'Changes' : 'Open');
+        setAttr(openBtn, 'aria-label', (showApplied ? 'Show changes in ' : 'Open ') + r.path);
         onClick(openBtn, function (mid: string) { return function () { send({ type: 'review.openChange', mutationId: mid }); }; }(r.id));
         li.appendChild(openBtn);
       } else if (r.kind === 'command' && r.status !== 'pending' && r.status !== 'rejected' && r.outputAvailable !== false) {
@@ -3873,6 +3910,7 @@ export function webviewRenderRuntime(): string {
     outcomeTitle.toString(),
     activityFiles.toString(),
     fileCountPhrase.toString(),
+    groupRetryNote.toString(),
     groupTitle.toString(),
     groupDetail.toString(),
     pushActivityGroup.toString(),

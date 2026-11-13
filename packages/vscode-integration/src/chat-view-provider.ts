@@ -222,7 +222,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             border-radius: 6px;
             max-width: 72ch;
         }
-        body.wide-chat .message { max-width: 88ch; }
+        body.wide-chat {
+            background: var(--vscode-editor-background);
+        }
+        body.wide-chat .message { max-width: 100%; }
+        body.wide-chat #header,
+        body.wide-chat #transcript,
+        body.wide-chat #activities,
+        body.wide-chat #reviews,
+        body.wide-chat #terminal-container,
+        body.wide-chat #confirmation-container,
+        body.wide-chat #composer-container,
+        body.wide-chat #empty-state,
+        body.wide-chat #recovery-container,
+        body.wide-chat #trust-banner,
+        body.wide-chat #model-manager {
+            width: 100%;
+            max-width: 920px;
+            margin-left: auto;
+            margin-right: auto;
+            box-sizing: border-box;
+        }
+        body.wide-chat #header { padding: 8px 24px; }
+        body.wide-chat #transcript { padding: 16px 24px 12px; }
+        body.wide-chat #composer-container { padding: 12px 24px 16px; }
+        body.wide-chat #composer {
+            min-height: 96px;
+            max-height: 280px;
+        }
+        body.wide-chat #wide-chat-btn { display: none; }
+        body.wide-chat #reviews { max-height: 240px; }
         .trust-banner, .model-manager {
             margin: 8px 10px 0;
             padding: 8px;
@@ -434,9 +463,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         .review-item .activity-mark { margin-top: 5px; }
         .review-item.is-pending .activity-mark, .review-item.is-running .activity-mark { background: var(--vscode-charts-blue, #75beff); }
-        .review-item.is-applied .activity-mark, .review-item.is-succeeded .activity-mark { background: var(--vscode-testing-iconPassed, #89d185); }
+        .review-item.is-approved .activity-mark { background: var(--vscode-charts-orange, #cca700); }
+        .review-item.is-applied .activity-mark, .review-item.is-verified .activity-mark, .review-item.is-succeeded .activity-mark { background: var(--vscode-testing-iconPassed, #89d185); }
         .review-item.is-failed .activity-mark, .review-item.is-stale .activity-mark, .review-item.is-timed-out .activity-mark { background: var(--vscode-errorForeground); }
-        .review-item.is-rejected .activity-mark, .review-item.is-cancelled .activity-mark { background: var(--vscode-disabledForeground, #888); }
+        .review-item.is-rejected .activity-mark, .review-item.is-cancelled .activity-mark, .review-item.is-interrupted .activity-mark { background: var(--vscode-disabledForeground, #888); }
         .review-body { flex: 1; min-width: 0; }
         .review-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
         .review-subject { overflow-wrap: anywhere; }
@@ -514,7 +544,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .activity-item.is-pending .activity-mark { background: var(--vscode-charts-blue, #75beff); }
         .activity-item.is-completed .activity-mark { background: var(--vscode-testing-iconPassed, #89d185); }
         .activity-item.is-failed .activity-mark { background: var(--vscode-errorForeground); }
-        .activity-item.is-cancelled .activity-mark { background: var(--vscode-disabledForeground, #888); }
+        .activity-item.is-cancelled .activity-mark, .activity-item.is-interrupted .activity-mark { background: var(--vscode-disabledForeground, #888); }
         .activity-summary { list-style: none; margin: 0; padding: 0; }
         .activity-trace { margin-top: 4px; }
         .activity-trace summary {
@@ -1039,6 +1069,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <div id="conversation-bar"></div>
         <div class="header-actions">
             <button id="models-btn" class="secondary" type="button" aria-label="Open model manager" aria-expanded="false" aria-controls="model-manager">Models</button>
+            <button id="wide-chat-btn" class="secondary" type="button" aria-label="Open a wider chat beside the editor">Wider chat</button>
             <button id="new-chat-btn" class="secondary" type="button" aria-label="Start a new conversation">New</button>
             <button id="history-btn" class="secondary" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Show conversation history">History</button>
             <details id="overflow-menu">
@@ -1047,7 +1078,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     <button id="browser-panel-btn" class="secondary" type="button" aria-label="Open visual browser panel">Visual browser</button>
                     <button id="integrations-btn" class="secondary" type="button" aria-expanded="false" aria-controls="integrations-panel" aria-label="Open integrations manager">Tools</button>
                     <button id="model-btn" class="secondary" type="button" aria-label="Select local model">Model list</button>
-                    <button id="wide-chat-btn" class="secondary" type="button" aria-label="Open a wider chat beside the editor">Wider chat</button>
                 </div>
             </details>
         </div>
@@ -1315,6 +1345,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             syncModeBadge(state);
             syncModelSelector(state.connection);
             sendInFlight = !!state.activeTurn;
+            if (typeof state.composerDraft === 'string' && document.activeElement !== composer) {
+                if (composer.value !== state.composerDraft) composer.value = state.composerDraft;
+            }
             var follow = false;
             if (!transcriptUnchanged) {
                 follow = scrollOnNextChange || pinnedToBottom;
@@ -1510,6 +1543,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ type: 'chat.send', text: text, mode: sendMode, customModeId: sendCustomId });
             composer.value = '';
             if (vscode.setState) vscode.setState({ draft: '' });
+            vscode.postMessage({ type: 'chat.draft', text: '' });
         }
         
         sendBtn.addEventListener('click', trySend);
@@ -1604,6 +1638,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
         composer.addEventListener('input', () => {
             if (vscode.setState) vscode.setState({ draft: composer.value });
+            vscode.postMessage({ type: 'chat.draft', text: composer.value });
             var value = composer.value;
             var at = value.lastIndexOf('@');
             if (at >= 0) {
