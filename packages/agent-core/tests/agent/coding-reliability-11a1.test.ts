@@ -231,11 +231,18 @@ test("Fix src/add.js only does not require the referenced test, and still requir
   assert.deepEqual(requiredEditPaths(instruction, mentioned), ["src/add.js"])
   assert.deepEqual(
     requiredEditPaths("Do not change the test.", mentioned),
-    mentioned,
+    ["src/add.js"],
   )
   assert.deepEqual(
     requiredEditPaths("Update src/format.js and src/greet.js so the greeting stays trimmed.", ["src/format.js", "src/greet.js"]),
     ["src/format.js", "src/greet.js"],
+  )
+  assert.deepEqual(
+    requiredEditPaths(
+      "Implement formatName, greet, and parseName so test/lib.test.ts passes. Use apply_patch. Do not change the test.",
+      ["test/lib.test.ts"],
+    ),
+    [],
   )
   const applied = [{ path: "src/add.js", status: "APPLIED" as const, at: "2026-11-09T00:00:01.000Z", operation: "patch" as const }]
   const unverified = assessCodingCompletion({

@@ -110,7 +110,7 @@ The authority map is unchanged. No new agent, permission, or provider method. St
 - Completed coding turns show a compact outcome card (changed files, tests passed vs not executed). Finished command output stays collapsed until the user opens it.
 - `MAX_TURNS_EXCEEDED` is presented as a stop with finished work, unfinished work, and a recovery notice. Writes are not replayed.
 
-Installed `0.1.0-rc.16` was not replaced. Presentation polish is in `ff96af72e1`. Clean candidate `0.1.0-rc.18` is not installed.
+Installed `0.1.0-rc.16` was not replaced. Presentation polish is in `ff96af72e1`. Clean candidate `0.1.0-rc.18` is not installed. M4 overlay CDP (2026-11-13) re-confirmed approve, reject, and verify boundaries on the M2+M3 source line.
 
 Milestone 3 coding comparison (2026-11-13, overlay still not installed): same-digest `qwen3-coder:30b` 12-task live harness scored Open VS Code 11/12 vs OpenCode 3/12. Native tool messages stay opt-in.
 

@@ -1,0 +1,48 @@
+{
+  "taskId": "2026-11-13T16-19-21-818Z:UX-WIDE",
+  "targetUrl": "vscode-webview://0rdbphr5f0cabjtuefnl14q87rrdvdc6mljl3r8ns62ltbvb57p3/index.html",
+  "raw": {
+    "found": true,
+    "taskId": "2026-11-13T16-19-21-818Z:UX-WIDE",
+    "sendClicks": 1,
+    "approvalClicks": 0,
+    "rejectionClicks": 0,
+    "composerValue": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Reply with the single word widecheck.",
+        "status": ""
+      },
+      {
+        "role": "assistant",
+        "text": "widecheck",
+        "status": "completed"
+      }
+    ],
+    "userCount": 1,
+    "assistant": "widecheck",
+    "running": false,
+    "timedOut": false,
+    "model": "qwen3-coder:30b",
+    "mode": "ASK",
+    "readyText": "Ready · qwen3-coder:30b",
+    "approvalNotes": [],
+    "approvalBlocked": false,
+    "activities": [
+      "Completed",
+      "Starting task — session-1794586947826",
+      "Preparing context — session-1794586947826",
+      "Model responded — session-1794586947826",
+      "Completed — session-1794586947826"
+    ],
+    "frame": "active-frame"
+  },
+  "interpreted": {
+    "ack": "acknowledged",
+    "assistant": "widecheck",
+    "userCount": 1,
+    "sendClicks": 1,
+    "problems": []
+  }
+}

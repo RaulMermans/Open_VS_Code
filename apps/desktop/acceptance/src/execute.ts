@@ -229,6 +229,7 @@ async function runScenario(scenario: AcceptanceScenario, context: RunContext, ev
     if (scenario.id === "LIFE-HISTORY") return runCdpHistory(scenario, context, evidencePath)
     if (scenario.id === "CODE-CONTINUE") return runCdpContinueSameSession(scenario, context, evidencePath)
     if (scenario.id === "CODE-CONTINUE-RESTART") return runCdpContinueRestart(scenario, context, evidencePath)
+    if (scenario.id === "CODE-CONTINUE-COMPLETE") return runCdpContinueComplete(scenario, context, evidencePath)
     if (scenario.id === "CODE-CONTINUE-STALE") return runCdpContinueStale(scenario, context, evidencePath)
     if (scenario.prompt) return runCdpChat(scenario, context, evidencePath)
     return `BLOCKED: CDP webview harness has no flow for ${scenario.id}`
@@ -1139,6 +1140,34 @@ async function finishContinueOracle(
   }
   if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
   return text.slice(0, 500) || "Continuation finished and the independent oracle matched."
+}
+
+async function runCdpContinueComplete(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app, dirs, before } = await startCdpSession(scenario, context, evidencePath)
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    const first = await oneCdpTurn(app, scenario, scenario.prompt, `${context.runId}:${scenario.id}`, dirs.workspace, evidencePath, "send.json")
+    if (first.blocked) return first.blocked
+    let text = first.text
+    for (let index = 0; index < 3; index += 1) {
+      const snap = await agentSurface(app, { op: "snapshot" }, "any")
+      if (snap.continueVisible !== true) break
+      const continued = await clickContinue(app, scenario, context, evidencePath, `continue-${index + 1}.json`)
+      if (continued.blocked) {
+        if (/Continue this run was not visible/i.test(continued.blocked)) break
+        return continued.blocked
+      }
+      text = `${text}\n${continued.text}`
+    }
+    await saveShot(app, evidencePath, "after-complete.png", true)
+    return finishContinueOracle(scenario, dirs.workspace, before, text, evidencePath)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
 }
 
 async function runCdpContinueSameSession(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {

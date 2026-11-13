@@ -1,0 +1,8 @@
+Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).
+Completed work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.
+
+No files were changed. No edit was approved. Tests did not run. Incomplete: The requested edit was not applied.
+
+Unsupported claim: the reply describes an outcome this run did not record.
+
+Continue this run keeps the same task. Starting a new message does not continue it.

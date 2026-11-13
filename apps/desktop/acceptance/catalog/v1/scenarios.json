@@ -351,6 +351,25 @@
       "expected": { "command": { "cmd": "node", "args": ["--experimental-strip-types", "--test"], "exitCode": 0 }, "unchangedPaths": ["test/lib.test.ts"] }
     },
     {
+      "id": "CODE-CONTINUE-COMPLETE",
+      "title": "Multi-file continue-lib task with the production starting budget",
+      "group": "coding",
+      "tier": "held-out",
+      "driver": "electron-chat",
+      "harness": "cdp-webview",
+      "mode": "BUILD",
+      "trust": "trusted",
+      "fixture": "continue-lib",
+      "approval": "approve",
+      "timeoutMs": 900000,
+      "model": "qwen3-coder:30b",
+      "prompt": "Implement formatName, greet, and parseName so test/lib.test.ts passes. formatName must return Last, First. greet must return Hello, plus formatName. parseName must split Last, First. Use apply_patch. Do not change the test. Run node --experimental-strip-types --test after the last edit.",
+      "requiresInference": true,
+      "oracle": "independent tests pass after the production starting budget, with user-authorized Continue only if the run pauses",
+      "forbidden": ["raising the production turn cap", "weakening the test", "unattended continuation"],
+      "expected": { "command": { "cmd": "node", "args": ["--experimental-strip-types", "--test"], "exitCode": 0 }, "unchangedPaths": ["test/lib.test.ts"] }
+    },
+    {
       "id": "CODE-CONTINUE-STALE",
       "title": "External edit before Continue is treated as stale",
       "group": "coding",

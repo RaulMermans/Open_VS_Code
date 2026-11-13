@@ -98,11 +98,18 @@ export function excludedEditPaths(instruction: string): string[] {
   return negated
 }
 
+/** The user forbade editing tests, without naming a specific test path. */
+export function forbidsTestEdits(instruction: string): boolean {
+  return /\b(?:do not|don't|never)\s+(?:edit|change|modify|update|touch|alter)(?:ing)?\s+the\s+tests?\b/i.test(instruction)
+    || /\bwithout\s+(?:editing|changing|modifying|updating)\s+the\s+tests?\b/i.test(instruction)
+}
+
 /**
  * Paths the user asked to change. "Read A and B, then fix only A" does not
  * require an edit to B. "Do not edit B" also leaves B out. A request that
  * names several files without either restriction still requires each of them.
- * If every named path is excluded, the original list stays in force.
+ * If every named path is excluded, the original list stays in force unless
+ * the only named paths were tests the user forbade changing.
  */
 export function requiredEditPaths(instruction: string, explicitPaths: readonly string[]): string[] {
   let paths = [...explicitPaths]
@@ -119,9 +126,9 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
     ...dependencyPaths(instruction),
   ]
   let kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
-  if (/\bwithout\s+(?:editing|changing|modifying|updating)\s+the\s+tests?\b/i.test(instruction)) {
-    const withoutTests = kept.filter((path) => !isTestArtifactPath(path))
-    if (withoutTests.length > 0) kept = withoutTests
+  if (forbidsTestEdits(instruction)) {
+    kept = kept.filter((path) => !isTestArtifactPath(path))
+    if (kept.length === 0 && paths.every((path) => isTestArtifactPath(path))) return []
   }
   return kept.length > 0 ? kept : paths
 }

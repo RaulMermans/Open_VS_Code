@@ -1,0 +1,14 @@
+[
+  {
+    "kind": "sidebar",
+    "url": "vscode-webview://1rbe2h3aglu5pesumtfdqh3e34tjfpg0m67me22vi0mek684j0n3/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:38983/devtools/page/2CABA9DE1161A424C15B1B42C48DC596",
+    "composer": true
+  },
+  {
+    "kind": "wide",
+    "url": "vscode-webview://0rdbphr5f0cabjtuefnl14q87rrdvdc6mljl3r8ns62ltbvb57p3/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:38983/devtools/page/1DD594B748CAB3FD297CF030BBC22F9C",
+    "composer": true
+  }
+]

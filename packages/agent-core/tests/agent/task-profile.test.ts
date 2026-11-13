@@ -44,6 +44,14 @@ test("adding a test file is test authoring, not a diagnosis", () => {
   assert.match(profile.toolGuidance, /test\/greeting\.test\.js/)
 })
 
+test("implementing behavior while forbidding test edits is not test authoring", () => {
+  const instruction = "Implement formatName, greet, and parseName so test/lib.test.ts passes. Use apply_patch. Do not change the test."
+  const profile = classifyTaskProfile(instruction, "BUILD")
+  assert.notEqual(profile.category, "TEST_AUTHORING")
+  assert.equal(profile.requiresCodeChange, true)
+  assert.doesNotMatch(profile.toolGuidance, /Do not modify any other file/)
+})
+
 test("classifyTaskProfile classifies TEST_DIAGNOSIS tasks correctly", () => {
   const profile = classifyTaskProfile("Inspect the test file in tests/ and implementation in src/ to diagnose why the test fails.")
   assert.equal(profile.category, "TEST_DIAGNOSIS")

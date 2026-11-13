@@ -1,0 +1,22 @@
+{
+  "binary": "/usr/lib/open-vs-code/open-vs-code",
+  "pid": 2475368,
+  "port": 45939,
+  "sandboxMode": "4755",
+  "profile": "/tmp/ovsc-cdp-CODE-CONTINUE-b3qmhU/user-data",
+  "driver": "cdp",
+  "extensionsDir": "/tmp/ovsc-m4-ext",
+  "windowBounds": {
+    "requested": {
+      "width": 1440,
+      "height": 900
+    },
+    "actual": {
+      "innerWidth": 1440,
+      "innerHeight": 900,
+      "outerWidth": 1472,
+      "outerHeight": 942
+    },
+    "method": "resizeTo"
+  }
+}
