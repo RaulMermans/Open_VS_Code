@@ -1,10 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { createServer } from "node:net"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { permitConfirmation, type StructuredConfirmation } from "./confirmation-allow.ts"
-import { assertLocalDebuggerUrl, CDP_TURN_RUNTIME, debuggerBindProblems, type CdpTurnRaw } from "./cdp-turn.ts"
+import {
+  assertLocalDebuggerUrl,
+  CDP_SURFACE_RUNTIME,
+  CDP_TURN_RUNTIME,
+  debuggerBindProblems,
+  type AgentSurfaceSnapshot,
+  type CdpTurnRaw,
+} from "./cdp-turn.ts"
 import { redactUrl } from "./oracles.ts"
 import { assertIsolatedPath, assertLabWorkspace, chromeSandboxMode } from "./safety.ts"
 import { acceptanceBinary, prepareProfile } from "./session.ts"
@@ -33,14 +40,39 @@ export interface CdpApp {
   close(): Promise<void>
 }
 
+export type AgentViewKind = "sidebar" | "wide" | "any"
+
+export interface AgentView {
+  readonly kind: AgentViewKind
+  readonly url: string
+  readonly webSocketDebuggerUrl: string
+  readonly composer: boolean
+}
+
 export interface CdpTurnRequest {
   readonly taskId: string
   readonly prompt: string
   readonly mode: string
   readonly model: string
   readonly timeoutMs: number
-  readonly decision: "approve" | "reject" | "none"
+  readonly decision: "approve" | "reject" | "none" | "hold"
   readonly workspace: string
+  readonly view?: AgentViewKind
+}
+
+export interface WorkbenchSnapshot {
+  readonly workbench: boolean
+  readonly diffEditor: boolean
+  readonly tabLabels: readonly string[]
+  readonly text: string
+}
+
+export function acceptanceExtensionsDir(): string | undefined {
+  const env = process.env.OPEN_VS_CODE_ACCEPTANCE_EXTENSIONS_DIR?.trim()
+  if (env) return env
+  const overlay = "/tmp/ovsc-m2/usr/lib/open-vs-code/resources/app/extensions"
+  if (existsSync(join(overlay, "open-vs-code.vscode-integration", "package.json"))) return overlay
+  return undefined
 }
 
 function sleep(ms: number): Promise<void> {
@@ -174,7 +206,38 @@ async function evaluate(socket: CdpSocket, expression: string, timeoutMs: number
   return result.result?.value
 }
 
-async function connectMatching(port: number, predicate: (value: unknown) => boolean, timeoutMs: number): Promise<{ socket: CdpSocket; url: string }> {
+async function probeAgentView(target: DebugTarget): Promise<AgentView | undefined> {
+  if (target.type !== "iframe" || !String(target.url || "").includes("/index.html") || !target.webSocketDebuggerUrl) return undefined
+  const socket = await CdpSocket.connect(target.webSocketDebuggerUrl)
+  try {
+    const value = await evaluate(socket, `(${CDP_SURFACE_RUNTIME})({ op: "snapshot" })`, 5000) as AgentSurfaceSnapshot
+    if (!value?.found || !value.composerVisible) return undefined
+    const kind: AgentViewKind = value.kind === "wide" ? "wide" : "sidebar"
+    return { kind, url: targetUrl(target), webSocketDebuggerUrl: target.webSocketDebuggerUrl, composer: true }
+  } finally {
+    socket.close()
+  }
+}
+
+export async function listAgentWebviews(app: CdpApp): Promise<AgentView[]> {
+  const targets = await listTargets(app.port)
+  const views: AgentView[] = []
+  for (const target of targets) {
+    try {
+      const view = await probeAgentView(target)
+      if (view) views.push(view)
+    } catch {
+      // Other vscode-webview iframes are not Agent surfaces.
+    }
+  }
+  return views
+}
+
+async function connectMatching(
+  port: number,
+  predicate: (view: AgentView, snapshot: AgentSurfaceSnapshot) => boolean,
+  timeoutMs: number,
+): Promise<{ socket: CdpSocket; url: string; webSocketDebuggerUrl: string; kind: AgentViewKind }> {
   const started = Date.now()
   let last = "no debug target"
   while (Date.now() - started < timeoutMs) {
@@ -187,13 +250,14 @@ async function connectMatching(port: number, predicate: (value: unknown) => bool
       let socket: CdpSocket | undefined
       try {
         socket = await CdpSocket.connect(target.webSocketDebuggerUrl)
-        const value = await evaluate(socket, `(() => {
-          const frame = document.getElementById("active-frame");
-          const doc = frame && frame.contentDocument;
-          const composer = doc && doc.getElementById("composer");
-          return { composer: !!(composer) };
-        })()`, 5000)
-        if (predicate(value)) return { socket, url: targetUrl(target), webSocketDebuggerUrl: target.webSocketDebuggerUrl }
+        const snapshot = await evaluate(socket, `(${CDP_SURFACE_RUNTIME})({ op: "snapshot" })`, 5000) as AgentSurfaceSnapshot
+        if (!snapshot?.found || !snapshot.composerVisible) {
+          socket.close()
+          continue
+        }
+        const kind: AgentViewKind = snapshot.kind === "wide" ? "wide" : "sidebar"
+        const view: AgentView = { kind, url: targetUrl(target), webSocketDebuggerUrl: target.webSocketDebuggerUrl, composer: true }
+        if (predicate(view, snapshot)) return { socket, url: view.url, webSocketDebuggerUrl: target.webSocketDebuggerUrl, kind }
       } catch (error) {
         last = error instanceof Error ? error.message : String(error)
       }
@@ -204,20 +268,33 @@ async function connectMatching(port: number, predicate: (value: unknown) => bool
   throw new Error(`Agent webview was not available through the local debug port. ${last}`)
 }
 
+export async function waitForAgentViews(app: CdpApp, min: number, timeoutMs: number): Promise<AgentView[]> {
+  const started = Date.now()
+  let last: AgentView[] = []
+  while (Date.now() - started < timeoutMs) {
+    last = await listAgentWebviews(app)
+    if (last.length >= min) return last
+    await sleep(300)
+  }
+  throw new Error(`Agent webview was not available through the local debug port. saw ${last.length}, wanted ${min}`)
+}
+
 export async function launchCdpApp(input: {
   userData: string
   workspace: string
   repositoryRoot: string
   disableWorkspaceTrust?: boolean
+  prepare?: boolean
 }): Promise<CdpApp> {
   const userData = assertIsolatedPath(input.userData, "Acceptance profile")
   const workspace = assertLabWorkspace(input.workspace, input.repositoryRoot)
-  prepareProfile(userData)
+  if (input.prepare !== false) prepareProfile(userData)
   const binary = acceptanceBinary()
   const sandboxMode = chromeSandboxMode(binary)
   if (sandboxMode !== "4755") throw new Error(`Refusing to launch while chrome-sandbox mode is ${sandboxMode}`)
   const port = await freeLoopbackPort()
   if (!port) throw new Error("Could not reserve a loopback debug port")
+  const extensionsDir = acceptanceExtensionsDir()
   const args = [
     `--user-data-dir=${userData}`,
     `--remote-debugging-port=${port}`,
@@ -227,6 +304,7 @@ export async function launchCdpApp(input: {
     "--skip-release-notes",
     "--no-first-run",
     "--disable-updates",
+    ...(extensionsDir ? [`--builtin-extensions-dir=${extensionsDir}`] : []),
     ...(input.disableWorkspaceTrust ? ["--disable-workspace-trust"] : []),
     workspace,
   ]
@@ -437,7 +515,7 @@ export async function sampleFrames(app: CdpApp): Promise<FrameSample> {
 }
 
 async function superviseConfirmations(webSocketDebuggerUrl: string, request: CdpTurnRequest, stopped: () => boolean): Promise<void> {
-  if (request.decision === "none") return
+  if (request.decision === "none" || request.decision === "hold") return
   const socket = await CdpSocket.connect(webSocketDebuggerUrl)
   const seen = new Set<string>()
   try {
@@ -482,7 +560,8 @@ export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<
   frames.push(await sampleFrames(app))
   let socket: CdpSocket | undefined
   try {
-    const connected = await connectMatching(app.port, (value) => Boolean((value as { composer?: boolean } | null)?.composer), 45000)
+    const wanted = request.view ?? "any"
+    const connected = await connectMatching(app.port, (view) => wanted === "any" || view.kind === wanted, 45000)
     socket = connected.socket
     const expression = `(${CDP_TURN_RUNTIME})(${JSON.stringify({
       taskId: request.taskId,
@@ -504,6 +583,95 @@ export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<
     clearInterval(sampler)
     socket?.close()
   }
+}
+
+export async function agentSurface(app: CdpApp, op: Record<string, unknown>, view: AgentViewKind = "any"): Promise<AgentSurfaceSnapshot> {
+  const connected = await connectMatching(app.port, (candidate) => view === "any" || candidate.kind === view, 20000)
+  try {
+    return await evaluate(connected.socket, `(${CDP_SURFACE_RUNTIME})(${JSON.stringify(op)})`, 8000) as AgentSurfaceSnapshot
+  } finally {
+    connected.socket.close()
+  }
+}
+
+export async function waitAgentSurface(
+  app: CdpApp,
+  view: AgentViewKind,
+  predicate: (snapshot: AgentSurfaceSnapshot) => boolean,
+  timeoutMs: number,
+): Promise<AgentSurfaceSnapshot> {
+  const started = Date.now()
+  let last: AgentSurfaceSnapshot = { found: false, reason: "not sampled" }
+  while (Date.now() - started < timeoutMs) {
+    try {
+      last = await agentSurface(app, { op: "snapshot" }, view)
+      if (predicate(last)) return last
+    } catch (error) {
+      last = { found: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+    await sleep(300)
+  }
+  throw new Error(`Agent webview did not reach the expected state. ${last.reason || "timeout"}`)
+}
+
+const WORKBENCH_SNAPSHOT = `(() => {
+  const workbench = Boolean(document.querySelector(".monaco-workbench"));
+  const tabs = Array.from(document.querySelectorAll(".tabs-container .tab, .tab .tab-label, .monaco-icon-label")).map((node) => String(node.textContent || "").replace(/\\s+/g, " ").trim()).filter(Boolean);
+  const labels = Array.from(document.querySelectorAll(".tab .label-name, .tab .tab-label")).map((node) => String(node.textContent || "").trim()).filter(Boolean);
+  return {
+    workbench: workbench,
+    diffEditor: Boolean(document.querySelector(".monaco-diff-editor")),
+    tabLabels: labels.length > 0 ? labels : tabs.slice(0, 20),
+    text: String((document.body && document.body.innerText) || "").slice(0, 4000),
+  };
+})()`
+
+export async function readWorkbench(app: CdpApp): Promise<WorkbenchSnapshot> {
+  const snapshot = await withWorkbench(app, async (socket) => {
+    const marker = await evaluate(socket, `Boolean(document.querySelector(".monaco-workbench"))`, 5000)
+    if (marker !== true) return undefined
+    return await evaluate(socket, WORKBENCH_SNAPSHOT, 5000) as WorkbenchSnapshot
+  })
+  if (!snapshot) throw new Error("Workbench was not available through the local debug port")
+  return snapshot
+}
+
+export async function closeWideChat(app: CdpApp): Promise<boolean> {
+  const clicked = await withWorkbench(app, async (socket) => {
+    const marker = await evaluate(socket, `Boolean(document.querySelector(".monaco-workbench"))`, 5000)
+    if (marker !== true) return undefined
+    return await evaluate(socket, `(() => {
+      const tabs = Array.from(document.querySelectorAll(".tabs-container .tab"));
+      for (const tab of tabs) {
+        const label = String(tab.textContent || "");
+        if (!/Open VS Code Agent|Agent Workspace/i.test(label)) continue;
+        const close = tab.querySelector(".codicon-close, .action-label.codicon-close, [aria-label*='Close']");
+        if (close) {
+          close.click();
+          return true;
+        }
+      }
+      return false;
+    })()`, 5000) as boolean
+  })
+  return clicked === true
+}
+
+export async function relaunchCdpApp(app: CdpApp, input: {
+  repositoryRoot: string
+  disableWorkspaceTrust?: boolean
+}): Promise<CdpApp> {
+  const userData = app.userData
+  const workspace = app.workspace
+  await app.close()
+  await sleep(800)
+  return launchCdpApp({
+    userData,
+    workspace,
+    repositoryRoot: input.repositoryRoot,
+    disableWorkspaceTrust: input.disableWorkspaceTrust,
+    prepare: false,
+  })
 }
 
 export function writePng(file: string, bytes: Buffer): void {

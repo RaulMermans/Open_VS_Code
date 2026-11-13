@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import type { AcceptanceScenario, ScenarioExpected } from "./catalog.ts"
+import { scenarioHarness, type AcceptanceScenario, type ScenarioExpected } from "./catalog.ts"
 import {
   assistantTextForTurn,
   attachChatSurface,
@@ -19,11 +19,28 @@ import {
   workbenchPage,
   type ChatSurface,
 } from "./chat-surface.ts"
-import { captureWorkbenchWhenReady, launchCdpApp, runCdpTurn, sampleFrames, trustWorkspace, writePng, type CdpApp } from "./cdp-driver.ts"
+import {
+  acceptanceExtensionsDir,
+  agentSurface,
+  captureWorkbenchWhenReady,
+  closeWideChat,
+  launchCdpApp,
+  listAgentWebviews,
+  readWorkbench,
+  relaunchCdpApp,
+  runCdpTurn,
+  sampleFrames,
+  trustWorkspace,
+  waitAgentSurface,
+  waitForAgentViews,
+  writePng,
+  type AgentViewKind,
+  type CdpApp,
+} from "./cdp-driver.ts"
 import { interpretCdpTurn } from "./cdp-turn.ts"
 import { assessJourney } from "./journey.ts"
 import { classifyPingContent, gitCleanProblems, sourceDigest, trustStateFromWorkbench } from "./oracles.ts"
-import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./safety.ts"
+import { assertApprovalTarget, assertIsolatedPath, fingerprintDrift, liveProfileDirs, liveProfileFingerprint } from "./safety.ts"
 import {
   acceptanceBinary,
   installedPackageVersion,
@@ -182,7 +199,16 @@ export async function executeScenario(scenario: AcceptanceScenario, context: Run
 
 function causeFor(scenario: AcceptanceScenario, detail: string): FailureCause {
   if (detail.includes("--no-sandbox") || detail.includes("chrome-sandbox") || detail.includes("dpkg")) return "packaging"
-  if (detail.includes("composer") || detail.includes("selector") || detail.includes("Send not") || detail.includes("webview") || detail.includes("screenshot")) return "tooling"
+  if (
+    detail.includes("composer")
+    || detail.includes("selector")
+    || detail.includes("Send not")
+    || detail.includes("webview")
+    || detail.includes("screenshot")
+    || detail.includes("debug port")
+    || detail.includes("debug socket")
+    || detail.includes("CDP")
+  ) return "tooling"
   if (detail.includes("forbidden text") || detail.includes("<tool_call") || detail.includes("protocol leak")) return "presentation"
   if (detail.includes("oracle") || detail.includes("exited")) return "model"
   if (detail.includes("Restricted Mode") || detail.includes("trust")) return "permission"
@@ -192,15 +218,19 @@ function causeFor(scenario: AcceptanceScenario, detail: string): FailureCause {
 }
 
 async function runScenario(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
-  if (scenario.driver === "unit") return runUnit(scenario, context.repositoryRoot)
-  if (scenario.driver === "artifact") return runArtifact(scenario, context)
-  if (scenario.driver === "electron-chat" && scenario.prompt && !PLAYWRIGHT_CHAT_IDS.has(scenario.id)) {
-    return runCdpChat(scenario, context, evidencePath)
+  const harness = scenarioHarness(scenario)
+  if (harness === "unit") return runUnit(scenario, context.repositoryRoot)
+  if (harness === "artifact") return runArtifact(scenario, context)
+  if (harness === "cdp-webview") {
+    if (scenario.id === "UX-WIDE") return runCdpWide(scenario, context, evidencePath)
+    if (scenario.id === "UX-ACTIVITY") return runCdpActivity(scenario, context, evidencePath)
+    if (scenario.id === "UX-DIFF") return runCdpDiff(scenario, context, evidencePath)
+    if (scenario.id === "LIFE-HISTORY") return runCdpHistory(scenario, context, evidencePath)
+    if (scenario.prompt) return runCdpChat(scenario, context, evidencePath)
+    return `BLOCKED: CDP webview harness has no flow for ${scenario.id}`
   }
   return runElectron(scenario, context, evidencePath)
 }
-
-const PLAYWRIGHT_CHAT_IDS = new Set(["SAFE-CANCEL", "LIFE-MODEL", "LIFE-HISTORY"])
 
 function runUnit(scenario: AcceptanceScenario, repositoryRoot: string): string {
   if (scenario.id === "SAFE-NO-SILENT") {
@@ -576,6 +606,7 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
       sandboxMode: app.sandboxMode,
       profile: app.userData,
       driver: "cdp",
+      extensionsDir: acceptanceExtensionsDir() ?? null,
     }, null, 2))
     await saveShot(app, evidencePath, "window.png")
     if (scenario.trust === "trusted") {
@@ -606,7 +637,7 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
       if (follow.blocked) return follow.blocked
       text = follow.text
     }
-    await saveShot(app, evidencePath, "after-prompt.png")
+    await saveShot(app, evidencePath, "after-prompt.png", true)
     const filesystem = filesystemProblems(dirs.workspace, before, scenario.expected)
     const fileProblems = filesystem.filter((problem) => !problem.startsWith("oracle "))
     const problems = [
@@ -691,6 +722,7 @@ async function oneCdpTurn(
   workspace: string,
   evidencePath: string,
   evidenceName: string,
+  view: AgentViewKind = "any",
 ): Promise<{ text: string; blocked?: string; activities: string[]; messageStatuses: string[]; approvalBlocked: boolean }> {
   const turn = await runCdpTurn(app, {
     taskId,
@@ -698,8 +730,9 @@ async function oneCdpTurn(
     mode: scenario.mode,
     model: scenario.model,
     timeoutMs: scenario.timeoutMs,
-    decision: scenario.approval,
+    decision: scenario.approval === "none" ? "none" : scenario.approval,
     workspace,
+    view,
   })
   writeEvidence(evidencePath, "frames.jsonl", turn.frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n")
   const interpreted = interpretCdpTurn({ taskId, prompt, workspace, raw: turn.raw })
@@ -720,12 +753,289 @@ async function oneCdpTurn(
   return { text: interpreted.assistant, ...observed }
 }
 
-async function saveShot(app: CdpApp, evidencePath: string, name: string): Promise<void> {
+async function saveShot(app: CdpApp, evidencePath: string, name: string, required = false): Promise<void> {
   try {
     writePng(join(evidencePath, name), await captureWorkbenchWhenReady(app))
   } catch (error) {
-    writeEvidence(evidencePath, `${name}.error.txt`, error instanceof Error ? error.message : String(error))
+    const message = error instanceof Error ? error.message : String(error)
+    writeEvidence(evidencePath, `${name}.error.txt`, message)
+    if (required) throw new Error(`Required screenshot ${name} failed: ${message}`)
   }
+}
+
+function protocolLeak(text: string): boolean {
+  return /<tool_call\b|<\/tool_call>|<function=/.test(text)
+}
+
+async function startCdpSession(
+  scenario: AcceptanceScenario,
+  context: RunContext,
+  evidencePath: string,
+  options?: { prepare?: boolean; userData?: string; workspace?: string },
+): Promise<{ app: CdpApp; dirs: { root: string; userData: string; workspace: string }; before: Record<string, string> }> {
+  const dirs = options?.userData && options.workspace
+    ? { root: join(options.userData, ".."), userData: options.userData, workspace: options.workspace }
+    : freshRunDir(`ovsc-cdp-${scenario.id}-`)
+  if (!options?.workspace) materializeFixture(scenario.fixture, dirs.workspace)
+  const before = workspaceDigest(dirs.workspace)
+  writeEvidence(evidencePath, "workspace.txt", dirs.workspace)
+  const app = await launchCdpApp({
+    userData: dirs.userData,
+    workspace: dirs.workspace,
+    repositoryRoot: context.repositoryRoot,
+    disableWorkspaceTrust: scenario.trust === "trusted",
+    prepare: options?.prepare,
+  })
+  writeEvidence(evidencePath, "argv.txt", app.argv.join("\n"))
+  writeEvidence(evidencePath, "launch.json", JSON.stringify({
+    binary: app.binary,
+    pid: app.pid,
+    port: app.port,
+    sandboxMode: app.sandboxMode,
+    profile: app.userData,
+    driver: "cdp",
+    extensionsDir: acceptanceExtensionsDir() ?? null,
+  }, null, 2))
+  if (scenario.trust === "trusted") {
+    const trust = await trustWorkspace(app)
+    writeEvidence(evidencePath, "trust.json", JSON.stringify(trust, null, 2))
+    if (trust.restricted) throw new Error("FAIL: workspace remained in Restricted Mode after the trust control was used")
+  }
+  return { app, dirs, before }
+}
+
+async function runCdpWide(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app, dirs } = await startCdpSession(scenario, context, evidencePath)
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    await waitForAgentViews(app, 1, 45000)
+    const sidebar = await waitAgentSurface(app, "sidebar", (snap) => snap.composerVisible === true, 20000)
+    writeEvidence(evidencePath, "sidebar-before.json", JSON.stringify(sidebar, null, 2))
+    if (!sidebar.wideButtonVisible) return "FAIL: Wider chat control was not visible in the sidebar"
+    await agentSurface(app, { op: "click", selector: "#wide-chat-btn" }, "sidebar")
+    let views
+    try {
+      views = await waitForAgentViews(app, 2, 20000)
+    } catch (error) {
+      return `BLOCKED: Wider Chat did not expose a second Agent webview: ${error instanceof Error ? error.message : String(error)}`
+    }
+    writeEvidence(evidencePath, "views.json", JSON.stringify(views, null, 2))
+    const wide = await waitAgentSurface(app, "wide", (snap) => snap.composerVisible === true, 15000)
+    if (!wide.composerVisible) return "FAIL: Wider chat did not leave a composer on screen"
+    const draft = `shared-draft-${scenario.id}`
+    await agentSurface(app, { op: "fill", value: draft }, "sidebar")
+    const synced = await waitAgentSurface(app, "wide", (snap) => (snap.composerValue || "").includes(draft), 10000).catch(() => null)
+    if (!synced) return "FAIL: Wider Chat did not show the sidebar composer draft"
+    await agentSurface(app, { op: "fill", value: "" }, "wide")
+    const taskId = `${context.runId}:${scenario.id}`
+    const sent = await oneCdpTurn(app, scenario, scenario.prompt, taskId, dirs.workspace, evidencePath, "send.json", "wide")
+    if (sent.blocked) return sent.blocked
+    const afterSidebar = await waitAgentSurface(app, "sidebar", (snap) => (snap.messages || []).some((message) => message.role === "user" && message.text.includes(scenario.prompt)), 15000)
+    const afterWide = await waitAgentSurface(app, "wide", (snap) => (snap.messages || []).some((message) => message.role === "assistant" && /widecheck/i.test(message.text)), 15000)
+    writeEvidence(evidencePath, "messages-sidebar.json", JSON.stringify(afterSidebar.messages ?? [], null, 2))
+    writeEvidence(evidencePath, "messages-wide.json", JSON.stringify(afterWide.messages ?? [], null, 2))
+    const problems = [
+      ...failuresForText(sent.text, scenario.expected),
+      ...failuresForText((afterSidebar.messages ?? []).map((message) => message.text).join("\n"), scenario.expected),
+    ]
+    const usersWide = (afterWide.messages ?? []).filter((message) => message.role === "user" && message.text.includes(scenario.prompt)).length
+    const usersSide = (afterSidebar.messages ?? []).filter((message) => message.role === "user" && message.text.includes(scenario.prompt)).length
+    if (usersWide !== 1 || usersSide !== 1) problems.push(`expected one shared user turn, sidebar=${usersSide} wide=${usersWide}`)
+    await saveShot(app, evidencePath, "wide-open.png", true)
+    const closed = await closeWideChat(app)
+    writeEvidence(evidencePath, "close-wide.json", JSON.stringify({ closed }, null, 2))
+    await waitForAgentViews(app, 1, 15000)
+    const remaining = await listAgentWebviews(app)
+    if (remaining.some((view) => view.kind === "wide")) problems.push("Wider Chat remained open after close")
+    const usable = await waitAgentSurface(app, "sidebar", (snap) => snap.composerVisible === true, 10000)
+    if (!usable.composerVisible) problems.push("sidebar composer was not usable after closing Wider Chat")
+    await saveShot(app, evidencePath, "after-prompt.png", true)
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return "Sidebar and Wider Chat shared one conversation, one draft, and one completed turn."
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
+}
+
+async function runCdpActivity(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app, dirs, before } = await startCdpSession(scenario, context, evidencePath)
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    const taskId = `${context.runId}:${scenario.id}`
+    const sent = await oneCdpTurn(app, scenario, scenario.prompt, taskId, dirs.workspace, evidencePath, "send.json")
+    if (sent.blocked) return sent.blocked
+    const snap = await waitAgentSurface(app, "sidebar", (value) => (value.activities ?? []).length > 0 || (value.trace ?? []).length > 0 || Boolean(sent.text), 10000)
+    writeEvidence(evidencePath, "activity.json", JSON.stringify({
+      activities: snap.activities ?? [],
+      statuses: snap.activityStatuses ?? [],
+      trace: snap.trace ?? [],
+      technicalOpen: snap.technicalOpen === true,
+    }, null, 2))
+    await saveShot(app, evidencePath, "after-prompt.png", true)
+    const body = `${sent.text}\n${(snap.activities ?? []).join("\n")}\n${(snap.trace ?? []).join("\n")}\n${snap.bodyText ?? ""}`
+    const problems = [
+      ...failuresForText(sent.text, scenario.expected),
+      ...filesystemProblems(dirs.workspace, before, { gitClean: scenario.expected.gitClean }),
+    ]
+    if (protocolLeak(body)) problems.push("protocol leak: tool-call markup remains visible")
+    if ((snap.trace ?? []).length > 0 && snap.technicalOpen) problems.push("technical details were expanded by default")
+    if ((snap.activities ?? []).length === 0) problems.push("activity is not grouped in a summary")
+    if ((snap.trace ?? []).length === 0) problems.push("technical activity trace is missing")
+    const toolish = [...(snap.activities ?? []), ...(snap.trace ?? [])].some((line) => /read|explor|file|tool|think|model/i.test(line))
+    if (!toolish) problems.push("activity summary does not correspond to model or tool work")
+    const failed = (snap.activityStatuses ?? []).includes("failed")
+    const retried = [...(snap.activities ?? []), ...(snap.trace ?? [])].some((line) => /retry|failed/i.test(line))
+    writeEvidence(evidencePath, "activity-flags.json", JSON.stringify({ failed, retried, visual: "NEEDS_REVIEW" }, null, 2))
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return "Activity is grouped, technical details stay collapsed, and the screenshot is ready for visual review."
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
+}
+
+async function runCdpDiff(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app, dirs, before } = await startCdpSession(scenario, context, evidencePath)
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    assertApprovalTarget(dirs.workspace, context.repositoryRoot, "reject")
+    const sourceBefore = readFileSync(join(dirs.workspace, "src", "add.js"), "utf8")
+    const taskId = `${context.runId}:${scenario.id}`
+    const turn = await runCdpTurn(app, {
+      taskId,
+      prompt: scenario.prompt,
+      mode: scenario.mode,
+      model: scenario.model,
+      timeoutMs: scenario.timeoutMs,
+      decision: "hold",
+      workspace: dirs.workspace,
+    })
+    writeEvidence(evidencePath, "frames.jsonl", turn.frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n")
+    writeEvidence(evidencePath, "send.json", JSON.stringify({ taskId, targetUrl: turn.targetUrl, raw: turn.raw }, null, 2))
+    const card = await waitAgentSurface(app, "any", (snap) => snap.diffVisible === true || snap.approveVisible === true, 20000)
+    writeEvidence(evidencePath, "confirmation.json", JSON.stringify({
+      confirmationId: card.confirmationId,
+      path: card.confirmationPath,
+      diffVisible: card.diffVisible,
+    }, null, 2))
+    if (!card.diffVisible) return "FAIL: Open Diff control was not visible on the proposed change"
+    if (card.confirmationPath && !card.confirmationPath.includes("add.js")) return `FAIL: proposed path was ${card.confirmationPath}`
+    await agentSurface(app, { op: "click", selector: "#btn-diff" }, "any")
+    const workbench = await waitForWorkbenchDiff(app, scenario.timeoutMs > 5000 ? 20000 : 20000)
+    writeEvidence(evidencePath, "workbench-diff.json", JSON.stringify(workbench, null, 2))
+    await saveShot(app, evidencePath, "review.png", true)
+    const afterOpen = readFileSync(join(dirs.workspace, "src", "add.js"), "utf8")
+    if (afterOpen !== sourceBefore) return "FAIL: opening the diff applied the proposed edit"
+    const stillPending = await agentSurface(app, { op: "snapshot" }, "any")
+    if (!stillPending.approveVisible && !stillPending.rejectVisible) return "FAIL: opening the diff dismissed the approval card"
+    await agentSurface(app, { op: "click", selector: "#btn-reject" }, "any")
+    const settled = await waitAgentSurface(app, "any", (snap) => snap.approveVisible !== true && snap.rejectVisible !== true, 60000)
+    writeEvidence(evidencePath, "messages.json", JSON.stringify(settled.messages ?? [], null, 2))
+    await saveShot(app, evidencePath, "after-prompt.png", true)
+    const problems = filesystemProblems(dirs.workspace, before, scenario.expected)
+    const sourceAfter = readFileSync(join(dirs.workspace, "src", "add.js"), "utf8")
+    if (sourceAfter !== sourceBefore) problems.push("src/add.js changed after reject")
+    if (sourceAfter.includes("a + b") && !sourceAfter.includes("a + b + 1") && sourceBefore.includes("a + b + 1")) {
+      problems.push("src/add.js was applied despite reject")
+    }
+    if (!workbench.diffEditor && !workbench.tabLabels.some((label) => /add\.js|Review/i.test(label))) {
+      problems.push("VS Code did not show a diff editor for the proposed file")
+    }
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return "Open Diff showed the proposed src/add.js change without applying it; reject left the file unchanged."
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
+}
+
+async function waitForWorkbenchDiff(app: CdpApp, timeoutMs: number): Promise<{ diffEditor: boolean; tabLabels: readonly string[]; text: string }> {
+  const started = Date.now()
+  let last = { diffEditor: false, tabLabels: [] as string[], text: "" }
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const snap = await readWorkbench(app)
+      last = { diffEditor: snap.diffEditor, tabLabels: [...snap.tabLabels], text: snap.text }
+      if (snap.diffEditor || snap.tabLabels.some((label) => /Review|add\.js/i.test(label))) return last
+    } catch {
+      // Workbench may still be attaching.
+    }
+    await sleep(300)
+  }
+  return last
+}
+
+async function runCdpHistory(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const liveBefore = liveProfileFingerprint()
+  const { app, dirs } = await startCdpSession(scenario, context, evidencePath)
+  let current = app
+  try {
+    await saveShot(current, evidencePath, "window.png", true)
+    const taskId = `${context.runId}:${scenario.id}`
+    const sent = await oneCdpTurn(current, scenario, scenario.prompt, taskId, dirs.workspace, evidencePath, "send.json")
+    if (sent.blocked) return sent.blocked
+    const original = await agentSurface(current, { op: "snapshot" }, "sidebar")
+    writeEvidence(evidencePath, "messages-before.json", JSON.stringify(original.messages ?? [], null, 2))
+    await agentSurface(current, { op: "historyOpen" }, "sidebar")
+    const listed = await waitAgentSurface(current, "sidebar", (snap) => (snap.historyItems ?? []).length > 0, 10000)
+    writeEvidence(evidencePath, "history-before.json", JSON.stringify(listed.historyItems ?? [], null, 2))
+    const identity = (listed.historyItems ?? []).find((item) => item.current)?.label
+      || (listed.historyItems ?? [])[0]?.label
+      || scenario.prompt
+    await saveShot(current, evidencePath, "before-restart.png", true)
+    current = await relaunchCdpApp(current, {
+      repositoryRoot: context.repositoryRoot,
+      disableWorkspaceTrust: scenario.trust === "trusted",
+    })
+    writeEvidence(evidencePath, "relaunch.json", JSON.stringify({
+      pid: current.pid,
+      port: current.port,
+      profile: current.userData,
+    }, null, 2))
+    await waitForAgentViews(current, 1, 45000)
+    await agentSurface(current, { op: "historyOpen" }, "sidebar")
+    const restoredList = await waitAgentSurface(current, "sidebar", (snap) => (snap.historyItems ?? []).some((item) => item.label.includes("historycheck") || (identity ? item.label === identity : false) || item.label.includes(scenario.prompt.slice(0, 24))), 20000).catch(async () => agentSurface(current, { op: "snapshot" }, "sidebar"))
+    writeEvidence(evidencePath, "history-after.json", JSON.stringify(restoredList.historyItems ?? [], null, 2))
+    const selected = await agentSurface(current, { op: "historySelect", value: "historycheck" }, "sidebar").catch(() => null)
+    if (!selected || selected.found === false) {
+      const byIdentity = identity ? await agentSurface(current, { op: "historySelect", value: identity.slice(0, 40) }, "sidebar").catch(() => null) : null
+      if (!byIdentity || byIdentity.found === false) return "FAIL: History did not list the original conversation after restart"
+    }
+    const restored = await waitAgentSurface(current, "sidebar", (snap) => (snap.messages ?? []).some((message) => message.text.includes("historycheck")), 15000)
+    writeEvidence(evidencePath, "messages-after.json", JSON.stringify(restored.messages ?? [], null, 2))
+    await saveShot(current, evidencePath, "after-prompt.png", true)
+    const problems = failuresForText((restored.messages ?? []).map((message) => message.text).join("\n"), scenario.expected)
+    if (restored.approveVisible) problems.push("an interrupted approval was restored as actionable")
+    const pendingReview = (restored.reviews ?? []).some((row) => /awaiting review|proposed/i.test(row) && /approve/i.test(row))
+    if (pendingReview) problems.push("a proposed review was restored as actionable")
+    const liveAfter = liveProfileFingerprint()
+    const liveProblems = fingerprintDrift(liveBefore, liveAfter)
+    writeEvidence(evidencePath, "live-profile.json", JSON.stringify({ before: liveBefore, after: liveAfter, liveProblems }, null, 2))
+    if (liveProblems.length > 0) problems.push(...liveProblems)
+    if (current.userData === liveProfileDirs()[0]) problems.push("lab relaunch used the live profile")
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return "The original conversation identity and messages were restored from the isolated profile History control."
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await current.close().catch(() => undefined)
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export function notRun(scenario: AcceptanceScenario, evidenceRoot: string): ScenarioResult {

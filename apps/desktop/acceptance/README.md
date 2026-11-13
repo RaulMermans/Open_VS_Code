@@ -27,7 +27,9 @@ npm run accept:lab -- --live all
 
 Without `--live`, the command runs the unit and package-artifact scenarios and records every other scenario as `NOT_RUN`. `NOT_RUN` is not a pass.
 
-Chat scenarios open the installed binary with a loopback debug port and drive `#active-frame` through Chrome DevTools. They do not use Playwright's Electron attachment. A turn counts only when the transcript has the submitted user message and the assistant reply for that task id. An empty composer is not Send acknowledgement, and an ambiguous send is not retried. `--repeat=10` reruns one selected scenario on a fresh profile each time.
+Each scenario names a harness. Agent Webview work (`cdp-webview`) opens the installed binary with a loopback debug port and drives `#active-frame` through Chrome DevTools, including Wider Chat, activity, proposed diffs, and History restore. Playwright stays on workbench-only checks that do not need that webview. A missing or detached Agent webview is recorded as `BLOCKED` tooling, not as a product failure. A turn counts only when the transcript has the submitted user message and the assistant reply for that task id. An empty composer is not Send acknowledgement, and an ambiguous send is not retried. `--repeat=10` reruns one selected scenario on a fresh profile each time.
+
+If `/tmp/ovsc-m2` contains the isolated Milestone 2 overlay, the lab loads that built-in extension directory. Override with `OPEN_VS_CODE_ACCEPTANCE_EXTENSIONS_DIR`. Full-workbench screenshots are required evidence; a failed capture fails the scenario.
 
 `--live smoke` also opens the installed app for the sandbox check, the fresh-profile check, and one real `qwen3-coder:30b` reply.
 

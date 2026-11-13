@@ -109,4 +109,4 @@ The authority map is unchanged. No new agent, permission, or provider method. St
 - Activity summaries still merge one kind of work inside a task. Failures and retries stay visible. Interrupted is a distinct status. The technical trace stays collapsed.
 - `MAX_TURNS_EXCEEDED` is presented as a stop with finished work, unfinished work, and a recovery notice. Writes are not replayed.
 
-Installed `0.1.0-rc.16` was not replaced. These changes are in the working tree and an isolated overlay at `/tmp/ovsc-m2`.
+Installed `0.1.0-rc.16` was not replaced. Presentation changes are in `cf7be9ff0d`. The acceptance lab drives Agent Webviews through CDP on the isolated overlay at `/tmp/ovsc-m2`. Run `2026-11-13T07-37-09-477Z` passed the objective Wider Chat, activity, diff, and history GUI checks. Visual quality for activity and diff still needs a person. No package was installed.

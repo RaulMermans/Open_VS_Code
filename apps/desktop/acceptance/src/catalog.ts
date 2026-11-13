@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 
 export type ScenarioGroup = "conversation" | "coding" | "safety" | "experience" | "lifecycle"
 export type ScenarioDriver = "unit" | "artifact" | "electron" | "electron-chat" | "review"
+export type ScenarioHarness = "unit" | "artifact" | "cdp-webview" | "playwright-workbench"
 export type ScenarioTier = "critical" | "held-out" | "standard" | "review"
 
 export interface ScenarioExpected {
@@ -26,6 +27,7 @@ export interface AcceptanceScenario {
   readonly group: ScenarioGroup
   readonly tier: ScenarioTier
   readonly driver: ScenarioDriver
+  readonly harness?: ScenarioHarness
   readonly mode: "ASK" | "PLAN" | "BUILD" | "DEBUG" | "REVIEW" | "NONE"
   readonly trust: "trusted" | "untrusted" | "n/a"
   readonly fixture: string
@@ -76,5 +78,42 @@ export function validateCatalog(scenarios: readonly AcceptanceScenario[]): void 
     if (scenario.requiresInference && scenario.driver !== "electron-chat" && scenario.driver !== "review") {
       throw new Error(`${scenario.id} requests inference without the chat driver`)
     }
+    if (scenario.harness && !["unit", "artifact", "cdp-webview", "playwright-workbench"].includes(scenario.harness)) {
+      throw new Error(`${scenario.id} has an unknown harness`)
+    }
   }
+}
+
+const PLAYWRIGHT_WORKBENCH = new Set([
+  "SAFE-CANCEL",
+  "LIFE-MODEL",
+  "LIFE-SANDBOX",
+  "LIFE-CRASH",
+  "LIFE-STALE",
+  "LIFE-SECOND-REPO",
+  "LIFE-UPGRADE",
+  "LIFE-ROLLBACK",
+  "UX-TRUST",
+  "UX-LAYOUT",
+  "SAFE-STALE",
+  "SAFE-NO-SILENT",
+  "SAFE-PROFILE",
+])
+
+const CDP_WEBVIEW = new Set([
+  "UX-WIDE",
+  "UX-ACTIVITY",
+  "UX-DIFF",
+  "LIFE-HISTORY",
+])
+
+/** Playwright keeps workbench-only flows. Agent Webview flows use CDP. */
+export function scenarioHarness(scenario: AcceptanceScenario): ScenarioHarness {
+  if (scenario.harness) return scenario.harness
+  if (scenario.driver === "unit") return "unit"
+  if (scenario.driver === "artifact") return "artifact"
+  if (CDP_WEBVIEW.has(scenario.id)) return "cdp-webview"
+  if (PLAYWRIGHT_WORKBENCH.has(scenario.id)) return "playwright-workbench"
+  if (scenario.driver === "electron-chat" && scenario.prompt) return "cdp-webview"
+  return "playwright-workbench"
 }

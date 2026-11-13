@@ -5,11 +5,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runInNewContext } from "node:vm"
 import { permitConfirmation, resolveInsideWorkspace } from "./src/confirmation-allow.ts"
-import { CDP_TURN_RUNTIME, assertLocalDebuggerUrl, confirmationAllowed, debuggerBindProblems, interpretCdpTurn } from "./src/cdp-turn.ts"
+import { CDP_SURFACE_RUNTIME, CDP_TURN_RUNTIME, assertLocalDebuggerUrl, confirmationAllowed, debuggerBindProblems, interpretCdpTurn } from "./src/cdp-turn.ts"
 import { assessJourney } from "./src/journey.ts"
 import { GUEST_RUNTIME } from "./src/guest-bridge.ts"
-import { loadCatalog } from "./src/catalog.ts"
-import { assertApprovalTarget, assertIsolatedPath, liveProfileDirs } from "./src/safety.ts"
+import { loadCatalog, scenarioHarness } from "./src/catalog.ts"
+import { assertApprovalTarget, assertIsolatedPath, fingerprintDrift, liveProfileDirs } from "./src/safety.ts"
 import { notRun } from "./src/execute.ts"
 import {
   classifyPingContent,
@@ -556,6 +556,98 @@ test("a disabled Agent mode is not clicked and is not retried as a send", async 
   assert.equal(result.sendClicks, 0)
   assert.deepEqual(clicks, [])
   assert.match(result.reason ?? "", /trusted/)
+})
+
+test("Agent Webview scenarios use CDP; workbench-only scenarios stay on Playwright", () => {
+  const catalog = loadCatalog()
+  const byId = Object.fromEntries(catalog.map((scenario) => [scenario.id, scenario]))
+  assert.equal(scenarioHarness(byId["UX-WIDE"]!), "cdp-webview")
+  assert.equal(scenarioHarness(byId["UX-ACTIVITY"]!), "cdp-webview")
+  assert.equal(scenarioHarness(byId["UX-DIFF"]!), "cdp-webview")
+  assert.equal(scenarioHarness(byId["LIFE-HISTORY"]!), "cdp-webview")
+  assert.equal(scenarioHarness(byId["CONV-PING"]!), "cdp-webview")
+  assert.equal(scenarioHarness(byId["SAFE-CANCEL"]!), "playwright-workbench")
+  assert.equal(scenarioHarness(byId["LIFE-MODEL"]!), "playwright-workbench")
+  assert.equal(scenarioHarness(byId["LIFE-SANDBOX"]!), "playwright-workbench")
+  assert.equal(scenarioHarness(byId["SAFE-PROFILE"]!), "unit")
+})
+
+test("the Agent surface script reads sidebar vs wide and clicks real controls", () => {
+  const clicks: string[] = []
+  class FakeEl {
+    value = ""
+    hidden = false
+    disabled = false
+    textContent = ""
+    innerText = ""
+    className = ""
+    classList = { contains: (name: string) => this.className.split(" ").includes(name) }
+    attrs: Record<string, string> = {}
+    constructor(readonly id = "") {}
+    getAttribute(name: string) { return this.attrs[name] || null }
+    setAttribute(name: string, value: string) { this.attrs[name] = value }
+    click() { clicks.push(this.id || this.className) }
+    getClientRects() { return this.hidden ? [] : [{}] }
+    focus() {}
+    dispatchEvent() {}
+    querySelector(selector: string) {
+      if (selector === ".message-body") return this
+      return null
+    }
+  }
+  const composer = new FakeEl("composer")
+  composer.value = ""
+  const wideBtn = new FakeEl("wide-chat-btn")
+  const historyBtn = new FakeEl("history-btn")
+  const historyPanel = new FakeEl("history-panel")
+  historyPanel.hidden = true
+  const historyOpen = new FakeEl("")
+  historyOpen.className = "history-open"
+  historyOpen.textContent = "historycheck conversation"
+  historyOpen.attrs["aria-label"] = "historycheck conversation"
+  const body = { classList: { contains: (name: string) => name === "never" }, innerText: "ok" }
+  const elements = new Map<string, FakeEl>([
+    ["composer", composer],
+    ["wide-chat-btn", wideBtn],
+    ["history-btn", historyBtn],
+    ["history-panel", historyPanel],
+  ])
+  const sandbox = {
+    document: {
+      getElementById: (id: string) => id === "active-frame" ? { contentDocument: {
+        body,
+        getElementById: (inner: string) => elements.get(inner) ?? null,
+        querySelector: (selector: string) => selector === "#wide-chat-btn" ? wideBtn : selector === ".history-open" ? historyOpen : null,
+        querySelectorAll: (selector: string) => {
+          if (selector === ".history-open") return [historyOpen]
+          if (selector === ".message") return []
+          if (selector === ".activity-summary .activity-label") return []
+          if (selector === ".activity-summary .activity-item") return []
+          if (selector === ".activity-list .activity-label") return []
+          if (selector === ".review-item") return []
+          return []
+        },
+      } } : null,
+    },
+    Event,
+  }
+  const snap = runInNewContext(`(${CDP_SURFACE_RUNTIME})(${JSON.stringify({ op: "snapshot" })})`, sandbox) as { kind?: string; wideButtonVisible?: boolean }
+  assert.equal(snap.kind, "sidebar")
+  assert.equal(snap.wideButtonVisible, true)
+  runInNewContext(`(${CDP_SURFACE_RUNTIME})(${JSON.stringify({ op: "click", selector: "#wide-chat-btn" })})`, sandbox)
+  assert.deepEqual(clicks, ["wide-chat-btn"])
+  historyPanel.hidden = true
+  runInNewContext(`(${CDP_SURFACE_RUNTIME})(${JSON.stringify({ op: "historyOpen" })})`, sandbox)
+  assert.ok(clicks.includes("history-btn"))
+  const selected = runInNewContext(`(${CDP_SURFACE_RUNTIME})(${JSON.stringify({ op: "historySelect", value: "historycheck" })})`, sandbox) as { found?: boolean }
+  assert.equal(selected.found, true)
+  assert.equal(CDP_SURFACE_RUNTIME.includes("ChatController"), false)
+})
+
+test("a live profile fingerprint does not match a changed settings file", () => {
+  const before = { "/tmp/fake-settings.json": { mtimeMs: 1, size: 2 } }
+  assert.deepEqual(fingerprintDrift(before, before), [])
+  assert.equal(fingerprintDrift(before, { "/tmp/fake-settings.json": { mtimeMs: 9, size: 2 } }).length, 1)
 })
 
 test("webview detach plus attach after Send is an unexpected reload", () => {

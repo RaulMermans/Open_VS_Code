@@ -1,6 +1,6 @@
 import { realpathSync, existsSync, statSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
-import { resolve, sep } from "node:path"
+import { join, resolve, sep } from "node:path"
 
 const LIVE_PROFILE_NAMES = [
   "Open VS Code",
@@ -22,6 +22,32 @@ export function liveProfileDirs(): string[] {
 export function isInside(child: string, parent: string): boolean {
   const root = parent.endsWith(sep) ? parent : parent + sep
   return child === parent || child.startsWith(root)
+}
+
+export function liveProfileFingerprint(): Record<string, { mtimeMs: number; size: number }> {
+  const result: Record<string, { mtimeMs: number; size: number }> = {}
+  for (const dir of liveProfileDirs()) {
+    for (const relative of ["User/settings.json"]) {
+      const path = join(dir, relative)
+      if (!existsSync(path)) continue
+      const stat = statSync(path)
+      result[path] = { mtimeMs: stat.mtimeMs, size: stat.size }
+    }
+  }
+  return result
+}
+
+export function fingerprintDrift(before: Record<string, { mtimeMs: number; size: number }>, after: Record<string, { mtimeMs: number; size: number }>): string[] {
+  const problems: string[] = []
+  for (const [path, prior] of Object.entries(before)) {
+    const next = after[path]
+    if (!next) {
+      problems.push(`live profile path missing: ${path}`)
+      continue
+    }
+    if (next.mtimeMs !== prior.mtimeMs || next.size !== prior.size) problems.push(`live profile changed: ${path}`)
+  }
+  return problems
 }
 
 export function assertIsolatedPath(target: string, label: string): string {
