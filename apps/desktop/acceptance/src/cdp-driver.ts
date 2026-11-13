@@ -304,6 +304,7 @@ export async function launchCdpApp(input: {
     "--skip-release-notes",
     "--no-first-run",
     "--disable-updates",
+    `--window-size=${process.env.OPEN_VS_CODE_ACCEPTANCE_WINDOW_SIZE?.trim() || "1440,900"}`,
     ...(extensionsDir ? [`--builtin-extensions-dir=${extensionsDir}`] : []),
     ...(input.disableWorkspaceTrust ? ["--disable-workspace-trust"] : []),
     workspace,

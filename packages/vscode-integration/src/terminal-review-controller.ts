@@ -272,6 +272,7 @@ export class TerminalReviewController {
     if (entry.status === 'CANCELLED' && entry.durationMs !== null) return;
 
     if (entry.status !== 'CANCELLED') entry.status = details.status;
+    if (isFinishedTerminalStatus(entry.status)) entry.isOutputVisible = false;
     entry.exitCode = details.exitCode ?? null;
     entry.exitSignal = details.exitSignal ?? null;
     entry.durationMs = details.durationMs ?? (entry.startedAt !== null ? Date.now() - entry.startedAt : null);

@@ -257,13 +257,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         body.companion #reviews,
         body.companion #terminal-container,
         body.companion #recovery-container,
-        body.companion #model-manager {
-            max-height: 0;
+        body.companion #model-manager,
+        body.companion #trust-banner {
+            flex: 0 0 0;
+            flex-grow: 0;
+            max-height: 0 !important;
+            min-height: 0 !important;
             overflow: hidden;
-            padding: 0;
-            margin: 0;
+            padding: 0 !important;
+            margin: 0 !important;
             border: 0;
             visibility: hidden;
+            pointer-events: none;
         }
         body.companion #activities {
             max-height: 28vh;
@@ -723,7 +728,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             border-radius: 10px;
             background: var(--vscode-badge-background);
             color: var(--vscode-badge-foreground);
-            flex-shrink: 0;
+            flex-shrink: 1;
+            min-width: 0;
+            max-width: 12em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .conversation-status.is-interrupted, .conversation-status.is-failed {
             background: var(--vscode-inputValidation-warningBackground, var(--vscode-badge-background));
