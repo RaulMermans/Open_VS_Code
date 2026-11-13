@@ -67,7 +67,7 @@ export function formatTerminalTaskMessage(result: TerminalTaskInput): { content:
 function exhaustedMessage(result: TerminalTaskInput): string {
   const lines = [
     "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).",
-    "Completed work is kept. Nothing else will be written or replayed until you send a new request.",
+    "Completed work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.",
   ]
   const answer = stripBudgetPhrase(result.finalAnswer)
   if (answer) lines.push("", answer)
@@ -77,7 +77,7 @@ function exhaustedMessage(result: TerminalTaskInput): string {
   if (finished.length > 0) lines.push("", "What finished", ...finished)
   const pending = pendingWork(result)
   if (pending.length > 0) lines.push("", "Not finished", ...pending)
-  lines.push("", "Recovery status is available for this conversation. Continuing requires a fresh request and a new approval for any write.")
+  lines.push("", "Continue this run keeps the same task. Starting a new message does not continue it.")
   return lines.join("\n")
 }
 
@@ -150,11 +150,15 @@ function outcomeFacts(result: TerminalTaskInput): string[] {
     return ["Already applied before cancellation:", ...paths.map((path) => "- " + path)]
   }
   const checks = checkFacts(reviews)
-  if (paths.length === 0 && checks.length === 0) return []
+  const alreadyPresent = alreadySatisfiedFactPaths(result, reviews)
+  if (paths.length === 0 && checks.length === 0 && alreadyPresent.length === 0) return []
   const lines = [
     paths.length > 0 ? "Changed:" : "No files were changed.",
     ...paths.map((path) => "- " + path),
   ]
+  if (alreadyPresent.length > 0) {
+    lines.push("Already present — no write:", ...alreadyPresent.map((path) => "- " + path))
+  }
   if (checks.length > 0) lines.push(...checks)
   else if (paths.length > 0) lines.push("Verification was not executed.")
   return lines.filter((line) => line.length > 0)
@@ -245,6 +249,16 @@ function appliedFactPaths(result: TerminalTaskInput, reviews: readonly TerminalT
     .map((mutation) => mutation.path)
   const fromReviews = reviews
     .filter((review) => review.kind === "mutation" && review.status === "applied")
+    .map((review) => review.path)
+  return uniqueFactPaths([...fromResult, ...fromReviews])
+}
+
+function alreadySatisfiedFactPaths(result: TerminalTaskInput, reviews: readonly TerminalTaskReview[]): string[] {
+  const fromResult = (result.appliedMutations || [])
+    .filter((mutation) => mutation.status === "ALREADY_SATISFIED")
+    .map((mutation) => mutation.path)
+  const fromReviews = reviews
+    .filter((review) => review.kind === "mutation" && review.status === "already-satisfied")
     .map((review) => review.path)
   return uniqueFactPaths([...fromResult, ...fromReviews])
 }
@@ -340,6 +354,7 @@ const ACTIVITY_LABELS: Record<string, { kind: ChatActivity["kind"]; label: strin
   "mutation.approved": { kind: "mutation", label: "Change approved" },
   "mutation.rejected": { kind: "mutation", label: "Change rejected" },
   "mutation.applied": { kind: "mutation", label: "Change applied" },
+  "mutation.already_satisfied": { kind: "mutation", label: "Already present — no write" },
   "mutation.failed": { kind: "mutation", label: "Change failed" },
   "verification.requested": { kind: "verification", label: "Running verification" },
   "verification.prepared": { kind: "verification", label: "Preparing verification" },

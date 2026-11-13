@@ -1009,12 +1009,14 @@ function reviewStatusLabel(status: string, record?: any): string {
     if (status === 'approved') return 'Approved';
     if (status === 'verified' || (status === 'applied' && record.verifiedBy && record.verifiedBy.status === 'succeeded')) return 'Verified';
     if (status === 'applied') return 'Applied';
+    if (status === 'already-satisfied') return 'Already present — no write';
     if (status === 'rejected') return 'Rejected';
   }
   switch (status) {
     case 'pending': return 'Awaiting review';
     case 'approved': return 'Approved';
     case 'applied': return 'Applied';
+    case 'already-satisfied': return 'Already present — no write';
     case 'verified': return 'Verified';
     case 'rejected': return 'Rejected';
     case 'cancelled': return 'Cancelled';
@@ -1041,7 +1043,7 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
   var counts: Record<string, number> = {};
   for (var c = 0; c < list.length; c++) counts[list[c].status] = (counts[list[c].status] || 0) + 1;
   var summaryParts = [];
-  var order = ['pending', 'approved', 'running', 'applied', 'verified', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled', 'interrupted'];
+  var order = ['pending', 'approved', 'running', 'applied', 'already-satisfied', 'verified', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled', 'interrupted'];
   for (var o = 0; o < order.length; o++) {
     if (counts[order[o]]) {
       var sample = null;
@@ -1714,21 +1716,60 @@ export function renderRecoveryPanel(container: any, recovery: any, title: string
   setText(o2, 'New task with this context: starts a fresh conversation with the last turns as background. Every change and command needs a new approval.');
   options.appendChild(o2);
   var o3 = d.createElement('li');
-  setText(o3, 'Resume the interrupted run: not available from the editor. Interrupted changes, commands and external tool calls are never replayed.');
+  if (recovery.turnBudgetContinue) {
+    setText(o3, 'Continue this run: authorizes more turns on the same task. Writes and tests still need a new approval. Interrupted crash recovery is still not auto-replayed.');
+  } else {
+    setText(o3, 'Resume the interrupted run: not available from the editor. Interrupted changes, commands and external tool calls are never replayed.');
+  }
   options.appendChild(o3);
   panel.appendChild(options);
 
   var actions = d.createElement('div');
   actions.className = 'confirmation-actions';
   var cid = recovery.conversationId;
+  if (recovery.turnBudgetContinue) {
+    var budget = appendAction(d, actions, 'Continue this run', 'Authorize more turns on the same task. Writes still need approval.', function () {
+      send({ type: 'task.continueBudget', conversationId: cid });
+    });
+    budget.className = 'btn-approve';
+  }
   var cont = appendAction(d, actions, 'Start new task with this context', 'Start a new conversation using this conversation as background context', function () {
     send({ type: 'conversation.continueFrom', conversationId: cid });
   });
-  cont.className = 'btn-approve';
+  if (!recovery.turnBudgetContinue) cont.className = 'btn-approve';
   appendAction(d, actions, 'Close', 'Close recovery status', function () { send({ type: 'conversation.closeRecovery' }); });
   panel.appendChild(actions);
   container.appendChild(panel);
   return panel;
+}
+
+export function renderTurnContinuation(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+  var pending = state && state.pendingTurnContinuation;
+  var sig = pending ? JSON.stringify(pending) : '';
+  if (container.__turnContSig === sig) return container.firstChild || null;
+  container.__turnContSig = sig;
+  container.textContent = '';
+  if (!pending) return null;
+  var bar = d.createElement('div');
+  bar.className = 'recovery-panel';
+  var title = d.createElement('h3');
+  setText(title, 'Turn budget used');
+  bar.appendChild(title);
+  var p = d.createElement('p');
+  p.className = 'recovery-state';
+  setText(p, 'This run stopped because it reached its turn limit. Continue keeps the same task and completed work. Writes still need approval.');
+  bar.appendChild(p);
+  var actions = d.createElement('div');
+  actions.className = 'confirmation-actions';
+  var btn = appendAction(d, actions, 'Continue this run', 'Authorize more turns on the same task', function () {
+    send({ type: 'task.continueBudget', conversationId: pending.conversationId });
+  });
+  btn.className = 'btn-approve';
+  bar.appendChild(actions);
+  container.appendChild(bar);
+  return bar;
 }
 
 export function renderProfileSection(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
@@ -4047,6 +4088,7 @@ export function webviewRenderRuntime(): string {
     operationKindLabel.toString(),
     operationStatusLabel.toString(),
     renderRecoveryPanel.toString(),
+    renderTurnContinuation.toString(),
     renderProfileSection.toString(),
     renderMcpDashboard.toString(),
     renderAddMcpWizard.toString(),

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-export type ReviewStatus = 'PREPARED' | 'REVIEWING' | 'APPROVED' | 'APPLIED' | 'REJECTED' | 'STALE' | 'FAILED' | 'CANCELLED';
+export type ReviewStatus = 'PREPARED' | 'REVIEWING' | 'APPROVED' | 'APPLIED' | 'ALREADY_SATISFIED' | 'REJECTED' | 'STALE' | 'FAILED' | 'CANCELLED';
 
 /** Opening a diff is a preview. These statuses never grant write permission. */
 export function isDiffPreviewStatus(status: ReviewStatus | undefined): boolean {

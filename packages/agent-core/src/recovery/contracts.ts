@@ -177,6 +177,8 @@ export interface CheckpointRecord {
         readonly arguments?: Readonly<Record<string, unknown>>
       }[]
       readonly completedPaths?: readonly string[]
+      /** Paths whose bytes already matched; no write occurred this run. */
+      readonly alreadyPresentPaths?: readonly string[]
     } | undefined
   }
 

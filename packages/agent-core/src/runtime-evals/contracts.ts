@@ -100,7 +100,7 @@ export interface BoundedFailureRecord {
 export interface BoundedMutationOutcome {
   readonly mutationId: string
   readonly path: string
-  readonly status: "PREPARED" | "APPLIED" | "FAILED" | "STALE"
+  readonly status: "PREPARED" | "APPLIED" | "ALREADY_SATISFIED" | "FAILED" | "STALE"
   readonly diffSummary: string
   readonly timestamp: string
   readonly operation?: "create" | "patch" | "delete" | undefined

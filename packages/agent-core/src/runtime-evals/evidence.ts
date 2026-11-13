@@ -232,7 +232,7 @@ export class RuntimeEvidenceCollector {
   recordMutationOutcome(mutation: {
     mutationId: string
     path: string
-    status: "PREPARED" | "APPLIED" | "FAILED" | "STALE"
+    status: "PREPARED" | "APPLIED" | "ALREADY_SATISFIED" | "FAILED" | "STALE"
     diffSummary?: string
     operation?: "create" | "patch" | "delete"
   }): void {

@@ -85,6 +85,8 @@ export class ChatController {
   private _webviewDisposeDisposable?: { dispose: () => void };
   private _activeAbortController?: AbortController;
   private _activeSessionBridge?: AgentSessionBridge;
+  /** Kept after MAX_TURNS_EXCEEDED so Continue uses the same runner. */
+  private _heldSessionBridge?: AgentSessionBridge;
   private _confirmationResolver?: (value: "APPROVE" | "REJECT") => void;
   private _confirmationInFlight = false;
   private _sendInFlight = false;
@@ -635,6 +637,9 @@ export class ChatController {
       case 'conversation.continueFrom':
         await this.continueFromConversation(message.conversationId);
         break;
+      case 'task.continueBudget':
+        await this.continueTurnBudget(message.conversationId);
+        break;
       case 'conversation.inspectRecovery':
         await this.inspectRecovery(message.conversationId);
         break;
@@ -1163,6 +1168,8 @@ export class ChatController {
   }
   
   private async startTurn(text: string, mode: ChatMode) {
+    this._heldSessionBridge = undefined;
+    this.state.pendingTurnContinuation = undefined;
     const attached = this.state.attachments.slice();
     const userMsg: ChatMessage = {
       id: this.generateId(),
@@ -1438,10 +1445,21 @@ export class ChatController {
       };
       this.state.messages.push(terminalMsg);
       this.state.lastStatus = terminal.lastStatus;
-      this.persistConversation();
-      this.sendState();
       if (result.failureReason === 'MAX_TURNS_EXCEEDED') {
+        this._heldSessionBridge = currentBridge;
+        this.state.pendingTurnContinuation = {
+          conversationId: currentConversationId,
+          additionalTurns: 8,
+          ...(this._activeRunId || this._turnStamp ? { runId: this._activeRunId || this._turnStamp } : {}),
+        };
+        this.persistConversation();
+        this.sendState();
         await this.inspectRecovery(currentConversationId);
+      } else {
+        this._heldSessionBridge = undefined;
+        this.state.pendingTurnContinuation = undefined;
+        this.persistConversation();
+        this.sendState();
       }
     } catch (e: any) {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
@@ -1550,6 +1568,13 @@ export class ChatController {
         if (this.findReview(payload.mutationId, 'mutation') && !this._appliedSinceVerification.includes(payload.mutationId)) {
           this._appliedSinceVerification.push(payload.mutationId);
         }
+        this.sendState();
+      }
+    } else if (ev.type === 'mutation.already_satisfied') {
+      const payload = ev.payload as any;
+      if (payload?.mutationId) {
+        this.setMutationStatus(payload.mutationId, 'ALREADY_SATISFIED', 'Already present — no write.');
+        this.diffReviewController.clearReview(payload.mutationId);
         this.sendState();
       }
     } else if (ev.type === 'mutation.failed') {
@@ -2067,6 +2092,9 @@ export class ChatController {
       reviews: (this.state.reviews || []).map((r) => ({ ...r })),
       lastStatus: this.state.lastStatus || 'idle',
       runIds: this._meta.runIds.slice(),
+      ...(this.state.pendingTurnContinuation
+        ? { pendingTurnContinuation: { additionalTurns: this.state.pendingTurnContinuation.additionalTurns, ...(this.state.pendingTurnContinuation.runId ? { runId: this.state.pendingTurnContinuation.runId } : {}) } }
+        : {}),
     };
     let started = 0;
     this._persistChain = this._persistChain
@@ -2158,6 +2186,15 @@ export class ChatController {
       activeTurn: false,
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: record.reviews,
+      ...(record.pendingTurnContinuation
+        ? {
+            pendingTurnContinuation: {
+              conversationId: record.id,
+              additionalTurns: record.pendingTurnContinuation.additionalTurns,
+              ...(record.pendingTurnContinuation.runId ? { runId: record.pendingTurnContinuation.runId } : {}),
+            },
+          }
+        : {}),
     };
     this.syncActiveModeFromManager();
     this.forgetSentTranscript();
@@ -2309,9 +2346,111 @@ export class ChatController {
         }
       }
     }
+    const pending = this.state.pendingTurnContinuation;
+    if (pending && pending.conversationId === id) {
+      view.turnBudgetContinue = {
+        additionalTurns: pending.additionalTurns,
+        ...(pending.runId ? { runId: pending.runId } : {}),
+      };
+    }
     if (this.state.conversationId === id || !this.state.activeTurn) {
       this.state.recovery = view;
       this.sendState();
+    }
+  }
+
+  /**
+   * Continues the same coding run after MAX_TURNS_EXCEEDED.
+   * Writes still require a new approval. Does not replay the original prompt as a new task.
+   */
+  public async continueTurnBudget(id: string): Promise<void> {
+    if (id !== this.state.conversationId) return;
+    if (this.state.activeTurn) {
+      this.refuseWhileBusy('continue this run');
+      return;
+    }
+    const pending = this.state.pendingTurnContinuation;
+    if (!pending || pending.conversationId !== id) return;
+    const snapshot = await this.host.getSnapshot();
+    const resolvedRoot = resolveWorkspaceRoot(snapshot);
+    if (!resolvedRoot) return;
+    const bridge = this._heldSessionBridge || this.bridgeFactory({
+      host: this.host,
+      workspaceRoot: resolvedRoot,
+      mode: this.state.mode,
+    } as any);
+    this._activeAbortController = new AbortController();
+    this._activeSessionBridge = bridge;
+    this.state.activeTurn = true;
+    this.state.lastStatus = 'running';
+    this.state.pendingTurnContinuation = undefined;
+    this.state.recovery = undefined;
+    this.state.connection = deriveConnectionStatus({ ...this._connectionInput, activeTurn: true });
+    this.persistConversation();
+    this.sendState();
+    const currentConversationId = this.state.conversationId;
+    const currentAbortController = this._activeAbortController;
+    const currentBridge = bridge;
+    try {
+      const result = await currentBridge.continueTurnBudget(pending.runId, currentAbortController.signal, (ev) => {
+        if (this.state.conversationId === currentConversationId && this.state.activeTurn) {
+          this.handleAgentEvent(ev);
+        }
+      });
+      if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
+      this.state.activeTurn = false;
+      const rejected = result.status === 'FAILED' && result.failureReason === 'REJECTED';
+      this.completePendingActivities(rejected ? 'cancelled' : result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
+      this.closeUndecided();
+      this.state.pendingConfirmation = undefined;
+      const runId = this._activeRunId || this._turnStamp;
+      const terminal = formatTerminalTaskMessage({
+        status: result.status,
+        failureReason: result.failureReason,
+        finalAnswer: result.finalAnswer,
+        appliedMutations: result.appliedMutations,
+        reviews: this.state.reviews,
+        runId,
+      });
+      this.state.messages.push({
+        id: this.generateId(),
+        role: terminal.lastStatus === 'completed' ? 'assistant' : 'system',
+        content: terminal.content,
+        timestamp: Date.now(),
+        status: terminal.lastStatus === 'rejected' ? 'rejected' : terminal.lastStatus === 'failed' ? 'failed' : terminal.lastStatus === 'cancelled' ? 'cancelled' : 'completed',
+      });
+      this.state.lastStatus = terminal.lastStatus;
+      if (result.failureReason === 'MAX_TURNS_EXCEEDED') {
+        this._heldSessionBridge = currentBridge;
+        this.state.pendingTurnContinuation = {
+          conversationId: currentConversationId,
+          additionalTurns: 8,
+          ...(pending.runId ? { runId: pending.runId } : {}),
+        };
+        await this.inspectRecovery(currentConversationId);
+      } else {
+        this._heldSessionBridge = undefined;
+        this.state.pendingTurnContinuation = undefined;
+      }
+      this.persistConversation();
+      this.sendState();
+    } catch (e: any) {
+      if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
+      this.state.activeTurn = false;
+      this.completePendingActivities('failed');
+      this.state.messages.push({
+        id: this.generateId(),
+        role: 'system',
+        content: `Could not continue this run: ${e?.message || 'unknown error'}`,
+        timestamp: Date.now(),
+        status: 'failed',
+      });
+      this.state.lastStatus = 'failed';
+      this.persistConversation();
+      this.sendState();
+    } finally {
+      if (this._activeAbortController === currentAbortController) this._activeAbortController = undefined;
+      if (this._activeSessionBridge === currentBridge) this._activeSessionBridge = undefined;
     }
   }
 }

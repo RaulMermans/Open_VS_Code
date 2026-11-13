@@ -151,6 +151,7 @@ export type ReviewRecordStatus =
   | "pending"
   | "approved"
   | "applied"
+  | "already-satisfied"
   | "verified"
   | "rejected"
   | "cancelled"
@@ -235,6 +236,8 @@ export interface RecoveryStatusDto {
   checkpoint?: { reason: string; phase: string; status: string; createdAt: string; fromEarlierProcess: boolean; awaitingApproval: boolean };
   operations: Array<{ kind: string; journalStatus: string; observedStatus: string; blocked: boolean; path?: string }>;
   files: string[];
+  /** Present only after MAX_TURNS_EXCEEDED. Continues the same run; writes still need approval. */
+  turnBudgetContinue?: { additionalTurns: number; runId?: string };
 }
 
 export interface WebviewState {
@@ -244,6 +247,8 @@ export interface WebviewState {
   conversations?: ConversationSummaryDto[];
   history?: { enabled: boolean; notice?: string };
   recovery?: RecoveryStatusDto;
+  /** Same-run continuation after the turn budget stopped the agent. */
+  pendingTurnContinuation?: { conversationId: string; runId?: string; additionalTurns: number };
   mode: ChatMode;
   customModeId?: string;
   activeCustomProfile?: CustomModeSummaryDto;
@@ -314,6 +319,7 @@ export type WebviewToHostMessage =
   | { type: "conversation.delete"; conversationId: string }
   | { type: "conversation.archive"; conversationId: string; archived: boolean }
   | { type: "conversation.continueFrom"; conversationId: string }
+  | { type: "task.continueBudget"; conversationId: string }
   | { type: "conversation.inspectRecovery"; conversationId: string }
   | { type: "conversation.closeRecovery" }
   | { type: "integration.openHub" }
@@ -470,6 +476,7 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
     case "conversation.open":
     case "conversation.delete":
     case "conversation.continueFrom":
+    case "task.continueBudget":
     case "conversation.inspectRecovery": {
       if (typeof raw.conversationId !== 'string' || !CONVERSATION_ID_PATTERN.test(raw.conversationId)) return null;
       return { type: raw.type, conversationId: raw.conversationId };

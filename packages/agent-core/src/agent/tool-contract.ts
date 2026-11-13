@@ -170,10 +170,20 @@ export interface CodingCompletion {
   readonly summary: string
 }
 
+function isSatisfiedMutation(status: string): boolean {
+  return status === "APPLIED" || status === "ALREADY_SATISFIED"
+}
+
 export function relevantAppliedPaths(mutations: readonly MutationFact[], explicitPaths: readonly string[]): string[] {
   const applied = mutations.filter((mutation) => mutation.status === "APPLIED").map((mutation) => mutation.path)
   if (explicitPaths.length === 0) return applied
   return applied.filter((path) => explicitPaths.some((wanted) => pathsReferToSameFile(path, wanted)))
+}
+
+export function relevantSatisfiedPaths(mutations: readonly MutationFact[], explicitPaths: readonly string[]): string[] {
+  const satisfied = mutations.filter((mutation) => isSatisfiedMutation(mutation.status)).map((mutation) => mutation.path)
+  if (explicitPaths.length === 0) return satisfied
+  return satisfied.filter((path) => explicitPaths.some((wanted) => pathsReferToSameFile(path, wanted)))
 }
 
 export function assessCodingCompletion(input: {
@@ -189,16 +199,20 @@ export function assessCodingCompletion(input: {
   readonly scheduledVerification?: "PASSED" | "UNAVAILABLE" | "NOT_RUN" | undefined
 }): CodingCompletion {
   const applied = relevantAppliedPaths(input.mutations, input.explicitPaths)
+  const satisfied = relevantSatisfiedPaths(input.mutations, input.explicitPaths)
   const unrelated = input.mutations
     .filter((mutation) => mutation.status === "APPLIED" && !applied.includes(mutation.path))
     .map((mutation) => mutation.path)
   const lastVerification = input.verifications.at(-1)
   const tests = describeTests(input.scheduledVerification, lastVerification?.status)
+  const alreadyPresent = satisfied.length > 0 && applied.length === 0
   const changed = applied.length > 0
     ? `Changed: ${applied.join(", ")}.`
     : unrelated.length > 0
       ? `Changed unrelated file: ${unrelated.join(", ")}.`
-      : "No files were changed."
+      : alreadyPresent
+        ? "No files were changed. The requested content was already present."
+        : "No files were changed."
   const approval = input.userRejectedMutation && applied.length === 0
     ? "The proposed edit was rejected."
     : applied.length > 0
@@ -217,9 +231,9 @@ export function assessCodingCompletion(input: {
     }
   }
 
-  const missingPaths = input.explicitPaths.filter((wanted) => !applied.some((path) => pathsReferToSameFile(path, wanted)))
+  const missingPaths = input.explicitPaths.filter((wanted) => !satisfied.some((path) => pathsReferToSameFile(path, wanted)))
   const testOnly = applied.length > 0 && requireImplementation && !implementationApplied
-  if (applied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0) || testOnly) {
+  if (satisfied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0) || testOnly) {
     const failureReason: AgentFailureReason = input.userRejectedMutation && applied.length === 0 ? "REJECTED" : "INCOMPLETE"
     const why = input.userRejectedMutation && applied.length === 0
       ? "The requested edit was not applied because the mutation was rejected."
@@ -227,7 +241,7 @@ export function assessCodingCompletion(input: {
         ? "A new file was created. The existing implementation was not modified."
         : testOnly
           ? "Only test files changed. The implementation was not modified."
-        : missingPaths.length > 0 && applied.length > 0
+        : missingPaths.length > 0 && satisfied.length > 0
           ? `The edit did not include ${missingPaths.join(", ")}.`
           : unrelated.length > 0
             ? "The applied edit does not match the requested file."
@@ -272,7 +286,9 @@ export function assessCodingCompletion(input: {
     accept: true,
     editsSatisfied: true,
     verificationSatisfied: true,
-    summary: `${changed} ${approval} ${tests} The requested edit was applied.`,
+    summary: alreadyPresent
+      ? `${changed} ${approval} ${tests} The requested content was already present.`
+      : `${changed} ${approval} ${tests} The requested edit was applied.`,
   }
 }
 
@@ -317,7 +333,7 @@ function verificationAfterMutation(
   explicitPaths: readonly string[],
 ): "PASS" | "FAIL" | "NONE" | "INCOMPLETE" {
   const relevant = mutations.filter((mutation) =>
-    mutation.status === "APPLIED"
+    isSatisfiedMutation(mutation.status)
     && (explicitPaths.length === 0 || explicitPaths.some((wanted) => pathsReferToSameFile(mutation.path, wanted))),
   )
   const lastMutation = relevant.at(-1)

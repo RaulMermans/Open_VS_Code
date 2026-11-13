@@ -319,6 +319,19 @@ test("planning is titled only when the activity carries plan evidence", () => {
   assert.match(labels(root, "activity-label").join("\n"), /run-plan/);
 });
 
+test("already-satisfied mutations are not listed as files changed this run", () => {
+  const formatted = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "The file already had the correct contents.",
+    runId: "run-present",
+    appliedMutations: [{ path: "src/add.ts", status: "ALREADY_SATISFIED" }],
+    reviews: [{ kind: "mutation", status: "already-satisfied", path: "src/add.ts", runId: "run-present" }],
+  });
+  assert.match(formatted.content, /Already present — no write/);
+  assert.match(formatted.content, /src\/add\.ts/);
+  assert.doesNotMatch(formatted.content, /^Changed:/m);
+});
+
 test("an exhausted turn budget names finished work, unfinished work, and does not replay", () => {
   const exhausted = formatTerminalTaskMessage({
     status: "FAILED",
@@ -338,7 +351,7 @@ test("an exhausted turn budget names finished work, unfinished work, and does no
   assert.match(exhausted.content, /src\/add\.ts/);
   assert.match(exhausted.content, /Not finished/);
   assert.match(exhausted.content, /src\/extra\.ts/);
-  assert.match(exhausted.content, /fresh request/);
+  assert.match(exhausted.content, /Continue this run/);
   assert.doesNotMatch(exhausted.content, /Task failed \(MAX_TURNS_EXCEEDED\)/);
 });
 

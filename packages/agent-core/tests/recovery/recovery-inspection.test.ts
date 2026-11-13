@@ -127,6 +127,25 @@ test("7C-R7: a corrupt journal is UNREADABLE with a code only, not content", asy
   assert.equal(result.manualInspectionRequired, true)
 })
 
+test("MAX_TURNS_EXCEEDED is continuable rather than a failed automatic retry", async () => {
+  const { root, coordinator } = await workspace()
+  const runId = "session-turn-budget"
+  await coordinator.checkpoint({
+    runId,
+    reason: "PAUSED",
+    phase: "PLANNING",
+    evidenceVersion: 1,
+    runtimeState: {
+      status: "FAILED",
+      pauseReason: "MAX_TURNS_EXCEEDED",
+      activeTask: { id: runId, mode: "BUILD", instruction: "Finish the remaining edit" },
+      workingContext: { completedPaths: ["a.ts"], alreadyPresentPaths: [] },
+    },
+  })
+  const plan = await coordinator.recoveryController.buildRecoveryPlan(runId, { persistReconciliation: false })
+  assert.equal(plan.disposition, "RESUME")
+})
+
 test("7C-R8: a runs directory symlinked outside the storage root is not read", async () => {
   const { root, storage } = await workspace()
   const outside = realpathSync(await mkdtemp(join(tmpdir(), "ovsc-7c-outside-")))
