@@ -40,6 +40,8 @@ export interface AcceptanceScenario {
   readonly oracle: string
   readonly forbidden: readonly string[]
   readonly expected: ScenarioExpected
+  /** Lab-only initial AgentRuntime budget. Production remains 15. */
+  readonly maxTurns?: number
 }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -60,8 +62,8 @@ export function loadCatalog(): AcceptanceScenario[] {
 }
 
 export function validateCatalog(scenarios: readonly AcceptanceScenario[]): void {
-  if (scenarios.length < 40 || scenarios.length > 50) {
-    throw new Error(`Scenario catalog must contain 40 to 50 scenarios, found ${scenarios.length}`)
+  if (scenarios.length < 40 || scenarios.length > 55) {
+    throw new Error(`Scenario catalog must contain 40 to 55 scenarios, found ${scenarios.length}`)
   }
   const ids = new Set<string>()
   for (const scenario of scenarios) {

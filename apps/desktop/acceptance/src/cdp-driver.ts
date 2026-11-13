@@ -44,6 +44,7 @@ export interface CdpApp {
   readonly argv: string[]
   readonly sandboxMode: string
   readonly binary: string
+  readonly extraEnv?: Record<string, string>
   windowBounds?: WindowBoundsEvidence
   close(): Promise<void>
 }
@@ -66,6 +67,7 @@ export interface CdpTurnRequest {
   readonly decision: "approve" | "reject" | "none" | "hold"
   readonly workspace: string
   readonly view?: AgentViewKind
+  readonly continueRun?: boolean
 }
 
 export interface WorkbenchSnapshot {
@@ -95,6 +97,7 @@ function labEnv(): Record<string, string> {
     env[key] = value
   }
   env.OPEN_VS_CODE_REAL_INFERENCE = "1"
+  env.OPEN_VS_CODE_ACCEPTANCE_LAB = "1"
   env.CHROME_DESKTOP = "open-vs-code.desktop"
   return env
 }
@@ -293,6 +296,7 @@ export async function launchCdpApp(input: {
   repositoryRoot: string
   disableWorkspaceTrust?: boolean
   prepare?: boolean
+  env?: Record<string, string>
 }): Promise<CdpApp> {
   const userData = assertIsolatedPath(input.userData, "Acceptance profile")
   const workspace = assertLabWorkspace(input.workspace, input.repositoryRoot)
@@ -322,7 +326,7 @@ export async function launchCdpApp(input: {
   }
   const child: ChildProcess = spawn(binary, args, {
     cwd: tmpdir(),
-    env: labEnv(),
+    env: { ...labEnv(), ...(input.env ?? {}) },
     detached: true,
     stdio: ["ignore", "ignore", "pipe"],
   })
@@ -369,6 +373,7 @@ export async function launchCdpApp(input: {
     argv,
     sandboxMode,
     binary,
+    ...(input.env ? { extraEnv: input.env } : {}),
     close: async () => {
       await stopProcess(pid)
     },
@@ -670,6 +675,7 @@ export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<
       timeoutMs: request.timeoutMs,
       decision: request.decision,
       workspace: request.workspace,
+      continueRun: request.continueRun === true,
     })})`
     let stopped = false
     const supervisor = superviseConfirmations(connected.webSocketDebuggerUrl, request, () => stopped)
@@ -759,6 +765,7 @@ export async function closeWideChat(app: CdpApp): Promise<boolean> {
 export async function relaunchCdpApp(app: CdpApp, input: {
   repositoryRoot: string
   disableWorkspaceTrust?: boolean
+  env?: Record<string, string>
 }): Promise<CdpApp> {
   const userData = app.userData
   const workspace = app.workspace
@@ -770,6 +777,7 @@ export async function relaunchCdpApp(app: CdpApp, input: {
     repositoryRoot: input.repositoryRoot,
     disableWorkspaceTrust: input.disableWorkspaceTrust,
     prepare: false,
+    ...((input.env ?? app.extraEnv) ? { env: input.env ?? app.extraEnv } : {}),
   })
 }
 

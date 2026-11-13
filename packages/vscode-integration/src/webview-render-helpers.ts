@@ -1731,7 +1731,7 @@ export function renderRecoveryPanel(container: any, recovery: any, title: string
     var budget = appendAction(d, actions, 'Continue this run', 'Authorize more turns on the same task. Writes still need approval.', function () {
       send({ type: 'task.continueBudget', conversationId: cid });
     });
-    budget.className = 'btn-approve';
+    budget.className = 'btn-approve btn-continue-run';
   }
   var cont = appendAction(d, actions, 'Start new task with this context', 'Start a new conversation using this conversation as background context', function () {
     send({ type: 'conversation.continueFrom', conversationId: cid });
@@ -1766,7 +1766,7 @@ export function renderTurnContinuation(container: any, state: any, doc?: any, po
   var btn = appendAction(d, actions, 'Continue this run', 'Authorize more turns on the same task', function () {
     send({ type: 'task.continueBudget', conversationId: pending.conversationId });
   });
-  btn.className = 'btn-approve';
+  btn.className = 'btn-approve btn-continue-run';
   bar.appendChild(actions);
   container.appendChild(bar);
   return bar;

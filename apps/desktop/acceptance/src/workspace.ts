@@ -59,8 +59,15 @@ export function gitPorcelain(root: string): string {
 }
 
 export function runOracleCommand(root: string, cmd: string, args: readonly string[]): number {
-  if (cmd !== "node") throw new Error(`Acceptance oracle command is limited to node, got ${cmd}`)
-  const result = spawnSync(cmd, [...args], { cwd: root, encoding: "utf8", timeout: 60000 })
+  if (cmd !== "node" && cmd !== "python3") {
+    throw new Error(`Acceptance oracle command is limited to node or python3, got ${cmd}`)
+  }
+  const result = spawnSync(cmd, [...args], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 60000,
+    env: { ...process.env, PYTHONPATH: root },
+  })
   return result.status === null ? 1 : result.status
 }
 

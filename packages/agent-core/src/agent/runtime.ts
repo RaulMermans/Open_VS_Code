@@ -49,6 +49,7 @@ import type { ModelProvider } from "../contracts/model.ts";
 import type { RoutingConfiguration } from "../contracts/routing.ts";
 import type { HealthChecker } from "../model/router.ts";
 import type { ConversationTurn } from "../contracts/context.ts";
+import { resolveAcceptanceMaxTurns } from "./acceptance-budget.ts";
 
 export interface CreateAgentRuntimeOptions {
   workspaceRoot: string;
@@ -412,7 +413,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   const runnerInput = {
     task: { id: `session-${Date.now()}`, mode: options.mode, instruction: options.instruction },
     workspaceRoot: options.workspaceRoot,
-    maxTurns: 15,
+    maxTurns: resolveAcceptanceMaxTurns(),
     contextBudget,
     projectInstructions: modeProjectInstructions,
     ...(options.recentTurns ? { recentTurns: options.recentTurns } : {}),
