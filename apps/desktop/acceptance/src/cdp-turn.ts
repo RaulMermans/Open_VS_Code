@@ -20,6 +20,7 @@ export interface CdpTurnRaw {
   readonly approvalBlocked?: boolean
   readonly activities?: readonly string[]
   readonly frame?: string
+  readonly confirmationId?: string
 }
 
 export interface InterpretedTurn {
@@ -196,6 +197,17 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
         phase = "wait";
         return;
       }
+      if (op.decision === "hold") {
+        const diff = doc.getElementById("btn-diff");
+        const approve = doc.getElementById("btn-approve");
+        const card = doc.querySelector(".confirmation-card");
+        const diffVisible = !!(diff && diff.getClientRects && diff.getClientRects().length > 0);
+        const approveVisible = !!(approve && !approve.disabled && approve.getClientRects && approve.getClientRects().length > 0);
+        if (diffVisible || approveVisible || card) {
+          return finish({ reason: "confirmation visible", confirmationId: card && card.getAttribute("data-confirmation-id") || "" });
+        }
+        return;
+      }
       if (op.decision === "none") {
         const reject = doc.getElementById("btn-reject");
         const rejectVisible = !!(reject && !reject.disabled && reject.getClientRects && reject.getClientRects().length > 0);
@@ -254,6 +266,121 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
       if (stable >= 2) return finish();
     }, 200);
   });
+}`
+
+export interface AgentSurfaceSnapshot {
+  readonly found: boolean
+  readonly kind?: "sidebar" | "wide" | "unknown"
+  readonly reason?: string
+  readonly composerVisible?: boolean
+  readonly composerValue?: string
+  readonly wideButtonVisible?: boolean
+  readonly historyOpen?: boolean
+  readonly historyItems?: readonly { readonly label: string; readonly current: boolean }[]
+  readonly messages?: ChatMessage[]
+  readonly activities?: readonly string[]
+  readonly activityStatuses?: readonly string[]
+  readonly trace?: readonly string[]
+  readonly technicalOpen?: boolean
+  readonly confirmationId?: string
+  readonly confirmationPath?: string
+  readonly diffVisible?: boolean
+  readonly approveVisible?: boolean
+  readonly rejectVisible?: boolean
+  readonly bodyText?: string
+  readonly reviews?: readonly string[]
+}
+
+/**
+ * Read or click Agent UI in the webview host document. Clicks real controls.
+ * Does not call ChatController methods.
+ */
+export const CDP_SURFACE_RUNTIME = `function cdpSurface(op) {
+  const frame = document.getElementById("active-frame");
+  const doc = frame && frame.contentDocument;
+  if (!doc) return { found: false, reason: "active-frame contentDocument unavailable" };
+  const visible = (el) => !!(el && el.getClientRects && el.getClientRects().length > 0);
+  const composer = doc.getElementById("composer");
+  const wideBtn = doc.getElementById("wide-chat-btn");
+  const historyBtn = doc.getElementById("history-btn");
+  const historyPanel = doc.getElementById("history-panel");
+  const kind = doc.body && doc.body.classList.contains("wide-chat") ? "wide" : "sidebar";
+  const collectMessages = () => Array.from(doc.querySelectorAll(".message")).map((node) => {
+    const role = node.classList.contains("assistant")
+      ? "assistant"
+      : node.classList.contains("user")
+        ? "user"
+        : "other";
+    const body = node.querySelector(".message-body");
+    const statusMatch = String(node.className || "").match(/is-(failed|completed|rejected|cancelled)/);
+    return { role: role, text: ((body && body.textContent) || "").trim(), status: statusMatch ? statusMatch[1] : "" };
+  });
+  const snapshot = () => {
+    const card = doc.querySelector(".confirmation-card");
+    const approve = doc.getElementById("btn-approve");
+    const reject = doc.getElementById("btn-reject");
+    const diff = doc.getElementById("btn-diff");
+    const trace = doc.querySelector(".activity-trace");
+    const historyItems = Array.from(doc.querySelectorAll(".history-open")).map((node) => ({
+      label: String(node.getAttribute("aria-label") || node.textContent || "").trim(),
+      current: node.getAttribute("aria-current") === "true",
+    }));
+    return {
+      found: true,
+      kind: kind,
+      composerVisible: visible(composer),
+      composerValue: composer ? String(composer.value || "") : "",
+      wideButtonVisible: visible(wideBtn),
+      historyOpen: !!(historyPanel && !historyPanel.hidden),
+      historyItems: historyItems,
+      messages: collectMessages(),
+      activities: Array.from(doc.querySelectorAll(".activity-summary .activity-label")).map((node) => (node.textContent || "").trim()).filter(Boolean).slice(0, 40),
+      activityStatuses: Array.from(doc.querySelectorAll(".activity-summary .activity-item")).map((node) => {
+        const match = String(node.className || "").match(/is-([a-z-]+)/);
+        return match ? match[1] : "";
+      }),
+      trace: Array.from(doc.querySelectorAll(".activity-list .activity-label")).map((node) => (node.textContent || "").trim()).filter(Boolean).slice(0, 80),
+      technicalOpen: !!(trace && trace.open),
+      confirmationId: card ? String(card.getAttribute("data-confirmation-id") || "") : "",
+      confirmationPath: card ? String(card.getAttribute("data-path") || "") : "",
+      diffVisible: visible(diff),
+      approveVisible: visible(approve) && !(approve && approve.disabled),
+      rejectVisible: visible(reject) && !(reject && reject.disabled),
+      bodyText: String((doc.body && doc.body.innerText) || "").slice(0, 4000),
+      reviews: Array.from(doc.querySelectorAll(".review-item")).map((node) => String(node.textContent || "").replace(/\\s+/g, " ").trim()).slice(0, 20),
+    };
+  };
+  if (op.op === "snapshot") return snapshot();
+  if (op.op === "fill" && composer) {
+    composer.focus();
+    composer.value = String(op.value || "");
+    if (typeof composer.selectionStart === "number") {
+      composer.selectionStart = composer.value.length;
+      composer.selectionEnd = composer.value.length;
+    }
+    composer.dispatchEvent(new Event("input", { bubbles: true }));
+    return snapshot();
+  }
+  if (op.op === "click") {
+    const node = op.selector ? doc.querySelector(op.selector) : null;
+    if (!node) return Object.assign(snapshot(), { found: false, reason: "missing " + (op.selector || "") });
+    node.click();
+    return snapshot();
+  }
+  if (op.op === "historyOpen") {
+    if (!historyBtn) return Object.assign(snapshot(), { found: false, reason: "missing history control" });
+    if (historyPanel && historyPanel.hidden) historyBtn.click();
+    return snapshot();
+  }
+  if (op.op === "historySelect") {
+    const needle = String(op.value || "");
+    const items = Array.from(doc.querySelectorAll(".history-open"));
+    const match = items.find((node) => String(node.getAttribute("aria-label") || node.textContent || "").indexOf(needle) !== -1);
+    if (!match) return Object.assign(snapshot(), { found: false, reason: "history item not listed" });
+    match.click();
+    return snapshot();
+  }
+  return snapshot();
 }`
 
 export function confirmationAllowed(note: string, workspace: string): boolean {

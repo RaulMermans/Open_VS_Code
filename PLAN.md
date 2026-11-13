@@ -1,10 +1,11 @@
 Milestone 2 — Agent workspace presentation
-STATUS: IN_PROGRESS
+STATUS: PARTIALLY_VERIFIED
   - Activity summaries merge one kind of work inside a task. File counts come from tool and mutation paths already on those events. A model wait reads "Thinking" until that call finishes. Failures and retries stay visible. Interrupted is distinct. The technical trace stays collapsed and still lists every event.
   - Sidebar and Wider Chat share one conversation, one composer draft, and one confirmation id. A second send is ignored while a turn is running. Opening a diff does not approve it.
   - Review rows distinguish proposed, approved, rejected, applied, and verified. An unused approval becomes interrupted on restore and is not replayed.
   - `MAX_TURNS_EXCEEDED` names finished work, unfinished work, and recovery. Nothing is written or replayed until a new request and a new approval.
-  - Isolated CDP overlay `/tmp/ovsc-m2` (rc.16 shell + this extension): CONV-PING PASS, CODE-BUG PASS, SAFE-REJECT PASS. UX-WIDE, UX-ACTIVITY, UX-DIFF, and LIFE-HISTORY failed on Playwright's Electron attach, not on the CDP chat path. Installed `0.1.0-rc.16` was not replaced. Streaming stays deferred. Personal V1 remains NO-GO until Wider Chat, diff navigation, and restart restoration are exercised on a candidate package.
+  - Acceptance harness: Agent Webview scenarios use CDP (`cdp-webview`). Playwright stays on workbench-only checks. A missing webview is `BLOCKED` tooling, not a product failure.
+  - Isolated overlay `/tmp/ovsc-m2` (installed rc.16 shell + this extension) run `2026-11-13T07-37-09-477Z`: CONV-PING, CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY PASS. UX-ACTIVITY and UX-DIFF met objective checks and remain `NEEDS_REVIEW` for visual quality. Installed `0.1.0-rc.16` was not replaced. No candidate package was built. Streaming stays deferred. Personal V1 remains NO-GO until a person signs the screenshots and a clean package is accepted.
 
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
