@@ -180,6 +180,7 @@ test("terminates model failure, maximum turns, and repeated non-progress distinc
     (request) => {
       const blob = request.messages.map((message) => message.content).join("\n")
       assert.match(blob, /README|read_file|observation|continuation/s)
+      assert.match(blob, /original task is unchanged/i)
       return response("Finished from the preserved observations.")
     },
     response("Finished from the preserved observations."),

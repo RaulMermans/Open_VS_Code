@@ -179,6 +179,12 @@ export interface CheckpointRecord {
       readonly completedPaths?: readonly string[]
       /** Paths whose bytes already matched; no write occurred this run. */
       readonly alreadyPresentPaths?: readonly string[]
+      /** Signatures of directory/search lookups already completed this run. */
+      readonly explorationSignatures?: readonly string[]
+      readonly lastVerification?: {
+        readonly status: string
+        readonly failureSummary?: string
+      }
     } | undefined
   }
 

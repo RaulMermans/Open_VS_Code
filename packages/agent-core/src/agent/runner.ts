@@ -1027,7 +1027,7 @@ export class AgentRunner {
       input: {
         workspaceRoot: wsRoot,
         task: { id: runId, instruction: recoveredInstruction, mode: recoveredMode },
-        maxTurns: Math.max(10, (latestCp.turnId ?? 0) + 8),
+        maxTurns: Math.min(40, Math.max(10, (latestCp.turnId ?? 0) + 8)),
         contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
         projectInstructions: [],
         ...(options?.signal ? { signal: options.signal } : {}),
@@ -1051,15 +1051,24 @@ export class AgentRunner {
       diagnostics: [],
       toolCalls: [...(working?.toolCalls ?? [])] as AgentToolCallRecord[],
       repeatedProgress: 0,
+      ...(working?.explorationSignatures && working.explorationSignatures.length > 0
+        ? { completedExploration: new Set(working.explorationSignatures) }
+        : {}),
     }
-    if (this.#session.observations.length === 0) {
+    if (working?.lastVerification) {
       this.#session.observations.push(createToolObservation({
-        toolName: "continuation",
-        callId: `recover-${runId}`,
-        output: this.#completedWorkNotice(),
+        toolName: "run_verification",
+        callId: `recover-verify-${runId}`,
+        output: `Last verification ${working.lastVerification.status}${working.lastVerification.failureSummary ? `: ${working.lastVerification.failureSummary}` : ""}. Change remaining code before repeating an identical failing test run.`,
         maxContentBytes: this.#observationMaxBytes,
       }))
     }
+    this.#session.observations.push(createToolObservation({
+      toolName: "continuation",
+      callId: `recover-${runId}`,
+      output: this.#completedWorkNotice(),
+      maxContentBytes: this.#observationMaxBytes,
+    }))
     return this.#continue()
   }
 
@@ -1433,7 +1442,8 @@ export class AgentRunner {
   #completedWorkNotice(): string {
     const session = this.#requiredSession()
     const completedCalls = session.toolCalls.filter((call) => call.outcome === "COMPLETED")
-    const outcomes = session.evidenceCollector.getEvidence().mutationOutcomes
+    const evidence = session.evidenceCollector.getEvidence()
+    const outcomes = evidence.mutationOutcomes
     const applied = outcomes
       .filter((mutation) => mutation.status === "APPLIED" && mutation.path.trim().length > 0)
       .map((mutation) => mutation.path)
@@ -1442,17 +1452,34 @@ export class AgentRunner {
       .map((mutation) => mutation.path)
     const uniquePaths = [...new Set(applied)]
     const uniquePresent = [...new Set(alreadyPresent)]
+    const requested = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+    const remaining = requested.filter((wanted) =>
+      !uniquePaths.some((path) => pathsReferToSameFile(path, wanted))
+      && !uniquePresent.some((path) => pathsReferToSameFile(path, wanted)),
+    )
+    const lastVerification = evidence.verificationOutcomes.at(-1)
+    const verification = lastVerification
+      ? `${lastVerification.status}${lastVerification.failureSummary ? `: ${lastVerification.failureSummary.slice(0, 400)}` : ""}`
+      : "NOT_RUN"
     const completed = completedCalls.length > 0
       ? completedCalls.map((call) => call.name).join(", ")
       : "none"
     const files = uniquePaths.length > 0 ? uniquePaths.join(", ") : "none"
     const present = uniquePresent.length > 0 ? uniquePresent.join(", ") : "none"
+    const leftover = remaining.length > 0
+      ? remaining.join(", ")
+      : requested.length === 0
+        ? "finish the original implementation and run verification"
+        : "none"
     return [
       "Continuing from a turn-budget checkpoint.",
+      `The original task is unchanged: ${session.input.task.instruction.slice(0, 500)}`,
       `Completed tools: ${completed}.`,
       `Files written this run: ${files}.`,
       `Already-correct files (no write): ${present}.`,
-      "Do not repeat those operations. Finish remaining work only.",
+      `Remaining requested files: ${leftover}.`,
+      `Last verification: ${verification}.`,
+      "Do not repeat completed writes or directory listings already done. Finish remaining work only.",
     ].join(" ")
   }
 
@@ -1471,6 +1498,8 @@ export class AgentRunner {
         .filter((mutation) => mutation.status === "ALREADY_SATISFIED" && mutation.path.trim().length > 0)
         .map((mutation) => mutation.path),
     )].slice(-16)
+    const lastVerification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
+    const explorationSignatures = [...(session.completedExploration ?? [])].slice(-32)
     const touchedFilePaths = [...completedPaths, ...alreadyPresentPaths].map((path) => (
       isAbsolute(path) ? path : join(session.input.workspaceRoot, path)
     ))
@@ -1489,7 +1518,21 @@ export class AgentRunner {
             mode: session.input.task.mode,
             instruction: session.input.task.instruction,
           },
-          workingContext: { observations, toolCalls, completedPaths, alreadyPresentPaths },
+          workingContext: {
+            observations,
+            toolCalls,
+            completedPaths,
+            alreadyPresentPaths,
+            ...(explorationSignatures.length > 0 ? { explorationSignatures } : {}),
+            ...(lastVerification
+              ? {
+                  lastVerification: {
+                    status: lastVerification.status,
+                    ...(lastVerification.failureSummary ? { failureSummary: lastVerification.failureSummary.slice(0, 500) } : {}),
+                  },
+                }
+              : {}),
+          },
         },
         touchedFilePaths,
       })

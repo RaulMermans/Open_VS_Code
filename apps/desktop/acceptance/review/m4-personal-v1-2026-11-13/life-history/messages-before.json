@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "text": "Reply with the single word historycheck.",
+    "status": ""
+  },
+  {
+    "role": "assistant",
+    "text": "historycheck",
+    "status": "completed"
+  }
+]

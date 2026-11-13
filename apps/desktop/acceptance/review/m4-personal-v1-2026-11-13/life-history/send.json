@@ -1,0 +1,48 @@
+{
+  "taskId": "2026-11-13T16-19-21-818Z:LIFE-HISTORY",
+  "targetUrl": "vscode-webview://1ch3lp47o28ipan4t54bi2bn6g3453lupr3ug0286ad441hfrbf9/index.html",
+  "raw": {
+    "found": true,
+    "taskId": "2026-11-13T16-19-21-818Z:LIFE-HISTORY",
+    "sendClicks": 1,
+    "approvalClicks": 0,
+    "rejectionClicks": 0,
+    "composerValue": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Reply with the single word historycheck.",
+        "status": ""
+      },
+      {
+        "role": "assistant",
+        "text": "historycheck",
+        "status": "completed"
+      }
+    ],
+    "userCount": 1,
+    "assistant": "historycheck",
+    "running": false,
+    "timedOut": false,
+    "model": "qwen3-coder:30b",
+    "mode": "ASK",
+    "readyText": "Ready · qwen3-coder:30b",
+    "approvalNotes": [],
+    "approvalBlocked": false,
+    "activities": [
+      "Completed",
+      "Starting task — session-1794586952639",
+      "Preparing context — session-1794586952639",
+      "Model responded — session-1794586952639",
+      "Completed — session-1794586952639"
+    ],
+    "frame": "active-frame"
+  },
+  "interpreted": {
+    "ack": "acknowledged",
+    "assistant": "historycheck",
+    "userCount": 1,
+    "sendClicks": 1,
+    "problems": []
+  }
+}

@@ -1,5 +1,5 @@
 import type { AgentMode } from "../contracts/agent.ts"
-import { isTestArtifactPath, requiredEditPaths } from "./tool-contract.ts"
+import { forbidsTestEdits, isTestArtifactPath, requiredEditPaths } from "./tool-contract.ts"
 
 export type TaskCategory =
   | "ORIENTATION"
@@ -154,7 +154,7 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
 
   if (requiresCodeChange) {
     const editPaths = requiredEditPaths(instruction, explicitFiles)
-    if (editPaths.length > 0 && editPaths.every((path) => isTestArtifactPath(path))) {
+    if (editPaths.length > 0 && editPaths.every((path) => isTestArtifactPath(path)) && !forbidsTestEdits(instruction)) {
       const named = editPaths.join(", ")
       return {
         category: "TEST_AUTHORING",

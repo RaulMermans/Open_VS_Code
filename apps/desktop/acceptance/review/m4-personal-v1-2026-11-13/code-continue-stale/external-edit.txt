@@ -1,0 +1,1 @@
+export const EXTERNAL_STALE_MARKER = "do-not-overwrite"

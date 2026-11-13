@@ -30,9 +30,9 @@
 
 ## Current sprint
 
-Milestone 3 — Real coding intelligence. Status: `PARTIALLY_VERIFIED`. Daily driver remains `0.1.0-rc.16`. Same-session and restart Continue paused at a real `MAX_TURNS_EXCEEDED` on `qwen3-coder:30b` and resumed only after an explicit click; independent tests did not finish the multi-file task inside the bounded Continue budget. `CODE-CONTINUE-STALE` PASS. OpenCode comparison stays INVALID. No new package. Personal V1 remains NO-GO. See `PLAN.md`.
+Milestone 3 — Real coding intelligence. Status: `VERIFIED`. Continuation safety held on a real `MAX_TURNS_EXCEEDED` pause with explicit Continue and stale-file protection. The representative multi-file task completed under the production starting budget with one authorized Continue (`CODE-CONTINUE-COMPLETE` PASS, independent tests 3/3). A lab-only 2+8 Continue still does not finish that fixture. OpenCode comparison stays INVALID. Daily driver remains `0.1.0-rc.16`. Clean Debian `0.1.0-rc.19` from `b82d93b025` is built and not installed. See `PLAN.md` and `docs/releases/V1_CONVERGENCE_STATUS.md`.
 
-Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. Packaged CDP on `/tmp/ovsc-rc18` passed CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY. UX-ACTIVITY and UX-DIFF stay `NEEDS_REVIEW` for appearance on that package. Visual copies: `apps/desktop/acceptance/review/m2-rc18-visual-2026-11-13/`. Streaming stays deferred. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
+Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. M2 presentation is in the M4 source line. UX-ACTIVITY and UX-DIFF appearance still need a person. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
 
 Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 

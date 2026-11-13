@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "text": "Reply with the single word widecheck.",
+    "status": ""
+  },
+  {
+    "role": "assistant",
+    "text": "widecheck",
+    "status": "completed"
+  }
+]
