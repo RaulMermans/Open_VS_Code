@@ -5,7 +5,8 @@ STATUS: PARTIALLY_VERIFIED
   - Review rows distinguish proposed, approved, rejected, applied, and verified. An unused approval becomes interrupted on restore and is not replayed.
   - `MAX_TURNS_EXCEEDED` names finished work, unfinished work, and recovery. Nothing is written or replayed until a new request and a new approval.
   - Acceptance harness: Agent Webview scenarios use CDP (`cdp-webview`). Playwright stays on workbench-only checks. A missing webview is `BLOCKED` tooling, not a product failure.
-  - Isolated overlay `/tmp/ovsc-m2` (installed rc.16 shell + this extension) run `2026-11-13T07-37-09-477Z`: CONV-PING, CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY PASS. UX-ACTIVITY and UX-DIFF met objective checks and remain `NEEDS_REVIEW` for visual quality. Installed `0.1.0-rc.16` was not replaced. No candidate package was built. Streaming stays deferred. Personal V1 remains NO-GO until a person signs the screenshots and a clean package is accepted.
+  - Clean Debian `0.1.0-rc.17` from `b5ed368eed`, SHA-256 `db4818be6111dd6ce63433b7a842236726dbdaec89b47baa4cb6c41d086947bf`. Bundled extension SHA-256 `07a6ad72dae273a6875586b150a60601deaf522442782b7e26f2b44ac28c8abd` matches the built `extension.js`. It is not installed. Installed daily driver remains `0.1.0-rc.16`.
+  - Packaged CDP on `/tmp/ovsc-rc17` (isolated profiles, chrome-sandbox symlink to the installed `4755` helper, no `--no-sandbox`) run `2026-11-13T08-20-07-247Z`: CONV-PING, CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY PASS. UX-ACTIVITY and UX-DIFF met objective checks and remain `NEEDS_REVIEW`. Visual copies are in `apps/desktop/acceptance/review/m2-rc17-visual-2026-11-13/`. A person has not signed appearance. Streaming stays deferred. Personal V1 remains NO-GO.
 
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
