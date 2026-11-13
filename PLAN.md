@@ -3,7 +3,8 @@ STATUS: VERIFIED
   - Final correction: “Do not change the test” no longer classifies an implementation task as test-authoring. Remaining-work notices and exploration signatures are restored from the turn-budget checkpoint.
   - Continuation safety (`2026-11-13T15-00-58-990Z`): real `MAX_TURNS_EXCEEDED` at lab `maxTurns=2`, explicit Continue, idle wait with no writes, new approvals. Independent tests 1/3 on that budget (capability limit). `CODE-CONTINUE-STALE` PASS (`2026-11-13T16-04-14-137Z`).
   - Coding completion (`CODE-CONTINUE-COMPLETE` `2026-11-13T15-17-03-087Z`): production 15 + one Continue; independent tests 3/3 on `format.ts`/`greet.ts`/`parse.ts`. Overlay extension SHA-256 `1e58f155ede4af92f7c37ca2fa927253bc9a3488154ea8377b52d9e512a99ad5`.
-  - OpenCode comparison remains INVALID. Native tool messages stay experimental. Daily driver still `0.1.0-rc.16`. Authoritative record: `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - Packaged rc.19 CDP (`2026-11-13` evening): critical safety and small coding PASS on the unpacked `.deb`. `CODE-CONTINUE-COMPLETE` FAIL this payload (model `create_file`). Restart recovery PARTIAL. Lab `maxTurns=2` Continue/Restart oracles no longer require 3/3 tests. Personal V1 `CONDITIONAL GO`, not installed. Daily driver still `0.1.0-rc.16`. Authoritative record: `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - OpenCode comparison remains INVALID. Native tool messages stay experimental.
 
 Milestone 2 — Agent workspace presentation
 STATUS: PARTIALLY_VERIFIED

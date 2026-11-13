@@ -564,6 +564,22 @@ test("acceptance window size is parsed independently of Electron launch flags", 
   assert.deepEqual(parseAcceptanceWindowSize("1440x900"), { width: 1440, height: 900 })
 })
 
+test("lab-budget Continue scenarios score recovery, not three-file coding completion", () => {
+  const catalog = loadCatalog()
+  const byId = Object.fromEntries(catalog.map((scenario) => [scenario.id, scenario]))
+  for (const id of ["CODE-CONTINUE", "CODE-CONTINUE-RESTART"] as const) {
+    const scenario = byId[id]!
+    assert.equal(scenario.maxTurns, 2)
+    assert.equal(scenario.expected.command, undefined)
+    assert.deepEqual(scenario.expected.unchangedPaths, ["test/lib.test.ts"])
+    assert.match(scenario.oracle, /not the pass bar/)
+  }
+  const complete = byId["CODE-CONTINUE-COMPLETE"]!
+  assert.equal(complete.maxTurns, undefined)
+  assert.equal(complete.expected.command?.cmd, "node")
+  assert.equal(complete.expected.command?.exitCode, 0)
+})
+
 test("Agent Webview scenarios use CDP; workbench-only scenarios stay on Playwright", () => {
   const catalog = loadCatalog()
   const byId = Object.fromEntries(catalog.map((scenario) => [scenario.id, scenario]))
