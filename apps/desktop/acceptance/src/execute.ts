@@ -1125,12 +1125,11 @@ async function finishContinueOracle(
   const diff = spawnSync("git", ["diff", "--"], { cwd: dirsWorkspace, encoding: "utf8" })
   writeEvidence(evidencePath, "git-diff.patch", diff.stdout || "")
   writeEvidence(evidencePath, "git-status.txt", gitPorcelain(dirsWorkspace))
-  const problems = [
-    ...failuresForText(text, scenario.expected),
-    ...filesystemProblems(dirsWorkspace, before, scenario.expected),
-  ]
-  if (scenario.expected.command) {
-    const oracle = spawnSync(scenario.expected.command.cmd, [...scenario.expected.command.args], {
+  const evidenceCommand = scenario.expected.command ?? (scenario.fixture === "continue-lib"
+    ? { cmd: "node", args: ["--experimental-strip-types", "--test"], exitCode: 0 }
+    : undefined)
+  if (evidenceCommand) {
+    const oracle = spawnSync(evidenceCommand.cmd, [...evidenceCommand.args], {
       cwd: dirsWorkspace,
       encoding: "utf8",
       timeout: 60000,
@@ -1138,8 +1137,15 @@ async function finishContinueOracle(
     })
     writeEvidence(evidencePath, "oracle-test.txt", `${oracle.stdout ?? ""}${oracle.stderr ?? ""}\nexit ${oracle.status}\n`)
   }
+  const problems = [
+    ...failuresForText(text, scenario.expected),
+    ...filesystemProblems(dirsWorkspace, before, scenario.expected),
+  ]
   if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
-  return text.slice(0, 500) || "Continuation finished and the independent oracle matched."
+  if (scenario.expected.command) {
+    return text.slice(0, 500) || "Continuation finished and the independent oracle matched."
+  }
+  return "Continue recovered the same task after an explicit click. Independent tests were recorded and are not the pass bar on the lab turn budget."
 }
 
 async function runCdpContinueComplete(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
