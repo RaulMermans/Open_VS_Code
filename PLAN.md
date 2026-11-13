@@ -1,7 +1,7 @@
 Milestone 3 — Real coding intelligence
 STATUS: IN_PROGRESS
   - Reliability close: idempotent apply is `ALREADY_SATISFIED` (no rewrite, no snapshot, not claimed as a write). Chat ledger labels that as already present. `Continue this run` is wired through ChatController (`task.continueBudget`), persists across conversation reload, and `MAX_TURNS_EXCEEDED` checkpoints are recovery-RESUME rather than automatic retry.
-  - OpenCode comparison harness v2 uses `--standalone`, isolated HOME/XDG, git fixtures, independent node/python oracles, and INVALID (not FAIL) when tool traces miss the disposable workspace. Live same-digest rerun is in progress (`OPEN_VS_CODE_REAL_INFERENCE=1`). Prior v1 11/12 vs 3/12 is not a fair FAIL. Default encoding remains `compiled-user`.
+  - OpenCode comparison v2 (`qwen3-coder:30b` `sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a`): compiled-user Open VS Code 11/13 e2e (T02 fail; T01 repeat pass), native-tool-messages 12/13 (T07 fail; T01 repeat pass). OpenCode `--standalone` scored 0 PASS; compiled 10/13 INVALID and native 11/13 INVALID because tool traces still miss the disposable fixture or mention this repository. That is not a product FAIL. Default encoding remains `compiled-user`. Results: `evals/results/m3-opencode-comparison.json` and `-native.json`.
   - Deterministic `eval:coding` 30/30. `eval:recovery` 60/60. GUI Continue on a real 30B coding task is not yet walked. M3 remains NO-GO until that Continue path is proven without lost or duplicated work.
   - Daily driver remains `0.1.0-rc.16`. No package installed. Personal V1 remains NO-GO.
 
