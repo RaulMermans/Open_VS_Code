@@ -131,7 +131,7 @@ test("activity groups real events and keeps the raw trace collapsed", () => {
   assert.equal(groups[0]?.title, "Understanding the request");
   const reading = groups.find((group) => group.category === "read");
   assert.equal(reading?.status, "failed");
-  assert.equal(reading?.title, "Reading files failed — 2 files");
+  assert.equal(reading?.title, "Reading files failed — 2 files · retry recorded");
   assert.match(reading?.detail || "", /src\/a\.ts/);
   assert.match(reading?.detail || "", /src\/b\.ts/);
   assert.equal(groups.find((group) => group.category === "consult")?.title, "Thinking");
@@ -317,4 +317,41 @@ test("planning is titled only when the activity carries plan evidence", () => {
   ], mockDoc());
   assert.equal(root.querySelector("details")?.open, false);
   assert.match(labels(root, "activity-label").join("\n"), /run-plan/);
+});
+
+test("an exhausted turn budget names finished work, unfinished work, and does not replay", () => {
+  const exhausted = formatTerminalTaskMessage({
+    status: "FAILED",
+    failureReason: "MAX_TURNS_EXCEEDED",
+    finalAnswer: "The adder is updated. Stopped because the turn budget was exhausted.",
+    runId: "run-budget",
+    appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
+    reviews: [
+      { kind: "mutation", status: "applied", path: "src/add.ts", runId: "run-budget" },
+      { kind: "mutation", status: "cancelled", path: "src/extra.ts", runId: "run-budget" },
+      { kind: "command", status: "cancelled", scriptName: "test", runId: "run-budget" },
+    ],
+  });
+  assert.equal(exhausted.lastStatus, "failed");
+  assert.match(exhausted.content, /MAX_TURNS_EXCEEDED/);
+  assert.match(exhausted.content, /What finished/);
+  assert.match(exhausted.content, /src\/add\.ts/);
+  assert.match(exhausted.content, /Not finished/);
+  assert.match(exhausted.content, /src\/extra\.ts/);
+  assert.match(exhausted.content, /fresh request/);
+  assert.doesNotMatch(exhausted.content, /Task failed \(MAX_TURNS_EXCEEDED\)/);
+});
+
+test("interrupted work is a distinct activity status and stays in the collapsed trace", () => {
+  const groups = summarizeActivities([
+    { id: "v", kind: "verification", label: "Running verification", status: "interrupted" },
+  ]);
+  assert.equal(groups[0]?.title, "Verification interrupted");
+  assert.equal(groups[0]?.status, "interrupted");
+  const root = new MockElement("div");
+  renderActivityTimeline(root, [
+    { id: "v", kind: "verification", label: "Running verification", status: "interrupted" },
+  ], mockDoc());
+  assert.equal(root.querySelector("details")?.open, false);
+  assert.match(labels(root, "activity-label").join("\n"), /Verification interrupted/);
 });

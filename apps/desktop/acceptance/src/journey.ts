@@ -23,7 +23,7 @@ export function assessJourney(input: {
   readonly approvalBlocked: boolean
 }): JourneyAssessment {
   const failure = FAILURE.exec(input.text)
-  const failureReason = failure?.[1] ?? ""
+  const failureReason = failure?.[1] ?? (input.text.includes("MAX_TURNS_EXCEEDED") ? "MAX_TURNS_EXCEEDED" : "")
   const failedStatus = input.messageStatuses.includes("failed") || failureReason.length > 0
   const completedActivity = input.activities.some((label) => label === "Completed")
   const agentCompleted = input.expectsAgentCompletion

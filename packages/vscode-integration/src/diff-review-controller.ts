@@ -1,6 +1,11 @@
 import * as vscode from 'vscode';
 
-export type ReviewStatus = 'PREPARED' | 'REVIEWING' | 'APPLIED' | 'REJECTED' | 'STALE' | 'FAILED' | 'CANCELLED';
+export type ReviewStatus = 'PREPARED' | 'REVIEWING' | 'APPROVED' | 'APPLIED' | 'REJECTED' | 'STALE' | 'FAILED' | 'CANCELLED';
+
+/** Opening a diff is a preview. These statuses never grant write permission. */
+export function isDiffPreviewStatus(status: ReviewStatus | undefined): boolean {
+  return status === 'PREPARED' || status === 'REVIEWING' || status === 'APPROVED';
+}
 
 export class DiffReviewController implements vscode.TextDocumentContentProvider {
   private registry = new Map<string, { before: string; after: string; size: number }>();

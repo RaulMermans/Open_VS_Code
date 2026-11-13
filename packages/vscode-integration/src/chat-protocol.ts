@@ -33,7 +33,7 @@ export interface ChatActivity {
   id: string;
   kind: "task" | "context" | "model" | "tool" | "approval" | "mutation" | "verification" | string;
   label: string;
-  status: "pending" | "completed" | "failed" | "cancelled";
+  status: "pending" | "completed" | "failed" | "cancelled" | "interrupted";
   toolName?: string;
   summary?: string;
   /** Agent run that produced this row. Presentation only. */
@@ -149,7 +149,9 @@ export interface ConfirmationRequestPayload {
 
 export type ReviewRecordStatus =
   | "pending"
+  | "approved"
   | "applied"
+  | "verified"
   | "rejected"
   | "cancelled"
   | "stale"
@@ -250,6 +252,8 @@ export interface WebviewState {
   activities: ChatActivity[];
   context: ChatContextChip[];
   attachments: ChatContextChip[];
+  /** In-memory composer text shared by sidebar and wide chat. Never persisted. */
+  composerDraft?: string;
   activeTurn: boolean;
   pendingConfirmation?: ConfirmationRequestPayload;
   activeTerminal?: TerminalReviewDto;
@@ -266,6 +270,7 @@ export interface WebviewState {
 export type WebviewToHostMessage =
   | { type: "chat.ready" }
   | { type: "chat.send"; text: string; mode: ChatMode; customModeId?: string }
+  | { type: "chat.draft"; text: string }
   | { type: "chat.cancel" }
   | { type: "chat.setMode"; mode: ChatMode; customModeId?: string }
   | { type: "chat.newConversation" }
@@ -391,6 +396,11 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
   switch (raw.type) {
     case "chat.ready":
       return { type: "chat.ready" };
+
+    case "chat.draft": {
+      if (typeof raw.text !== "string" || raw.text.length > 50000) return null;
+      return { type: "chat.draft", text: raw.text };
+    }
       
     case "chat.send": {
       if (typeof raw.text !== 'string') return null;

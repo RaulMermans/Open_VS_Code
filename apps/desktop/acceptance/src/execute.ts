@@ -430,7 +430,6 @@ async function modelsDetail(session: LabSession, log: WebviewLifecycleLog, expec
 }
 
 async function wideDetail(session: LabSession, surface: ChatSurface, log: WebviewLifecycleLog): Promise<string> {
-  await surface.locator("#overflow-menu summary").click()
   await surface.locator("#wide-chat-btn").click()
   const next = await resolveChatSurface(session.app, 15000, log, surface.page)
   const visible = await next.locator("#composer").isVisible().catch(() => false)

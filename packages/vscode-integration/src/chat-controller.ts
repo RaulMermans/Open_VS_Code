@@ -15,7 +15,7 @@ import {
   type PersistedConversation,
   type StoreIssue,
 } from './conversation-store.js';
-import { DiffReviewController, ReviewStatus } from './diff-review-controller.js';
+import { DiffReviewController, ReviewStatus, isDiffPreviewStatus } from './diff-review-controller.js';
 import { TerminalReviewController, TerminalReviewEntry, formatTerminalTranscript } from './terminal-review-controller.js';
 import {
   activityFromAgentEvent,
@@ -87,6 +87,7 @@ export class ChatController {
   private _activeSessionBridge?: AgentSessionBridge;
   private _confirmationResolver?: (value: "APPROVE" | "REJECT") => void;
   private _confirmationInFlight = false;
+  private _sendInFlight = false;
   private _connectionInput: ConnectionSnapshotInput = {};
   /** Mutations applied since the last approved verification, for the review ledger. */
   private _appliedSinceVerification: string[] = [];
@@ -558,12 +559,23 @@ export class ChatController {
         this.sendState();
         break;
       case 'chat.send':
-        if (this.state.activeTurn) return;
-        if (message.customModeId !== undefined) {
-          this.state.customModeId = message.customModeId;
-          this.syncActiveModeFromManager();
+        if (this.state.activeTurn || this._sendInFlight) return;
+        this._sendInFlight = true;
+        try {
+          if (message.customModeId !== undefined) {
+            this.state.customModeId = message.customModeId;
+            this.syncActiveModeFromManager();
+          }
+          this.state.composerDraft = '';
+          await this.startTurn(message.text, message.mode || this.state.mode);
+        } finally {
+          this._sendInFlight = false;
         }
-        await this.startTurn(message.text, message.mode || this.state.mode);
+        break;
+      case 'chat.draft':
+        if (this.state.composerDraft === message.text) return;
+        this.state.composerDraft = message.text;
+        if (this._extraWebviews.size > 0) this.sendState();
         break;
       case 'chat.cancel':
         this.cancelTurn();
@@ -676,7 +688,10 @@ export class ChatController {
             }
 
             this._confirmationInFlight = true;
-            if (message.action === 'APPROVE' && mutId) this._approvedMutations.add(mutId);
+            if (message.action === 'APPROVE' && mutId) {
+              this._approvedMutations.add(mutId);
+              this.setMutationStatus(mutId, 'APPROVED');
+            }
             this.state.pendingConfirmation.responding = true;
             this.sendState();
             this.state.pendingConfirmation = undefined;
@@ -744,7 +759,7 @@ export class ChatController {
         }
         break;
       case 'ui.openDiff':
-        if (this.state.pendingConfirmation?.mutationId === message.mutationId) {
+        if (isDiffPreviewStatus(this.diffReviewController.getStatus(message.mutationId))) {
           this.diffReviewController.openDiff(message.mutationId, message.path, message.isCreate);
         }
         break;
@@ -1084,13 +1099,17 @@ export class ChatController {
       const entry = this.terminalReviewController.getByExecutionId(record.id);
       // Restored rows have no live entry, so there is no retained output to open.
       record.outputAvailable = Boolean(entry);
-      if (!entry) continue;
-      record.status = reviewStatusFromTerminal(entry.status);
-      record.exitCode = entry.exitCode;
-      record.durationMs = entry.durationMs;
+      if (entry) {
+        record.status = reviewStatusFromTerminal(entry.status);
+        record.exitCode = entry.exitCode;
+        record.durationMs = entry.durationMs;
+      }
       for (const mutationId of record.verifies || []) {
         const change = this.findReview(mutationId, 'mutation');
-        if (change) change.verifiedBy = { id: record.id, command: record.command || '', status: record.status };
+        if (!change) continue;
+        change.verifiedBy = { id: record.id, command: record.command || '', status: record.status };
+        if (change.status === 'applied' && record.status === 'succeeded') change.status = 'verified';
+        else if (change.status === 'verified' && record.status !== 'succeeded') change.status = 'applied';
       }
     }
   }
@@ -1110,11 +1129,11 @@ export class ChatController {
   private async openReviewedChange(mutationId: string): Promise<void> {
     const record = this.findReview(mutationId, 'mutation');
     if (!record?.path) return;
-    if (record.status === 'pending' && this.state.pendingConfirmation?.mutationId === mutationId) {
+    if (isDiffPreviewStatus(this.diffReviewController.getStatus(mutationId))) {
       await this.diffReviewController.openDiff(mutationId, record.path, record.mutation?.operation === 'create');
       return;
     }
-    if (record.status === 'applied') {
+    if (record.status === 'applied' || record.status === 'verified') {
       const uri = this.containedWorkspaceUri(record.path);
       if (uri && vscode.commands?.executeCommand) {
         try {
@@ -1413,6 +1432,9 @@ export class ChatController {
       this.state.lastStatus = terminal.lastStatus;
       this.persistConversation();
       this.sendState();
+      if (result.failureReason === 'MAX_TURNS_EXCEEDED') {
+        await this.inspectRecovery(currentConversationId);
+      }
     } catch (e: any) {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
       
@@ -1824,8 +1846,8 @@ export class ChatController {
       resolver('REJECT');
     }
     for (const record of this.state.reviews || []) {
-      if (record.kind !== 'mutation' || record.status !== 'pending') continue;
-      if (this._approvedMutations.has(record.id)) {
+      if (record.kind !== 'mutation' || (record.status !== 'pending' && record.status !== 'approved')) continue;
+      if (this._approvedMutations.has(record.id) || record.status === 'approved') {
         this.setMutationStatus(record.id, 'FAILED', 'Approved, but the engine reported no applied result. Check the file before retrying.');
       } else {
         this.setMutationStatus(record.id, 'CANCELLED', 'Turn ended before a decision — nothing was written.');
@@ -2034,6 +2056,7 @@ export class ChatController {
   /** Drops everything that belongs to a live turn: decisions and links to applied changes. Pending diff content is cleared per mutation where it is decided. */
   private resetTransientState(): void {
     this._confirmationInFlight = false;
+    this._sendInFlight = false;
     this._confirmationResolver = undefined;
     this._appliedSinceVerification = [];
     this._approvedMutations.clear();
@@ -2058,6 +2081,7 @@ export class ChatController {
       activities: [],
       context: this.state.context,
       attachments: [],
+      composerDraft: '',
       activeTurn: false,
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: [],
@@ -2089,6 +2113,7 @@ export class ChatController {
       activities: [],
       context: this.state.context,
       attachments: record.attachments,
+      composerDraft: '',
       activeTurn: false,
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: record.reviews,

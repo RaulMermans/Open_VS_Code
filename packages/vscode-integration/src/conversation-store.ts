@@ -42,7 +42,7 @@ const ITEM_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,100}$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const MODES: ChatMode[] = ['ASK', 'PLAN', 'BUILD', 'DEBUG', 'REVIEW'];
 const EXECUTION_STATUSES: ConversationExecutionStatus[] = ['idle', 'running', 'completed', 'failed', 'cancelled', 'interrupted', 'rejected'];
-const REVIEW_STATUSES: ReviewRecordStatus[] = ['pending', 'applied', 'rejected', 'cancelled', 'stale', 'failed', 'running', 'succeeded', 'timed-out', 'interrupted'];
+const REVIEW_STATUSES: ReviewRecordStatus[] = ['pending', 'approved', 'applied', 'verified', 'rejected', 'cancelled', 'stale', 'failed', 'running', 'succeeded', 'timed-out', 'interrupted'];
 const CHIP_KINDS = ['workspace', 'active-file', 'selection', 'file', 'diagnostics', 'implicit'];
 const INDEX_FILE = 'index.json';
 
@@ -248,7 +248,7 @@ export function prepareForRestore(record: PersistedConversation): PersistedConve
     ...record,
     lastStatus: interrupted ? 'interrupted' : record.lastStatus,
     messages: record.messages.map((m) => (m.status === 'pending' ? { ...m, status: 'cancelled' as const } : m)),
-    reviews: record.reviews.map((r) => (r.status === 'pending' || r.status === 'running'
+    reviews: record.reviews.map((r) => (r.status === 'pending' || r.status === 'running' || r.status === 'approved'
       ? { ...r, status: 'interrupted' as const, detail: 'The editor closed before an outcome was recorded. Check the file and the recovery status before retrying.' }
       : r)),
     interrupted,

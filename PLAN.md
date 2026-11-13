@@ -1,9 +1,10 @@
 Milestone 2 — Agent workspace presentation
 STATUS: IN_PROGRESS
-  - Activity summaries merge one kind of work inside a task. File counts come from tool and mutation paths already on those events. A model wait reads "Thinking" until that call finishes. The technical trace stays collapsed and still lists every event.
-  - An approval card for a file says the change is proposed and is not written until that card is approved. The click still sends the confirmation id on the card.
-  - Streaming stays deferred. `ModelProvider` has `complete()` only. Ollama returns one response. No character-by-character simulation was added.
-  - Installed `0.1.0-rc.16` was not replaced. These presentation changes are in the working tree.
+  - Activity summaries merge one kind of work inside a task. File counts come from tool and mutation paths already on those events. A model wait reads "Thinking" until that call finishes. Failures and retries stay visible. Interrupted is distinct. The technical trace stays collapsed and still lists every event.
+  - Sidebar and Wider Chat share one conversation, one composer draft, and one confirmation id. A second send is ignored while a turn is running. Opening a diff does not approve it.
+  - Review rows distinguish proposed, approved, rejected, applied, and verified. An unused approval becomes interrupted on restore and is not replayed.
+  - `MAX_TURNS_EXCEEDED` names finished work, unfinished work, and recovery. Nothing is written or replayed until a new request and a new approval.
+  - Isolated CDP overlay `/tmp/ovsc-m2` (rc.16 shell + this extension): CONV-PING PASS, CODE-BUG PASS, SAFE-REJECT PASS. UX-WIDE, UX-ACTIVITY, UX-DIFF, and LIFE-HISTORY failed on Playwright's Electron attach, not on the CDP chat path. Installed `0.1.0-rc.16` was not replaced. Streaming stays deferred. Personal V1 remains NO-GO until Wider Chat, diff navigation, and restart restoration are exercised on a candidate package.
 
 Sprint 15 — Product acceptance lab
 STATUS: IN_VERIFICATION
