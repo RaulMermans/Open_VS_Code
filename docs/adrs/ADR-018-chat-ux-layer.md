@@ -104,9 +104,10 @@ Record: `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`.
 
 The authority map is unchanged. No new agent, permission, or provider method. Streaming stays deferred.
 
-- Sidebar and Wider Chat attach to one `ChatController`. A second send is refused while a turn is in flight. Composer draft is shared in memory and is not persisted. Opening a diff never resolves a confirmation id.
-- Review rows distinguish proposed, approved, rejected, applied, and verified. An unused approval is interrupted on restore and is not replayed.
-- Activity summaries still merge one kind of work inside a task. Failures and retries stay visible. Interrupted is a distinct status. The technical trace stays collapsed.
+- Sidebar and Wider Chat attach to one `ChatController`. A second send is refused while a turn is in flight. Composer draft is shared in memory and is not persisted. Opening a diff never resolves a confirmation id. While Wider Chat is open, the sidebar is a compact companion; the wide panel is the visible transcript.
+- Review rows distinguish proposed, approved, rejected, applied, and verified. User rejection is a decision (`Change rejected — no files modified`), not a failed execution. Approval controls are cleared. Diff preview tabs close. An unused approval is interrupted on restore and is not replayed.
+- Activity summaries still merge one kind of work inside a task. Trivial ask turns keep the outcome line. Failures and retries stay visible. Interrupted is a distinct status. The technical trace stays collapsed. Ordinary agent tasks do not reveal the Output channel; `Open VS Code: Show Agent Output` remains available.
+- Completed coding turns show a compact outcome card (changed files, tests passed vs not executed). Finished command output stays collapsed until the user opens it.
 - `MAX_TURNS_EXCEEDED` is presented as a stop with finished work, unfinished work, and a recovery notice. Writes are not replayed.
 
-Installed `0.1.0-rc.16` was not replaced. Presentation changes are in `cf7be9ff0d`. Clean candidate `0.1.0-rc.17` is from `b5ed368eed` and is not installed. Packaged CDP on `/tmp/ovsc-rc17` (`2026-11-13T08-20-07-247Z`) passed the objective Wider Chat, activity, diff, and history GUI checks. Visual quality for activity and diff still needs a person. Review copies: `apps/desktop/acceptance/review/m2-rc17-visual-2026-11-13/`.
+Installed `0.1.0-rc.16` was not replaced. Presentation polish for visual sign-off is versioned as `0.1.0-rc.18` and is not installed until authorized.

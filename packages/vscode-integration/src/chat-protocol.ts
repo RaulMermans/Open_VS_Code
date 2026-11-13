@@ -23,7 +23,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
-  status?: "pending" | "completed" | "failed" | "cancelled";
+  status?: "pending" | "completed" | "failed" | "cancelled" | "rejected";
   attachments?: ChatContextChip[];
   /** Copied from an earlier conversation as background context; never re-run. */
   inherited?: boolean;
@@ -364,9 +364,9 @@ export type WebviewToHostMessage =
 
 // Host -> Webview
 export type HostToWebviewMessage =
-  | { type: "chat.state"; state: WebviewState }
+  | { type: "chat.state"; state: WebviewState; wideOpen?: boolean }
   /** Sprint 7D: the transcript is unchanged since the last post, so it is omitted; the webview keeps its own. */
-  | { type: "chat.state"; state: Omit<WebviewState, "messages">; transcript: "unchanged" }
+  | { type: "chat.state"; state: Omit<WebviewState, "messages">; transcript: "unchanged"; wideOpen?: boolean }
   | { type: "integration.state"; state: IntegrationManagerState; open: boolean }
   | { type: "turn.started" }
   | { type: "turn.status"; activity: ChatActivity }

@@ -19,6 +19,10 @@ const mockVscode: any = {
     showErrorMessage: () => {},
     showWarningMessage: async () => "Cancel",
     showTextDocument: async () => {},
+    tabGroups: {
+      all: [] as any[],
+      close: async () => true,
+    },
   },
   commands: {
     executeCommand: async (id: string, ...args: any[]) => {
@@ -168,7 +172,13 @@ test("sidebar and wide chat share one conversation and do not duplicate a send",
   await first;
   assert.equal(started, 1);
   assert.equal(fx.state().messages.filter((message: any) => message.role === "user").length, 1);
+  const sidebarState = [...fx.view.webview.messages].reverse().find((message) => message.type === "chat.state");
+  const wideState = [...wide.messages].reverse().find((message) => message.type === "chat.state");
+  assert.equal(sidebarState?.wideOpen, true);
+  assert.equal(wideState?.wideOpen, false);
   attached.dispose();
+  const afterClose = [...fx.view.webview.messages].reverse().find((message) => message.type === "chat.state");
+  assert.equal(afterClose?.wideOpen, false);
 });
 
 async function waitFor(cond: () => boolean, ms = 3000) {
@@ -205,6 +215,12 @@ test("opening a proposed diff does not approve the confirmation", async () => {
   await send;
   assert.equal(fx.diff.getStatus("mut-m2"), "REJECTED");
   assert.equal(fx.state().reviews[0].status, "rejected");
+  const outcome = fx.state().messages.at(-1);
+  assert.equal(outcome.status, "rejected");
+  assert.match(outcome.content, /Change rejected — no files modified/);
+  assert.equal(fx.state().pendingConfirmation, undefined);
+  assert.equal(fx.state().activities.some((activity: any) => activity.label === "Failed"), false);
+  assert.equal(fx.state().activities.some((activity: any) => activity.label === "Change rejected"), true);
 });
 
 test("approve is distinct from applied, and a passing check is verified", async () => {
@@ -240,6 +256,22 @@ test("approve is distinct from applied, and a passing check is verified", async 
   renderReviewLedger(root, fx.state().reviews, mockDoc());
   const text = walk(root).map((node) => node.textContent).join("\n");
   assert.match(text, /Verified/);
+});
+
+test("rejecting a proposed diff closes its preview tab", () => {
+  const closed: any[] = [];
+  mockVscode.window.tabGroups.all = [{
+    tabs: [{
+      input: {
+        original: { toString: () => "open-vs-code-diff:preview?id=mut-x&side=before" },
+        modified: { toString: () => "open-vs-code-diff:preview?id=mut-x&side=after" },
+      },
+    }],
+  }];
+  mockVscode.window.tabGroups.close = async (tabs: any) => { closed.push(tabs); return true; };
+  const diff = new DiffReviewController();
+  diff.closeDiffEditors("mut-x");
+  assert.equal(closed.length, 1);
 });
 
 test("an unused approval is interrupted on restore and is not replayed", () => {

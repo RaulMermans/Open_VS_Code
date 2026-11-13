@@ -182,6 +182,7 @@ export class TerminalReviewController {
       entry.isOutputVisible = true;
     }
     entry.status = status;
+    if (isFinishedTerminalStatus(status)) entry.isOutputVisible = false;
     this.onDidChangeEmitter?.fire(executionId);
     return true;
   }

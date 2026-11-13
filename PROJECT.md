@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.17` from `b5ed368eed` is built and not installed. Installed desktop remains `0.1.0-rc.16`. Packaged CDP on `/tmp/ovsc-rc17` passed CONV-PING, CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY. UX-ACTIVITY and UX-DIFF stay `NEEDS_REVIEW` for appearance. Visual review copies are in `apps/desktop/acceptance/review/m2-rc17-visual-2026-11-13/`. Streaming stays deferred. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
+Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Presentation polish after the rc.17 visual reject is in tree (companion sidebar, compact composer, no auto-open Output, truthful rejection, completion card). Installed desktop remains `0.1.0-rc.16`. Previous candidate `0.1.0-rc.17` is not installed. Packaged `0.1.0-rc.18` acceptance is still required before visual sign-off. Streaming stays deferred. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
 
 Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
 

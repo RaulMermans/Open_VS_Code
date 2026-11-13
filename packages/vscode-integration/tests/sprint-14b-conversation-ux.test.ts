@@ -355,3 +355,47 @@ test("interrupted work is a distinct activity status and stays in the collapsed 
   assert.equal(root.querySelector("details")?.open, false);
   assert.match(labels(root, "activity-label").join("\n"), /Verification interrupted/);
 });
+
+test("trivial ask activity keeps only the outcome line", () => {
+  const groups = summarizeActivities([
+    { id: "s", kind: "task", label: "Starting task", status: "completed" },
+    { id: "m", kind: "model", label: "Model responded", status: "completed" },
+    { id: "d", kind: "task", label: "Completed", status: "completed" },
+  ]);
+  assert.deepEqual(groups.map((group) => group.title), ["Completed"]);
+});
+
+test("a verified coding result is a compact outcome card", () => {
+  const formatted = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "The adder now returns the sum.",
+    runId: "run-ok",
+    appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
+    reviews: [
+      { kind: "mutation", status: "applied", path: "src/add.ts", runId: "run-ok" },
+      { kind: "command", status: "succeeded", scriptName: "test", command: "npm test", runId: "run-ok" },
+    ],
+  });
+  const root = new MockElement("div");
+  renderChatMessage(root, { role: "assistant", content: formatted.content, status: "completed" }, mockDoc());
+  assert.match(root.querySelector("outcome-card")?.className || "", /is-verified/);
+  const text = labels(root, "outcome-line").join("\n") + "\n" + labels(root, "file-ref").join("\n");
+  assert.match(text, /Changed:/);
+  assert.match(text, /src\/add\.ts/);
+  assert.match(text, /Tests passed/);
+});
+
+test("a rejected change is not presented as a failed execution", () => {
+  const formatted = formatTerminalTaskMessage({
+    status: "FAILED",
+    failureReason: "REJECTED",
+  });
+  const root = new MockElement("div");
+  renderChatMessage(root, { role: "system", content: formatted.content, status: "rejected" }, mockDoc());
+  assert.match(root.querySelector("outcome-card")?.className || "", /is-rejected/);
+  assert.match(labels(root, "outcome-title").join("\n"), /Change rejected — no files modified/);
+  assert.equal(summarizeActivities([
+    { id: "a", kind: "approval", label: "Change rejected", status: "cancelled" },
+    { id: "o", kind: "task", label: "Change rejected", status: "cancelled" },
+  ]).some((group) => group.title === "Failed"), false);
+});

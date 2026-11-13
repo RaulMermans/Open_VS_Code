@@ -80,7 +80,9 @@ function docOf(doc?: any): any {
 
 function roleLabel(role: string, status?: string, inherited?: boolean): string {
   var label = role === "assistant" ? "Assistant" : role === "system" ? "System" : "You";
-  if (status && status !== "completed" && status !== "pending") label += " · " + status;
+  if (status && status !== "completed" && status !== "pending") {
+    label += " · " + (status === "rejected" ? "Change rejected" : status);
+  }
   if (inherited) label += " · from an earlier conversation";
   return label;
 }
@@ -144,6 +146,7 @@ export function renderChatMessage(
 }
 
 function fillMessageBody(body: any, content: string, d: any, postMessage?: (msg: any) => void): void {
+  if (renderOutcomeBody(body, content, d, postMessage)) return;
   var segments = parseMessageSegments(content);
   var first = segments[0];
   if (segments.length === 1 && first.kind === "text") {
@@ -355,6 +358,7 @@ function activityGroupStatus(items: any[]): string {
 function outcomeTitle(items: any[]): string {
   var last = items[items.length - 1] || {};
   var label = String(last.label || "");
+  if (label === "Change rejected" || last.status === "rejected") return "Change rejected";
   if (last.status === "failed" || label === "Failed") return "Failed";
   if (last.status === "cancelled" || label === "Cancelled") return "Cancelled";
   if (last.status === "interrupted" || label === "Interrupted") return "Interrupted";
@@ -418,7 +422,11 @@ function groupTitle(category: string, items: any[]): string {
     return "Verification finished";
   }
   if (category === "edit") {
-    var editBase = status === "pending" ? "Implementing changes" : status === "failed" ? "Edit failed" : status === "cancelled" ? "Edit cancelled" : status === "interrupted" ? "Edit interrupted" : "Implemented changes";
+    var rejectedEdit = false;
+    for (var e = 0; e < items.length; e++) {
+      if (items[e] && items[e].label === "Change rejected") rejectedEdit = true;
+    }
+    var editBase = status === "pending" ? "Implementing changes" : status === "failed" ? "Edit failed" : rejectedEdit ? "Change rejected" : status === "cancelled" ? "Edit cancelled" : status === "interrupted" ? "Edit interrupted" : "Implemented changes";
     return editBase + fileCountPhrase(files.length, false) + (status === "failed" ? retry : "");
   }
   if (category === "explore") {
@@ -506,7 +514,74 @@ export function summarizeActivities(activities: any[]): Array<{ category: string
     }
     if (part.outcome) pushActivityGroup(summarized, "outcome", [part.outcome]);
   }
-  return summarized;
+  return compressTrivialTimeline(summarized);
+}
+
+function compressTrivialTimeline(groups: Array<{ category: string; title: string; status: string; count: number; detail: string }>): Array<{ category: string; title: string; status: string; count: number; detail: string }> {
+  var substantial = false;
+  for (var i = 0; i < groups.length; i++) {
+    var category = groups[i] && groups[i].category;
+    if (category === "read" || category === "explore" || category === "edit" || category === "checks" || category === "approval" || category === "plan" || category === "review") {
+      substantial = true;
+    }
+  }
+  if (substantial) return groups;
+  var kept: Array<{ category: string; title: string; status: string; count: number; detail: string }> = [];
+  for (var j = 0; j < groups.length; j++) {
+    var group = groups[j];
+    if (!group) continue;
+    if (group.category === "outcome" || group.status === "failed" || group.status === "cancelled" || group.status === "interrupted") kept.push(group);
+  }
+  return kept.length ? kept : groups;
+}
+
+function renderOutcomeBody(body: any, content: string, d: any, postMessage?: (msg: any) => void): boolean {
+  var rejected = content.indexOf("Change rejected —") === 0;
+  var marker = "\n\nVerified outcome\n";
+  var idx = content.indexOf(marker);
+  if (!rejected && idx < 0) return false;
+  var prose = rejected ? "" : content.slice(0, idx);
+  var facts = rejected ? content : content.slice(idx + marker.length);
+  if (prose) {
+    var lead = d.createElement("div");
+    lead.className = "md-text";
+    setText(lead, prose);
+    body.appendChild(lead);
+  }
+  var card = d.createElement("div");
+  card.className = "outcome-card" + (rejected ? " is-rejected" : " is-verified");
+  setAttr(card, "role", "status");
+  var lines = facts.split("\n");
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line) continue;
+    if (line.indexOf("- ") === 0) {
+      var path = line.slice(2);
+      var row = d.createElement("div");
+      row.className = "outcome-file";
+      var btn = d.createElement("button");
+      btn.className = "file-ref";
+      btn.type = "button";
+      setText(btn, path);
+      setAttr(btn, "aria-label", "Open applied change " + path);
+      if (postMessage) {
+        onClick(btn, function (p: string) {
+          return function () {
+            postMessage({ type: "ui.openFile", path: p });
+          };
+        }(path));
+      }
+      row.appendChild(btn);
+      card.appendChild(row);
+    } else {
+      var p = d.createElement("div");
+      p.className = line === "Change rejected — no files modified." || line.indexOf("Change rejected") === 0 ? "outcome-title" : "outcome-line";
+      setText(p, line);
+      card.appendChild(p);
+    }
+  }
+  body.appendChild(card);
+  return true;
 }
 
 export function renderActivityTimeline(container: any, activities: any[], doc?: any): any {
@@ -3900,6 +3975,7 @@ export function webviewRenderRuntime(): string {
     parseMessageSegments.toString(),
     roleLabel.toString(),
     appendRoleLabel.toString(),
+    renderOutcomeBody.toString(),
     fillMessageBody.toString(),
     messageSig.toString(),
     renderChatMessage.toString(),
@@ -3915,6 +3991,7 @@ export function webviewRenderRuntime(): string {
     groupDetail.toString(),
     pushActivityGroup.toString(),
     summarizeActivities.toString(),
+    compressTrivialTimeline.toString(),
     renderActivityTimeline.toString(),
     renderContextChips.toString(),
     renderConnectionStatus.toString(),
