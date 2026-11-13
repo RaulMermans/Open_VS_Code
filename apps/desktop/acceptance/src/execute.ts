@@ -227,6 +227,9 @@ async function runScenario(scenario: AcceptanceScenario, context: RunContext, ev
     if (scenario.id === "UX-ACTIVITY") return runCdpActivity(scenario, context, evidencePath)
     if (scenario.id === "UX-DIFF") return runCdpDiff(scenario, context, evidencePath)
     if (scenario.id === "LIFE-HISTORY") return runCdpHistory(scenario, context, evidencePath)
+    if (scenario.id === "CODE-CONTINUE") return runCdpContinueSameSession(scenario, context, evidencePath)
+    if (scenario.id === "CODE-CONTINUE-RESTART") return runCdpContinueRestart(scenario, context, evidencePath)
+    if (scenario.id === "CODE-CONTINUE-STALE") return runCdpContinueStale(scenario, context, evidencePath)
     if (scenario.prompt) return runCdpChat(scenario, context, evidencePath)
     return `BLOCKED: CDP webview harness has no flow for ${scenario.id}`
   }
@@ -597,6 +600,7 @@ async function runCdpChat(scenario: AcceptanceScenario, context: RunContext, evi
     workspace: dirs.workspace,
     repositoryRoot: context.repositoryRoot,
     disableWorkspaceTrust: scenario.trust === "trusted",
+    ...(scenario.maxTurns ? { env: { OPEN_VS_CODE_ACCEPTANCE_MAX_TURNS: String(scenario.maxTurns) } } : {}),
   })
   try {
     writeEvidence(evidencePath, "argv.txt", app.argv.join("\n"))
@@ -740,6 +744,7 @@ async function oneCdpTurn(
   evidencePath: string,
   evidenceName: string,
   view: AgentViewKind = "any",
+  continueRun = false,
 ): Promise<{ text: string; blocked?: string; activities: string[]; messageStatuses: string[]; approvalBlocked: boolean }> {
   const turn = await runCdpTurn(app, {
     taskId,
@@ -750,6 +755,7 @@ async function oneCdpTurn(
     decision: scenario.approval === "none" ? "none" : scenario.approval,
     workspace,
     view,
+    continueRun,
   })
   writeEvidence(evidencePath, "frames.jsonl", turn.frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n")
   const interpreted = interpretCdpTurn({ taskId, prompt, workspace, raw: turn.raw })
@@ -761,6 +767,13 @@ async function oneCdpTurn(
     activities: [...(turn.raw.activities ?? [])],
     messageStatuses: (turn.raw.messages ?? []).map((message) => message.status ?? "").filter(Boolean),
     approvalBlocked: turn.raw.approvalBlocked === true,
+  }
+  if (continueRun) {
+    const text = (turn.raw.messages ?? []).map((message) => message.text).join("\n")
+    if (turn.raw.reason === "Continue this run was not visible") {
+      return { text, blocked: "FAIL: Continue this run was not visible", ...observed }
+    }
+    return { text, ...observed }
   }
   if (interpreted.problems.length > 0) return { text: interpreted.assistant, blocked: `FAIL: ${interpreted.problems.join("; ")}`, ...observed }
   if (interpreted.ack === "not_attempted") return { text: "", blocked: `FAIL: Send not attempted: ${turn.raw.reason || "composer was not submitted"}`, ...observed }
@@ -802,6 +815,7 @@ async function startCdpSession(
     repositoryRoot: context.repositoryRoot,
     disableWorkspaceTrust: scenario.trust === "trusted",
     prepare: options?.prepare,
+    ...(scenario.maxTurns ? { env: { OPEN_VS_CODE_ACCEPTANCE_MAX_TURNS: String(scenario.maxTurns) } } : {}),
   })
   writeEvidence(evidencePath, "argv.txt", app.argv.join("\n"))
   writeEvidence(evidencePath, "launch.json", JSON.stringify({
@@ -1035,6 +1049,204 @@ async function waitForWorkbenchDiff(app: CdpApp, timeoutMs: number): Promise<{ d
     await sleep(300)
   }
   return last
+}
+
+const STALE_MARKER = 'export const EXTERNAL_STALE_MARKER = "do-not-overwrite"'
+
+function continuationEnv(scenario: AcceptanceScenario): Record<string, string> | undefined {
+  return scenario.maxTurns ? { OPEN_VS_CODE_ACCEPTANCE_MAX_TURNS: String(scenario.maxTurns) } : undefined
+}
+
+function transcriptHasTurnLimit(text: string): boolean {
+  return /MAX_TURNS_EXCEEDED|turn budget was used up|Continue this run/i.test(text)
+}
+
+async function waitIdleWithoutResume(app: CdpApp, evidencePath: string): Promise<string[]> {
+  const before = await agentSurface(app, { op: "snapshot" }, "any")
+  const beforeDigest = workspaceDigest(app.workspace)
+  await sleep(5000)
+  const after = await agentSurface(app, { op: "snapshot" }, "any")
+  const afterDigest = workspaceDigest(app.workspace)
+  writeEvidence(evidencePath, "idle-before.json", JSON.stringify(before, null, 2))
+  writeEvidence(evidencePath, "idle-after.json", JSON.stringify(after, null, 2))
+  const problems: string[] = []
+  if (before.continueVisible === true && after.continueVisible !== true && !transcriptHasTurnLimit((after.bodyText || "") + (after.messages ?? []).map((m) => m.text).join("\n"))) {
+    problems.push("Continue this run disappeared without an explicit click")
+  }
+  if (JSON.stringify(sourceDigest(beforeDigest)) !== JSON.stringify(sourceDigest(afterDigest))) {
+    problems.push("workspace changed during the idle wait before Continue")
+  }
+  return problems
+}
+
+async function pauseAtTurnLimit(
+  app: CdpApp,
+  scenario: AcceptanceScenario,
+  context: RunContext,
+  evidencePath: string,
+): Promise<{ text: string; blocked?: string }> {
+  const taskId = `${context.runId}:${scenario.id}`
+  const first = await oneCdpTurn(app, scenario, scenario.prompt, taskId, app.workspace, evidencePath, "send.json")
+  if (first.blocked) return first
+  const snap = await agentSurface(app, { op: "snapshot" }, "any")
+  writeEvidence(evidencePath, "pause-snapshot.json", JSON.stringify({
+    continueVisible: snap.continueVisible === true,
+    body: (snap.bodyText || "").slice(0, 2000),
+    messages: snap.messages ?? [],
+    activities: snap.activities ?? [],
+    reviews: snap.reviews ?? [],
+    model: scenario.model,
+    maxTurns: scenario.maxTurns ?? null,
+  }, null, 2))
+  await saveShot(app, evidencePath, "paused.png", true)
+  const blob = [first.text, snap.bodyText || "", ...(snap.messages ?? []).map((message) => message.text)].join("\n")
+  if (!transcriptHasTurnLimit(blob) && snap.continueVisible !== true) {
+    return { text: blob, blocked: "FAIL: task did not pause at the lab turn budget; Continue this run was not shown. The cap was not increased." }
+  }
+  const idle = await waitIdleWithoutResume(app, evidencePath)
+  if (idle.length > 0) return { text: blob, blocked: `FAIL: ${idle.join("; ")}` }
+  return { text: blob }
+}
+
+async function clickContinue(app: CdpApp, scenario: AcceptanceScenario, context: RunContext, evidencePath: string, name: string): Promise<{ text: string; blocked?: string }> {
+  const taskId = `${context.runId}:${scenario.id}:continue`
+  return oneCdpTurn(app, scenario, scenario.prompt, taskId, app.workspace, evidencePath, name, "any", true)
+}
+
+async function finishContinueOracle(
+  scenario: AcceptanceScenario,
+  dirsWorkspace: string,
+  before: Record<string, string>,
+  text: string,
+  evidencePath: string,
+): Promise<string> {
+  writeEvidence(evidencePath, "assistant-final.txt", text)
+  const diff = spawnSync("git", ["diff", "--"], { cwd: dirsWorkspace, encoding: "utf8" })
+  writeEvidence(evidencePath, "git-diff.patch", diff.stdout || "")
+  writeEvidence(evidencePath, "git-status.txt", gitPorcelain(dirsWorkspace))
+  const problems = [
+    ...failuresForText(text, scenario.expected),
+    ...filesystemProblems(dirsWorkspace, before, scenario.expected),
+  ]
+  if (scenario.expected.command) {
+    const oracle = spawnSync(scenario.expected.command.cmd, [...scenario.expected.command.args], {
+      cwd: dirsWorkspace,
+      encoding: "utf8",
+      timeout: 60000,
+      env: { ...process.env, PYTHONPATH: dirsWorkspace },
+    })
+    writeEvidence(evidencePath, "oracle-test.txt", `${oracle.stdout ?? ""}${oracle.stderr ?? ""}\nexit ${oracle.status}\n`)
+  }
+  if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+  return text.slice(0, 500) || "Continuation finished and the independent oracle matched."
+}
+
+async function runCdpContinueSameSession(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app, dirs, before } = await startCdpSession(scenario, context, evidencePath)
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    const paused = await pauseAtTurnLimit(app, scenario, context, evidencePath)
+    if (paused.blocked) return paused.blocked
+    const continued = await clickContinue(app, scenario, context, evidencePath, "continue.json")
+    if (continued.blocked) return continued.blocked
+    await saveShot(app, evidencePath, "after-continue.png", true)
+    return finishContinueOracle(scenario, dirs.workspace, before, continued.text, evidencePath)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
+}
+
+async function restoreConversation(app: CdpApp, needle: string): Promise<void> {
+  await waitForAgentViews(app, 1, 45000)
+  await agentSurface(app, { op: "historyOpen" }, "sidebar")
+  await agentSurface(app, { op: "historySelect", value: needle.slice(0, 40) }, "sidebar").catch(() => undefined)
+}
+
+async function runCdpContinueRestart(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app: initial, dirs, before } = await startCdpSession(scenario, context, evidencePath)
+  let app = initial
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    const paused = await pauseAtTurnLimit(app, scenario, context, evidencePath)
+    if (paused.blocked) return paused.blocked
+    await saveShot(app, evidencePath, "before-restart.png", true)
+    app = await relaunchCdpApp(app, {
+      repositoryRoot: context.repositoryRoot,
+      disableWorkspaceTrust: scenario.trust === "trusted",
+      ...(continuationEnv(scenario) ? { env: continuationEnv(scenario) } : {}),
+    })
+    writeEvidence(evidencePath, "relaunch.json", JSON.stringify({ pid: app.pid, port: app.port, profile: app.userData }, null, 2))
+    await restoreConversation(app, scenario.prompt)
+    const restored = await waitAgentSurface(app, "sidebar", (snap) => snap.continueVisible === true || transcriptHasTurnLimit(snap.bodyText || ""), 30000)
+    writeEvidence(evidencePath, "restored.json", JSON.stringify(restored, null, 2))
+    await saveShot(app, evidencePath, "after-restart.png", true)
+    if (restored.continueVisible !== true && !transcriptHasTurnLimit(restored.bodyText || "")) {
+      return "FAIL: Continue this run was not available after relaunch"
+    }
+    const idle = await waitIdleWithoutResume(app, evidencePath)
+    if (idle.length > 0) return `FAIL: ${idle.join("; ")}`
+    const continued = await clickContinue(app, scenario, context, evidencePath, "continue.json")
+    if (continued.blocked) return continued.blocked
+    await saveShot(app, evidencePath, "after-continue.png", true)
+    return finishContinueOracle(scenario, dirs.workspace, before, continued.text, evidencePath)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
+}
+
+async function runCdpContinueStale(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app: initial, dirs, before } = await startCdpSession(scenario, context, evidencePath)
+  let app = initial
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    const paused = await pauseAtTurnLimit(app, scenario, context, evidencePath)
+    if (paused.blocked) return paused.blocked
+    for (const relativePath of ["src/format.ts", "src/greet.ts", "src/parse.ts"]) {
+      const target = join(dirs.workspace, relativePath)
+      const current = readFileSync(target, "utf8")
+      if (!current.includes("EXTERNAL_STALE_MARKER")) {
+        writeFileSync(target, `${current.trimEnd()}\n${STALE_MARKER}\n`)
+      }
+    }
+    writeEvidence(evidencePath, "external-edit.txt", STALE_MARKER)
+    app = await relaunchCdpApp(app, {
+      repositoryRoot: context.repositoryRoot,
+      disableWorkspaceTrust: scenario.trust === "trusted",
+      ...(continuationEnv(scenario) ? { env: continuationEnv(scenario) } : {}),
+    })
+    await restoreConversation(app, scenario.prompt)
+    await waitAgentSurface(app, "sidebar", (snap) => snap.continueVisible === true || transcriptHasTurnLimit(snap.bodyText || ""), 30000).catch(() => undefined)
+    await saveShot(app, evidencePath, "before-stale-continue.png", true)
+    const continued = await clickContinue(app, scenario, context, evidencePath, "continue.json")
+    const text = `${paused.text}\n${continued.text}`
+    writeEvidence(evidencePath, "assistant-final.txt", text)
+    await saveShot(app, evidencePath, "after-stale-continue.png", true)
+    const problems: string[] = []
+    for (const relativePath of ["src/format.ts", "src/greet.ts", "src/parse.ts"]) {
+      const body = readFileSync(join(dirs.workspace, relativePath), "utf8")
+      if (!body.includes("EXTERNAL_STALE_MARKER")) problems.push(`overwrote external edit in ${relativePath}`)
+    }
+    const blob = text.toLowerCase()
+    const noticed = /stale|diverg|changed since|checkpoint|resolve the stale|external/i.test(blob)
+    if (!noticed) problems.push("agent did not report stale or diverged workspace state")
+    problems.push(...filesystemProblems(dirs.workspace, before, { unchangedPaths: scenario.expected.unchangedPaths }))
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return "External edits survived Continue; the agent reported stale state and did not overwrite them."
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
 }
 
 async function runCdpHistory(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {

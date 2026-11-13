@@ -127,6 +127,7 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
     let lastDecisionText = "";
     let holdForRun = false;
     let sawRunningAfterDecision = false;
+    let sawRunningAfterContinue = false;
     let stable = 0;
     let modeAttempts = 0;
     const timeoutMs = typeof op.timeoutMs === "number" ? op.timeoutMs : 20000;
@@ -184,6 +185,16 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
           if (modeAttempts > 3) return finish({ reason: "mode did not stay on " + op.mode });
           mode.value = op.mode;
           mode.dispatchEvent(new Event("change", { bubbles: true }));
+          return;
+        }
+        if (op.continueRun) {
+          const continueBtn = doc.querySelector(".btn-continue-run");
+          if (!continueBtn || !continueBtn.getClientRects || !continueBtn.getClientRects().length) {
+            return finish({ reason: "Continue this run was not visible" });
+          }
+          continueBtn.click();
+          sendClicks += 1;
+          phase = "wait";
           return;
         }
         if (userCount === 1) return finish({ reason: "user turn already present" });
@@ -260,8 +271,11 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
       }
       if (holdForRun && running) sawRunningAfterDecision = true;
       if (holdForRun && sawRunningAfterDecision && !running) holdForRun = false;
+      if (op.continueRun && running) sawRunningAfterContinue = true;
       const decisionVisible = !!((op.decision === "approve" || op.decision === "reject") && doc.getElementById(op.decision === "approve" ? "btn-approve" : "btn-reject") && !doc.getElementById(op.decision === "approve" ? "btn-approve" : "btn-reject").disabled && doc.getElementById(op.decision === "approve" ? "btn-approve" : "btn-reject").getClientRects().length > 0);
-      const settled = userCount === 1 && assistant && !running && !holdForRun && !decisionVisible && /ready/i.test(readyText);
+      const settled = op.continueRun
+        ? sawRunningAfterContinue && !running && !holdForRun && !decisionVisible && /ready/i.test(readyText)
+        : userCount === 1 && assistant && !running && !holdForRun && !decisionVisible && /ready/i.test(readyText);
       stable = settled ? stable + 1 : 0;
       if (stable >= 2) return finish();
     }, 200);
@@ -287,6 +301,7 @@ export interface AgentSurfaceSnapshot {
   readonly diffVisible?: boolean
   readonly approveVisible?: boolean
   readonly rejectVisible?: boolean
+  readonly continueVisible?: boolean
   readonly bodyText?: string
   readonly reviews?: readonly string[]
   readonly outcomeVisible?: boolean
@@ -356,6 +371,7 @@ export const CDP_SURFACE_RUNTIME = `function cdpSurface(op) {
       outcomeText: outcome ? String(outcome.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500) : "",
       bodyText: String((doc.body && doc.body.innerText) || "").slice(0, 4000),
       reviews: Array.from(doc.querySelectorAll(".review-item")).map((node) => String(node.textContent || "").replace(/\\s+/g, " ").trim()).slice(0, 20),
+      continueVisible: visible(doc.querySelector(".btn-continue-run")),
     };
   };
   if (op.op === "snapshot") return snapshot();

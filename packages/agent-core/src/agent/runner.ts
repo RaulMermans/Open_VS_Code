@@ -875,8 +875,44 @@ export class AgentRunner {
       return { ...res, recoveryPlan: plan }
     }
 
+    if (plan.divergenceClass === "BLOCKED_DIVERGENCE") {
+      this.#session = {
+        input: {
+          workspaceRoot: wsRoot,
+          task: { id: runId, instruction, mode },
+          maxTurns: 10,
+          contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
+          projectInstructions: [],
+          ...(options?.signal ? { signal: options.signal } : {}),
+        },
+        taskProfile,
+        evidenceLedger: new EvidenceLedger(),
+        evidenceCollector,
+        evalEngine,
+        evalPolicy,
+        evalLedger,
+        evalAnalytics,
+        evalResults: [],
+        state: {
+          status: "FAILED",
+          events: [],
+        },
+        turns: latestCp.turnId ?? 0,
+        continuationAttempts: 0,
+        observations: [],
+        diagnostics: [],
+        toolCalls: [],
+        repeatedProgress: 0,
+        failureReason: "INCOMPLETE",
+        finalAnswer: "Workspace files changed since the last checkpoint. Resolve the stale files before continuing. No writes were replayed.",
+      }
+      this.#emit("task.failed", { message: "BLOCKED_DIVERGENCE: workspace diverged from the turn-budget checkpoint" })
+      const diverged = this.#result()
+      return { ...diverged, recoveryPlan: plan }
+    }
+
     // Check if recovery requires human escalation or reconfirmation
-    if (directive.decision === "ASK_HUMAN" || plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM" || plan.divergenceClass === "BLOCKED_DIVERGENCE") {
+    if (directive.decision === "ASK_HUMAN" || plan.disposition === "ASK_HUMAN" || plan.disposition === "RECONFIRM") {
       const pendingConf = latestCp.runtimeState.pendingConfirmation
       const recoveredConfirmation: AgentConfirmationRequest | undefined = pendingConf ? {
         callId: pendingConf.callId,
@@ -1435,6 +1471,9 @@ export class AgentRunner {
         .filter((mutation) => mutation.status === "ALREADY_SATISFIED" && mutation.path.trim().length > 0)
         .map((mutation) => mutation.path),
     )].slice(-16)
+    const touchedFilePaths = [...completedPaths, ...alreadyPresentPaths].map((path) => (
+      isAbsolute(path) ? path : join(session.input.workspaceRoot, path)
+    ))
     try {
       await this.#checkpointCoordinator.checkpoint({
         runId: session.input.task.id,
@@ -1452,6 +1491,7 @@ export class AgentRunner {
           },
           workingContext: { observations, toolCalls, completedPaths, alreadyPresentPaths },
         },
+        touchedFilePaths,
       })
     } catch {
       // Continuation still works in-process without durability.

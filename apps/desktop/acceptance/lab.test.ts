@@ -27,7 +27,7 @@ const REPOSITORY_ROOT = join(import.meta.dirname, "..", "..", "..")
 
 test("scenario catalog has a closed set of executable contracts", () => {
   const scenarios = loadCatalog()
-  assert.ok(scenarios.length >= 40 && scenarios.length <= 50)
+  assert.ok(scenarios.length >= 40 && scenarios.length <= 55)
   const groups = new Set(scenarios.map((scenario) => scenario.group))
   for (const group of ["conversation", "coding", "safety", "experience", "lifecycle"]) {
     assert.equal(groups.has(group as never), true)

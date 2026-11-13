@@ -1,0 +1,33 @@
+{
+  "schema": "m3-opencode-isolation-preflight/v1",
+  "model": "qwen3-coder:30b",
+  "digest": "sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a",
+  "createdAt": "2026-11-13T13:20:00.000Z",
+  "isolationPolicy": "OpenCode --standalone + isolated HOME/XDG + unique disposable Git fixture; INVALID if tool paths escape the disposable workspace",
+  "note": "Open VS Code was not scored in this preflight. The previous compiled/native comparison files were restored after a filename collision.",
+  "totals": {
+    "tasks": 2,
+    "ovscPass": 0,
+    "opencodePass": 0,
+    "opencodeInvalid": 1
+  },
+  "rows": [
+    {
+      "id": "T01-off-by-one",
+      "opencode": {
+        "comparisonStatus": "FAIL",
+        "isolationValid": true,
+        "detail": "independent verifier saw add(1,2)=4; isolation did not report extra-workspace paths on this first spawn"
+      }
+    },
+    {
+      "id": "T01-off-by-one-repeat",
+      "opencode": {
+        "comparisonStatus": "INVALID",
+        "isolationValid": false,
+        "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    }
+  ],
+  "disposition": "INVALID — workspace isolation cannot be established across a unique disposable fixture. Nonblocking research limitation for Personal V1. Not evidence of Open VS Code coding quality."
+}

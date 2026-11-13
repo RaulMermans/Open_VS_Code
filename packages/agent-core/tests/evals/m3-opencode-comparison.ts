@@ -507,9 +507,20 @@ export async function runM3OpenCodeComparison(options?: {
       await writeFixture(ocRoot, task.files)
       await initGit(ovscRoot)
       await initGit(ocRoot)
-      console.log(`\n[${label}] Open VS Code (${encoding})...`)
-      const ovsc = await runOpenVsCode(task, ovscRoot, encoding)
-      console.log(`  OVSC ${String(ovsc.comparisonStatus)} independent=${(ovsc.independent as { pass?: boolean })?.pass} ${ovsc.durationMs}ms`)
+      const skipOvsc = process.env.M3_COMPARE_OPENCODE_PREFLIGHT === "1"
+      let ovsc: Record<string, unknown> = {
+        status: "SKIPPED",
+        comparisonStatus: "INVALID",
+        pass: false,
+        detail: "skipped Open VS Code for isolation preflight",
+      }
+      if (!skipOvsc) {
+        console.log(`\n[${label}] Open VS Code (${encoding})...`)
+        ovsc = await runOpenVsCode(task, ovscRoot, encoding)
+        console.log(`  OVSC ${String(ovsc.comparisonStatus)} independent=${(ovsc.independent as { pass?: boolean })?.pass} ${ovsc.durationMs}ms`)
+      } else {
+        console.log(`\n[${label}] Open VS Code skipped (OpenCode isolation preflight)`)
+      }
       const skipOpenCode = process.env.M3_COMPARE_OVSC_ONLY === "1"
       let opencode: Record<string, unknown> = {
         status: "SKIPPED",
@@ -547,7 +558,7 @@ export async function runM3OpenCodeComparison(options?: {
   const ocPass = rows.filter((row) => row.opencode.comparisonStatus === "PASS").length
   const ocInvalid = rows.filter((row) => row.opencode.comparisonStatus === "INVALID").length
   const report = {
-    schema: "m3-opencode-comparison/v2",
+    schema: process.env.M3_COMPARE_OPENCODE_PREFLIGHT === "1" ? "m3-opencode-isolation-preflight/v1" : "m3-opencode-comparison/v2",
     model: MODEL,
     digest,
     encoding,
@@ -565,7 +576,9 @@ export async function runM3OpenCodeComparison(options?: {
   }
   const dir = getCanonicalEvalsDir()
   await mkdir(dir, { recursive: true })
-  const out = join(dir, encoding === "native-tool-messages" ? "m3-opencode-comparison-native.json" : "m3-opencode-comparison.json")
+  const out = join(dir, process.env.M3_COMPARE_OPENCODE_PREFLIGHT === "1"
+    ? "m3-opencode-isolation-preflight.json"
+    : encoding === "native-tool-messages" ? "m3-opencode-comparison-native.json" : "m3-opencode-comparison.json")
   await writeFile(out, JSON.stringify(report, null, 2), "utf8")
   console.log(`\nWrote ${out}`)
   console.log(`Open VS Code ${ovscPass}/${rows.length}; OpenCode PASS ${ocPass} INVALID ${ocInvalid}/${rows.length}; digest ${digest}`)

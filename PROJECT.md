@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Milestone 3 — Real coding intelligence. Status: `IN_PROGRESS`. Daily driver remains `0.1.0-rc.16`. Idempotent mutations are `ALREADY_SATISFIED` rather than claimed writes. Same-run Continue is in ChatController and recovery UI. Isolated OpenCode comparison: Open VS Code 11/13 compiled-user and 12/13 native; OpenCode 0 PASS, mostly INVALID for unproven fixture isolation. Deterministic coding eval is 30/30. GUI Continue on a live coding task is still required before M3 GO. No new package. Personal V1 remains NO-GO. See `PLAN.md`.
+Milestone 3 — Real coding intelligence. Status: `PARTIALLY_VERIFIED`. Daily driver remains `0.1.0-rc.16`. Same-session and restart Continue paused at a real `MAX_TURNS_EXCEEDED` on `qwen3-coder:30b` and resumed only after an explicit click; independent tests did not finish the multi-file task inside the bounded Continue budget. `CODE-CONTINUE-STALE` PASS. OpenCode comparison stays INVALID. No new package. Personal V1 remains NO-GO. See `PLAN.md`.
 
 Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. Packaged CDP on `/tmp/ovsc-rc18` passed CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY. UX-ACTIVITY and UX-DIFF stay `NEEDS_REVIEW` for appearance on that package. Visual copies: `apps/desktop/acceptance/review/m2-rc18-visual-2026-11-13/`. Streaming stays deferred. Personal V1 remains NO-GO. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
 
