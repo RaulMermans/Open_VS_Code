@@ -95,6 +95,23 @@ test("tool contract messages name the canonical edit tools", () => {
   assert.match(path?.message ?? "", /INVALID_PATH: use a workspace-relative path such as src\/add\.ts/)
 })
 
+test("already-satisfied content is not reported as a file change", () => {
+  const verdict = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: ["src/add.js"],
+    requireImplementationChange: true,
+    mutations: [{ path: "src/add.js", status: "ALREADY_SATISFIED", at: "2026-11-13T00:00:01.000Z", operation: "patch" }],
+    verifications: [{ status: "PASS", at: "2026-11-13T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    scheduledVerification: "PASSED",
+  })
+  assert.equal(verdict.accept, true)
+  assert.equal(verdict.editsSatisfied, true)
+  assert.match(verdict.summary, /already present/)
+  assert.doesNotMatch(verdict.summary, /^Changed:/)
+})
+
 test("a test-only mutation is not a behavior change", () => {
   assert.equal(implementationChangeRequired("Reject empty title or body in formatNote, update the unit tests, and run the tests.", []), true)
   const verdict = assessCodingCompletion({

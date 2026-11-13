@@ -1,8 +1,8 @@
 Milestone 3 — Real coding intelligence
 STATUS: IN_PROGRESS
-  - M2 visual close (overlay, not installed): reject awaits preview close; outcome card visible (`CODE-BUG` 2026-11-13T09-20-06-924Z `outcomeVisible: true`); window bounds measured at 1100×800 (`UX-WIDE` 2026-11-13T09-19-14-047Z inner 1100×800). Copies: `apps/desktop/acceptance/review/m3-visual-2026-11-13/`.
-  - Edits: applying a patch or create whose bytes already match the proposal is `APPLIED` (no rewrite). Turn-budget stops stay resumable via `continueFromLimit` without dropping observations. Recovery restores bounded working context when a PAUSED checkpoint recorded it.
-  - Context: `compiled-user` remains default. Opt-in `native-tool-messages` now includes real tool arguments (ADR-044). Same-digest `qwen3-coder:30b` (`sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a`) 12-task comparison: Open VS Code 11/12 vs OpenCode `run --auto` 3/12 (`evals/results/m3-opencode-comparison.json`). Native encoding 4/4 on a compiled-passing subset (`evals/results/m3-opencode-comparison-native.json`); default stays compiled-user. Deterministic `eval:coding` 30/30.
+  - Reliability close: idempotent apply is `ALREADY_SATISFIED` (no rewrite, no snapshot, not claimed as a write). Chat ledger labels that as already present. `Continue this run` is wired through ChatController (`task.continueBudget`), persists across conversation reload, and `MAX_TURNS_EXCEEDED` checkpoints are recovery-RESUME rather than automatic retry.
+  - OpenCode comparison harness v2 uses `--standalone`, isolated HOME/XDG, git fixtures, independent node/python oracles, and INVALID (not FAIL) when tool traces miss the disposable workspace. Live same-digest rerun is in progress (`OPEN_VS_CODE_REAL_INFERENCE=1`). Prior v1 11/12 vs 3/12 is not a fair FAIL. Default encoding remains `compiled-user`.
+  - Deterministic `eval:coding` 30/30. `eval:recovery` 60/60. GUI Continue on a real 30B coding task is not yet walked. M3 remains NO-GO until that Continue path is proven without lost or duplicated work.
   - Daily driver remains `0.1.0-rc.16`. No package installed. Personal V1 remains NO-GO.
 
 Milestone 2 — Agent workspace presentation

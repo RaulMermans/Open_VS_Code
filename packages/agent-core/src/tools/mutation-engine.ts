@@ -565,7 +565,7 @@ export class MutationEngine {
       result = await this.#applyCreate(prepared)
     }
 
-    if (result.status === "APPLIED") {
+    if (result.status === "APPLIED" || result.status === "ALREADY_SATISFIED") {
       this.#consumed.add(prepared.id)
     }
     return result
@@ -804,11 +804,11 @@ export class MutationEngine {
   #alreadyAppliedResult(prepared: PreparedMutation): MutationResult {
     return {
       id: prepared.id,
-      status: "APPLIED",
+      status: "ALREADY_SATISFIED",
       path: prepared.path,
       operation: prepared.operation,
       diff: prepared.diff,
-      observation: `${this.#formatObservation(prepared)}\nAlready at the proposed content; no write.`,
+      observation: `Already satisfied: ${prepared.path}\nThe file already matches the proposed content. No write.`,
     }
   }
 

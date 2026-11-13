@@ -192,6 +192,7 @@ test("terminates model failure, maximum turns, and repeated non-progress distinc
   assert.equal(continued.status, "COMPLETED")
   assert.equal(continued.toolCalls[0]?.name, "read_file")
   assert.match(continued.finalAnswer ?? "", /Finished from the preserved observations/)
+  await assert.rejects(limited.continueFromLimit(40), /total turn budget cannot exceed 40|turn-budget pause/)
 
   const repeated = Array.from({ length: 3 }, (_, index) => response("again", [
     { id: `repeat-${index}`, name: "read_file", arguments: { path: "README.md" } },

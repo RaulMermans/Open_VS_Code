@@ -339,7 +339,11 @@ export class AgentRunner {
     if (!Number.isInteger(additionalTurns) || additionalTurns <= 0) {
       throw new AgentRunnerError("INVALID_INPUT", "additionalTurns must be a positive integer")
     }
-    session.input = { ...session.input, maxTurns: session.input.maxTurns + additionalTurns }
+    const nextBudget = session.input.maxTurns + additionalTurns
+    if (nextBudget > 40) {
+      throw new AgentRunnerError("INVALID_INPUT", "total turn budget cannot exceed 40")
+    }
+    session.input = { ...session.input, maxTurns: nextBudget }
     delete session.failureReason
     delete session.finalAnswer
     session.state = {
@@ -607,9 +611,16 @@ export class AgentRunner {
               output: result,
             })
           } else {
-            reviewSucceeded = result.status === "APPLIED"
-            if (reviewSucceeded) {
+            reviewSucceeded = result.status === "APPLIED" || result.status === "ALREADY_SATISFIED"
+            if (result.status === "APPLIED") {
               this.#emit("mutation.applied", {
+                callId: pending.prepared.id,
+                name: pending.prepared.name,
+                mutationId: reviewable.id,
+                ...mutationPathPayload(pending.prepared.arguments, reviewable.reviewPayload),
+              })
+            } else if (result.status === "ALREADY_SATISFIED") {
+              this.#emit("mutation.already_satisfied", {
                 callId: pending.prepared.id,
                 name: pending.prepared.name,
                 mutationId: reviewable.id,
@@ -621,8 +632,8 @@ export class AgentRunner {
             session.evidenceCollector.recordMutationOutcome({
               mutationId: reviewable.id,
               path: (pending.prepared.arguments as any)?.targetFile || (pending.prepared.arguments as any)?.path || "",
-              status: result.status === "APPLIED" ? "APPLIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
-              diffSummary: (reviewable.reviewPayload as any)?.summary || "",
+              status: result.status === "APPLIED" ? "APPLIED" : result.status === "ALREADY_SATISFIED" ? "ALREADY_SATISFIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
+              diffSummary: result.status === "ALREADY_SATISFIED" ? "already satisfied; no write" : ((reviewable.reviewPayload as any)?.summary || ""),
               operation: mutationOperation(pending.prepared.name),
             })
             if (result.status === "APPLIED") {
@@ -961,6 +972,15 @@ export class AgentRunner {
         path,
         status: "APPLIED",
         diffSummary: "already applied before recovery",
+        operation: "patch",
+      })
+    }
+    for (const path of working?.alreadyPresentPaths ?? []) {
+      evidenceCollector.recordMutationOutcome({
+        mutationId: `recovered-present:${path}`,
+        path,
+        status: "ALREADY_SATISFIED",
+        diffSummary: "already satisfied; no write",
         operation: "patch",
       })
     }
@@ -1377,18 +1397,25 @@ export class AgentRunner {
   #completedWorkNotice(): string {
     const session = this.#requiredSession()
     const completedCalls = session.toolCalls.filter((call) => call.outcome === "COMPLETED")
-    const applied = session.evidenceCollector.getEvidence().mutationOutcomes
+    const outcomes = session.evidenceCollector.getEvidence().mutationOutcomes
+    const applied = outcomes
       .filter((mutation) => mutation.status === "APPLIED" && mutation.path.trim().length > 0)
       .map((mutation) => mutation.path)
+    const alreadyPresent = outcomes
+      .filter((mutation) => mutation.status === "ALREADY_SATISFIED" && mutation.path.trim().length > 0)
+      .map((mutation) => mutation.path)
     const uniquePaths = [...new Set(applied)]
+    const uniquePresent = [...new Set(alreadyPresent)]
     const completed = completedCalls.length > 0
       ? completedCalls.map((call) => call.name).join(", ")
       : "none"
     const files = uniquePaths.length > 0 ? uniquePaths.join(", ") : "none"
+    const present = uniquePresent.length > 0 ? uniquePresent.join(", ") : "none"
     return [
       "Continuing from a turn-budget checkpoint.",
       `Completed tools: ${completed}.`,
-      `Applied files: ${files}.`,
+      `Files written this run: ${files}.`,
+      `Already-correct files (no write): ${present}.`,
       "Do not repeat those operations. Finish remaining work only.",
     ].join(" ")
   }
@@ -1401,6 +1428,11 @@ export class AgentRunner {
     const completedPaths = [...new Set(
       session.evidenceCollector.getEvidence().mutationOutcomes
         .filter((mutation) => mutation.status === "APPLIED" && mutation.path.trim().length > 0)
+        .map((mutation) => mutation.path),
+    )].slice(-16)
+    const alreadyPresentPaths = [...new Set(
+      session.evidenceCollector.getEvidence().mutationOutcomes
+        .filter((mutation) => mutation.status === "ALREADY_SATISFIED" && mutation.path.trim().length > 0)
         .map((mutation) => mutation.path),
     )].slice(-16)
     try {
@@ -1418,7 +1450,7 @@ export class AgentRunner {
             mode: session.input.task.mode,
             instruction: session.input.task.instruction,
           },
-          workingContext: { observations, toolCalls, completedPaths },
+          workingContext: { observations, toolCalls, completedPaths, alreadyPresentPaths },
         },
       })
     } catch {

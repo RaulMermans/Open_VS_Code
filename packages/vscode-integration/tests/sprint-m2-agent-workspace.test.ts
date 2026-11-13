@@ -154,6 +154,14 @@ test("parseWebviewMessage accepts a bounded composer draft", () => {
   assert.equal(parseWebviewMessage({ type: "chat.draft", text: 1 }), null);
 });
 
+test("parseWebviewMessage accepts same-run turn-budget continuation", () => {
+  const conversationId = "c-0123456789abcdef";
+  assert.deepEqual(
+    parseWebviewMessage({ type: "task.continueBudget", conversationId }),
+    { type: "task.continueBudget", conversationId },
+  );
+});
+
 test("sidebar and wide chat share one conversation and do not duplicate a send", async () => {
   const fx = fixtures();
   const wide = new MockWebview();

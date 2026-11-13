@@ -57,7 +57,7 @@ export interface FileChange {
 }
 
 // --- Mutation Result ---
-export type MutationResultStatus = "APPLIED" | "REJECTED" | "FAILED" | "STALE_BASE" | "ROLLBACK_CONFLICT"
+export type MutationResultStatus = "APPLIED" | "ALREADY_SATISFIED" | "REJECTED" | "FAILED" | "STALE_BASE" | "ROLLBACK_CONFLICT"
 
 export interface MutationResult {
   readonly id: string

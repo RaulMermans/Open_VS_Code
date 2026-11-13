@@ -1,11 +1,15 @@
 /**
  * Milestone 3 same-digest live coding comparison: Open VS Code AgentRunner vs OpenCode CLI.
  * Gated by OPEN_VS_CODE_REAL_INFERENCE=1. Disposable fixtures only.
+ *
+ * OpenCode is launched with --standalone, an isolated HOME/XDG tree, and an
+ * explicit Build agent. Isolation is proven from recorded cwd and tool paths.
+ * If isolation cannot be proven, OpenCode is INVALID, not FAIL.
  */
 import { spawn } from "node:child_process"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, relative, resolve, sep } from "node:path"
 import { calculateBudget } from "../../src/context/budget.ts"
 import { OpenAICompatibleProvider } from "../../src/model/openai-compatible.ts"
 import { checkInferenceGate } from "../../src/model/inference-gate.ts"
@@ -181,6 +185,101 @@ async function writeFixture(root: string, files: Record<string, string>): Promis
   }
 }
 
+async function spawnCapture(
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv; timeoutMs?: number },
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise) => {
+    const child = spawn(command, [...args], {
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+    })
+    let stdout = ""
+    let stderr = ""
+    const timer = setTimeout(() => child.kill("SIGTERM"), options.timeoutMs ?? TASK_TIMEOUT_MS)
+    child.stdout.on("data", (chunk) => { stdout += String(chunk) })
+    child.stderr.on("data", (chunk) => { stderr += String(chunk) })
+    child.on("close", (code) => {
+      clearTimeout(timer)
+      resolvePromise({ code, stdout, stderr })
+    })
+    child.on("error", (error) => {
+      clearTimeout(timer)
+      resolvePromise({ code: 1, stdout, stderr: error instanceof Error ? error.message : String(error) })
+    })
+  })
+}
+
+async function initGit(root: string): Promise<void> {
+  await spawnCapture("git", ["init"], { cwd: root, timeoutMs: 15_000 })
+  await spawnCapture("git", ["add", "-A"], { cwd: root, timeoutMs: 15_000 })
+  await spawnCapture("git", ["-c", "user.email=eval@open-vs-code.local", "-c", "user.name=Open VS Code Eval", "commit", "-m", "fixture", "--allow-empty"], { cwd: root, timeoutMs: 15_000 })
+}
+
+async function runIndependentVerifier(root: string, task: ComparisonTask): Promise<{ pass: boolean; detail: string }> {
+  const bodies: Record<string, string> = {
+    "T01-off-by-one": "import assert from 'node:assert/strict'\nimport { add } from './src/add.js'\nassert.equal(add(1, 2), 3)\nassert.equal(add(0, 0), 0)\n",
+    "T02-missing-export": "import assert from 'node:assert/strict'\nimport { greet } from './src/greet.js'\nassert.equal(greet('Ada'), 'Hello, Ada')\n",
+    "T03-cross-file": "import assert from 'node:assert/strict'\nimport { formatName } from './src/format.js'\nassert.equal(formatName('Ada', 'Lovelace'), 'Lovelace, Ada')\n",
+    "T04-rename": "import assert from 'node:assert/strict'\nimport { sumAll } from './src/math.js'\nassert.equal(sumAll([1, 2, 3]), 6)\n",
+    "T05-counter": "import assert from 'node:assert/strict'\nimport { increment, value } from './src/counter.js'\nassert.equal(value(), 0)\nassert.equal(increment(), 1)\nassert.equal(value(), 1)\n",
+    "T07-create-util": "import assert from 'node:assert/strict'\nimport { clamp } from './src/clamp.js'\nassert.equal(clamp(5, 0, 3), 3)\nassert.equal(clamp(-1, 0, 3), 0)\nassert.equal(clamp(2, 0, 3), 2)\n",
+    "T08-early-return": "import assert from 'node:assert/strict'\nimport { divide } from './src/div.js'\nassert.equal(divide(4, 2), 2)\nassert.equal(divide(1, 0), null)\n",
+    "T09-string": "import assert from 'node:assert/strict'\nimport { label } from './src/label.js'\nassert.equal(label('Ada'), 'Name: Ada')\n",
+    "T10-two-files": "import assert from 'node:assert/strict'\nimport { run } from './src/app.js'\nassert.equal(run(), 6)\n",
+    "T11-json": "import assert from 'node:assert/strict'\nimport { parseJson } from './src/parse.js'\nassert.equal(parseJson('not json'), null)\nassert.equal(parseJson('{\"a\":1}').a, 1)\n",
+    "T12-expected": "import assert from 'node:assert/strict'\nimport { double } from './src/double.js'\nassert.equal(double(4), 8)\n",
+    "T06-python-add": "import ast, pathlib, sys\nsrc = pathlib.Path('src/add.py').read_text()\nns = {}\nexec(compile(src, 'src/add.py', 'exec'), ns)\nassert ns['add'](1, 2) == 3\nassert ns['add'](0, 0) == 0\n",
+  }
+  const body = bodies[task.id]
+  if (!body) return { pass: false, detail: `no independent verifier for ${task.id}` }
+  if (task.id === "T06-python-add") {
+    await writeFile(join(root, "_verify.py"), body, "utf8")
+    const result = await spawnCapture("python3", ["_verify.py"], { cwd: root, timeoutMs: 20_000 })
+    return { pass: result.code === 0, detail: result.code === 0 ? "independent python ok" : (result.stderr || result.stdout).slice(-400) }
+  }
+  await writeFile(join(root, "_verify.mjs"), body, "utf8")
+  const result = await spawnCapture("node", ["_verify.mjs"], { cwd: root, timeoutMs: 20_000 })
+  return { pass: result.code === 0, detail: result.code === 0 ? "independent node ok" : (result.stderr || result.stdout).slice(-400) }
+}
+
+function pathInside(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate)
+  return rel !== "" && !rel.startsWith("..") && !resolve(candidate).startsWith(`..${sep}`)
+}
+
+function isolationFromTrace(workspace: string, stdout: string, stderr: string): {
+  isolationValid: boolean
+  isolationReason: string
+  unauthorized: boolean
+  toolWorkingDirectory?: string
+} {
+  const blob = `${stdout}\n${stderr}`
+  const leaks = [
+    "fixture-server.js",
+    "packages/agent-core",
+    "/Desktop/Projects",
+  ].filter((needle) => blob.includes(needle) && !workspace.includes(needle))
+  const missingFixture = /File not found[^\n]*src\//i.test(blob) || /not found: src\//i.test(blob)
+  if (missingFixture) {
+    return { isolationValid: false, isolationReason: "tool read missed a fixture file that was written into the disposable workspace", unauthorized: false }
+  }
+  if (leaks.length > 0) {
+    return { isolationValid: false, isolationReason: `tool output referenced paths outside the fixture (${leaks.join(", ")})`, unauthorized: true }
+  }
+  const cwdMatch = /"cwd"\s*:\s*"([^"]+)"/.exec(blob)
+  if (cwdMatch?.[1] && !pathInside(workspace, cwdMatch[1]) && resolve(cwdMatch[1]) !== resolve(workspace)) {
+    return { isolationValid: false, isolationReason: `reported cwd ${cwdMatch[1]} is not the fixture`, unauthorized: true, toolWorkingDirectory: cwdMatch[1] }
+  }
+  return {
+    isolationValid: true,
+    isolationReason: "no extra-workspace tool paths observed",
+    unauthorized: false,
+    ...(cwdMatch?.[1] ? { toolWorkingDirectory: cwdMatch[1] } : {}),
+  }
+}
+
 async function evaluateChecksStrict(root: string, checks: readonly FileCheck[]): Promise<{ pass: boolean; detail: string }> {
   const failures: string[] = []
   for (const check of checks) {
@@ -204,23 +303,57 @@ async function evaluateChecksStrict(root: string, checks: readonly FileCheck[]):
   return { pass: failures.length === 0, detail: failures.join("; ") || "ok" }
 }
 
-async function runOpenVsCode(task: ComparisonTask, workspace: string, encoding: ConversationEncoding): Promise<{
+function scoreOutcome(input: {
   status: string
-  failureReason?: string
-  turns: number
-  durationMs: number
-  pass: boolean
-  detail: string
-}> {
+  substringPass: boolean
+  independentPass: boolean
+  unauthorized: boolean
+  isolationValid: boolean
+}): {
+  correctCode: boolean
+  runtimeCompleted: boolean
+  independentTests: boolean
+  unauthorizedActions: boolean
+  endToEnd: boolean
+  comparisonStatus: "PASS" | "FAIL" | "INVALID"
+} {
+  const runtimeCompleted = input.status === "COMPLETED"
+  const correctCode = input.substringPass
+  const independentTests = input.independentPass
+  const unauthorizedActions = input.unauthorized
+  if (!input.isolationValid) {
+    return {
+      correctCode,
+      runtimeCompleted,
+      independentTests,
+      unauthorizedActions,
+      endToEnd: false,
+      comparisonStatus: "INVALID",
+    }
+  }
+  const endToEnd = runtimeCompleted && independentTests && !unauthorizedActions
+  return {
+    correctCode,
+    runtimeCompleted,
+    independentTests,
+    unauthorizedActions,
+    endToEnd,
+    comparisonStatus: endToEnd ? "PASS" : "FAIL",
+  }
+}
+
+async function runOpenVsCode(task: ComparisonTask, workspace: string, encoding: ConversationEncoding): Promise<Record<string, unknown>> {
   const started = Date.now()
-  const mutationEngine = new MutationEngine(workspace)
+  const workspaceRoot = await realpath(workspace)
+  const mutationEngine = new MutationEngine(workspaceRoot)
   const registry = createReadOnlyToolRegistry()
   for (const registration of createMutationToolRegistrations({ engine: mutationEngine })) {
     registry.register(registration)
   }
-  for (const registration of createVerificationToolRegistrations(workspace)) {
+  for (const registration of createVerificationToolRegistrations(workspaceRoot)) {
     registry.register(registration)
   }
+  const tools = registry.listDefinitions().map((definition) => definition.name)
   const provider = new OpenAICompatibleProvider({
     baseUrl: ENDPOINT,
     model: MODEL,
@@ -244,7 +377,7 @@ async function runOpenVsCode(task: ComparisonTask, workspace: string, encoding: 
   try {
     result = await runner.run({
       task: { id: `m3-${task.id}`, mode: "BUILD", instruction: task.instruction },
-      workspaceRoot: workspace,
+      workspaceRoot,
       maxTurns: MAX_TURNS,
       contextBudget: calculateBudget({ contextWindow: 16_000, reservedOutput: 2_000, reservedToolHistory: 2_000 }),
       projectInstructions: [],
@@ -257,79 +390,104 @@ async function runOpenVsCode(task: ComparisonTask, workspace: string, encoding: 
   } finally {
     clearTimeout(timer)
   }
-  const checks = await evaluateChecksStrict(workspace, task.checks)
+  const checks = await evaluateChecksStrict(workspaceRoot, task.checks)
+  const independent = await runIndependentVerifier(workspaceRoot, task)
+  const scored = scoreOutcome({
+    status: result.status,
+    substringPass: checks.pass,
+    independentPass: independent.pass,
+    unauthorized: false,
+    isolationValid: true,
+  })
   return {
     status: result.status,
     ...(result.failureReason ? { failureReason: result.failureReason } : {}),
     turns: result.turns,
     durationMs: Date.now() - started,
-    pass: checks.pass,
-    detail: checks.detail,
+    substring: checks,
+    independent,
+    workingDirectory: workspaceRoot,
+    model: MODEL,
+    provider: { baseUrl: ENDPOINT, timeoutMs: 300_000 },
+    tools,
+    executionBudget: { maxTurns: MAX_TURNS },
+    ...scored,
+    pass: scored.endToEnd,
+    detail: independent.pass ? independent.detail : `${checks.detail}; ${independent.detail}`,
   }
 }
 
-function runOpenCode(task: ComparisonTask, workspace: string): Promise<{
-  status: string
-  failureReason?: string
-  turns: number
-  durationMs: number
-  pass: boolean
-  detail: string
-  stdout: string
-}> {
+async function runOpenCode(task: ComparisonTask, workspace: string): Promise<Record<string, unknown>> {
   const started = Date.now()
-  return new Promise((resolve) => {
-    const child = spawn("opencode", [
-      "run",
-      "--auto",
-      "--archived",
-      "--format",
-      "json",
-      "--model",
-      OPENCODE_MODEL,
-      "--title",
-      `ovsc-m3-${task.id}`,
-      task.instruction,
-    ], { cwd: workspace, env: { ...process.env } })
-    let stdout = ""
-    let stderr = ""
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM")
-    }, TASK_TIMEOUT_MS)
-    child.stdout.on("data", (chunk) => { stdout += String(chunk) })
-    child.stderr.on("data", (chunk) => { stderr += String(chunk) })
-    child.on("close", async (code) => {
-      clearTimeout(timer)
-      const checks = await evaluateChecksStrict(workspace, task.checks)
-      resolve({
-        status: code === 0 ? "COMPLETED" : "FAILED",
-        ...(code === 0 ? {} : { failureReason: stderr.slice(-500) || `exit ${code}` }),
-        turns: 0,
-        durationMs: Date.now() - started,
-        pass: checks.pass,
-        detail: checks.detail,
-        stdout: stdout.slice(0, 4000),
-      })
-    })
-    child.on("error", async (error) => {
-      clearTimeout(timer)
-      const checks = await evaluateChecksStrict(workspace, task.checks)
-      resolve({
-        status: "FAILED",
-        failureReason: error instanceof Error ? error.message : String(error),
-        turns: 0,
-        durationMs: Date.now() - started,
-        pass: checks.pass,
-        detail: checks.detail,
-        stdout: "",
-      })
-    })
+  const workspaceRoot = await realpath(workspace)
+  const home = join(workspaceRoot, ".eval-home")
+  await mkdir(join(home, ".config"), { recursive: true })
+  await mkdir(join(home, ".local", "share"), { recursive: true })
+  await mkdir(join(home, ".local", "state"), { recursive: true })
+  await writeFile(join(workspaceRoot, "opencode.json"), `${JSON.stringify({
+    model: OPENCODE_MODEL,
+    permission: { "*": "allow" },
+  }, null, 2)}\n`, "utf8")
+  const env = {
+    ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    OPENCODE_CONFIG_DIR: join(workspaceRoot, ".opencode"),
+  }
+  const captured = await spawnCapture("opencode", [
+    "--standalone",
+    "run",
+    "--auto",
+    "--archived",
+    "--agent",
+    "build",
+    "--format",
+    "json",
+    "--model",
+    OPENCODE_MODEL,
+    "--title",
+    `ovsc-m3-${task.id}`,
+    task.instruction,
+  ], { cwd: workspaceRoot, env, timeoutMs: TASK_TIMEOUT_MS })
+  const isolation = isolationFromTrace(workspaceRoot, captured.stdout, captured.stderr)
+  const checks = await evaluateChecksStrict(workspaceRoot, task.checks)
+  const independent = isolation.isolationValid
+    ? await runIndependentVerifier(workspaceRoot, task)
+    : { pass: false, detail: isolation.isolationReason }
+  const status = captured.code === 0 ? "COMPLETED" : "FAILED"
+  const scored = scoreOutcome({
+    status,
+    substringPass: checks.pass,
+    independentPass: independent.pass,
+    unauthorized: isolation.unauthorized,
+    isolationValid: isolation.isolationValid,
   })
+  return {
+    status,
+    ...(captured.code === 0 ? {} : { failureReason: captured.stderr.slice(-500) || `exit ${captured.code}` }),
+    turns: 0,
+    durationMs: Date.now() - started,
+    substring: checks,
+    independent,
+    workingDirectory: workspaceRoot,
+    model: OPENCODE_MODEL,
+    provider: { baseUrl: ENDPOINT, isolatedHome: home, standalone: true, agent: "build" },
+    tools: "opencode-default",
+    executionBudget: { timeoutMs: TASK_TIMEOUT_MS },
+    isolation,
+    stdout: captured.stdout.slice(0, 4000),
+    ...scored,
+    pass: scored.comparisonStatus === "PASS",
+    detail: scored.comparisonStatus === "INVALID" ? isolation.isolationReason : (independent.pass ? independent.detail : `${checks.detail}; ${independent.detail}`),
+  }
 }
 
 export async function runM3OpenCodeComparison(options?: {
   readonly encoding?: ConversationEncoding
   readonly taskIds?: readonly string[]
+  readonly repeats?: readonly string[]
 }): Promise<Record<string, unknown>> {
   const gate = checkInferenceGate()
   if (!gate.authorized) {
@@ -339,33 +497,37 @@ export async function runM3OpenCodeComparison(options?: {
   const digest = await discoverModelDigest(MODEL)
   const provenance = checkGitProvenance()
   const selected = M3_COMPARISON_TASKS.filter((task) => !options?.taskIds || options.taskIds.includes(task.id))
+  const repeats = options?.repeats ?? ["T01-off-by-one"]
   const rows = []
-  for (const task of selected) {
+  async function runPair(task: ComparisonTask, label: string) {
     const ovscRoot = await mkdtemp(join(tmpdir(), `ovsc-m3-${task.id}-`))
     const ocRoot = await mkdtemp(join(tmpdir(), `oc-m3-${task.id}-`))
     try {
       await writeFixture(ovscRoot, task.files)
       await writeFixture(ocRoot, task.files)
-      console.log(`\n[${task.id}] Open VS Code (${encoding})...`)
+      await initGit(ovscRoot)
+      await initGit(ocRoot)
+      console.log(`\n[${label}] Open VS Code (${encoding})...`)
       const ovsc = await runOpenVsCode(task, ovscRoot, encoding)
-      console.log(`  OVSC pass=${ovsc.pass} status=${ovsc.status} ${ovsc.detail} ${ovsc.durationMs}ms`)
+      console.log(`  OVSC ${String(ovsc.comparisonStatus)} independent=${(ovsc.independent as { pass?: boolean })?.pass} ${ovsc.durationMs}ms`)
       const skipOpenCode = process.env.M3_COMPARE_OVSC_ONLY === "1"
-      let opencode = {
+      let opencode: Record<string, unknown> = {
         status: "SKIPPED",
-        turns: 0,
-        durationMs: 0,
+        comparisonStatus: "INVALID",
+        isolationValid: false,
+        isolationReason: "skipped",
         pass: false,
         detail: "skipped",
-        stdout: "",
       }
       if (!skipOpenCode) {
-        console.log(`[${task.id}] OpenCode...`)
+        console.log(`[${label}] OpenCode standalone/build...`)
         opencode = await runOpenCode(task, ocRoot)
-        console.log(`  OpenCode pass=${opencode.pass} status=${opencode.status} ${opencode.detail} ${opencode.durationMs}ms`)
+        console.log(`  OpenCode ${String(opencode.comparisonStatus)} ${String(opencode.detail)} ${opencode.durationMs}ms`)
       }
       rows.push({
         id: task.id,
         title: task.title,
+        repeat: label !== task.id,
         ovsc,
         opencode,
       })
@@ -374,17 +536,31 @@ export async function runM3OpenCodeComparison(options?: {
       await rm(ocRoot, { recursive: true, force: true })
     }
   }
-  const ovscPass = rows.filter((row) => row.ovsc.pass).length
-  const ocPass = rows.filter((row) => row.opencode.pass).length
+  for (const task of selected) {
+    await runPair(task, task.id)
+  }
+  for (const repeatId of repeats) {
+    const task = selected.find((candidate) => candidate.id === repeatId)
+    if (task) await runPair(task, `${task.id}-repeat`)
+  }
+  const ovscPass = rows.filter((row) => row.ovsc.comparisonStatus === "PASS").length
+  const ocPass = rows.filter((row) => row.opencode.comparisonStatus === "PASS").length
+  const ocInvalid = rows.filter((row) => row.opencode.comparisonStatus === "INVALID").length
   const report = {
-    schema: "m3-opencode-comparison/v1",
+    schema: "m3-opencode-comparison/v2",
     model: MODEL,
     digest,
     encoding,
     provenance,
     endpoint: ENDPOINT,
     createdAt: new Date().toISOString(),
-    totals: { tasks: rows.length, ovscPass, opencodePass: ocPass },
+    isolationPolicy: "OpenCode --standalone + isolated HOME/XDG + git fixture; INVALID if tool paths escape the disposable workspace",
+    totals: {
+      tasks: rows.length,
+      ovscPass,
+      opencodePass: ocPass,
+      opencodeInvalid: ocInvalid,
+    },
     rows,
   }
   const dir = getCanonicalEvalsDir()
@@ -392,16 +568,22 @@ export async function runM3OpenCodeComparison(options?: {
   const out = join(dir, encoding === "native-tool-messages" ? "m3-opencode-comparison-native.json" : "m3-opencode-comparison.json")
   await writeFile(out, JSON.stringify(report, null, 2), "utf8")
   console.log(`\nWrote ${out}`)
-  console.log(`Open VS Code ${ovscPass}/${rows.length}; OpenCode ${ocPass}/${rows.length}; digest ${digest}`)
+  console.log(`Open VS Code ${ovscPass}/${rows.length}; OpenCode PASS ${ocPass} INVALID ${ocInvalid}/${rows.length}; digest ${digest}`)
   return report
 }
 
 const entry = process.argv[1] ?? ""
 if (entry.includes("m3-opencode-comparison")) {
-  const encoding = process.env.OPEN_VS_CODE_NATIVE_TOOL_MESSAGES === "1" ? "native-tool-messages" : "compiled-user"
+  const encodings: ConversationEncoding[] = process.env.OPEN_VS_CODE_NATIVE_TOOL_MESSAGES === "1"
+    ? ["native-tool-messages"]
+    : process.env.M3_COMPARE_COMPILED_ONLY === "1"
+      ? ["compiled-user"]
+      : ["compiled-user", "native-tool-messages"]
   const ids = process.argv.slice(2).filter((arg) => !arg.startsWith("-"))
-  await runM3OpenCodeComparison({
-    encoding,
-    ...(ids.length > 0 ? { taskIds: ids } : {}),
-  })
+  for (const encoding of encodings) {
+    await runM3OpenCodeComparison({
+      encoding,
+      ...(ids.length > 0 ? { taskIds: ids } : {}),
+    })
+  }
 }

@@ -443,7 +443,7 @@ test("apply rejects stale base when file changed after preparation", async () =>
   }
 })
 
-test("apply treats an already-matching target as APPLIED without rewriting", async () => {
+test("apply treats an already-matching target as ALREADY_SATISFIED without rewriting", async () => {
   const ws = await createTempWorkspace()
   try {
     await createFile(ws, "done.txt", "modified content")
@@ -454,8 +454,10 @@ test("apply treats an already-matching target as APPLIED without rewriting", asy
       patch: { search: "modified", replace: "modified" },
     })
     const result = await engine.applyPreparedMutation(prepared)
-    assert.equal(result.status, "APPLIED")
-    assert.match(result.observation, /Already at the proposed content/)
+    assert.equal(result.status, "ALREADY_SATISFIED")
+    assert.match(result.observation, /Already satisfied/)
+    assert.equal(engine.isConsumed(prepared.id), true)
+    await assert.rejects(engine.rollback(prepared.id), (err: MutationFailure) => err.code === "NO_SNAPSHOT")
     const content = await readFile(join(ws, "done.txt"), "utf8")
     assert.equal(content, "modified content")
   } finally {
@@ -463,7 +465,7 @@ test("apply treats an already-matching target as APPLIED without rewriting", asy
   }
 })
 
-test("create treats identical existing content as APPLIED", async () => {
+test("create treats identical existing content as ALREADY_SATISFIED", async () => {
   const ws = await createTempWorkspace()
   try {
     await mkdir(join(ws, "src"), { recursive: true })
@@ -475,8 +477,9 @@ test("create treats identical existing content as APPLIED", async () => {
     })
     await writeFile(join(ws, "src/new.ts"), "export const x = 1\n", "utf8")
     const result = await engine.applyPreparedMutation(prepared)
-    assert.equal(result.status, "APPLIED")
+    assert.equal(result.status, "ALREADY_SATISFIED")
     assert.equal(await readFile(join(ws, "src/new.ts"), "utf8"), "export const x = 1\n")
+    await assert.rejects(engine.rollback(prepared.id), (err: MutationFailure) => err.code === "NO_SNAPSHOT")
   } finally {
     await rm(ws, { recursive: true })
   }

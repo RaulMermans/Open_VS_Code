@@ -15,6 +15,7 @@ import {
   renderConversationBar,
   renderHistoryPanel,
   renderRecoveryPanel,
+  renderTurnContinuation,
   filterConversations,
   renderProfileSection,
   renderMcpDashboard,
@@ -1169,6 +1170,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div id="trust-banner"></div>
     <div id="model-manager"></div>
     <div id="recovery-container"></div>
+    <div id="continuation-container"></div>
 
     <div id="empty-state">
         <p class="empty-title">Ask about this workspace</p>
@@ -1261,6 +1263,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const historyArchived = document.getElementById('history-archived');
         const conversationBar = document.getElementById('conversation-bar');
         const recoveryContainer = document.getElementById('recovery-container');
+        const continuationContainer = document.getElementById('continuation-container');
         let historyOpen = false;
         let showArchived = false;
         let renamingId = null;
@@ -1299,6 +1302,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'conversation.reset':
                     renamingId = null;
                     renderRecoveryPanel(recoveryContainer, null, '', document);
+                    if (continuationContainer) renderTurnContinuation(continuationContainer, null, document);
                     transcript.innerHTML = '';
                     currentState = Object.assign({}, currentState, { messages: [] });
                     scrollOnNextChange = true;
@@ -1449,6 +1453,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (modelsBtn) modelsBtn.setAttribute('aria-expanded', state.modelManager && state.modelManager.open ? 'true' : 'false');
             renderConversationBar(conversationBar, state, document, vscode.postMessage);
             renderRecoveryPanel(recoveryContainer, state.recovery, state.conversationTitle, document, vscode.postMessage);
+            if (continuationContainer) renderTurnContinuation(continuationContainer, state, document, vscode.postMessage);
             renderHistory();
             if (follow) {
                 var outcome = transcript.querySelector(".outcome-card:last-of-type");

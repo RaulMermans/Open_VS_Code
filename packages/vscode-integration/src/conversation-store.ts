@@ -42,7 +42,7 @@ const ITEM_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,100}$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const MODES: ChatMode[] = ['ASK', 'PLAN', 'BUILD', 'DEBUG', 'REVIEW'];
 const EXECUTION_STATUSES: ConversationExecutionStatus[] = ['idle', 'running', 'completed', 'failed', 'cancelled', 'interrupted', 'rejected'];
-const REVIEW_STATUSES: ReviewRecordStatus[] = ['pending', 'approved', 'applied', 'verified', 'rejected', 'cancelled', 'stale', 'failed', 'running', 'succeeded', 'timed-out', 'interrupted'];
+const REVIEW_STATUSES: ReviewRecordStatus[] = ['pending', 'approved', 'applied', 'already-satisfied', 'verified', 'rejected', 'cancelled', 'stale', 'failed', 'running', 'succeeded', 'timed-out', 'interrupted'];
 const CHIP_KINDS = ['workspace', 'active-file', 'selection', 'file', 'diagnostics', 'implicit'];
 const INDEX_FILE = 'index.json';
 
@@ -62,6 +62,8 @@ export interface PersistedConversation {
   lastStatus: ConversationExecutionStatus;
   runIds: string[];
   archived: boolean;
+  /** Display hint only: Continue this run is available after MAX_TURNS_EXCEEDED. */
+  pendingTurnContinuation?: { runId?: string; additionalTurns: number };
 }
 
 export type ConversationInput = Omit<PersistedConversation, 'schemaVersion' | 'workspaceId' | 'archived' | 'titleSource' | 'title'> & {
@@ -219,6 +221,12 @@ export function sanitizeConversation(raw: any, workspaceId: string): PersistedCo
   const titleSource = raw?.titleSource === 'user' ? 'user' : 'auto';
   const title = (titleSource === 'user' ? normalizeTitle(raw?.title) : null) || deriveTitle(messages);
   const customModeId = typeof raw?.customModeId === 'string' && raw.customModeId.length <= 100 ? raw.customModeId : undefined;
+  const pendingRaw = raw?.pendingTurnContinuation;
+  const pendingTurns = Number.isInteger(pendingRaw?.additionalTurns) ? pendingRaw.additionalTurns : 0;
+  const pendingRunId = typeof pendingRaw?.runId === 'string' && RUN_ID_PATTERN.test(pendingRaw.runId) ? pendingRaw.runId : undefined;
+  const pendingTurnContinuation = pendingTurns > 0 && pendingTurns <= 8
+    ? { additionalTurns: pendingTurns, ...(pendingRunId ? { runId: pendingRunId } : {}) }
+    : undefined;
   return {
     schemaVersion: CONVERSATION_SCHEMA_VERSION,
     id: raw.id,
@@ -235,6 +243,7 @@ export function sanitizeConversation(raw: any, workspaceId: string): PersistedCo
     lastStatus: EXECUTION_STATUSES.includes(raw?.lastStatus) ? raw.lastStatus : 'idle',
     runIds: Array.isArray(raw?.runIds) ? raw.runIds.filter((r: unknown) => typeof r === 'string' && RUN_ID_PATTERN.test(r)).slice(-MAX_RUN_IDS) : [],
     archived: raw?.archived === true,
+    ...(pendingTurnContinuation ? { pendingTurnContinuation } : {}),
   };
 }
 
