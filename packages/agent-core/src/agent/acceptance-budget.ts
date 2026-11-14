@@ -1,9 +1,15 @@
 /**
- * Lab-only initial turn budget. Production chat stays at 15 unless the
- * acceptance lab process sets both flags. This does not change completion
- * semantics, Continue (+8, cap 40), or daily-driver defaults.
+ * Daily-driver chat has no turn cap. The runner still accepts an explicit
+ * positive maxTurns for tests and the acceptance lab (OPEN_VS_CODE_ACCEPTANCE_LAB=1
+ * plus OPEN_VS_CODE_ACCEPTANCE_MAX_TURNS). Continue remains available after a
+ * lab pause. Stop/cancel still abort a run.
  */
-export const PRODUCTION_MAX_TURNS = 15
+export const UNLIMITED_MAX_TURNS = Number.MAX_SAFE_INTEGER
+export const PRODUCTION_MAX_TURNS = UNLIMITED_MAX_TURNS
+
+export function isUnlimitedTurnBudget(maxTurns: number): boolean {
+  return maxTurns >= UNLIMITED_MAX_TURNS
+}
 
 export function resolveAcceptanceMaxTurns(
   env: NodeJS.ProcessEnv = process.env,

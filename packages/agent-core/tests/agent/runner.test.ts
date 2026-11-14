@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { join } from "node:path"
 import test from "node:test"
 
+import { UNLIMITED_MAX_TURNS } from "../../src/agent/acceptance-budget.ts"
 import { AgentRunner, AgentRunnerError } from "../../src/agent/runner.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
@@ -193,7 +194,7 @@ test("terminates model failure, maximum turns, and repeated non-progress distinc
   assert.equal(continued.status, "COMPLETED")
   assert.equal(continued.toolCalls[0]?.name, "read_file")
   assert.match(continued.finalAnswer ?? "", /Finished from the preserved observations/)
-  await assert.rejects(limited.continueFromLimit(40), /total turn budget cannot exceed 40|turn-budget pause/)
+  await assert.rejects(limited.continueFromLimit(40), /turn-budget pause/)
 
   const repeated = Array.from({ length: 3 }, (_, index) => response("again", [
     { id: `repeat-${index}`, name: "read_file", arguments: { path: "README.md" } },
@@ -202,6 +203,24 @@ test("terminates model failure, maximum turns, and repeated non-progress distinc
   assert.equal(nonProgress.failureReason, "NON_PROGRESS")
   assert.equal(nonProgress.turns, 3)
   assert.equal(nonProgress.events.at(-1)!.type, "task.non_progress")
+})
+
+test("unlimited production budget does not pause after 15 tool turns", async () => {
+  const replies = [
+    ...Array.from({ length: 16 }, (_, index) => response("search", [{
+      id: `search-${index}`,
+      name: "search_text",
+      arguments: { query: `greet-${index}` },
+    }])),
+    response("Done after sixteen searches."),
+  ]
+  const result = await createRunner(new ScriptedModelProvider(replies), createReadOnlyToolRegistry(), 40).run(
+    input({ maxTurns: UNLIMITED_MAX_TURNS }),
+  )
+  assert.equal(result.status, "COMPLETED")
+  assert.equal(result.failureReason, undefined)
+  assert.equal(result.turns, 17)
+  assert.equal(result.events.some((event) => event.type === "task.max_turns"), false)
 })
 
 test("propagates cancellation through the model path as CANCELLED", async () => {
