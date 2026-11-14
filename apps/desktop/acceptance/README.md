@@ -37,7 +37,7 @@ Set `OPEN_VS_CODE_ACCEPTANCE_BINARY` to point at another production-equivalent b
 
 ## Oracles
 
-Chat assertions read `.message.assistant .message-body` for the current user turn, so an earlier assistant message does not satisfy the expected text. Filesystem assertions allow only `.open-vs-code/model-performance-ledger.json` and `.open-vs-code/recovery/**`. `models.json` and other runtime files still fail a clean-git oracle. Coding scenarios run `node --test` in the fixture after the turn. That command is the lab's check, not the model's claim. Lab-budget Continue and Continue-restart (`maxTurns=2`) record that command as evidence and pass or fail on pause, explicit Continue, and an unchanged test file. `CODE-CONTINUE-COMPLETE` still requires the independent tests to pass on the production starting budget of 15.
+Chat assertions read `.message.assistant .message-body` for the current user turn, so an earlier assistant message does not satisfy the expected text. Filesystem assertions allow only `.open-vs-code/model-performance-ledger.json` and `.open-vs-code/recovery/**`. `models.json` and other runtime files still fail a clean-git oracle. Coding scenarios run `node --test` in the fixture after the turn. That command is the lab's check, not the model's claim. Lab-budget Continue and Continue-restart (`maxTurns=2`) record that command as evidence and pass or fail on pause, explicit Continue, and an unchanged test file. `CODE-CONTINUE-COMPLETE` still requires the independent tests to pass on the unlimited production turn budget.
 
 Scenarios marked `review` stay `NEEDS_REVIEW` after a screenshot. A person decides the visual result.
 

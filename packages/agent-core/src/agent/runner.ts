@@ -49,6 +49,7 @@ import { DirectProgressGuard, dedupeObservations, type DirectNonProgressEvidence
 import { boundRecoveryText, buildNonProgressReport, buildRecoveryPlan, classifyStall, describeSignals, formatNonProgressReport, runDiagnosticCheck, stallNotice, type FailureCapture } from "../progress/recovery.ts"
 import { resolveRepositoryPath } from "../tools/path-safety.ts"
 import { sha256 } from "../tools/mutation-engine.ts"
+import { UNLIMITED_MAX_TURNS, isUnlimitedTurnBudget } from "./acceptance-budget.ts"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
 
@@ -340,9 +341,6 @@ export class AgentRunner {
       throw new AgentRunnerError("INVALID_INPUT", "additionalTurns must be a positive integer")
     }
     const nextBudget = session.input.maxTurns + additionalTurns
-    if (nextBudget > 40) {
-      throw new AgentRunnerError("INVALID_INPUT", "total turn budget cannot exceed 40")
-    }
     session.input = { ...session.input, maxTurns: nextBudget }
     delete session.failureReason
     delete session.finalAnswer
@@ -1027,7 +1025,7 @@ export class AgentRunner {
       input: {
         workspaceRoot: wsRoot,
         task: { id: runId, instruction: recoveredInstruction, mode: recoveredMode },
-        maxTurns: Math.min(40, Math.max(10, (latestCp.turnId ?? 0) + 8)),
+        maxTurns: UNLIMITED_MAX_TURNS,
         contextBudget: { contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 1000, availableContext: 6000 },
         projectInstructions: [],
         ...(options?.signal ? { signal: options.signal } : {}),
@@ -1079,7 +1077,7 @@ export class AgentRunner {
         this.#cancel()
         break
       }
-      if (session.turns >= session.input.maxTurns) {
+      if (!isUnlimitedTurnBudget(session.input.maxTurns) && session.turns >= session.input.maxTurns) {
         const met = this.#codingGoalVerdict()
         if (met?.accept) {
           await this.#completeTask(met.summary)
@@ -1101,7 +1099,7 @@ export class AgentRunner {
       const answerableWithoutEdit = !session.taskProfile.requiresCodeChange
       const isEvidenceSatisfied = directReply || (hasRealEvidence && evidenceEvaluation.satisfied)
 
-      const isTurnBudgetTight = session.turns >= session.input.maxTurns - 1
+      const isTurnBudgetTight = !isUnlimitedTurnBudget(session.input.maxTurns) && session.turns >= session.input.maxTurns - 1
       const allowedToolNames = new Set(session.taskProfile.allowedTools)
       const isStandardToolsOnly = this.#registry
         .listDefinitions()
