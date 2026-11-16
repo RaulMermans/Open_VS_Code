@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { assessCodingCompletion } from "../../src/agent/tool-contract.ts"
+import { assessCodingCompletion, requestsExistingFileEdit } from "../../src/agent/tool-contract.ts"
 
 const named = ["src/index.ts", "src/strings.ts"]
 const edit = [{ path: "src/index.ts", status: "APPLIED", at: "2026-11-16T00:00:01.000Z", operation: "patch" as const }]
@@ -44,4 +44,20 @@ test("a passing run never excuses a test-only edit", () => {
     userRejectedMutation: false,
   })
   assert.equal(result.accept, false)
+})
+
+test("an explicit create request is satisfied by creating the named file", () => {
+  assert.equal(requestsExistingFileEdit("Create src/slug.ts exporting slugify(text)."), false)
+  assert.equal(requestsExistingFileEdit("Create a new Stack class in src/stack.js"), false)
+  assert.equal(requestsExistingFileEdit("Fix src/add.ts so add returns the sum."), true)
+  const result = assessCodingCompletion({
+    requiresCodeChange: true,
+    explicitPaths: ["src/slug.ts"],
+    requireExistingFileEdit: requestsExistingFileEdit("Create src/slug.ts exporting slugify(text)."),
+    mutations: [{ path: "src/slug.ts", status: "APPLIED", at: "2026-11-16T00:00:01.000Z", operation: "create" }],
+    verifications: [{ status: "PASS", at: "2026-11-16T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+  })
+  assert.equal(result.accept, true, result.summary)
 })

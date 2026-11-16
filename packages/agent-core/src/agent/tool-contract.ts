@@ -318,6 +318,9 @@ function implementationEditCounts(path: string, input: {
 
 export function requestsExistingFileEdit(instruction: string): boolean {
   if (/\b(?:create|add|write)\b/i.test(instruction) && /\b(?:file|module)\b/i.test(instruction)) return false
+  // "Create src/slug.ts ...", "add a new Stack class": a create request names a path or a new unit of code.
+  // Creating over an existing file is still refused by the engine (FILE_EXISTS), so this cannot widen writes.
+  if (/\b(?:create|new)\b[^.\n]{0,40}?(?:\b(?:class|component|module|file)\b|[\w./-]+\.[a-z]{1,5}\b)/i.test(instruction)) return false
   return true
 }
 
