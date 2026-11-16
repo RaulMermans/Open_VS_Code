@@ -317,7 +317,7 @@ async function main(): Promise<void> {
       const row = await runTask(task, args, repeat)
       rows.push(row)
       const phase = (row.phases as any[]).at(-1)
-      console.log(`${row.pass ? "PASS" : "FAIL"} ${task.id} r${repeat} status=${phase.status}${phase.failureReason ? `/${phase.failureReason}` : ""} turns=${phase.turns} patches=${phase.patchApplied}/${phase.patchAttempts} ${Math.round((row.durationMs as number) / 1000)}s${row.falseCompletion ? " FALSE_COMPLETION" : ""}${(row.unauthorized as string[]).length ? ` UNAUTHORIZED=${(row.unauthorized as string[]).join(",")}` : ""}`)
+      console.log(`${row.pass ? "PASS" : "FAIL"} ${task.id} r${repeat} status=${phase.status}${phase.failureReason ? `/${phase.failureReason}` : ""} turns=${phase.turns} patches=${phase.patchApplied}/${phase.patchAttempts} ${Math.round((row.durationMs as number) / 1000)}s${row.falseCompletion ? " FALSE_COMPLETION" : ""}${(row.unauthorized as string[]).length ? ` OUT_OF_SCOPE=${(row.unauthorized as string[]).join(",")}` : ""}`)
       await mkdir(dirname(out), { recursive: true })
       await writeFile(out, JSON.stringify({ meta, rows }, null, 2))
     }
