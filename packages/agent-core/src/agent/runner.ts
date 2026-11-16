@@ -1630,7 +1630,10 @@ export class AgentRunner {
       if (seen?.has(signature)) {
         const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
         const target = pending.length > 0 ? ` Create or update ${pending.join(", ")} if that is the requested change.` : ""
-        this.#addErrorObservation(prepared, "EDIT_REQUIRED", `That lookup already completed.${target} Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference.`, "DENIED")
+        // Name what the request still lacks (e.g. "add the tests"), so the model is not left to guess the next step.
+        await this.#refreshRequirementGaps()
+        const gaps = session.requirementGaps?.length ? ` Still missing: ${session.requirementGaps.join(" ")}` : ""
+        this.#addErrorObservation(prepared, "EDIT_REQUIRED", `That lookup already completed.${target}${gaps} Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference.`, "DENIED")
         return false
       }
     }
