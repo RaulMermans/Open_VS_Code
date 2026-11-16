@@ -81,8 +81,8 @@ function formatObservationContent(output: unknown, toolName: string): string {
       let formatted = `Verification Status: ${status}`
       if (record.exitCode !== undefined && record.exitCode !== null) formatted += `\nExit Code: ${record.exitCode}`
       if (record.durationMs !== undefined) formatted += `\nDuration: ${record.durationMs}ms`
-      const sandbox = record.sandbox as { sandboxed?: boolean; reason?: string } | undefined
-      if (sandbox && typeof sandbox === "object") formatted += sandbox.sandboxed ? "\nSandbox: bubblewrap (no network, workspace-only writes)" : `\nSandbox: none (${sandbox.reason ?? "not sandboxed"})`
+      const sandbox = record.sandbox as { sandboxed?: boolean; reason?: string; limits?: string } | undefined
+      if (sandbox && typeof sandbox === "object") formatted += sandbox.sandboxed ? `\nSandbox: bubblewrap (no network, workspace-only writes; limits: ${sandbox.limits ?? "none"})` : `\nSandbox: none (${sandbox.reason ?? "not sandboxed"})`
       if (record.stdout && typeof record.stdout === "string") formatted += `\n\n### Output\n\`\`\`\n${record.stdout}\n\`\`\``
       if (record.stderr && typeof record.stderr === "string") formatted += `\n\n### Errors\n\`\`\`\n${record.stderr}\n\`\`\``
       // The diagnosis goes first so truncation of long test output cannot hide it.

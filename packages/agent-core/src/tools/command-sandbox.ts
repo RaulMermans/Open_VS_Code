@@ -22,6 +22,8 @@ export interface SandboxStatus {
   readonly mode: CommandSandboxMode
   readonly sandboxed: boolean
   readonly backend?: "bubblewrap"
+  /** Resource limits applied through a user cgroup scope, when available. */
+  readonly limits?: string
   /** Why the command was not sandboxed, when it was not. */
   readonly reason?: string
 }
@@ -60,6 +62,25 @@ export function detectBubblewrap(): { available: boolean; path?: string; reason?
 /** Test seam: forget the cached probe. */
 export function resetBubblewrapProbe(): void {
   probeCache = undefined
+  limitsCache = undefined
+}
+
+export const SANDBOX_LIMITS = { memory: "4G", tasks: 512 } as const
+let limitsCache: { available: boolean; path?: string; env?: Record<string, string> } | undefined
+
+/**
+ * Hard memory (no swap) and process-count caps through an unprivileged systemd user scope (cgroup v2
+ * delegation). Probed once; when unavailable the sandbox still runs and its status says so.
+ */
+export function detectResourceLimits(): { available: boolean; path?: string; env?: Record<string, string> } {
+  if (limitsCache) return limitsCache
+  const systemdRun = ["/usr/bin/systemd-run", "/bin/systemd-run"].find((candidate) => existsSync(candidate))
+  const runtimeDir = process.env.XDG_RUNTIME_DIR
+  if (!systemdRun || !runtimeDir) return (limitsCache = { available: false })
+  const env: Record<string, string> = { XDG_RUNTIME_DIR: runtimeDir, PATH: "/usr/bin:/bin" }
+  if (process.env.DBUS_SESSION_BUS_ADDRESS) env.DBUS_SESSION_BUS_ADDRESS = process.env.DBUS_SESSION_BUS_ADDRESS
+  const probe = spawnSync(systemdRun, ["--user", "--scope", "--quiet", "-p", "MemoryMax=64M", "-p", "TasksMax=8", "--", "/bin/true"], { timeout: 5_000, stdio: "pipe", env })
+  return (limitsCache = probe.status === 0 ? { available: true, path: systemdRun, env } : { available: false })
 }
 
 function realOrUndefined(target: string): string | undefined {
@@ -143,19 +164,32 @@ export function planSandboxedCommand(input: {
   const env: Record<string, string> = { ...input.env, HOME: home, TMPDIR: "/tmp", LANG: input.env.LANG ?? "C.UTF-8" }
   for (const [key, value] of Object.entries(env)) args.push("--setenv", key, value)
   args.push("--", input.executable, ...input.args)
-  return { executable: bwrap.path, args, env, status: { mode: input.mode, sandboxed: true, backend: "bubblewrap" } }
+  const limits = detectResourceLimits()
+  if (limits.available && limits.path) {
+    // systemd-run execs bwrap inside a new cgroup scope; its D-Bus variables never enter the sandbox (--clearenv).
+    return {
+      executable: limits.path,
+      args: ["--user", "--scope", "--quiet", "-p", `MemoryMax=${SANDBOX_LIMITS.memory}`, "-p", "MemorySwapMax=0", "-p", `TasksMax=${SANDBOX_LIMITS.tasks}`, "--", bwrap.path, ...args],
+      env: { ...env, ...limits.env },
+      status: { mode: input.mode, sandboxed: true, backend: "bubblewrap", limits: `memory ${SANDBOX_LIMITS.memory}B, ${SANDBOX_LIMITS.tasks} tasks` },
+    }
+  }
+  return { executable: bwrap.path, args, env, status: { mode: input.mode, sandboxed: true, backend: "bubblewrap", limits: "none (user cgroups unavailable)" } }
 }
 
 /** What execution would do under this mode, for the approval card. */
 export function predictSandbox(mode: CommandSandboxMode): SandboxStatus {
   if (mode === "off") return { mode, sandboxed: false, reason: "command sandbox is turned off" }
   const bwrap = detectBubblewrap()
-  if (bwrap.available) return { mode, sandboxed: true, backend: "bubblewrap" }
+  if (bwrap.available) {
+    const limits = detectResourceLimits()
+    return { mode, sandboxed: true, backend: "bubblewrap", limits: limits.available ? `memory ${SANDBOX_LIMITS.memory}B, ${SANDBOX_LIMITS.tasks} tasks` : "none (user cgroups unavailable)" }
+  }
   return { mode, sandboxed: false, reason: mode === "required" ? `required but ${bwrap.reason ?? "unavailable"}; the command will not run` : (bwrap.reason ?? "bubblewrap is unavailable") }
 }
 
 export function describeSandbox(status: SandboxStatus): string {
   return status.sandboxed
-    ? "Sandbox: bubblewrap (no network, workspace-only writes, private HOME and /tmp)"
+    ? `Sandbox: bubblewrap (no network, workspace-only writes, private HOME and /tmp; limits: ${status.limits ?? "none"})`
     : `Sandbox: none (${status.reason ?? "not sandboxed"})`
 }
