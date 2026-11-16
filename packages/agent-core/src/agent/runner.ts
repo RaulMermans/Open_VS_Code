@@ -27,7 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
+import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -44,6 +44,7 @@ import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.t
 import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
 import { join, dirname, normalize, relative, isAbsolute, basename, extname } from "node:path"
 import { access, readFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
 import { MAX_NON_PROGRESS_RECOVERIES, type ProgressSignal, type ProgressThresholds } from "../progress/contracts.ts"
 import { DirectProgressGuard, dedupeObservations, type DirectNonProgressEvidence } from "../progress/direct-guard.ts"
 import { boundRecoveryText, buildNonProgressReport, buildRecoveryPlan, classifyStall, describeSignals, formatNonProgressReport, runDiagnosticCheck, stallNotice, type FailureCapture } from "../progress/recovery.ts"
@@ -147,6 +148,8 @@ interface Session {
   contractFaults?: Map<string, number>
   /** Identical refusals (tool + category + message) per workspace state; see #recordRefusal. */
   refusals?: Map<string, number>
+  /** Whether the workspace package.json defines a typecheck script (cached). */
+  typecheckScript?: boolean
   refusalStop?: boolean
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
@@ -771,7 +774,7 @@ export class AgentRunner {
       const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
       if (verifyName) {
         session.autoVerifyPending = true
-        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }) || session.refusalStop) {
+        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: this.#nextVerificationAction() } }) || session.refusalStop) {
           this.#finishRefusalStop()
           return this.#result()
         }
@@ -1413,7 +1416,7 @@ export class AgentRunner {
           const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
           if (verifyName) {
             session.autoVerifyPending = true
-            calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }]
+            calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: this.#nextVerificationAction() } }]
           }
         }
 
@@ -3031,11 +3034,43 @@ export class AgentRunner {
         at: mutation.timestamp,
         ...(mutation.operation ? { operation: mutation.operation } : {}),
       })),
-      verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
+      verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp, action: verification.action })),
       verificationRequired: this.#verificationRequired(),
       userRejectedMutation: session.mutationRejectedByUser === true,
       scheduledVerification,
+      additionalVerification: this.#additionalVerification(),
     })
+  }
+
+  /**
+   * Checks the project itself defines, required after edits they cover: a `typecheck` script after
+   * TypeScript edits. Unit tests alone miss importers of a renamed or removed export.
+   */
+  #additionalVerification(): string[] {
+    const session = this.#requiredSession()
+    if (session.typecheckScript === undefined) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(session.input.workspaceRoot, "package.json"), "utf8")) as { scripts?: Record<string, unknown> }
+        session.typecheckScript = typeof pkg.scripts?.typecheck === "string" && pkg.scripts.typecheck.trim().length > 0
+      } catch {
+        session.typecheckScript = false
+      }
+    }
+    if (!session.typecheckScript) return []
+    const touchedTypeScript = session.evidenceCollector.getEvidence().mutationOutcomes
+      .some((mutation) => mutation.status === "APPLIED" && /\.(?:ts|tsx|mts|cts)$/.test(mutation.path))
+    return touchedTypeScript ? ["TYPECHECK"] : []
+  }
+
+  /** The next runtime-owned verification: tests first, then any additional check still missing after the last edit. */
+  #nextVerificationAction(): string {
+    const session = this.#requiredSession()
+    const evidence = session.evidenceCollector.getEvidence()
+    const mutations = evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp }))
+    const verifications = evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp, action: verification.action }))
+    const paths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+    if (actionAfterMutation(mutations, verifications, paths, "TEST") !== "PASS") return "TEST"
+    return this.#additionalVerification().find((action) => actionAfterMutation(mutations, verifications, paths, action) !== "PASS") ?? "TEST"
   }
 
   async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {

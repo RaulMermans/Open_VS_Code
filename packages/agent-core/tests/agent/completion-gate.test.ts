@@ -61,3 +61,22 @@ test("an explicit create request is satisfied by creating the named file", () =>
   })
   assert.equal(result.accept, true, result.summary)
 })
+
+test("a required typecheck must pass after the edit, not just the tests", () => {
+  const base = {
+    requiresCodeChange: true,
+    explicitPaths: ["lib/format.ts"],
+    mutations: [{ path: "lib/format.ts", status: "APPLIED", at: "2026-11-16T00:00:01.000Z", operation: "patch" as const }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+    additionalVerification: ["TYPECHECK"],
+  }
+  const testsOnly = assessCodingCompletion({ ...base, verifications: [{ status: "PASS", at: "2026-11-16T00:00:02.000Z", action: "TEST" }] })
+  assert.equal(testsOnly.accept, false)
+  assert.match(testsOnly.summary, /Typecheck has not run since the last edit/)
+  const typeFails = assessCodingCompletion({ ...base, verifications: [{ status: "PASS", at: "2026-11-16T00:00:02.000Z", action: "TEST" }, { status: "FAIL", at: "2026-11-16T00:00:03.000Z", action: "TYPECHECK" }] })
+  assert.equal(typeFails.accept, false)
+  assert.equal(typeFails.failureReason, "VERIFICATION_FAILED")
+  const both = assessCodingCompletion({ ...base, verifications: [{ status: "PASS", at: "2026-11-16T00:00:02.000Z", action: "TEST" }, { status: "PASS", at: "2026-11-16T00:00:03.000Z", action: "TYPECHECK" }] })
+  assert.equal(both.accept, true)
+})

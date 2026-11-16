@@ -169,6 +169,8 @@ export interface MutationFact {
 export interface VerificationFact {
   readonly status: string
   readonly at: string
+  /** TEST, TYPECHECK, LINT or BUILD. Absent facts are treated as TEST. */
+  readonly action?: string
 }
 
 export interface CodingCompletion {
@@ -206,6 +208,11 @@ export function assessCodingCompletion(input: {
   readonly verificationRequired: boolean
   readonly userRejectedMutation: boolean
   readonly scheduledVerification?: "PASSED" | "UNAVAILABLE" | "NOT_RUN" | undefined
+  /**
+   * Verification actions that must also pass after the last edit, beyond the test run (for example TYPECHECK
+   * when the project defines a typecheck script and the edit touched TypeScript).
+   */
+  readonly additionalVerification?: readonly string[]
 }): CodingCompletion {
   const applied = relevantAppliedPaths(input.mutations, input.explicitPaths)
   const satisfied = relevantSatisfiedPaths(input.mutations, input.explicitPaths)
@@ -295,6 +302,23 @@ export function assessCodingCompletion(input: {
     }
   }
 
+  if (input.verificationRequired && (input.additionalVerification?.length ?? 0) > 0) {
+    for (const action of ["TEST", ...input.additionalVerification!]) {
+      const status = actionAfterMutation(input.mutations, input.verifications, input.explicitPaths, action)
+      if (status === "PASS") continue
+      const label = action === "TEST" ? "Tests" : action === "TYPECHECK" ? "Typecheck" : action.charAt(0) + action.slice(1).toLowerCase()
+      return {
+        accept: false,
+        editsSatisfied: true,
+        verificationSatisfied: false,
+        failureReason: status === "FAIL" ? "VERIFICATION_FAILED" : "INCOMPLETE",
+        summary: status === "FAIL"
+          ? `${changed} ${approval} ${label} failed. The edit is not complete.`
+          : `${changed} ${approval} ${label} has not run since the last edit. Incomplete: the edit is not verified.`,
+      }
+    }
+  }
+
   return {
     accept: true,
     editsSatisfied: true,
@@ -341,6 +365,16 @@ function verificationDetail(status: string | undefined): string {
   if (status === "STALE_VERIFICATION") return "Verification was stale. Incomplete: verification is still required."
   if (status === "EXECUTION_ERROR") return "Verification did not complete. Incomplete: verification is still required."
   return "Tests did not run after the edit. Incomplete: verification is still required."
+}
+
+/** The latest result of one verification action after the last relevant edit. */
+export function actionAfterMutation(
+  mutations: readonly MutationFact[],
+  verifications: readonly VerificationFact[],
+  explicitPaths: readonly string[],
+  action: string,
+): "PASS" | "FAIL" | "NONE" | "INCOMPLETE" {
+  return verificationAfterMutation(mutations, verifications.filter((verification) => (verification.action ?? "TEST") === action), explicitPaths)
 }
 
 function verificationAfterMutation(
