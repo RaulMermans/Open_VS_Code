@@ -62,3 +62,6 @@ benchmark-results/
 !benchmark-results/*.md
 # Inference host performance profiles
 .model-profiles/
+
+# graphify knowledge graph output (regenerate with `graphify update .`)
+graphify-out/
