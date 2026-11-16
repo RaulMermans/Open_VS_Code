@@ -51,7 +51,7 @@ export function unresolvedSymbols(output: string): UnresolvedSymbol[] {
   return [...found.values()]
 }
 
-async function collectSourceFiles(root: string): Promise<string[]> {
+export async function collectSourceFiles(root: string): Promise<string[]> {
   const files: string[] = []
   const walk = async (dir: string, depth: number): Promise<void> => {
     if (depth > 8 || files.length >= MAX_FILES) return

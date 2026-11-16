@@ -27,7 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
+import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -45,6 +45,7 @@ import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
 import { join, dirname, normalize, relative, isAbsolute, basename, extname } from "node:path"
 import { access, readFile } from "node:fs/promises"
 import { readFileSync } from "node:fs"
+import { requirementGaps } from "./requirement-checks.ts"
 import { MAX_NON_PROGRESS_RECOVERIES, type ProgressSignal, type ProgressThresholds } from "../progress/contracts.ts"
 import { DirectProgressGuard, dedupeObservations, type DirectNonProgressEvidence } from "../progress/direct-guard.ts"
 import { boundRecoveryText, buildNonProgressReport, buildRecoveryPlan, classifyStall, describeSignals, formatNonProgressReport, runDiagnosticCheck, stallNotice, type FailureCapture } from "../progress/recovery.ts"
@@ -150,6 +151,8 @@ interface Session {
   refusals?: Map<string, number>
   /** Whether the workspace package.json defines a typecheck script (cached). */
   typecheckScript?: boolean
+  /** Unfinished explicit parts of the request, refreshed after each applied edit. */
+  requirementGaps?: string[]
   refusalStop?: boolean
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
@@ -652,6 +655,7 @@ export class AgentRunner {
               session.evidenceCollector.resolveRecoveredToolContractFailures()
               if (!isVerification) session.completedExploration?.clear()
             }
+            if (result.status === "APPLIED" || result.status === "ALREADY_SATISFIED") await this.#refreshRequirementGaps()
           }
           observation = createToolObservation({
             toolName: pending.prepared.name,
@@ -1320,7 +1324,9 @@ export class AgentRunner {
               category: "EDIT_REQUIRED",
               message: gateTestOnly
                 ? `[EDIT REQUIRED]\nCreate or update only ${gatePaths.join(", ")}. ${gateExisting ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist."} A prose answer is not enough.`
-                : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+                : codingVerdict.gaps && codingVerdict.gaps.length > 0
+                  ? `[NOT DONE YET]\nParts of the request are still missing:\n${codingVerdict.gaps.map((gap) => `- ${gap}`).join("\n")}\nMake those changes before answering.`
+                  : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
             },
             maxContentBytes: this.#observationMaxBytes,
           }))
@@ -1935,6 +1941,7 @@ export class AgentRunner {
           operation: mutationOperation(prepared.name),
         })
         session.evidenceCollector.resolveRecoveredToolContractFailures()
+        await this.#refreshRequirementGaps()
         const { evalResult: mutEval, directive: mutDirective } = await this.#runEval("MUTATION_RESULT")
         if (this.#adaptiveInterventions && mutDirective.decision !== "CONTINUE") {
           const handled = await this.#dispatchDirective(mutEval, mutDirective, "MUTATION_RESULT")
@@ -3028,6 +3035,7 @@ export class AgentRunner {
       explicitPaths: editPaths,
       requireImplementationChange: implementationChangeRequired(session.input.task.instruction, editPaths),
       requireExistingFileEdit: requestsExistingFileEdit(session.input.task.instruction),
+      requireTestEdit: requestsNewTest(session.input.task.instruction),
       mutations: evidence.mutationOutcomes.map((mutation) => ({
         path: mutation.path,
         status: mutation.status,
@@ -3039,7 +3047,24 @@ export class AgentRunner {
       userRejectedMutation: session.mutationRejectedByUser === true,
       scheduledVerification,
       additionalVerification: this.#additionalVerification(),
+      ...(session.requirementGaps && session.requirementGaps.length > 0 ? { requirementGaps: session.requirementGaps } : {}),
     })
+  }
+
+  /** Recomputes explicit-request gaps after the workspace changed (async file reads; the verdict stays sync). */
+  async #refreshRequirementGaps(): Promise<void> {
+    const session = this.#requiredSession()
+    if (!session.taskProfile.requiresCodeChange) return
+    const appliedPaths = session.evidenceCollector.getEvidence().mutationOutcomes
+      .filter((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED")
+      .map((mutation) => mutation.path)
+      .filter((path) => path.trim().length > 0)
+    session.requirementGaps = await requirementGaps({
+      workspaceRoot: session.input.workspaceRoot,
+      instruction: session.input.task.instruction,
+      appliedPaths,
+      isTestPath: isTestArtifactPath,
+    }).catch(() => [])
   }
 
   /**
