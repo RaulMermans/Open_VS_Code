@@ -251,7 +251,7 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
                 return finish({ reason: permit.reason || "confirmation was not fixture-scoped" });
               }
               if (lastDecisionText !== card.id) {
-                if (approvalClicks + rejectionClicks >= ${MAX_FIXTURE_CONFIRMATIONS}) {
+                if (approvalClicks + rejectionClicks >= (op.maxConfirmations || ${MAX_FIXTURE_CONFIRMATIONS})) {
                   approvalBlocked = true;
                   return finish({ reason: "approval cap" });
                 }

@@ -294,6 +294,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .outcome-card.is-rejected {
             border-left-color: var(--vscode-editorWarning-foreground, #cca700);
         }
+        .outcome-card.is-incomplete {
+            border-left-color: var(--vscode-testing-iconFailed, #f14c4c);
+        }
         .outcome-title { font-weight: 600; }
         .outcome-line, .outcome-file { margin-top: 4px; }
         .message.is-rejected {

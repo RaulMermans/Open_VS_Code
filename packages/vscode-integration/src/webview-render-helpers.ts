@@ -538,10 +538,12 @@ function compressTrivialTimeline(groups: Array<{ category: string; title: string
 function renderOutcomeBody(body: any, content: string, d: any, postMessage?: (msg: any) => void): boolean {
   var rejected = content.indexOf("Change rejected —") === 0;
   var marker = "\n\nVerified outcome\n";
-  var idx = content.indexOf(marker);
+  var incompleteMarker = "\n\nVerified outcome: not completed\n";
+  var incomplete = content.indexOf(incompleteMarker) >= 0;
+  var idx = incomplete ? content.indexOf(incompleteMarker) : content.indexOf(marker);
   if (!rejected && idx < 0) return false;
   var prose = rejected ? "" : content.slice(0, idx);
-  var facts = rejected ? content : content.slice(idx + marker.length);
+  var facts = rejected ? content : content.slice(idx + (incomplete ? incompleteMarker : marker).length);
   if (prose) {
     var lead = d.createElement("div");
     lead.className = "md-text";
@@ -549,13 +551,13 @@ function renderOutcomeBody(body: any, content: string, d: any, postMessage?: (ms
     body.appendChild(lead);
   }
   var card = d.createElement("div");
-  card.className = "outcome-card" + (rejected ? " is-rejected" : " is-verified");
+  card.className = "outcome-card" + (rejected ? " is-rejected" : incomplete ? " is-incomplete" : " is-verified");
   setAttr(card, "role", "status");
-  setAttr(card, "data-outcome", rejected ? "rejected" : "verified");
+  setAttr(card, "data-outcome", rejected ? "rejected" : incomplete ? "incomplete" : "verified");
   if (!rejected) {
     var heading = d.createElement("div");
     heading.className = "outcome-title";
-    setText(heading, "Task completed.");
+    setText(heading, incomplete ? "Task not completed." : "Task completed.");
     card.appendChild(heading);
   }
   var lines = facts.split("\n");

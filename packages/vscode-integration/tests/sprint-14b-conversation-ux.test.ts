@@ -413,3 +413,28 @@ test("a rejected change is not presented as a failed execution", () => {
     { id: "o", kind: "task", label: "Change rejected", status: "cancelled" },
   ]).some((group) => group.title === "Failed"), false);
 });
+
+test("the outcome card of a failed run is titled as not completed, never as completed", () => {
+  const failed = formatTerminalTaskMessage({
+    status: "FAILED",
+    failureReason: "NON_PROGRESS",
+    finalAnswer: "Stopped: the tests kept failing.",
+    runId: "run-np",
+    reviews: [{ kind: "command", status: "failed", scriptName: "test", runId: "run-np" }],
+  });
+  const failedRoot = new MockElement("div");
+  renderChatMessage(failedRoot, { id: "f1", role: "assistant", content: failed.content }, mockDoc());
+  assert.deepEqual(labels(failedRoot, "outcome-title"), ["Task not completed."]);
+  assert.equal(failedRoot.querySelector("outcome-card")?.className.includes("is-incomplete"), true);
+
+  const passed = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "Fixed.",
+    runId: "run-ok",
+    appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
+    reviews: [{ kind: "command", status: "succeeded", scriptName: "test", runId: "run-ok" }],
+  });
+  const passedRoot = new MockElement("div");
+  renderChatMessage(passedRoot, { id: "p1", role: "assistant", content: passed.content }, mockDoc());
+  assert.deepEqual(labels(passedRoot, "outcome-title"), ["Task completed."]);
+});
