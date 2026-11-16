@@ -81,6 +81,11 @@ export interface AgentRunnerDependencies {
   readonly permissionEvaluator?: typeof classifyPermission
   readonly contextCompiler?: (input: ContextCompilerInput) => CompiledContext
   readonly nonProgressThreshold?: number
+  /**
+   * ADR-011 mutation budgets are per step. A step is one model response, so the runner resets the
+   * engine's per-step counter before handling each response's tool calls.
+   */
+  readonly mutationStep?: { resetStepCounter(): void }
   readonly observationMaxBytes?: number
   readonly evidenceGate?: boolean
   readonly maxContinuations?: number
@@ -229,6 +234,7 @@ export class AgentRunner {
   readonly #permissionEvaluator: typeof classifyPermission
   readonly #contextCompiler: (input: ContextCompilerInput) => CompiledContext
   readonly #nonProgressThreshold: number
+  readonly #mutationStep: { resetStepCounter(): void } | undefined
   readonly #observationMaxBytes: number
   readonly #evidenceGate: boolean
   readonly #maxContinuations: number
@@ -252,6 +258,7 @@ export class AgentRunner {
     this.#permissionEvaluator = dependencies.permissionEvaluator ?? classifyPermission
     this.#contextCompiler = dependencies.contextCompiler ?? compileContext
     this.#nonProgressThreshold = dependencies.nonProgressThreshold ?? 3
+    this.#mutationStep = dependencies.mutationStep
     this.#observationMaxBytes = dependencies.observationMaxBytes ?? 16 * 1024
     this.#evidenceGate = dependencies.evidenceGate ?? true
     this.#maxContinuations = dependencies.maxContinuations ?? 2
@@ -1410,6 +1417,7 @@ export class AgentRunner {
       }
 
       let stopped = false
+      this.#mutationStep?.resetStepCounter()
       for (const call of calls) {
         if (await this.#handleCall(call) || session.refusalStop) {
           stopped = true
