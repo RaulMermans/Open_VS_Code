@@ -135,3 +135,14 @@ test("prepared environment is limited to a workspace-contained PYTHONPATH", asyn
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("pytest-style test functions are never verified with unittest discovery, which would run 0 tests", async () => {
+  const root = await fixture({ "pkg/__init__.py": "", "pkg/mod.py": "def value():\n    return 1\n", "pkg/test_mod.py": "from mod import value\n\ndef test_value():\n    assert value() == 1\n" })
+  try {
+    const command = await discoverVerificationCommand(root, "TEST").catch(() => undefined)
+    // pytest when the interpreter has it, otherwise no verifier at all (honest "unavailable"); never unittest discovery.
+    assert.ok(command === undefined || command.args.join(" ") === "-m pytest -q", `unexpected verifier: ${command?.args.join(" ")}`)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { assessCodingCompletion, requestsExistingFileEdit } from "../../src/agent/tool-contract.ts"
+import { assessCodingCompletion, requestsExistingFileEdit, requestsNewTest } from "../../src/agent/tool-contract.ts"
 
 const named = ["src/index.ts", "src/strings.ts"]
 const edit = [{ path: "src/index.ts", status: "APPLIED", at: "2026-11-16T00:00:01.000Z", operation: "patch" as const }]
@@ -79,4 +79,20 @@ test("a required typecheck must pass after the edit, not just the tests", () => 
   assert.equal(typeFails.failureReason, "VERIFICATION_FAILED")
   const both = assessCodingCompletion({ ...base, verifications: [{ status: "PASS", at: "2026-11-16T00:00:02.000Z", action: "TEST" }, { status: "PASS", at: "2026-11-16T00:00:03.000Z", action: "TYPECHECK" }] })
   assert.equal(both.accept, true)
+})
+
+test("a requested new test is not excused by a passing run when the named test file was never edited", () => {
+  const input = {
+    requiresCodeChange: true,
+    explicitPaths: ["pkg/regions.py", "pkg/test_regions.py"],
+    mutations: [{ path: "pkg/regions.py", status: "APPLIED", at: "2026-11-16T00:00:01.000Z", operation: "patch" as const }],
+    verifications: [{ status: "PASS", at: "2026-11-16T00:00:02.000Z" }],
+    verificationRequired: true,
+    userRejectedMutation: false,
+  }
+  assert.equal(assessCodingCompletion(input).accept, true, "without a test request the named test file is only context")
+  assert.equal(assessCodingCompletion({ ...input, requireTestEdit: true }).accept, false)
+  assert.equal(requestsNewTest("Rename x. Then add a test in pkg/test_regions.py."), true)
+  assert.equal(requestsNewTest("Fix the bug and run the tests."), false)
+  assert.equal(requestsNewTest("Add a feature but do not edit the tests."), false)
 })

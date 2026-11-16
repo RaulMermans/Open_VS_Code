@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
 import * as crypto from "node:crypto"
+import { spawnSync } from "node:child_process"
 import { VerificationAction } from "./verification-contracts.ts"
 import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
 
@@ -128,6 +129,17 @@ async function srcHoldsPackage(workspaceReal: string): Promise<boolean> {
   return false
 }
 
+/** True when the tests are plain module-level `def test_*` functions that unittest discovery cannot see. */
+async function isPytestStyleOnly(workspaceReal: string, testFiles: readonly string[]): Promise<boolean> {
+  let plainFunctions = false
+  for (const file of testFiles) {
+    const text = await containedText(workspaceReal, file)
+    if (/^\s*(?:import unittest|from unittest\b)|\bunittest\.TestCase\b|\(\s*TestCase\s*\)/m.test(text)) return false
+    if (/^(?:def test_|class Test)/m.test(text)) plainFunctions = true
+  }
+  return plainFunctions
+}
+
 async function discoverPythonTestCommand(workspaceReal: string): Promise<DiscoveredCommand | undefined> {
   const testFiles = await collectContainedNodeTests(workspaceReal, workspaceReal, 0, PYTHON_TEST_FILE)
   const djangoProject = await containedFileExists(workspaceReal, "manage.py")
@@ -147,6 +159,11 @@ async function discoverPythonTestCommand(workspaceReal: string): Promise<Discove
     || /^\[(?:tool:)?pytest\]/m.test(await containedText(workspaceReal, "setup.cfg"))
     || /^\[pytest\]/m.test(await containedText(workspaceReal, "tox.ini"))
   if (pytestConfigured) return command(["-m", "pytest", "-q"])
+  // Plain `def test_*` functions are invisible to unittest discovery ("Ran 0 tests"), which would look like a
+  // failing run that no code change can fix. Such tests need pytest; without it, report no verifier instead.
+  if (await isPytestStyleOnly(workspaceReal, testFiles)) {
+    return spawnSync(executable, ["-I", "-c", "import pytest"], { stdio: "ignore", timeout: 10_000, cwd: os.tmpdir() }).status === 0 ? command(["-m", "pytest", "-q"]) : undefined
+  }
   const topDirs = new Set(testFiles.map((file) => file.split(path.sep)[0]!))
   const start = topDirs.size === 1 && testFiles.every((file) => file.includes(path.sep)) ? [...topDirs][0]! : "."
   const importable = start === "." || await containedFileExists(workspaceReal, path.join(start, "__init__.py"))
