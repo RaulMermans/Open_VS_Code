@@ -628,7 +628,10 @@ export class MutationEngine {
     }
     const dangling = danglingRenamedBinding(beforeContent, afterContent)
     if (dangling) {
-      throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${relForError} still calls it. Update that call in the same patch.`)
+      const lines = afterContent.split("\n")
+      const callLine = lines.findIndex((line) => new RegExp(`\\b${dangling.replace(/[$]/g, "\\$")}\\b`).test(line) && !/^\s*import\b/.test(line))
+      const where = callLine >= 0 ? ` (line ${callLine + 1}: ${lines[callLine]!.trim().slice(0, 160)})` : ""
+      throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${relForError} still calls it${where}. Rename that call in the same patch: include the import line and that line in search and replace.`)
     }
     const resultHash = sha256(afterContent)
 
