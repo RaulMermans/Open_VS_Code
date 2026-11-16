@@ -419,7 +419,8 @@ export class ChatController {
       const commandPreview = pc.commandPreview || `${cmdExecutable} ${cmdArgs.join(' ')}`.trim();
       const timeoutMs = typeof pc.timeoutMs === 'number' && pc.timeoutMs > 0 ? pc.timeoutMs : 60000;
       const cwd = pc.cwd.trim();
-      const provenance = pc.scriptName ? `package.json [${pc.scriptName}]` : (pc.provenance || 'Verification Runner');
+      const baseProvenance = pc.scriptName ? `package.json [${pc.scriptName}]` : (pc.provenance || 'Verification Runner');
+      const provenance = typeof pc.sandboxPreview === 'string' && pc.sandboxPreview ? `${baseProvenance} · ${pc.sandboxPreview}` : baseProvenance;
 
       const entry = this.terminalReviewController.registerPreparedCommand({
         confirmationId,

@@ -23,6 +23,8 @@ export interface BridgeOptions {
   mcpCatalog?: McpCatalog;
   /** Governed BrowserSessionManager (Sprint 9A) */
   browserSessionManager?: BrowserSessionManager;
+  /** Sandbox for agent-initiated commands (ADR-046): "auto" (default), "required" or "off". */
+  commandSandbox?: "auto" | "required" | "off";
   /** Authenticated account identity scope for evidence and session isolation */
   accountScope?: string;
 }
@@ -43,6 +45,7 @@ export class AgentSessionBridge {
   private browserSessionManager?: BrowserSessionManager;
   private lastWorkflowState?: WorkflowState;
   private accountScope?: string;
+  private commandSandbox: "auto" | "required" | "off";
   private lastRouteIdentity?: ConfiguredRouteIdentity;
   private lastRuntime?: Awaited<ReturnType<typeof createAgentRuntime>>;
   private heldForTurnBudget = false;
@@ -64,6 +67,7 @@ export class AgentSessionBridge {
     this.mcpCatalog = options.mcpCatalog;
     this.browserSessionManager = options.browserSessionManager;
     this.accountScope = options.accountScope;
+    this.commandSandbox = options.commandSandbox ?? "auto";
   }
 
   /** Bounded workflow state of the most recent structured task, if one ran. */
@@ -235,6 +239,7 @@ export class AgentSessionBridge {
         ...(this.routingConfigOverride ? { routingConfigOverride: this.routingConfigOverride } : {}),
         ...(this.skipWorkspaceRoutingFile ? { skipWorkspaceRoutingFile: true } : {}),
         ...(this.accountScope ? { accountScope: this.accountScope } : {}),
+        commandSandbox: this.commandSandbox,
         ...(resolvedProfile ? { resolvedProfile } : {}),
         ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),
         ...(this.browserSessionManager ? { browserSessionManager: this.browserSessionManager } : {}),
@@ -405,6 +410,7 @@ export class AgentSessionBridge {
       ...(this.routingConfigOverride ? { routingConfigOverride: this.routingConfigOverride } : {}),
       ...(this.skipWorkspaceRoutingFile ? { skipWorkspaceRoutingFile: true } : {}),
       ...(this.accountScope ? { accountScope: this.accountScope } : {}),
+      commandSandbox: this.commandSandbox,
     });
   }
   

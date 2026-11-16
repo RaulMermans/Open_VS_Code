@@ -1,6 +1,7 @@
 import { ToolRegistry, ToolRegistration, ToolExecutionContext, ReviewableExecution } from "./registry.ts"
 import { discoverVerificationCommand } from "./verification-discovery.ts"
 import { VerificationEngine } from "./verification-engine.ts"
+import { type CommandSandboxMode, describeSandbox, predictSandbox } from "./command-sandbox.ts"
 import { VerificationAction, PreparedVerification, VerificationResult } from "./verification-contracts.ts"
 
 export const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
@@ -10,8 +11,9 @@ export const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
   BUILD: 120_000,
 }
 
-export function createVerificationToolRegistrations(workspaceRoot: string): ToolRegistration[] {
-  const engine = new VerificationEngine({ workspaceRoot })
+export function createVerificationToolRegistrations(workspaceRoot: string, options: { readonly sandbox?: CommandSandboxMode } = {}): ToolRegistration[] {
+  const sandbox = options.sandbox ?? "off"
+  const engine = new VerificationEngine({ workspaceRoot, sandbox })
 
   const runVerificationRegistration: ToolRegistration = {
     definition: {
@@ -55,6 +57,7 @@ export function createVerificationToolRegistrations(workspaceRoot: string): Tool
         packageJsonHash: command.packageJsonHash,
         scriptName: command.scriptName,
         scriptBody: command.scriptBody,
+        sandboxPreview: describeSandbox(predictSandbox(sandbox)),
       }
 
       return {

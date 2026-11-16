@@ -7,6 +7,7 @@ import { PreparedVerification, VerificationResult, VerificationStatus } from "./
 import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
 import { resolveWritePath } from "./mutation-engine.ts"
 import { killProcessTree } from "./kill-process-tree.ts"
+import { type CommandSandboxMode, planSandboxedCommand } from "./command-sandbox.ts"
 
 const MAX_OUTPUT_BYTES = 16 * 1024 // 16KB
 
@@ -41,6 +42,8 @@ export type VerificationOutputCallback = (output: { stream: "stdout" | "stderr";
 
 export interface VerificationEngineOptions {
   readonly workspaceRoot: string
+  /** ADR-046. Library default "off"; the desktop runtime passes the user setting (default "auto"). */
+  readonly sandbox?: CommandSandboxMode
 }
 
 export class VerificationEngine {
@@ -148,12 +151,26 @@ export class VerificationEngine {
       }
     }
 
-    return new Promise((resolve) => {
+    const plan = planSandboxedCommand({
+      mode: this.options.sandbox ?? "off",
+      workspaceRoot: this.options.workspaceRoot,
+      cwd: resolvedCwd,
+      executable: prepared.executable,
+      args: prepared.args,
+      env,
+    })
+    if ("error" in plan) {
+      return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: plan.error, durationMs: Date.now() - startTime, sandbox: plan.status }
+    }
+    const sandbox = plan.status
+
+    return new Promise<VerificationResult>((resolveRaw) => {
+      const resolve = (result: VerificationResult) => resolveRaw({ ...result, sandbox })
       let isSettled = false
 
-      const child = spawn(prepared.executable, prepared.args, {
+      const child = spawn(plan.executable, [...plan.args], {
         cwd: resolvedCwd,
-        env,
+        env: plan.env,
         shell: false,
         detached: process.platform !== "win32",
       })
