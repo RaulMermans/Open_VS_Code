@@ -109,25 +109,37 @@ export class OpenAICompatibleProvider implements ModelProvider {
       })}\n`)
     }
 
-    let response: Response
-    try {
-      assertInferenceAuthorized(this.#isCustomFetch)
-      response = await this.#fetch(this.#endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...this.#headers },
-        body: JSON.stringify(requestBody),
-        signal,
-      })
-    } catch (error) {
-      if (error instanceof InferenceNotAuthorizedError) {
-        throw new ModelProviderError("INFERENCE_NOT_AUTHORIZED", error.message, undefined, { cause: error })
+    // A local endpoint restarting (service restart, model reload) returns 5xx or drops the connection for a
+    // moment; one such blip must not discard a long task. Bounded, abortable, never on 4xx or cancellation.
+    let response: Response | undefined
+    for (let attempt = 0; ; attempt += 1) {
+      let failure: ModelProviderError
+      try {
+        assertInferenceAuthorized(this.#isCustomFetch)
+        response = await this.#fetch(this.#endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...this.#headers },
+          body: JSON.stringify(requestBody),
+          signal,
+        })
+        if (response.ok) break
+        failure = new ModelProviderError("HTTP_ERROR", `Model endpoint returned HTTP ${response.status}`, response.status)
+        if (response.status !== 429 && response.status < 500) throw failure
+      } catch (error) {
+        if (error instanceof ModelProviderError) throw error
+        if (error instanceof InferenceNotAuthorizedError) {
+          throw new ModelProviderError("INFERENCE_NOT_AUTHORIZED", error.message, undefined, { cause: error })
+        }
+        if (request.signal?.aborted) throw new ModelProviderError("CANCELLED", "Model request was cancelled", undefined, { cause: error })
+        if (timeoutSignal.aborted) throw new ModelProviderError("TIMEOUT", `Model request exceeded ${this.#timeoutMs}ms`, undefined, { cause: error })
+        failure = new ModelProviderError("NETWORK_ERROR", "Model request failed", undefined, { cause: error })
       }
-      if (request.signal?.aborted) throw new ModelProviderError("CANCELLED", "Model request was cancelled", undefined, { cause: error })
-      if (timeoutSignal.aborted) throw new ModelProviderError("TIMEOUT", `Model request exceeded ${this.#timeoutMs}ms`, undefined, { cause: error })
-      throw new ModelProviderError("NETWORK_ERROR", "Model request failed", undefined, { cause: error })
+      if (attempt >= TRANSIENT_RETRY_DELAYS_MS.length) throw failure
+      await abortableDelay(TRANSIENT_RETRY_DELAYS_MS[attempt]!, signal).catch((error) => {
+        if (request.signal?.aborted) throw new ModelProviderError("CANCELLED", "Model request was cancelled", undefined, { cause: error })
+        throw new ModelProviderError("TIMEOUT", `Model request exceeded ${this.#timeoutMs}ms`, undefined, { cause: error })
+      })
     }
-
-    if (!response.ok) throw new ModelProviderError("HTTP_ERROR", `Model endpoint returned HTTP ${response.status}`, response.status)
     let payload: unknown
     try {
       payload = await response.json()
@@ -148,4 +160,16 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
     return normalized
   }
+}
+
+/** Waits between retries of a transient model endpoint failure. */
+export const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000]
+
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+    const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve() }, ms)
+    const onAbort = () => { clearTimeout(timer); reject(signal.reason) }
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
 }
