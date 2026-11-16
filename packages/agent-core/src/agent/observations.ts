@@ -59,7 +59,18 @@ function formatObservationContent(output: unknown, toolName: string): string {
     const record = output as Record<string, unknown>
     if (toolName === "read_file" && typeof record.content === "string") {
       const path = typeof record.path === "string" ? record.path : "file"
-      return `File: ${path}\n\`\`\`\n${record.content}\n\`\`\``
+      const total = typeof record.totalLines === "number" ? record.totalLines : undefined
+      const start = typeof record.startLine === "number" ? record.startLine : 1
+      const end = typeof record.endLine === "number" ? Math.min(record.endLine, total ?? record.endLine) : undefined
+      const partial = total !== undefined && end !== undefined && (start > 1 || end < total)
+      const unknownTail = total === undefined && end !== undefined && end - start + 1 >= 250
+      const header = partial && start > total! ? `File: ${path} (past the end)` : partial ? `File: ${path} (lines ${start}-${end} of ${total})` : unknownTail ? `File: ${path} (lines ${start}-${end})` : `File: ${path}`
+      const footer = partial && end! < total!
+        ? `\n[More below: call read_file with path "${path}" and startLine ${end! + 1} to read lines ${end! + 1}-${Math.min(total!, end! + 250)}.]`
+        : partial && start > total!
+          ? `\n[The file has only ${total} lines.]`
+          : unknownTail ? `\n[More may follow: call read_file with path "${path}" and startLine ${end! + 1}.]` : ""
+      return `${header}\n\`\`\`\n${record.content}\n\`\`\`${footer}`
     }
     if (toolName === "search_text" && Array.isArray(record.results)) {
       const results = record.results as Array<{ path: string; line: number; text: string }>
