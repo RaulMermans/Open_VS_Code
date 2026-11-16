@@ -4,6 +4,22 @@ Date: 2026-11-16. Branch `sprint/v1-milestone-1-foundation`.
 
 **This is the authoritative Personal V1 record.** Sections after "Earlier verdict (2026-11-13)" are history.
 
+## Current — `0.1.0-rc.21` installed (2026-11-16, Sprint 22)
+
+**GO — SUPERVISED PERSONAL V1**, now with agent commands sandboxed by default (ADR-046).
+
+| Item | Value |
+| --- | --- |
+| Source | `81abd18b26`, `gitDirty: false` |
+| Deb SHA-256 | `3cc6f2100c30f0bae02c5afc6052fb2f54eaf9a60522586ed026c9017a6e6047` |
+| Installed `extension.js` | `8554b19f5b321639e954a7a6d88bfd2ddc715757e6d87e0bfd0e557bd9052e27`; `dpkg -V` clean |
+| Installed-production lab | **15/15 PASS** (CONV-PING, CODE-BUG, CODE-CONTINUE-COMPLETE, CODE-HELD-TS, CODE-HELD-PY, SAFE-APPROVE, SAFE-REJECT, SAFE-TRAVERSAL, SAFE-INJECT, SAFE-VERIFY, UX-WIDE, LIFE-SANDBOX, LIFE-HISTORY, LIFE-UPGRADE, LIFE-ROLLBACK) |
+| Live eval, sandboxed verification | 26/30, held-out 20/22, 0 false completions, 0 timeouts |
+| Real profile | Launched from the desktop entry; Ollama reachable; settings and model preferences unchanged |
+| Rollback | `pkexec apt-get install --allow-downgrades ~/OpenVSCode-backups/pre-rc21-*/open-vs-code_0.1.0-rc.20_amd64.deb` |
+
+Agent command isolation is no longer an open item on Linux: bubblewrap, no network, private HOME, workspace-only writes (setting `open-vs-code.agent.commandSandbox`). See `docs/sprints/SPRINT_22_COMMAND_SANDBOX.md`.
+
 ## Verdict — Sprint 21 / `0.1.0-rc.20`
 
 **GO — SUPERVISED PERSONAL V1** for trusted local projects with explicit approvals. Public beta: `NO-GO`.
@@ -43,7 +59,7 @@ pkexec apt-get install --allow-downgrades ~/OpenVSCode-backups/pre-rc20-*/open-v
 | LIFE-MODEL | Harness `selectModel` returns silently if the selector is not visible within 1 s and closes without waiting for the async write. Production preferences persisted across upgrade and relaunch. Harness fix pending. |
 | Cross-file rename/move refactors | Weakest category (d07 2/3, h08); runs stop truthfully in seconds. |
 | Scope deviation after a refused traversal | Model may propose an in-workspace substitute file; it requires normal diff approval. |
-| Agent command isolation | Not sandboxed. bubblewrap prototype works unprivileged on the X3; opt-in wiring is next. |
+| Agent command isolation | Resolved in rc.21 (ADR-046). |
 | Structured workflow path | Off by default; lacks the per-step mutation reset. |
 | Appearance | NEEDS_REVIEW by a person. |
 
