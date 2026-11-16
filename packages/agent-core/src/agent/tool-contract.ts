@@ -242,7 +242,11 @@ export function assessCodingCompletion(input: {
 
   const missingPaths = input.explicitPaths.filter((wanted) => !satisfied.some((path) => pathsReferToSameFile(path, wanted)))
   const testOnly = applied.length > 0 && requireImplementation && !implementationApplied
-  if (satisfied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0) || testOnly) {
+  // A named file is context, not an obligation, once the repository's own tests pass after the applied
+  // implementation edit. The summary still lists the named files that were left unchanged.
+  const verifiedWithoutMissing = missingPaths.length > 0 && satisfied.length > 0 && !testOnly
+    && verificationAfterMutation(input.mutations, input.verifications, input.explicitPaths) === "PASS"
+  if (satisfied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0 && !verifiedWithoutMissing) || testOnly) {
     const failureReason: AgentFailureReason = input.userRejectedMutation && applied.length === 0 ? "REJECTED" : "INCOMPLETE"
     const why = input.userRejectedMutation && applied.length === 0
       ? "The requested edit was not applied because the mutation was rejected."
@@ -297,7 +301,7 @@ export function assessCodingCompletion(input: {
     verificationSatisfied: true,
     summary: alreadyPresent
       ? `${changed} ${approval} ${tests} The requested content was already present.`
-      : `${changed} ${approval} ${tests} The requested edit was applied.`,
+      : `${changed} ${approval} ${tests} The requested edit was applied.${verifiedWithoutMissing ? ` Not changed (tests pass without it): ${missingPaths.join(", ")}.` : ""}`,
   }
 }
 
