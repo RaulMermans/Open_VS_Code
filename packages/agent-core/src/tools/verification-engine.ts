@@ -144,6 +144,18 @@ export class VerificationEngine {
       PATH: absolutePathEntries(process.env.PATH || ""),
       NODE_ENV: process.env.NODE_ENV || "test",
     }
+    // Prepared environment: only PYTHONPATH, and every entry must resolve inside the workspace.
+    for (const [key, value] of Object.entries(prepared.env ?? {})) {
+      if (key !== "PYTHONPATH") {
+        return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: `Environment variable ${key} is not allowed for verification`, durationMs: Date.now() - startTime }
+      }
+      try {
+        const entries = await Promise.all(value.split(path.delimiter).filter(Boolean).map((entry) => resolveRepositoryPath(this.options.workspaceRoot, entry, "directory")))
+        env.PYTHONPATH = entries.join(path.delimiter)
+      } catch (error) {
+        return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: `PYTHONPATH must stay inside the workspace: ${(error as Error).message}`, durationMs: Date.now() - startTime }
+      }
+    }
     // Include npm_config_* variables
     for (const [key, value] of Object.entries(process.env)) {
       if (key.toLowerCase().startsWith("npm_config_") && value !== undefined) {

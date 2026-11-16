@@ -30,6 +30,7 @@ async function execute(root: string) {
     packageJsonHash: command.packageJsonHash,
     scriptName: command.scriptName,
     scriptBody: command.scriptBody,
+    ...(command.env ? { env: command.env } : {}),
   })
   return { command, result }
 }
@@ -99,6 +100,37 @@ test("a repository with no package.json and no recognizable tests still has no v
   const root = await fixture({ "src/mod.py": "x = 1\n" })
   try {
     await assert.rejects(discoverVerificationCommand(root, "TEST"), /package\.json/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a src-layout package runs with PYTHONPATH=src and the approval preview shows it", async () => {
+  const root = await fixture({
+    "pyproject.toml": "[tool.setuptools.packages.find]\nwhere = [\"src\"]\n",
+    "src/mylib/__init__.py": "def value():\n    return 1\n",
+    "tests/test_lib.py": "import unittest\nfrom mylib import value\n\nclass T(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(value(), 1)\n",
+  })
+  try {
+    const { command, result } = await execute(root)
+    assert.deepEqual(command.env, { PYTHONPATH: join(root, "src") })
+    assert.equal(result.status, "PASS", result.stdout + result.stderr)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("prepared environment is limited to a workspace-contained PYTHONPATH", async () => {
+  const root = await fixture({ "tests/test_a.py": "import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        pass\n" })
+  const engine = new VerificationEngine({ workspaceRoot: root })
+  const base = { verificationId: "env", action: "TEST" as const, executable: "/usr/bin/python3", args: ["-m", "unittest", "discover", "-s", "tests"], cwd: root, timeoutMs: 20_000, commandPreview: "", packageJsonPath: "", packageJsonHash: "", scriptName: "", scriptBody: "" }
+  try {
+    const outside = await engine.execute({ ...base, verificationId: "env-out", env: { PYTHONPATH: tmpdir() } })
+    assert.equal(outside.status, "EXECUTION_ERROR")
+    assert.match(outside.stderr, /PYTHONPATH must stay inside the workspace/)
+    const other = await engine.execute({ ...base, verificationId: "env-other", env: { LD_PRELOAD: join(root, "x.so") } })
+    assert.equal(other.status, "EXECUTION_ERROR")
+    assert.match(other.stderr, /LD_PRELOAD is not allowed/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

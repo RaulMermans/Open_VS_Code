@@ -29,6 +29,8 @@ export interface PreparedVerification {
   readonly packageJsonHash: string
   readonly scriptName: string
   readonly scriptBody: string
+  /** Extra environment shown on the approval card. The engine accepts only workspace-contained PYTHONPATH. */
+  readonly env?: Readonly<Record<string, string>>
   /** Predicted sandbox for the approval card (ADR-046); the engine re-decides at execution. */
   readonly sandboxPreview?: string
 }

@@ -13,6 +13,8 @@ export interface DiscoveredCommand {
   readonly packageJsonHash: string
   readonly scriptName: string
   readonly scriptBody: string
+  /** Extra environment for the command. Only PYTHONPATH entries inside the workspace are accepted by the engine. */
+  readonly env?: Readonly<Record<string, string>>
 }
 
 const ACTION_TO_SCRIPT: Record<VerificationAction, string> = {
@@ -114,13 +116,30 @@ async function containedText(workspaceReal: string, relative: string): Promise<s
  * implies are used: Django's manage.py, a configured pytest, or stdlib unittest over existing test files.
  * The interpreter is python3 from PATH and is refused when it resolves inside the workspace.
  */
+async function srcHoldsPackage(workspaceReal: string): Promise<boolean> {
+  try {
+    const entries = await fs.readdir(path.join(workspaceReal, "src"), { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.isDirectory() && await containedFileExists(workspaceReal, path.join("src", entry.name, "__init__.py"))) return true
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
 async function discoverPythonTestCommand(workspaceReal: string): Promise<DiscoveredCommand | undefined> {
   const testFiles = await collectContainedNodeTests(workspaceReal, workspaceReal, 0, PYTHON_TEST_FILE)
   const djangoProject = await containedFileExists(workspaceReal, "manage.py")
   if (testFiles.length === 0 && !djangoProject) return undefined
   const executable = findExecutable("python3", { workspaceRoot: workspaceReal })
   if (!executable) return undefined
-  const command = (args: string[]): DiscoveredCommand => ({ executable, args, packageJsonPath: "", packageJsonHash: "", scriptName: "", scriptBody: "" })
+  // src layout: packages live under src/ (pyproject `where = ["src"]`, or src/ holding a package).
+  const pyproject = await containedText(workspaceReal, "pyproject.toml")
+  const srcLayout = /where\s*=\s*\[\s*["']src["']\s*\]/.test(pyproject) || /package_dir\s*=\s*\{\s*["']{2}\s*:\s*["']src["']/.test(await containedText(workspaceReal, "setup.py"))
+    || await srcHoldsPackage(workspaceReal)
+  const env = srcLayout ? { PYTHONPATH: path.join(workspaceReal, "src") } : undefined
+  const command = (args: string[]): DiscoveredCommand => ({ executable, args, packageJsonPath: "", packageJsonHash: "", scriptName: "", scriptBody: "", ...(env ? { env } : {}) })
   if (djangoProject) return command(["manage.py", "test"])
   const pytestConfigured = await containedFileExists(workspaceReal, "pytest.ini")
     || await containedFileExists(workspaceReal, "conftest.py")
