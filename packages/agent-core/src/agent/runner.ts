@@ -1607,7 +1607,9 @@ export class AgentRunner {
     const effectiveAction = prepared.effectiveAction ?? prepared.definition.action
     if (effectiveAction === "run_known_test" && this.#verificationWaitingOnEdit(session)) {
       const last = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
-      const detail = last?.failureSummary ? `\n${last.failureSummary}` : ""
+      const diagnosisObservation = session.observations.toReversed().find((item) => item.toolName === "run_verification" && item.content.includes("### Diagnosis"))
+      const diagnosis = diagnosisObservation ? `\n${diagnosisObservation.content.slice(diagnosisObservation.content.indexOf("### Diagnosis"), diagnosisObservation.content.indexOf("### Diagnosis") + 1_600)}` : ""
+      const detail = diagnosis || (last?.failureSummary ? `\n${last.failureSummary}` : "")
       this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
       return false
     }

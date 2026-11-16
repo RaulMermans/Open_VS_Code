@@ -85,6 +85,8 @@ function formatObservationContent(output: unknown, toolName: string): string {
       if (sandbox && typeof sandbox === "object") formatted += sandbox.sandboxed ? "\nSandbox: bubblewrap (no network, workspace-only writes)" : `\nSandbox: none (${sandbox.reason ?? "not sandboxed"})`
       if (record.stdout && typeof record.stdout === "string") formatted += `\n\n### Output\n\`\`\`\n${record.stdout}\n\`\`\``
       if (record.stderr && typeof record.stderr === "string") formatted += `\n\n### Errors\n\`\`\`\n${record.stderr}\n\`\`\``
+      // The diagnosis goes first so truncation of long test output cannot hide it.
+      if (record.diagnosis && typeof record.diagnosis === "string") formatted = `${formatted.split("\n\n### Output")[0]}\n\n### Diagnosis\n${record.diagnosis}${formatted.includes("\n\n### Output") ? `\n\n### Output${formatted.split("\n\n### Output").slice(1).join("\n\n### Output")}` : ""}`
       return formatted
     }
   }

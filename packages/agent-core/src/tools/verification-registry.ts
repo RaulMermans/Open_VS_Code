@@ -2,6 +2,7 @@ import { ToolRegistry, ToolRegistration, ToolExecutionContext, ReviewableExecuti
 import { discoverVerificationCommand } from "./verification-discovery.ts"
 import { VerificationEngine } from "./verification-engine.ts"
 import { type CommandSandboxMode, describeSandbox, predictSandbox } from "./command-sandbox.ts"
+import { diagnoseUnresolvedSymbols } from "./symbol-diagnosis.ts"
 import { VerificationAction, PreparedVerification, VerificationResult } from "./verification-contracts.ts"
 
 export const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
@@ -64,7 +65,11 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
         id: verificationId,
         reviewPayload: prepared as any,
         apply: async (applyContext: ToolExecutionContext): Promise<VerificationResult> => {
-          return engine.execute(prepared, applyContext.signal, applyContext.onOutput)
+          const result = await engine.execute(prepared, applyContext.signal, applyContext.onOutput)
+          if (result.status !== "FAIL") return result
+          // Read-only workspace scan; never changes the verdict.
+          const diagnosis = await diagnoseUnresolvedSymbols(workspaceRoot, `${result.stdout}\n${result.stderr}`).catch(() => undefined)
+          return diagnosis ? { ...result, diagnosis } : result
         },
       }
     },
