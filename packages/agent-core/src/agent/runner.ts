@@ -1124,6 +1124,9 @@ export class AgentRunner {
         .listDefinitions()
         .filter((definition) => !isStandardToolsOnly || allowedToolNames.has(definition.name))
         .filter((definition) => this.#permission(definition.action) !== "DENY")
+        // Repair stage: after a failed run, the only useful next step is a code change. The test tool is not
+        // offered again until something in the workspace changes (it would be refused anyway).
+        .filter((definition) => definition.action !== "run_known_test" || !this.#verificationWaitingOnEdit(session))
       const codingAssessment = session.taskProfile.requiresCodeChange ? this.#assessCoding("NOT_RUN") : undefined
       const editOutstanding = Boolean(codingAssessment && !codingAssessment.editsSatisfied)
       const verificationOutstanding = Boolean(codingAssessment?.editsSatisfied && !codingAssessment.verificationSatisfied)
@@ -3000,7 +3003,8 @@ export class AgentRunner {
     const evidence = session.evidenceCollector.getEvidence()
     const last = evidence.verificationOutcomes.at(-1)
     if (!last || last.status !== "FAIL") return false
-    return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && mutation.timestamp > last.timestamp)
+    // An edit recorded in the same millisecond as the failed run still follows it (a run must finish before an edit is applied).
+    return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && mutation.timestamp >= last.timestamp)
   }
 
   #codingGoalVerdict(): CodingCompletion | undefined {
