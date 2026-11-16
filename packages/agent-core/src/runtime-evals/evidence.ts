@@ -95,6 +95,7 @@ export class RuntimeEvidenceCollector {
   readonly #toolOutcomes: BoundedActionRecord[] = []
   readonly #mutationOutcomes: BoundedMutationOutcome[] = []
   readonly #verificationOutcomes: BoundedVerificationOutcome[] = []
+  #sequence = 0
   readonly #securitySignals: BoundedSecuritySignal[] = []
   readonly #unresolvedFailures = new Map<string, BoundedFailureRecord>()
   readonly #routeSignals: BoundedRouteSignal[] = []
@@ -247,6 +248,7 @@ export class RuntimeEvidenceCollector {
       status: mutation.status,
       diffSummary: truncateBounded(mutation.diffSummary ?? "", 300),
       timestamp: new Date().toISOString(),
+      sequence: ++this.#sequence,
       ...(mutation.operation ? { operation: mutation.operation } : {}),
     }
 
@@ -275,7 +277,8 @@ export class RuntimeEvidenceCollector {
     this.#verificationCount++
     const combinedOutput = `${verification.stdout ?? ""}\n${verification.stderr ?? ""}`
     const failureSummary = verification.status !== "PASS" ? verificationFailureExcerpt(combinedOutput, 500) : undefined
-    const failureHash = failureSummary ? deterministicHash(`${verification.action}:${verification.status}:${failureSummary}`) : undefined
+    // An empty excerpt is still a failure: identical silent failures must hash identically so repeats are detected.
+    const failureHash = failureSummary !== undefined ? deterministicHash(`${verification.action}:${verification.status}:${verification.failedTestCount ?? ""}:${failureSummary}`) : undefined
 
     const record: BoundedVerificationOutcome = {
       executionId: verification.executionId,
@@ -286,6 +289,7 @@ export class RuntimeEvidenceCollector {
       failureSummary,
       failureHash,
       timestamp: new Date().toISOString(),
+      sequence: ++this.#sequence,
     }
 
     // Progress signal comparison with previous verification

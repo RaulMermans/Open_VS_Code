@@ -233,7 +233,7 @@ async function runCase(task: LiveCase): Promise<Record<string, unknown>> {
     toolCalls: result.toolCalls.map((call) => ({ name: call.name, outcome: call.outcome })),
     files,
     pass,
-    truthfulCompletion: result.status === "COMPLETED" ? independent.pass : result.status !== "COMPLETED",
+    truthfulCompletion: result.status !== "COMPLETED" || independent.pass,
   }
 }
 

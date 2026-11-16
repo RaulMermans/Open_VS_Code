@@ -736,6 +736,8 @@ export function activate(context: vscode.ExtensionContext) {
         progressMonitor: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('progressMonitor.enabled', false) === true },
         // Bounded memory-to-skill learning (ADR-032); off by default.
         learning: { enabled: learningEnabled() },
+        // Agent command sandbox (ADR-046); bubblewrap when available by default.
+        commandSandbox: commandSandboxSetting(),
       });
     }
     return activeBridge!;
@@ -1235,6 +1237,11 @@ export const STARTER_MODELS_JSON = JSON.stringify({
   }
 }, null, 2) + "\n";
 
+
+function commandSandboxSetting(): 'auto' | 'required' | 'off' {
+  const value = vscode.workspace.getConfiguration('open-vs-code').get<string>('agent.commandSandbox', 'auto');
+  return value === 'required' || value === 'off' ? value : 'auto';
+}
 
 /** Saves the chat model in extension storage. Workspace models.json is not written. */
 async function persistSelectedLocalModel(name: string, quiet: boolean): Promise<void> {

@@ -13,6 +13,7 @@ import { MutationEngine } from "../tools/mutation-engine.ts";
 import { VerificationEngine } from "../tools/verification-engine.ts";
 import { createReadOnlyToolRegistry } from "../tools/read-only-registry.ts";
 import { createMutationToolRegistrations } from "../tools/mutation-registry.ts";
+import type { CommandSandboxMode } from "../tools/command-sandbox.ts";
 import { createVerificationToolRegistrations } from "../tools/verification-registry.ts";
 import { McpCatalog, selectMcpTools, createMcpToolRegistration } from "../mcp/index.ts";
 import { loadMcpConfig } from "../mcp/mcp-config-loader.ts";
@@ -53,6 +54,11 @@ import { resolveAcceptanceMaxTurns } from "./acceptance-budget.ts";
 
 export interface CreateAgentRuntimeOptions {
   workspaceRoot: string;
+  /**
+   * Sandbox for agent-initiated commands (ADR-046). "auto" (default) uses bubblewrap when it works and
+   * labels the result unsandboxed otherwise; "required" refuses to run without it; "off" runs on the host.
+   */
+  commandSandbox?: CommandSandboxMode;
   mode: AgentMode;
   instruction: string;
   recentTurns?: readonly ConversationTurn[];
@@ -221,7 +227,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   }
 
   const mutationEngine = new MutationEngine(options.workspaceRoot);
-  const verificationEngine = new VerificationEngine({ workspaceRoot: options.workspaceRoot });
+  const commandSandbox: CommandSandboxMode = options.commandSandbox ?? "auto";
+  const verificationEngine = new VerificationEngine({ workspaceRoot: options.workspaceRoot, sandbox: commandSandbox });
   const checkpointCoordinator = new CheckpointCoordinator({
     workspaceRoot: options.workspaceRoot,
     mutationEngine,
@@ -233,7 +240,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     for (const r of createMutationToolRegistrations({ engine: mutationEngine })) {
       registry.register(r);
     }
-    for (const r of createVerificationToolRegistrations(options.workspaceRoot)) {
+    for (const r of createVerificationToolRegistrations(options.workspaceRoot, { sandbox: commandSandbox })) {
       registry.register(r);
     }
   }
@@ -432,6 +439,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     registry,
     permissionEvaluator: classifyPermission,
     evidenceGate: false,
+    mutationStep: mutationEngine,
     eventSink: options.eventSink,
     checkpointCoordinator,
     contextCompiler,
@@ -591,6 +599,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       registry,
       permissionEvaluator: classifyPermission,
       evidenceGate: false,
+      mutationStep: mutationEngine,
       eventSink: options.eventSink,
       checkpointCoordinator,
       contextCompiler,

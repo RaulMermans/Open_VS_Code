@@ -103,6 +103,8 @@ export interface BoundedMutationOutcome {
   readonly status: "PREPARED" | "APPLIED" | "ALREADY_SATISFIED" | "FAILED" | "STALE"
   readonly diffSummary: string
   readonly timestamp: string
+  /** Monotonic order across mutations and verifications in one collector; timestamps tie within a millisecond. */
+  readonly sequence?: number
   readonly operation?: "create" | "patch" | "delete" | undefined
 }
 
@@ -115,6 +117,8 @@ export interface BoundedVerificationOutcome {
   readonly failureSummary?: string | undefined
   readonly failureHash?: string | undefined
   readonly timestamp: string
+  /** Monotonic order across mutations and verifications in one collector. */
+  readonly sequence?: number
 }
 
 export interface BoundedSecuritySignal {

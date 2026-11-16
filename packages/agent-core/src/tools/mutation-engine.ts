@@ -400,6 +400,160 @@ export function checkBudgets(diff: MutationDiff, budgets: MutationBudgets): Muta
   return null
 }
 
+// --- Patch Location ---
+
+export type PatchMatchKind = "EXACT" | "WHITESPACE_NORMALIZED"
+
+export type PatchLocation =
+  | { readonly ok: true; readonly afterContent: string; readonly matchKind: PatchMatchKind; readonly startLine: number }
+  | { readonly ok: false; readonly code: "PATCH_MISMATCH" | "PATCH_AMBIGUOUS"; readonly detail: string }
+
+const MAX_HINT_LINES = 24
+const MAX_HINT_BYTES = 2_400
+
+function key(line: string): string {
+  return line.trim()
+}
+
+function leadingWhitespace(line: string): string {
+  return line.match(/^[ \t]*/)?.[0] ?? ""
+}
+
+function numbered(lines: readonly string[], firstLine: number): string {
+  let text = ""
+  for (let index = 0; index < lines.length && index < MAX_HINT_LINES; index += 1) {
+    const next = `${String(firstLine + index).padStart(4)}| ${lines[index]!.replace(/\r$/, "")}\n`
+    if (text.length + next.length > MAX_HINT_BYTES) break
+    text += next
+  }
+  return text
+}
+
+/** True when every non-blank file line is its search line shifted by one shared indentation prefix. */
+function uniformIndentOffset(searchLines: readonly string[], fileLines: readonly string[]): boolean {
+  let shared: string | undefined
+  for (let index = 0; index < searchLines.length; index += 1) {
+    const search = searchLines[index]!
+    const file = fileLines[index]!
+    if (!search.trim() || !file.trim()) continue
+    const s = leadingWhitespace(search)
+    const f = leadingWhitespace(file)
+    const delta = f.endsWith(s) ? `+${f.slice(0, f.length - s.length)}` : s.endsWith(f) ? `-${s.slice(0, s.length - f.length)}` : undefined
+    if (delta === undefined || (shared !== undefined && delta !== shared)) return false
+    shared = delta
+  }
+  return true
+}
+
+/**
+ * Re-indents replacement lines by the uniform indentation offset between the model's search text and the
+ * matched file lines. Only a consistent prefix is added or removed; anything else is left untouched.
+ */
+function reindent(replaceLines: readonly string[], searchFirst: string, fileFirst: string): string[] {
+  const searchIndent = leadingWhitespace(searchFirst)
+  const fileIndent = leadingWhitespace(fileFirst)
+  if (searchIndent === fileIndent) return [...replaceLines]
+  if (fileIndent.endsWith(searchIndent)) {
+    const prefix = fileIndent.slice(0, fileIndent.length - searchIndent.length)
+    return replaceLines.map((line) => (line.trim() ? prefix + line : line))
+  }
+  if (searchIndent.endsWith(fileIndent)) {
+    const extra = searchIndent.slice(0, searchIndent.length - fileIndent.length)
+    if (replaceLines.every((line) => !line.trim() || line.startsWith(extra))) {
+      return replaceLines.map((line) => (line.trim() ? line.slice(extra.length) : line))
+    }
+  }
+  return [...replaceLines]
+}
+
+/**
+ * Locates a search/replace edit in file content.
+ *
+ * 1. Exact substring that occurs exactly once.
+ * 2. Otherwise, a unique window of whole lines equal to the search lines after trimming each line
+ *    (indentation, trailing spaces and CRLF differences). The replacement is re-indented by the observed
+ *    offset and the original line endings are kept. Text outside the window is preserved byte-for-byte.
+ * 3. Otherwise a typed failure whose detail carries the closest region with line numbers, so the caller can
+ *    correct the search text without another read.
+ *
+ * Pure function: no I/O. The caller still validates, diffs, budgets and requires approval.
+ */
+export function locatePatch(content: string, search: string, replace: string, displayPath: string): PatchLocation {
+  const first = content.indexOf(search)
+  if (first !== -1) {
+    const second = content.indexOf(search, first + 1)
+    if (second !== -1) {
+      const lineOf = (offset: number) => content.slice(0, offset).split("\n").length
+      return { ok: false, code: "PATCH_AMBIGUOUS", detail: `PATCH_AMBIGUOUS: search matched more than once in ${displayPath} (lines ${lineOf(first)} and ${lineOf(second)}). Include more surrounding lines so search matches exactly once.` }
+    }
+    return { ok: true, afterContent: content.slice(0, first) + replace + content.slice(first + search.length), matchKind: "EXACT", startLine: content.slice(0, first).split("\n").length }
+  }
+
+  const fileLines = content.split("\n")
+  const trimmedSearch = search.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "")
+  const searchLines = trimmedSearch.split("\n")
+  const searchKeys = searchLines.map(key)
+  const nonEmptyKeys = searchKeys.filter(Boolean)
+  const matches: number[] = []
+  if (nonEmptyKeys.length > 0 && nonEmptyKeys.join("").length >= 3) {
+    for (let start = 0; start + searchLines.length <= fileLines.length; start += 1) {
+      let equal = true
+      for (let offset = 0; offset < searchLines.length; offset += 1) {
+        if (key(fileLines[start + offset]!) !== searchKeys[offset]) { equal = false; break }
+      }
+      if (equal) matches.push(start)
+    }
+  }
+  if (matches.length > 1) {
+    return { ok: false, code: "PATCH_AMBIGUOUS", detail: `PATCH_AMBIGUOUS: search matched ${matches.length} places in ${displayPath} (lines ${matches.slice(0, 4).map((line) => line + 1).join(", ")}) when indentation is ignored. Include more surrounding lines so search matches exactly once.` }
+  }
+  if (matches.length === 1 && !uniformIndentOffset(searchLines, fileLines.slice(matches[0]!, matches[0]! + searchLines.length))) {
+    const start = matches[0]!
+    return {
+      ok: false,
+      code: "PATCH_MISMATCH",
+      detail: `PATCH_MISMATCH: search matches lines ${start + 1}-${start + searchLines.length} of ${displayPath} only if indentation is ignored, and the indentation differs unevenly. Copy search and replace with the file's exact indentation:\n${numbered(fileLines.slice(start, start + searchLines.length), start + 1)}`,
+    }
+  }
+  if (matches.length === 1) {
+    const start = matches[0]!
+    const window = fileLines.slice(start, start + searchLines.length)
+    const crlf = window.length > 0 && window.every((line) => line.endsWith("\r"))
+    const trimmedReplace = replace.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "")
+    const rawReplaceLines = trimmedReplace === "" ? [] : trimmedReplace.split("\n").map((line) => line.replace(/\r$/, ""))
+    const firstSearch = searchLines.find((line) => line.trim()) ?? ""
+    const firstFile = window[searchLines.indexOf(firstSearch)] ?? window[0] ?? ""
+    const replaceLines = reindent(rawReplaceLines, firstSearch, firstFile).map((line) => (crlf ? `${line}\r` : line))
+    const afterLines = [...fileLines.slice(0, start), ...replaceLines, ...fileLines.slice(start + searchLines.length)]
+    return { ok: true, afterContent: afterLines.join("\n"), matchKind: "WHITESPACE_NORMALIZED", startLine: start + 1 }
+  }
+
+  // No match: return the most similar region so the next attempt can copy exact text.
+  let bestStart = -1
+  let bestScore = 0
+  const searchSet = new Set(nonEmptyKeys)
+  const span = Math.max(1, searchLines.length)
+  for (let start = 0; start < fileLines.length; start += 1) {
+    let score = 0
+    for (let offset = 0; offset < span && start + offset < fileLines.length; offset += 1) {
+      if (searchSet.has(key(fileLines[start + offset]!))) score += 1
+    }
+    if (score > bestScore) { bestScore = score; bestStart = start }
+  }
+  const replaceKey = replace.trim()
+  const alreadyThere = replaceKey.length >= 3 && content.includes(replaceKey)
+    ? ` The replace text already appears in ${displayPath}; this edit may already be applied, so check before retrying.`
+    : ""
+  const regionStart = bestStart >= 0 ? Math.max(0, bestStart - 2) : 0
+  const regionLines = fileLines.slice(regionStart, regionStart + (bestStart >= 0 ? span + 4 : MAX_HINT_LINES))
+  const label = bestStart >= 0 ? `Closest lines in ${displayPath}` : `Start of ${displayPath} (${fileLines.length} lines)`
+  return {
+    ok: false,
+    code: "PATCH_MISMATCH",
+    detail: `PATCH_MISMATCH: search was not found in ${displayPath}.${alreadyThere} Copy search exactly from the current file text below (without the line-number prefix), or call read_file first. Do not call create_file.\n${label}:\n${numbered(regionLines, regionStart + 1)}`,
+  }
+}
+
 // --- Mutation Engine ---
 
 export interface MutationEngineOptions {
@@ -465,25 +619,19 @@ export class MutationEngine {
 
     // Apply patch: find search text and replace
     const relForError = relative(root, resolvedPath).replaceAll("\\", "/")
-    const searchIndex = beforeContent.indexOf(request.patch.search)
-    if (searchIndex === -1) {
-      throw new MutationFailure("PATCH_MISMATCH", `PATCH_MISMATCH: search was not found in ${relForError}. Copy a unique exact substring from the current file into search. Do not call create_file.`)
-    }
-
-    // Check for ambiguity
-    const secondIndex = beforeContent.indexOf(request.patch.search, searchIndex + 1)
-    if (secondIndex !== -1) {
-      throw new MutationFailure("PATCH_AMBIGUOUS", `PATCH_AMBIGUOUS: search matched more than once in ${relForError}. Lengthen search until it matches exactly once.`)
-    }
-
-    const afterContent = beforeContent.slice(0, searchIndex) + request.patch.replace + beforeContent.slice(searchIndex + request.patch.search.length)
+    const location = locatePatch(beforeContent, request.patch.search, request.patch.replace, relForError)
+    if (!location.ok) throw new MutationFailure(location.code, location.detail)
+    const afterContent = location.afterContent
     const duplicate = duplicateExportFunction(afterContent)
     if (duplicate) {
       throw new MutationFailure("INVALID_PATCH", `Patch would declare export function ${duplicate} more than once in ${relForError}`)
     }
     const dangling = danglingRenamedBinding(beforeContent, afterContent)
     if (dangling) {
-      throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${relForError} still calls it. Update that call in the same patch.`)
+      const lines = afterContent.split("\n")
+      const callLine = lines.findIndex((line) => new RegExp(`\\b${dangling.replace(/[$]/g, "\\$")}\\b`).test(line) && !/^\s*import\b/.test(line))
+      const where = callLine >= 0 ? ` (line ${callLine + 1}: ${lines[callLine]!.trim().slice(0, 160)})` : ""
+      throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${relForError} still calls it${where}. Rename that call in the same patch: include the import line and that line in search and replace.`)
     }
     const resultHash = sha256(afterContent)
 

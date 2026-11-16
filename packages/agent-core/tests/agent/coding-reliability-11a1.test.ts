@@ -311,8 +311,7 @@ test("a missing verification result does not complete a coding task", async () =
     response("", [{ id: "verify", name: "run_verification", arguments: {} }]),
     response("Tests passed. The edit is done."),
   ])
-  const missing = verificationTool("FAIL")
-  missing.execute = async () => ({ exitCode: null, stdout: "", stderr: "" })
+  const missing: ToolRegistration = { ...verificationTool("FAIL"), execute: async () => ({ exitCode: null, stdout: "", stderr: "" }) }
   try {
     const { result } = await runTask(provider, root, "Fix the implementation in src/add.ts and run the tests.", "DEBUG", 6, [missing])
     assert.notEqual(result.status, "COMPLETED")
@@ -429,13 +428,13 @@ test("a request not to edit files denies the patch before approval", async () =>
     response("The tests fail. I did not edit any files."),
   ])
   try {
-    const { runner, result } = await runTask(provider, root, "Run the tests. Do not edit files. If they fail, say they failed.", "BUILD")
+    const { runner: agent, result } = await runTask(provider, root, "Run the tests. Do not edit files. If they fail, say they failed.", "BUILD")
     assert.equal(result.toolCalls[0]?.outcome, "DENIED")
     assert.notEqual(result.status, "PAUSED")
     assert.equal(await readFile(join(root, "src/add.ts"), "utf8"), before)
-    assert.equal(result.toolCalls.some((call) => call.outcome === "APPLIED"), false)
+    assert.equal(result.toolCalls.some((call) => (call.name === "apply_patch" || call.name === "create_file") && call.outcome === "COMPLETED"), false)
     assert.equal(classifyTaskProfile("Run the tests. Do not edit files. If they fail, say they failed.", "BUILD").toolGuidance.includes("apply_patch"), false)
-    await assert.rejects(() => runner.resume("APPROVE"), /cannot resume|not waiting/)
+    await assert.rejects(() => agent.resume("APPROVE"), /cannot resume|not waiting/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -456,13 +455,12 @@ test("a repeated test run is refused until the code changes", async () => {
       return response("The comma is still missing.")
     },
   ])
-  const failing = verificationTool("FAIL")
-  failing.execute = async () => ({
+  const failing: ToolRegistration = { ...verificationTool("FAIL"), execute: async () => ({
     status: "FAIL",
     exitCode: 1,
     stdout: `${header}Expected values to be strictly equal:\n+ 'Hello Ada'\n- 'Hello, Ada'\n`,
     stderr: "",
-  })
+  }) }
   try {
     const { result } = await runTask(provider, root, "Fix src/add.ts only. Do not change the test.", "BUILD", 8, [failing])
     const verifications = result.toolCalls.filter((call) => call.name === "run_verification")
@@ -561,12 +559,12 @@ test("a different lookup stays available after one directory listing", async () 
   const root = await workspace()
   const listTool: ToolRegistration = {
     definition: { name: "list_directory", description: "List one directory.", action: "read_repository", inputSchema: { type: "object" } },
-    validate: (args) => args,
+    validate: (args) => args as Readonly<Record<string, unknown>>,
     execute: async () => ({ entries: ["add.ts"] }),
   }
   const searchTool: ToolRegistration = {
     definition: { name: "search_text", description: "Search text.", action: "read_repository", inputSchema: { type: "object" } },
-    validate: (args) => args,
+    validate: (args) => args as Readonly<Record<string, unknown>>,
     execute: async () => ({ matches: [] }),
   }
   const provider = new ScriptedModelProvider([

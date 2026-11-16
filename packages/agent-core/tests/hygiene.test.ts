@@ -43,7 +43,7 @@ test("agent-core codebase maintains strict zero-baggage architectural boundary",
       if (!line.includes("import") && !line.includes("require")) continue
 
       for (const pattern of FORBIDDEN_IMPORT_PATTERNS) {
-        if (pattern.source.includes("child_process") && (filePath.endsWith("verification-engine.ts") || filePath.endsWith("kill-process-tree.ts") || filePath.endsWith("mcp-transport.ts"))) {
+        if (pattern.source.includes("child_process") && (filePath.endsWith("verification-engine.ts") || filePath.endsWith("kill-process-tree.ts") || filePath.endsWith("mcp-transport.ts") || filePath.endsWith("command-sandbox.ts") || filePath.endsWith("verification-discovery.ts"))) {
           continue
         }
         assert.equal(

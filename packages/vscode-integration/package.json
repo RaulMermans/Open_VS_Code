@@ -209,6 +209,17 @@
           "default": false,
           "description": "Run eligible Build/Debug tasks through the Structured Engineering Loop (PLAN → IMPLEMENT → TEST → fresh-context REVIEW → VERIFY). Every change and check still needs your approval. Off until the HALO A/B benchmark is recorded."
         },
+        "open-vs-code.agent.commandSandbox": {
+          "type": "string",
+          "enum": ["auto", "required", "off"],
+          "enumDescriptions": [
+            "Run agent commands (tests, lint, build) inside bubblewrap when it is available: no network, only the workspace is writable, HOME and other projects are hidden. Without bubblewrap the command runs on the host and is labeled unsandboxed.",
+            "Never run agent commands outside the bubblewrap sandbox. If bubblewrap is unavailable, verification is reported as unavailable.",
+            "Run agent commands directly on the host (previous behavior)."
+          ],
+          "default": "auto",
+          "description": "Sandbox for commands the agent runs after your approval. The editor's own sandbox does not cover these processes."
+        },
         "open-vs-code.progressMonitor.enabled": {
           "type": "boolean",
           "default": false,

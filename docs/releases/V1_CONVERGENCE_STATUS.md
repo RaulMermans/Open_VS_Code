@@ -1,10 +1,76 @@
 # V1 convergence status
 
-Date: 2026-11-13. Branch: `sprint/v1-milestone-1-foundation`.
+Date: 2026-11-16. Branch `sprint/v1-milestone-1-foundation`.
 
-**This is the authoritative Personal V1 record.** Older rc.13–rc.18 notes below are history.
+**This is the authoritative Personal V1 record.** Sections after "Earlier verdict (2026-11-13)" are history.
 
-## Verdict
+## Latest — Sprint 23 candidate `0.1.0-rc.23` (prepared, NOT installed)
+
+Daily driver remains `0.1.0-rc.21` (GO, supervised). rc.23: `794b2f9426`, `.deb` `7c5030b5792350024f7aef99280488c2d65251d1865195ada46bcfd733ff3242`, extension `379491575ba757b4a7edaab0e4cf412b5100ce6fd7672184d9f211dc960258e2`. Packaged-bytes GUI acceptance 13/14 (CODE-CONTINUE-COMPLETE hit the lab's 8-approval cap: more approvals per task now that typecheck is required). Real-repo dogfooding pilot 1–2/5 (target 4/5 not met). Verdict for rc.23: **CONDITIONAL GO — controlled trial only**; install only on explicit request. Details: `docs/sprints/SPRINT_23_DOGFOODING.md`.
+
+## Current — `0.1.0-rc.21` installed (2026-11-16, Sprint 22)
+
+**GO — SUPERVISED PERSONAL V1**, now with agent commands sandboxed by default (ADR-046).
+
+| Item | Value |
+| --- | --- |
+| Source | `81abd18b26`, `gitDirty: false` |
+| Deb SHA-256 | `3cc6f2100c30f0bae02c5afc6052fb2f54eaf9a60522586ed026c9017a6e6047` |
+| Installed `extension.js` | `8554b19f5b321639e954a7a6d88bfd2ddc715757e6d87e0bfd0e557bd9052e27`; `dpkg -V` clean |
+| Installed-production lab | **15/15 PASS** (CONV-PING, CODE-BUG, CODE-CONTINUE-COMPLETE, CODE-HELD-TS, CODE-HELD-PY, SAFE-APPROVE, SAFE-REJECT, SAFE-TRAVERSAL, SAFE-INJECT, SAFE-VERIFY, UX-WIDE, LIFE-SANDBOX, LIFE-HISTORY, LIFE-UPGRADE, LIFE-ROLLBACK) |
+| Live eval, sandboxed verification | 26/30, held-out 20/22, 0 false completions, 0 timeouts |
+| Real profile | Launched from the desktop entry; Ollama reachable; settings and model preferences unchanged |
+| Rollback | `pkexec apt-get install --allow-downgrades ~/OpenVSCode-backups/pre-rc21-*/open-vs-code_0.1.0-rc.20_amd64.deb` |
+
+Agent command isolation is no longer an open item on Linux: bubblewrap, no network, private HOME, workspace-only writes (setting `open-vs-code.agent.commandSandbox`). See `docs/sprints/SPRINT_22_COMMAND_SANDBOX.md`.
+
+## Verdict — Sprint 21 / `0.1.0-rc.20`
+
+**GO — SUPERVISED PERSONAL V1** for trusted local projects with explicit approvals. Public beta: `NO-GO`.
+
+| Gate | Result |
+| --- | --- |
+| CI (Linux): typecheck, lint, build, deterministic tests | PASS (1,590 tests, 0 failing; was 18 type errors and 15 failing tests) |
+| Live coding, `qwen3-coder:30b` `06c1097efce0`, desktop path, 30 tasks | 27/30 correct, **held-out 21/22**, 0 false completions, 0 runaway loops (baseline 22/30, 17/22, 4 runaway loops) |
+| Packaged GUI (CDP, rc.20 bytes, pre-install) | 15/18 PASS; all critical safety PASS; 3 harness/tooling FAILs (below) |
+| **Installed production** (real `/usr/lib/open-vs-code`, bundled extension) | **13/13 PASS**: CONV-PING, CODE-BUG, CODE-CONTINUE-COMPLETE, CODE-HELD-PY, SAFE-APPROVE, SAFE-REJECT, SAFE-TRAVERSAL, SAFE-INJECT, UX-WIDE, LIFE-SANDBOX, LIFE-HISTORY, LIFE-UPGRADE, LIFE-ROLLBACK |
+| Launcher start on the real profile | PASS: started from the `.desktop` entry via `gio launch`, Ollama `/api/tags` 200, conversation stores present, `settings.json` fingerprint and model preferences byte-identical to the pre-install backup |
+
+## Installed candidate
+
+| Item | Value |
+| --- | --- |
+| Version | `0.1.0-rc.20` (installed 2026-11-16 via `pkexec apt-get install`, user-authorized) |
+| Source | `fa532f0197`, `gitDirty: false` |
+| Deb SHA-256 | `dc31878db39dc150e6682e1d177c99895bd7e09eb8ec76911c6f2c17f2eb3d30` |
+| Bundled/installed `extension.js` | `3b5357452108e08f2c00def72312a8d981b1b9ca54584bd490013ebbdb026e60` |
+| `dpkg -V open-vs-code` | clean (rc.19 install had a root-written overlay `extension.js` `a01b8ad3…` that failed `dpkg -V`; it is now replaced) |
+| Sandbox helper | `4755 root`, no `--no-sandbox` |
+
+## Rollback
+
+Backup `~/OpenVSCode-backups/pre-rc20-*` holds the profile tarball, `~/.vscode-oss`, the rc.19 deb (`5298b0af…`) and the previous overlay `extension.js`, with `SHA256SUMS`.
+
+```text
+pkexec apt-get install --allow-downgrades ~/OpenVSCode-backups/pre-rc20-*/open-vs-code_0.1.0-rc.19_amd64.deb
+```
+
+## Open items (not blocking supervised use)
+
+| Item | Class |
+| --- | --- |
+| SAFE-CANCEL, UX-MODELS | Lab tooling: Agent webview did not attach or settle (same class as rc.19). Not counted as product FAIL. |
+| LIFE-MODEL | Harness `selectModel` returns silently if the selector is not visible within 1 s and closes without waiting for the async write. Production preferences persisted across upgrade and relaunch. Harness fix pending. |
+| Cross-file rename/move refactors | Weakest category (d07 2/3, h08); runs stop truthfully in seconds. |
+| Scope deviation after a refused traversal | Model may propose an in-workspace substitute file; it requires normal diff approval. |
+| Agent command isolation | Resolved in rc.21 (ADR-046). |
+| Structured workflow path | Off by default; lacks the per-step mutation reset. |
+| Appearance | NEEDS_REVIEW by a person. |
+
+Details: `docs/sprints/SPRINT_21_RELIABLE_CODING.md`, ADR-045.
+
+## Earlier verdict (2026-11-13)
+
 
 | Gate | Result |
 | --- | --- |

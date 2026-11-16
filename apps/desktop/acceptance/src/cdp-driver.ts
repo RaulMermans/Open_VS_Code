@@ -68,6 +68,8 @@ export interface CdpTurnRequest {
   readonly workspace: string
   readonly view?: AgentViewKind
   readonly continueRun?: boolean
+  /** Confirmation cards one turn may answer. Default 8 (fixtures); real dogfood tasks may need more. */
+  readonly maxConfirmations?: number
 }
 
 export interface WorkbenchSnapshot {
@@ -676,6 +678,7 @@ export async function runCdpTurn(app: CdpApp, request: CdpTurnRequest): Promise<
       decision: request.decision,
       workspace: request.workspace,
       continueRun: request.continueRun === true,
+      maxConfirmations: request.maxConfirmations ?? 0,
     })})`
     let stopped = false
     const supervisor = superviseConfirmations(connected.webSocketDebuggerUrl, request, () => stopped)

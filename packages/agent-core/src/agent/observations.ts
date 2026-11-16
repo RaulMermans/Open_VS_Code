@@ -20,7 +20,7 @@ export interface ToolObservationInput {
   readonly output?: unknown
   readonly error?: { readonly category: string; readonly message: string }
   readonly maxContentBytes?: number
-  readonly arguments?: Readonly<Record<string, unknown>>
+  readonly arguments?: Readonly<Record<string, unknown>> | undefined
 }
 
 function collectPaths(value: unknown, paths: Set<string>, depth = 0): void {
@@ -59,7 +59,18 @@ function formatObservationContent(output: unknown, toolName: string): string {
     const record = output as Record<string, unknown>
     if (toolName === "read_file" && typeof record.content === "string") {
       const path = typeof record.path === "string" ? record.path : "file"
-      return `File: ${path}\n\`\`\`\n${record.content}\n\`\`\``
+      const total = typeof record.totalLines === "number" ? record.totalLines : undefined
+      const start = typeof record.startLine === "number" ? record.startLine : 1
+      const end = typeof record.endLine === "number" ? Math.min(record.endLine, total ?? record.endLine) : undefined
+      const partial = total !== undefined && end !== undefined && (start > 1 || end < total)
+      const unknownTail = total === undefined && end !== undefined && end - start + 1 >= 250
+      const header = partial && start > total! ? `File: ${path} (past the end)` : partial ? `File: ${path} (lines ${start}-${end} of ${total})` : unknownTail ? `File: ${path} (lines ${start}-${end})` : `File: ${path}`
+      const footer = partial && end! < total!
+        ? `\n[More below: call read_file with path "${path}" and startLine ${end! + 1} to read lines ${end! + 1}-${Math.min(total!, end! + 250)}.]`
+        : partial && start > total!
+          ? `\n[The file has only ${total} lines.]`
+          : unknownTail ? `\n[More may follow: call read_file with path "${path}" and startLine ${end! + 1}.]` : ""
+      return `${header}\n\`\`\`\n${record.content}\n\`\`\`${footer}`
     }
     if (toolName === "search_text" && Array.isArray(record.results)) {
       const results = record.results as Array<{ path: string; line: number; text: string }>
@@ -81,8 +92,12 @@ function formatObservationContent(output: unknown, toolName: string): string {
       let formatted = `Verification Status: ${status}`
       if (record.exitCode !== undefined && record.exitCode !== null) formatted += `\nExit Code: ${record.exitCode}`
       if (record.durationMs !== undefined) formatted += `\nDuration: ${record.durationMs}ms`
+      const sandbox = record.sandbox as { sandboxed?: boolean; reason?: string; limits?: string } | undefined
+      if (sandbox && typeof sandbox === "object") formatted += sandbox.sandboxed ? `\nSandbox: bubblewrap (no network, workspace-only writes; limits: ${sandbox.limits ?? "none"})` : `\nSandbox: none (${sandbox.reason ?? "not sandboxed"})`
       if (record.stdout && typeof record.stdout === "string") formatted += `\n\n### Output\n\`\`\`\n${record.stdout}\n\`\`\``
       if (record.stderr && typeof record.stderr === "string") formatted += `\n\n### Errors\n\`\`\`\n${record.stderr}\n\`\`\``
+      // The diagnosis goes first so truncation of long test output cannot hide it.
+      if (record.diagnosis && typeof record.diagnosis === "string") formatted = `${formatted.split("\n\n### Output")[0]}\n\n### Diagnosis\n${record.diagnosis}${formatted.includes("\n\n### Output") ? `\n\n### Output${formatted.split("\n\n### Output").slice(1).join("\n\n### Output")}` : ""}`
       return formatted
     }
   }

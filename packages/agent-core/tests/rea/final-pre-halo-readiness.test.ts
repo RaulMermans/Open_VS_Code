@@ -341,7 +341,7 @@ test("10A.1D-1: Verifier initializes from validated evidence bundle via AgentRun
       res = await wf.resume("APPROVE", wf.pendingConfirmation?.callId);
     }
 
-    assert.equal(res.status, "COMPLETE");
+    assert.equal(res.status, "COMPLETE", JSON.stringify({ blocker: wf.state.blocker, stages: wf.state.stages?.map((s: any) => [s.stage, s.status, s.outcome]) }).slice(0, 2000));
     assert.equal(wf.state.status, "COMPLETE");
   } finally {
     if (refServer) {

@@ -29,6 +29,10 @@ export interface PreparedVerification {
   readonly packageJsonHash: string
   readonly scriptName: string
   readonly scriptBody: string
+  /** Extra environment shown on the approval card. The engine accepts only workspace-contained PYTHONPATH. */
+  readonly env?: Readonly<Record<string, string>>
+  /** Predicted sandbox for the approval card (ADR-046); the engine re-decides at execution. */
+  readonly sandboxPreview?: string
 }
 
 export interface VerificationResult {
@@ -37,4 +41,8 @@ export interface VerificationResult {
   readonly stdout: string
   readonly stderr: string
   readonly durationMs: number
+  /** Whether and how the command was sandboxed (ADR-046). Absent when the command never started. */
+  readonly sandbox?: import("./command-sandbox.ts").SandboxStatus
+  /** Unresolved-name diagnosis for a failed run (symbol-diagnosis.ts). Informational only. */
+  readonly diagnosis?: string
 }

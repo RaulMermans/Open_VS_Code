@@ -93,3 +93,5 @@ export * from "./design/index.ts"
 export * from "./rea/index.ts"
 
 
+
+export { detectBubblewrap, planSandboxedCommand, predictSandbox, describeSandbox, type CommandSandboxMode, type SandboxStatus } from "./tools/command-sandbox.ts"

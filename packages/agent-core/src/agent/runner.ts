@@ -27,7 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
+import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -44,6 +44,8 @@ import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.t
 import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
 import { join, dirname, normalize, relative, isAbsolute, basename, extname } from "node:path"
 import { access, readFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
+import { requirementGaps } from "./requirement-checks.ts"
 import { MAX_NON_PROGRESS_RECOVERIES, type ProgressSignal, type ProgressThresholds } from "../progress/contracts.ts"
 import { DirectProgressGuard, dedupeObservations, type DirectNonProgressEvidence } from "../progress/direct-guard.ts"
 import { boundRecoveryText, buildNonProgressReport, buildRecoveryPlan, classifyStall, describeSignals, formatNonProgressReport, runDiagnosticCheck, stallNotice, type FailureCapture } from "../progress/recovery.ts"
@@ -81,6 +83,11 @@ export interface AgentRunnerDependencies {
   readonly permissionEvaluator?: typeof classifyPermission
   readonly contextCompiler?: (input: ContextCompilerInput) => CompiledContext
   readonly nonProgressThreshold?: number
+  /**
+   * ADR-011 mutation budgets are per step. A step is one model response, so the runner resets the
+   * engine's per-step counter before handling each response's tool calls.
+   */
+  readonly mutationStep?: { resetStepCounter(): void }
   readonly observationMaxBytes?: number
   readonly evidenceGate?: boolean
   readonly maxContinuations?: number
@@ -140,6 +147,13 @@ interface Session {
   nonProgress?: DirectNonProgressEvidence | undefined
   timeoutOccurred?: boolean | undefined
   contractFaults?: Map<string, number>
+  /** Identical refusals (tool + category + message) per workspace state; see #recordRefusal. */
+  refusals?: Map<string, number>
+  /** Whether the workspace package.json defines a typecheck script (cached). */
+  typecheckScript?: boolean
+  /** Unfinished explicit parts of the request, refreshed after each applied edit. */
+  requirementGaps?: string[]
+  refusalStop?: boolean
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
   completedExploration?: Set<string>
@@ -226,6 +240,7 @@ export class AgentRunner {
   readonly #permissionEvaluator: typeof classifyPermission
   readonly #contextCompiler: (input: ContextCompilerInput) => CompiledContext
   readonly #nonProgressThreshold: number
+  readonly #mutationStep: { resetStepCounter(): void } | undefined
   readonly #observationMaxBytes: number
   readonly #evidenceGate: boolean
   readonly #maxContinuations: number
@@ -249,6 +264,7 @@ export class AgentRunner {
     this.#permissionEvaluator = dependencies.permissionEvaluator ?? classifyPermission
     this.#contextCompiler = dependencies.contextCompiler ?? compileContext
     this.#nonProgressThreshold = dependencies.nonProgressThreshold ?? 3
+    this.#mutationStep = dependencies.mutationStep
     this.#observationMaxBytes = dependencies.observationMaxBytes ?? 16 * 1024
     this.#evidenceGate = dependencies.evidenceGate ?? true
     this.#maxContinuations = dependencies.maxContinuations ?? 2
@@ -639,6 +655,7 @@ export class AgentRunner {
               session.evidenceCollector.resolveRecoveredToolContractFailures()
               if (!isVerification) session.completedExploration?.clear()
             }
+            if (result.status === "APPLIED" || result.status === "ALREADY_SATISFIED") await this.#refreshRequirementGaps()
           }
           observation = createToolObservation({
             toolName: pending.prepared.name,
@@ -761,7 +778,8 @@ export class AgentRunner {
       const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
       if (verifyName) {
         session.autoVerifyPending = true
-        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } })) {
+        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: this.#nextVerificationAction() } }) || session.refusalStop) {
+          this.#finishRefusalStop()
           return this.#result()
         }
         const verified = this.#codingGoalVerdict()
@@ -1078,6 +1096,10 @@ export class AgentRunner {
         this.#cancel()
         break
       }
+      if (session.refusalStop) {
+        this.#finishRefusalStop()
+        break
+      }
       if (!isUnlimitedTurnBudget(session.input.maxTurns) && session.turns >= session.input.maxTurns) {
         const met = this.#codingGoalVerdict()
         if (met?.accept) {
@@ -1109,6 +1131,9 @@ export class AgentRunner {
         .listDefinitions()
         .filter((definition) => !isStandardToolsOnly || allowedToolNames.has(definition.name))
         .filter((definition) => this.#permission(definition.action) !== "DENY")
+        // Repair stage: after a failed run, the only useful next step is a code change. The test tool is not
+        // offered again until something in the workspace changes (it would be refused anyway).
+        .filter((definition) => definition.action !== "run_known_test" || !this.#verificationWaitingOnEdit(session))
       const codingAssessment = session.taskProfile.requiresCodeChange ? this.#assessCoding("NOT_RUN") : undefined
       const editOutstanding = Boolean(codingAssessment && !codingAssessment.editsSatisfied)
       const verificationOutstanding = Boolean(codingAssessment?.editsSatisfied && !codingAssessment.verificationSatisfied)
@@ -1299,7 +1324,9 @@ export class AgentRunner {
               category: "EDIT_REQUIRED",
               message: gateTestOnly
                 ? `[EDIT REQUIRED]\nCreate or update only ${gatePaths.join(", ")}. ${gateExisting ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist."} A prose answer is not enough.`
-                : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+                : codingVerdict.gaps && codingVerdict.gaps.length > 0
+                  ? `[NOT DONE YET]\nParts of the request are still missing:\n${codingVerdict.gaps.map((gap) => `- ${gap}`).join("\n")}\nMake those changes before answering.`
+                  : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
             },
             maxContentBytes: this.#observationMaxBytes,
           }))
@@ -1395,7 +1422,7 @@ export class AgentRunner {
           const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
           if (verifyName) {
             session.autoVerifyPending = true
-            calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }]
+            calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: this.#nextVerificationAction() } }]
           }
         }
 
@@ -1407,8 +1434,10 @@ export class AgentRunner {
       }
 
       let stopped = false
+      this.#mutationStep?.resetStepCounter()
       for (const call of calls) {
-        if (await this.#handleCall(call)) {
+        if (await this.#handleCall(call) || session.refusalStop) {
+          this.#finishRefusalStop()
           stopped = true
           break
         }
@@ -1590,7 +1619,9 @@ export class AgentRunner {
     const effectiveAction = prepared.effectiveAction ?? prepared.definition.action
     if (effectiveAction === "run_known_test" && this.#verificationWaitingOnEdit(session)) {
       const last = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
-      const detail = last?.failureSummary ? `\n${last.failureSummary}` : ""
+      const diagnosisObservation = session.observations.toReversed().find((item) => item.toolName === "run_verification" && item.content.includes("### Diagnosis"))
+      const diagnosis = diagnosisObservation ? `\n${diagnosisObservation.content.slice(diagnosisObservation.content.indexOf("### Diagnosis"), diagnosisObservation.content.indexOf("### Diagnosis") + 1_600)}` : ""
+      const detail = diagnosis || (last?.failureSummary ? `\n${last.failureSummary}` : "")
       this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
       return false
     }
@@ -1599,7 +1630,10 @@ export class AgentRunner {
       if (seen?.has(signature)) {
         const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
         const target = pending.length > 0 ? ` Create or update ${pending.join(", ")} if that is the requested change.` : ""
-        this.#addErrorObservation(prepared, "EDIT_REQUIRED", `That lookup already completed.${target} Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference.`, "DENIED")
+        // Name what the request still lacks (e.g. "add the tests"), so the model is not left to guess the next step.
+        await this.#refreshRequirementGaps()
+        const gaps = session.requirementGaps?.length ? ` Still missing: ${session.requirementGaps.join(" ")}` : ""
+        this.#addErrorObservation(prepared, "EDIT_REQUIRED", `That lookup already completed.${target}${gaps} Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference.`, "DENIED")
         return false
       }
     }
@@ -1607,13 +1641,9 @@ export class AgentRunner {
       const createdPath = String((prepared.arguments as { path?: unknown }).path ?? "")
       const createdContent = String((prepared.arguments as { content?: unknown }).content ?? "")
       const implementation = session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path))
-      const missingImports = await missingRelativeImports(session.input.workspaceRoot, createdPath, createdContent)
-      if (missingImports.length > 0) {
-        const hints = missingImports.map((specifier) => {
-          const suggestion = suggestedRelativeImport(createdPath, specifier, implementation)
-          return suggestion ? `${specifier} (the named file is ${suggestion})` : specifier
-        })
-        this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", `These imports do not exist: ${hints.join(", ")}. Import a file that is already in the workspace.`, "DENIED")
+      const importProblems = await relativeImportProblems(session.input.workspaceRoot, createdPath, createdContent)
+      if (importProblems.length > 0) {
+        this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", describeImportProblems(importProblems, createdPath, implementation), "DENIED")
         return false
       }
     }
@@ -1697,13 +1727,9 @@ export class AgentRunner {
               ...session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path)),
               ...session.evidenceLedger.filesRead.filter((path) => !isTestArtifactPath(path)),
             ]
-            const missingImports = await missingRelativeImports(session.input.workspaceRoot, proposedPath, proposedContent)
-            if (missingImports.length > 0) {
-              const hints = missingImports.map((specifier) => {
-                const suggestion = suggestedRelativeImport(proposedPath, specifier, implementation)
-                return suggestion ? `${specifier} (the named file is ${suggestion})` : specifier
-              })
-              const message = `These imports do not exist: ${hints.join(", ")}. Import a file that is already in the workspace.`
+            const importProblems = await relativeImportProblems(session.input.workspaceRoot, proposedPath, proposedContent)
+            if (importProblems.length > 0) {
+              const message = describeImportProblems(importProblems, proposedPath, implementation)
               this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", message, "FAILED")
               this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
               return false
@@ -1918,6 +1944,7 @@ export class AgentRunner {
           operation: mutationOperation(prepared.name),
         })
         session.evidenceCollector.resolveRecoveredToolContractFailures()
+        await this.#refreshRequirementGaps()
         const { evalResult: mutEval, directive: mutDirective } = await this.#runEval("MUTATION_RESULT")
         if (this.#adaptiveInterventions && mutDirective.decision !== "CONTINUE") {
           const handled = await this.#dispatchDirective(mutEval, mutDirective, "MUTATION_RESULT")
@@ -2156,6 +2183,39 @@ export class AgentRunner {
     })
     session.observations.push(observation)
     session.toolCalls.push(recordCall(prepared, outcome, observation.truncated))
+    // Runtime-initiated verification (auto-verify-*) is not a model choice and does not count toward the bound.
+    if ((outcome === "DENIED" || outcome === "FAILED") && !prepared.id.startsWith("auto-verify-")) this.#recordRefusal(prepared.name, category, message)
+  }
+
+  /**
+   * Bounded repair: the same refusal repeated without any change to the workspace state (no applied
+   * mutation, no new verification run) is non-progress. Reads in between do not reset it. The run stops
+   * truthfully instead of looping until the user intervenes (the daily-driver turn budget is unlimited).
+   */
+  #recordRefusal(toolName: string, category: string, message: string): void {
+    const session = this.#requiredSession()
+    if (session.refusalStop) return
+    const evidence = session.evidenceCollector.getEvidence()
+    const state = `${evidence.mutationOutcomes.filter((mutation) => mutation.status === "APPLIED").length}:${evidence.verificationOutcomes.length}`
+    const key = `${state}\0${toolName}\0${category}\0${message.slice(0, 400)}`
+    const refusals = session.refusals ?? (session.refusals = new Map())
+    const count = (refusals.get(key) ?? 0) + 1
+    refusals.set(key, count)
+    if (count < REPEATED_REFUSAL_LIMIT) return
+    session.refusalStop = true
+    session.failureReason = "NON_PROGRESS"
+    session.terminationSource = "NON_PROGRESS_GUARD"
+    const verdict = this.#assessCoding("NOT_RUN")
+    session.finalAnswer = `Stopped: ${toolName} was refused ${count} times with the same reason and nothing in the workspace changed in between. Last reason: ${message.split("\n")[0]!.slice(0, 300)} ${verdict.summary}`.trim()
+    // The terminal event is emitted by #finishRefusalStop once the current tool call has finished its own
+    // events (a refused patch still emits tool.rejected after this point).
+  }
+
+  /** Emits the NON_PROGRESS terminal event for a refusal stop exactly once, after the tool call returns. */
+  #finishRefusalStop(): void {
+    const session = this.#requiredSession()
+    if (!session.refusalStop || ["COMPLETED", "FAILED", "CANCELLED"].includes(session.state.status)) return
+    this.#emit("task.non_progress", { message: session.finalAnswer ?? "Repeated refusal without progress.", threshold: REPEATED_REFUSAL_LIMIT, terminationSource: "NON_PROGRESS_GUARD" })
   }
 
   /**
@@ -2956,7 +3016,10 @@ export class AgentRunner {
     const evidence = session.evidenceCollector.getEvidence()
     const last = evidence.verificationOutcomes.at(-1)
     if (!last || last.status !== "FAIL") return false
-    return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && mutation.timestamp > last.timestamp)
+    // Ordered by the collector's sequence: millisecond timestamps cannot order an edit and a run that tie.
+    return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && (
+      mutation.sequence !== undefined && last.sequence !== undefined ? mutation.sequence > last.sequence : mutation.timestamp > last.timestamp
+    ))
   }
 
   #codingGoalVerdict(): CodingCompletion | undefined {
@@ -2975,17 +3038,67 @@ export class AgentRunner {
       explicitPaths: editPaths,
       requireImplementationChange: implementationChangeRequired(session.input.task.instruction, editPaths),
       requireExistingFileEdit: requestsExistingFileEdit(session.input.task.instruction),
+      requireTestEdit: requestsNewTest(session.input.task.instruction),
       mutations: evidence.mutationOutcomes.map((mutation) => ({
         path: mutation.path,
         status: mutation.status,
         at: mutation.timestamp,
         ...(mutation.operation ? { operation: mutation.operation } : {}),
       })),
-      verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp })),
+      verifications: evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp, action: verification.action })),
       verificationRequired: this.#verificationRequired(),
       userRejectedMutation: session.mutationRejectedByUser === true,
       scheduledVerification,
+      additionalVerification: this.#additionalVerification(),
+      ...(session.requirementGaps && session.requirementGaps.length > 0 ? { requirementGaps: session.requirementGaps } : {}),
     })
+  }
+
+  /** Recomputes explicit-request gaps after the workspace changed (async file reads; the verdict stays sync). */
+  async #refreshRequirementGaps(): Promise<void> {
+    const session = this.#requiredSession()
+    if (!session.taskProfile.requiresCodeChange) return
+    const appliedPaths = session.evidenceCollector.getEvidence().mutationOutcomes
+      .filter((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED")
+      .map((mutation) => mutation.path)
+      .filter((path) => path.trim().length > 0)
+    session.requirementGaps = await requirementGaps({
+      workspaceRoot: session.input.workspaceRoot,
+      instruction: session.input.task.instruction,
+      appliedPaths,
+      isTestPath: isTestArtifactPath,
+    }).catch(() => [])
+  }
+
+  /**
+   * Checks the project itself defines, required after edits they cover: a `typecheck` script after
+   * TypeScript edits. Unit tests alone miss importers of a renamed or removed export.
+   */
+  #additionalVerification(): string[] {
+    const session = this.#requiredSession()
+    if (session.typecheckScript === undefined) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(session.input.workspaceRoot, "package.json"), "utf8")) as { scripts?: Record<string, unknown> }
+        session.typecheckScript = typeof pkg.scripts?.typecheck === "string" && pkg.scripts.typecheck.trim().length > 0
+      } catch {
+        session.typecheckScript = false
+      }
+    }
+    if (!session.typecheckScript) return []
+    const touchedTypeScript = session.evidenceCollector.getEvidence().mutationOutcomes
+      .some((mutation) => mutation.status === "APPLIED" && /\.(?:ts|tsx|mts|cts)$/.test(mutation.path))
+    return touchedTypeScript ? ["TYPECHECK"] : []
+  }
+
+  /** The next runtime-owned verification: tests first, then any additional check still missing after the last edit. */
+  #nextVerificationAction(): string {
+    const session = this.#requiredSession()
+    const evidence = session.evidenceCollector.getEvidence()
+    const mutations = evidence.mutationOutcomes.map((mutation) => ({ path: mutation.path, status: mutation.status, at: mutation.timestamp }))
+    const verifications = evidence.verificationOutcomes.map((verification) => ({ status: verification.status, at: verification.timestamp, action: verification.action }))
+    const paths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+    if (actionAfterMutation(mutations, verifications, paths, "TEST") !== "PASS") return "TEST"
+    return this.#additionalVerification().find((action) => actionAfterMutation(mutations, verifications, paths, action) !== "PASS") ?? "TEST"
   }
 
   async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {
@@ -3147,6 +3260,9 @@ export class AgentRunner {
   }
 }
 
+/** Identical refusals allowed per workspace state before the run stops as NON_PROGRESS. */
+const REPEATED_REFUSAL_LIMIT = 4
+
 function mutationOperation(toolName: string): "create" | "patch" | "delete" {
   if (toolName === "create_file") return "create"
   if (toolName === "delete_file") return "delete"
@@ -3172,7 +3288,7 @@ function stringField(value: unknown, key: string): string | undefined {
 function suggestedRelativeImport(filePath: string, specifier: string, implementationPaths: readonly string[]): string | undefined {
   const wanted = basename(specifier)
   const wantedStem = wanted.replace(/\.[^.]+$/, "")
-  const matches = implementationPaths.filter((path) => {
+  const matches = [...new Set(implementationPaths.map((path) => path.replaceAll("\\", "/")))].filter((path) => {
     const name = basename(path)
     return name === wanted || name.replace(/\.[^.]+$/, "") === wantedStem
   })
@@ -3182,37 +3298,106 @@ function suggestedRelativeImport(filePath: string, specifier: string, implementa
   return next === specifier ? undefined : next
 }
 
-async function missingRelativeImports(workspaceRoot: string, filePath: string, content: string): Promise<string[]> {
+interface RelativeImportProblem {
+  readonly specifier: string
+  /** The exact specifier that resolves under this project's toolchain, when one exists. */
+  readonly fix?: string
+}
+
+const TS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"]
+const JS_EXTENSIONS = [".js", ".jsx", ".mjs", ".cjs"]
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function readOptional(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8")
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * Whether relative imports in this file must spell the real file extension. True for native Node ESM
+ * (type: module, .mjs/.mts) and native TypeScript execution (type stripping, or no tsconfig at all).
+ * False for tsc/bundler projects, where "./format" or "./format.js" resolve to format.ts.
+ */
+async function requiresExplicitExtension(workspaceRoot: string, filePath: string): Promise<boolean> {
+  const importerExt = extname(filePath)
+  if (importerExt === ".mjs" || importerExt === ".mts") return true
+  let directory = dirname(join(workspaceRoot, filePath))
+  let packageText = ""
+  let tsconfigText = ""
+  let hasTsconfig = false
+  for (;;) {
+    if (!packageText) packageText = await readOptional(join(directory, "package.json"))
+    if (!hasTsconfig && await exists(join(directory, "tsconfig.json"))) {
+      hasTsconfig = true
+      tsconfigText = await readOptional(join(directory, "tsconfig.json"))
+    }
+    const parent = dirname(directory)
+    if (directory === workspaceRoot || parent === directory || relative(workspaceRoot, parent).startsWith("..")) break
+    directory = parent
+  }
+  const nativeTypeScript = /--experimental-(?:strip|transform)-types/.test(packageText) || /allowImportingTsExtensions|rewriteRelativeImportExtensions/.test(tsconfigText)
+  if (TS_EXTENSIONS.includes(importerExt)) return nativeTypeScript || !hasTsconfig
+  return /"type"\s*:\s*"module"/.test(packageText) && !hasTsconfig
+}
+
+/**
+ * Relative imports that will not resolve, each with the exact working specifier when the target file exists.
+ * One authority for create_file and apply_patch, so the model gets an actionable correction instead of a retry loop.
+ */
+async function relativeImportProblems(workspaceRoot: string, filePath: string, content: string): Promise<RelativeImportProblem[]> {
   const specifiers = new Set<string>()
   for (const match of content.matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
     if (match[1]) specifiers.add(match[1])
   }
-  const missing: string[] = []
+  const problems: RelativeImportProblem[] = []
+  let explicit: boolean | undefined
   for (const specifier of specifiers) {
     const base = normalize(join(workspaceRoot, dirname(filePath), specifier))
     const relativeToWorkspace = relative(workspaceRoot, base)
     if (!relativeToWorkspace || relativeToWorkspace.startsWith("..") || isAbsolute(relativeToWorkspace)) {
-      missing.push(specifier)
+      problems.push({ specifier })
       continue
     }
-    const importerExt = extname(filePath)
-    const specifierExt = extname(specifier)
-    const candidates = specifierExt
-      ? [base]
-      : importerExt === ".ts" || importerExt === ".tsx" || importerExt === ".mts"
-        ? [base, join(base, "index.ts"), join(base, "index.tsx")]
-        : [base, `${base}.js`, `${base}.mjs`, `${base}.cjs`, join(base, "index.js")]
-    let found = false
-    for (const candidate of candidates) {
-      try {
-        await access(candidate)
-        found = true
-        break
-      } catch {
-        found = false
-      }
+    if (await exists(base) && extname(specifier)) continue
+    // The file the specifier means, if any: same path plus an extension, a .js spelling of a .ts file, or an index file.
+    const stem = JS_EXTENSIONS.includes(extname(specifier)) ? base.slice(0, -extname(specifier).length) : base
+    let target: string | undefined
+    for (const candidate of [
+      ...TS_EXTENSIONS.map((ext) => `${stem}${ext}`),
+      ...JS_EXTENSIONS.map((ext) => `${stem}${ext}`),
+      ...[...TS_EXTENSIONS, ...JS_EXTENSIONS].map((ext) => join(base, `index${ext}`)),
+    ]) {
+      if (candidate !== base && await exists(candidate)) { target = candidate; break }
     }
-    if (!found) missing.push(specifier)
+    if (!target) {
+      if (!(await exists(base))) problems.push({ specifier })
+      continue
+    }
+    explicit ??= await requiresExplicitExtension(workspaceRoot, filePath)
+    if (!explicit) continue
+    let fix = relative(dirname(join(workspaceRoot, filePath)), target).replaceAll("\\", "/")
+    if (!fix.startsWith(".")) fix = `./${fix}`
+    problems.push({ specifier, fix })
   }
-  return missing
+  return problems
+}
+
+function describeImportProblems(problems: readonly RelativeImportProblem[], filePath: string, implementationPaths: readonly string[]): string {
+  const parts = problems.map((problem) => {
+    if (problem.fix) return `"${problem.specifier}" must be written "${problem.fix}" (this project resolves imports with the exact file extension)`
+    const suggestion = suggestedRelativeImport(filePath, problem.specifier, implementationPaths)
+    return suggestion ? `"${problem.specifier}" does not exist (the named file is "${suggestion}")` : `"${problem.specifier}" does not exist`
+  })
+  return `These imports do not exist: ${parts.join("; ")}. Use exactly the specifier shown, or import a file that is already in the workspace.`
 }

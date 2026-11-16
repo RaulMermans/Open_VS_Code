@@ -96,6 +96,42 @@ test("Verification Engine - CWD escape", async () => {
   }
 })
 
+test("Verification Engine - not-yet-existing argument paths must stay inside the workspace", async () => {
+  const tmpDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-")))
+  const outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-outside-")))
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    await fs.writeFile(path.join(tmpDir, "write.cjs"), "require('node:fs').writeFileSync(process.argv[2], 'x')\n")
+    await fs.symlink(outside, path.join(tmpDir, "linked"))
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const run = (target: string) => engine.execute({
+      verificationId: `arg-${target}`, action: "TEST",
+      executable: process.execPath,
+      args: [path.join(tmpDir, "write.cjs"), target],
+      cwd: tmpDir,
+      timeoutMs: 10_000,
+      commandPreview: "node write.cjs",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node write.cjs",
+    })
+    const inside = await run("./report.txt")
+    assert.equal(inside.status, "PASS")
+    for (const escaping of ["../escaped.txt", path.join(outside, "escaped.txt"), "./linked/escaped.txt"]) {
+      const result = await run(escaping)
+      assert.equal(result.status, "EXECUTION_ERROR", escaping)
+      assert.match(result.stderr, /CWD validation failed/)
+    }
+    await assert.rejects(fs.stat(path.join(outside, "escaped.txt")))
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+    await fs.rm(outside, { recursive: true, force: true })
+  }
+})
+
 test("Verification Engine - Success execution", async () => {
   let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
   tmpDir = await fs.realpath(tmpDir)

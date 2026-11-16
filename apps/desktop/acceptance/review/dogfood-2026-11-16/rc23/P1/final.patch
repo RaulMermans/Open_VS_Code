@@ -1,0 +1,30 @@
+diff --git a/packages/client-python/src/reeprov_client/client.py b/packages/client-python/src/reeprov_client/client.py
+index 27e2bff..666be17 100644
+--- a/packages/client-python/src/reeprov_client/client.py
++++ b/packages/client-python/src/reeprov_client/client.py
+@@ -103,7 +103,16 @@ class ReeprovClient:
+         timeout: int = 10,
+         max_retries: int = 2,
+         fail_open: bool = True,
++        backoff_base: Optional[float] = None,
+     ) -> None:
++        if backoff_base is not None:
++            self.backoff_base = backoff_base
++        else:
++            env_backoff_base = os.environ.get("REEPROV_BACKOFF_BASE")
++            if env_backoff_base is not None:
++                self.backoff_base = float(env_backoff_base)
++            else:
++                self.backoff_base = 0.05
+         raw_url = (
+             url
+             or endpoint
+@@ -766,7 +775,7 @@ class ReeprovClient:
+                 last_error = e
+ 
+             if attempt < self._max_retries:
+-                time.sleep(0.05 * (2 ** attempt))
++                time.sleep(self.backoff_base * (2 ** attempt))
+ 
+         print(f"[Reeprov] Request to {path} failed after retries: {last_error}", file=sys.stderr)
+         return None

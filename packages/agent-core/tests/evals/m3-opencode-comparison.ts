@@ -365,7 +365,7 @@ async function runOpenVsCode(task: ComparisonTask, workspace: string, encoding: 
     evidenceGate: false,
     adaptiveInterventions: false,
     permissionEvaluator: (input) => {
-      if (input.action === "run_shell" || input.action === "shell" || input.action === "terminal_command") return "DENY"
+      if (input.action === "terminal_command") return "DENY"
       if (input.action === "write_file" || input.action === "run_known_test" || input.action === "delete_file") return "CONFIRM"
       return "ALLOW"
     },
@@ -498,7 +498,7 @@ export async function runM3OpenCodeComparison(options?: {
   const provenance = checkGitProvenance()
   const selected = M3_COMPARISON_TASKS.filter((task) => !options?.taskIds || options.taskIds.includes(task.id))
   const repeats = options?.repeats ?? ["T01-off-by-one"]
-  const rows = []
+  const rows: Array<{ id: string; title: string; repeat: boolean; ovsc: Record<string, unknown>; opencode: Record<string, unknown> }> = []
   async function runPair(task: ComparisonTask, label: string) {
     const ovscRoot = await mkdtemp(join(tmpdir(), `ovsc-m3-${task.id}-`))
     const ocRoot = await mkdtemp(join(tmpdir(), `oc-m3-${task.id}-`))

@@ -80,6 +80,7 @@ export function isTestArtifactPath(path: string): boolean {
   if (/(^|\/)(test|tests|__tests__|spec|specs)\//.test(lower)) return true
   const base = lower.split("/").pop() ?? lower
   if (base === "test" || base === "tests" || base === "spec" || base === "specs") return true
+  if (/^test_[^/]*\.py$/.test(base) || /_test\.(?:py|go)$/.test(base)) return true
   return /(?:^|\/)[^/]+\.(?:test|spec)\.[a-z0-9]+$/i.test(normalized)
 }
 
@@ -151,6 +152,11 @@ function dependencyPaths(instruction: string): string[] {
   return cited
 }
 
+/** The user asked for a test to be written ("add a test", "write regression tests"), not just for tests to pass. */
+export function requestsNewTest(instruction: string): boolean {
+  return /\b(?:add|write|create|include|extend)\b[^.\n]{0,60}?\b(?:regression\s+tests?|unit\s+tests?|tests?|specs?)\b/i.test(instruction) && !forbidsTestEdits(instruction)
+}
+
 export function implementationChangeRequired(instruction: string, explicitPaths: readonly string[]): boolean {
   if (explicitPaths.length > 0 && explicitPaths.every((path) => isTestArtifactPath(path))) return false
   if (explicitPaths.some((path) => !isTestArtifactPath(path))) return true
@@ -169,9 +175,13 @@ export interface MutationFact {
 export interface VerificationFact {
   readonly status: string
   readonly at: string
+  /** TEST, TYPECHECK, LINT or BUILD. Absent facts are treated as TEST. */
+  readonly action?: string
 }
 
 export interface CodingCompletion {
+  /** Specific unfinished parts of the request, when known. */
+  readonly gaps?: readonly string[]
   readonly accept: boolean
   readonly editsSatisfied: boolean
   readonly verificationSatisfied: boolean
@@ -201,11 +211,20 @@ export function assessCodingCompletion(input: {
   readonly requireImplementationChange?: boolean
   /** When true, creating a new file does not satisfy the requested behavior change. */
   readonly requireExistingFileEdit?: boolean
+  /** The request asks for a new test, so a missing test file is not excused by a passing run. */
+  readonly requireTestEdit?: boolean
   readonly mutations: readonly MutationFact[]
   readonly verifications: readonly VerificationFact[]
   readonly verificationRequired: boolean
   readonly userRejectedMutation: boolean
   readonly scheduledVerification?: "PASSED" | "UNAVAILABLE" | "NOT_RUN" | undefined
+  /**
+   * Verification actions that must also pass after the last edit, beyond the test run (for example TYPECHECK
+   * when the project defines a typecheck script and the edit touched TypeScript).
+   */
+  readonly additionalVerification?: readonly string[]
+  /** Explicit request parts not carried out yet (requirement-checks.ts). Non-empty means edits are unsatisfied. */
+  readonly requirementGaps?: readonly string[]
 }): CodingCompletion {
   const applied = relevantAppliedPaths(input.mutations, input.explicitPaths)
   const satisfied = relevantSatisfiedPaths(input.mutations, input.explicitPaths)
@@ -242,7 +261,12 @@ export function assessCodingCompletion(input: {
 
   const missingPaths = input.explicitPaths.filter((wanted) => !satisfied.some((path) => pathsReferToSameFile(path, wanted)))
   const testOnly = applied.length > 0 && requireImplementation && !implementationApplied
-  if (satisfied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0) || testOnly) {
+  // A named file is context, not an obligation, once the repository's own tests pass after the applied
+  // implementation edit. The summary still lists the named files that were left unchanged.
+  const verifiedWithoutMissing = missingPaths.length > 0 && satisfied.length > 0 && !testOnly
+    && !(input.requireTestEdit && missingPaths.some((path) => isTestArtifactPath(path)))
+    && verificationAfterMutation(input.mutations, input.verifications, input.explicitPaths) === "PASS"
+  if (satisfied.length === 0 || (input.explicitPaths.length > 1 && missingPaths.length > 0 && !verifiedWithoutMissing) || testOnly) {
     const failureReason: AgentFailureReason = input.userRejectedMutation && applied.length === 0 ? "REJECTED" : "INCOMPLETE"
     const why = input.userRejectedMutation && applied.length === 0
       ? "The requested edit was not applied because the mutation was rejected."
@@ -261,6 +285,17 @@ export function assessCodingCompletion(input: {
       verificationSatisfied: false,
       failureReason,
       summary: `${changed} ${approval} ${tests} Incomplete: ${why}`,
+    }
+  }
+
+  if ((input.requirementGaps?.length ?? 0) > 0) {
+    return {
+      accept: false,
+      editsSatisfied: false,
+      verificationSatisfied: false,
+      failureReason: "INCOMPLETE",
+      gaps: input.requirementGaps!,
+      summary: `${changed} ${approval} ${tests} Incomplete: ${input.requirementGaps!.join(" ")}`,
     }
   }
 
@@ -291,13 +326,30 @@ export function assessCodingCompletion(input: {
     }
   }
 
+  if (input.verificationRequired && (input.additionalVerification?.length ?? 0) > 0) {
+    for (const action of ["TEST", ...input.additionalVerification!]) {
+      const status = actionAfterMutation(input.mutations, input.verifications, input.explicitPaths, action)
+      if (status === "PASS") continue
+      const label = action === "TEST" ? "Tests" : action === "TYPECHECK" ? "Typecheck" : action.charAt(0) + action.slice(1).toLowerCase()
+      return {
+        accept: false,
+        editsSatisfied: true,
+        verificationSatisfied: false,
+        failureReason: status === "FAIL" ? "VERIFICATION_FAILED" : "INCOMPLETE",
+        summary: status === "FAIL"
+          ? `${changed} ${approval} ${label} failed. The edit is not complete.`
+          : `${changed} ${approval} ${label} has not run since the last edit. Incomplete: the edit is not verified.`,
+      }
+    }
+  }
+
   return {
     accept: true,
     editsSatisfied: true,
     verificationSatisfied: true,
     summary: alreadyPresent
       ? `${changed} ${approval} ${tests} The requested content was already present.`
-      : `${changed} ${approval} ${tests} The requested edit was applied.`,
+      : `${changed} ${approval} ${tests} The requested edit was applied.${verifiedWithoutMissing ? ` Not changed (tests pass without it): ${missingPaths.join(", ")}.` : ""}`,
   }
 }
 
@@ -314,6 +366,9 @@ function implementationEditCounts(path: string, input: {
 
 export function requestsExistingFileEdit(instruction: string): boolean {
   if (/\b(?:create|add|write)\b/i.test(instruction) && /\b(?:file|module)\b/i.test(instruction)) return false
+  // "Create src/slug.ts ...", "add a new Stack class": a create request names a path or a new unit of code.
+  // Creating over an existing file is still refused by the engine (FILE_EXISTS), so this cannot widen writes.
+  if (/\b(?:create|new)\b[^.\n]{0,40}?(?:\b(?:class|component|module|file)\b|[\w./-]+\.[a-z]{1,5}\b)/i.test(instruction)) return false
   return true
 }
 
@@ -334,6 +389,16 @@ function verificationDetail(status: string | undefined): string {
   if (status === "STALE_VERIFICATION") return "Verification was stale. Incomplete: verification is still required."
   if (status === "EXECUTION_ERROR") return "Verification did not complete. Incomplete: verification is still required."
   return "Tests did not run after the edit. Incomplete: verification is still required."
+}
+
+/** The latest result of one verification action after the last relevant edit. */
+export function actionAfterMutation(
+  mutations: readonly MutationFact[],
+  verifications: readonly VerificationFact[],
+  explicitPaths: readonly string[],
+  action: string,
+): "PASS" | "FAIL" | "NONE" | "INCOMPLETE" {
+  return verificationAfterMutation(mutations, verifications.filter((verification) => (verification.action ?? "TEST") === action), explicitPaths)
 }
 
 function verificationAfterMutation(

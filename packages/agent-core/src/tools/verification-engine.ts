@@ -4,8 +4,10 @@ import * as crypto from "node:crypto"
 import * as path from "node:path"
 import { StringDecoder } from "node:string_decoder"
 import { PreparedVerification, VerificationResult, VerificationStatus } from "./verification-contracts.ts"
-import { resolveRepositoryPath } from "./path-safety.ts"
+import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
+import { resolveWritePath } from "./mutation-engine.ts"
 import { killProcessTree } from "./kill-process-tree.ts"
+import { type CommandSandboxMode, planSandboxedCommand } from "./command-sandbox.ts"
 
 const MAX_OUTPUT_BYTES = 16 * 1024 // 16KB
 
@@ -40,6 +42,8 @@ export type VerificationOutputCallback = (output: { stream: "stdout" | "stderr";
 
 export interface VerificationEngineOptions {
   readonly workspaceRoot: string
+  /** ADR-046. Library default "off"; the desktop runtime passes the user setting (default "auto"). */
+  readonly sandbox?: CommandSandboxMode
 }
 
 export class VerificationEngine {
@@ -140,6 +144,18 @@ export class VerificationEngine {
       PATH: absolutePathEntries(process.env.PATH || ""),
       NODE_ENV: process.env.NODE_ENV || "test",
     }
+    // Prepared environment: only PYTHONPATH, and every entry must resolve inside the workspace.
+    for (const [key, value] of Object.entries(prepared.env ?? {})) {
+      if (key !== "PYTHONPATH") {
+        return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: `Environment variable ${key} is not allowed for verification`, durationMs: Date.now() - startTime }
+      }
+      try {
+        const entries = await Promise.all(value.split(path.delimiter).filter(Boolean).map((entry) => resolveRepositoryPath(this.options.workspaceRoot, entry, "directory")))
+        env.PYTHONPATH = entries.join(path.delimiter)
+      } catch (error) {
+        return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: `PYTHONPATH must stay inside the workspace: ${(error as Error).message}`, durationMs: Date.now() - startTime }
+      }
+    }
     // Include npm_config_* variables
     for (const [key, value] of Object.entries(process.env)) {
       if (key.toLowerCase().startsWith("npm_config_") && value !== undefined) {
@@ -147,12 +163,26 @@ export class VerificationEngine {
       }
     }
 
-    return new Promise((resolve) => {
+    const plan = planSandboxedCommand({
+      mode: this.options.sandbox ?? "off",
+      workspaceRoot: this.options.workspaceRoot,
+      cwd: resolvedCwd,
+      executable: prepared.executable,
+      args: prepared.args,
+      env,
+    })
+    if ("error" in plan) {
+      return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: plan.error, durationMs: Date.now() - startTime, sandbox: plan.status }
+    }
+    const sandbox = plan.status
+
+    return new Promise<VerificationResult>((resolveRaw) => {
+      const resolve = (result: VerificationResult) => resolveRaw({ ...result, sandbox })
       let isSettled = false
 
-      const child = spawn(prepared.executable, prepared.args, {
+      const child = spawn(plan.executable, [...plan.args], {
         cwd: resolvedCwd,
-        env,
+        env: plan.env,
         shell: false,
         detached: process.platform !== "win32",
       })
@@ -232,6 +262,10 @@ export class VerificationEngine {
           finalStatus = "FAIL"
           stderr += "\nNode test run did not report a passing test."
         }
+        if (finalStatus === "PASS" && isPythonTestCommand(prepared.args) && !pythonTestReportedPass(stdout, stderr, stdoutTruncated || stderrTruncated)) {
+          finalStatus = "FAIL"
+          stderr += "\nPython test run did not report a passing test."
+        }
 
         resolve({
           status: finalStatus,
@@ -305,13 +339,34 @@ async function assertExecutableContained(workspaceRoot: string, executable: stri
 async function assertArgsContained(workspaceRoot: string, args: readonly string[]): Promise<void> {
   for (const arg of args) {
     if (!isPathArg(arg)) continue
-    await resolveRepositoryPath(workspaceRoot, arg)
+    try {
+      await resolveRepositoryPath(workspaceRoot, arg)
+    } catch (error) {
+      // An output path the command will create (for example a report or pid file) need not exist yet,
+      // but its nearest existing ancestor must still resolve inside the workspace.
+      if (!(error instanceof RepositoryPathError) || error.code !== "NOT_FOUND") throw error
+      await resolveWritePath(workspaceRoot, arg, { mustExist: false })
+    }
   }
 }
 
 function isPathArg(arg: string): boolean {
   if (arg.startsWith("-") && !arg.includes("..") && !arg.includes("/") && !arg.includes("\\")) return false
   return arg.includes("/") || arg.includes("\\") || arg.startsWith(".") || path.isAbsolute(arg)
+}
+
+/** unittest, Django's manage.py test and pytest: an exit code of 0 is not enough when no test ran. */
+function isPythonTestCommand(args: readonly string[]): boolean {
+  return (args[0] === "-m" && (args[1] === "unittest" || args[1] === "pytest")) || (args[0] === "manage.py" && args[1] === "test")
+}
+
+function pythonTestReportedPass(stdout: string, stderr: string, truncated: boolean): boolean {
+  if (truncated) return false
+  const text = `${stdout}\n${stderr}`
+  const ran = [...text.matchAll(/^Ran (\d+) tests? in /gm)].at(-1)
+  if (ran) return Number(ran[1]) > 0 && /^OK\b/m.test(text)
+  const pytest = [...text.matchAll(/(\d+) passed/g)].at(-1)
+  return pytest !== undefined && Number(pytest[1]) > 0 && !/\d+ (?:failed|error)/.test(text)
 }
 
 function isNodeTestCommand(args: readonly string[]): boolean {

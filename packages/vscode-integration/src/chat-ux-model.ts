@@ -137,7 +137,8 @@ function appendVerified(content: string, result: TerminalTaskInput): string {
   const note = claimNote(result, facts)
   const blocks = [content]
   if (note) blocks.push("", note)
-  if (facts.length > 0) blocks.push("", "Verified outcome", ...facts)
+  // The card title follows the run status; a failed or incomplete run must never read "Task completed."
+  if (facts.length > 0) blocks.push("", result.status === "COMPLETED" ? "Verified outcome" : "Verified outcome: not completed", ...facts)
   return blocks.join("\n")
 }
 
