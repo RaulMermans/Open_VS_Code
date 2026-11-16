@@ -113,3 +113,18 @@ test("a real code change between refusals resets the bound", async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("a refused patch that also emits tool.rejected stops cleanly instead of throwing a transition error", async () => {
+  const root = await workspace()
+  try {
+    await writeFile(join(root, "src/greet.ts"), "export function greet(name: string): string {\n  return name\n}\n")
+    const badImport = (id: string) => response("", [{ id, name: "apply_patch", arguments: { path: "src/greet.ts", search: "export function greet(name: string): string {", replace: "import { missing } from './nowhere.ts'\nexport function greet(name: string): string {" } }])
+    const { result } = await run(root, [badImport("i1"), badImport("i2"), badImport("i3"), badImport("i4"), badImport("i5")])
+    assert.equal(result.status, "FAILED")
+    assert.equal(result.failureReason, "NON_PROGRESS")
+    assert.match(result.finalAnswer ?? "", /refused 4 times/)
+    assert.equal(await readFile(join(root, "src/greet.ts"), "utf8"), "export function greet(name: string): string {\n  return name\n}\n")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

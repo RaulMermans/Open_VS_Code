@@ -772,6 +772,7 @@ export class AgentRunner {
       if (verifyName) {
         session.autoVerifyPending = true
         if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }) || session.refusalStop) {
+          this.#finishRefusalStop()
           return this.#result()
         }
         const verified = this.#codingGoalVerdict()
@@ -1086,6 +1087,10 @@ export class AgentRunner {
     while (!["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_CONFIRMATION"].includes(session.state.status)) {
       if (session.input.signal?.aborted) {
         this.#cancel()
+        break
+      }
+      if (session.refusalStop) {
+        this.#finishRefusalStop()
         break
       }
       if (!isUnlimitedTurnBudget(session.input.maxTurns) && session.turns >= session.input.maxTurns) {
@@ -1420,6 +1425,7 @@ export class AgentRunner {
       this.#mutationStep?.resetStepCounter()
       for (const call of calls) {
         if (await this.#handleCall(call) || session.refusalStop) {
+          this.#finishRefusalStop()
           stopped = true
           break
         }
@@ -2183,7 +2189,15 @@ export class AgentRunner {
     session.terminationSource = "NON_PROGRESS_GUARD"
     const verdict = this.#assessCoding("NOT_RUN")
     session.finalAnswer = `Stopped: ${toolName} was refused ${count} times with the same reason and nothing in the workspace changed in between. Last reason: ${message.split("\n")[0]!.slice(0, 300)} ${verdict.summary}`.trim()
-    this.#emit("task.non_progress", { message: session.finalAnswer, threshold: REPEATED_REFUSAL_LIMIT, terminationSource: "NON_PROGRESS_GUARD" })
+    // The terminal event is emitted by #finishRefusalStop once the current tool call has finished its own
+    // events (a refused patch still emits tool.rejected after this point).
+  }
+
+  /** Emits the NON_PROGRESS terminal event for a refusal stop exactly once, after the tool call returns. */
+  #finishRefusalStop(): void {
+    const session = this.#requiredSession()
+    if (!session.refusalStop || ["COMPLETED", "FAILED", "CANCELLED"].includes(session.state.status)) return
+    this.#emit("task.non_progress", { message: session.finalAnswer ?? "Repeated refusal without progress.", threshold: REPEATED_REFUSAL_LIMIT, terminationSource: "NON_PROGRESS_GUARD" })
   }
 
   /**
