@@ -4,7 +4,8 @@ import * as crypto from "node:crypto"
 import * as path from "node:path"
 import { StringDecoder } from "node:string_decoder"
 import { PreparedVerification, VerificationResult, VerificationStatus } from "./verification-contracts.ts"
-import { resolveRepositoryPath } from "./path-safety.ts"
+import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
+import { resolveWritePath } from "./mutation-engine.ts"
 import { killProcessTree } from "./kill-process-tree.ts"
 
 const MAX_OUTPUT_BYTES = 16 * 1024 // 16KB
@@ -232,6 +233,10 @@ export class VerificationEngine {
           finalStatus = "FAIL"
           stderr += "\nNode test run did not report a passing test."
         }
+        if (finalStatus === "PASS" && isPythonTestCommand(prepared.args) && !pythonTestReportedPass(stdout, stderr, stdoutTruncated || stderrTruncated)) {
+          finalStatus = "FAIL"
+          stderr += "\nPython test run did not report a passing test."
+        }
 
         resolve({
           status: finalStatus,
@@ -305,13 +310,34 @@ async function assertExecutableContained(workspaceRoot: string, executable: stri
 async function assertArgsContained(workspaceRoot: string, args: readonly string[]): Promise<void> {
   for (const arg of args) {
     if (!isPathArg(arg)) continue
-    await resolveRepositoryPath(workspaceRoot, arg)
+    try {
+      await resolveRepositoryPath(workspaceRoot, arg)
+    } catch (error) {
+      // An output path the command will create (for example a report or pid file) need not exist yet,
+      // but its nearest existing ancestor must still resolve inside the workspace.
+      if (!(error instanceof RepositoryPathError) || error.code !== "NOT_FOUND") throw error
+      await resolveWritePath(workspaceRoot, arg, { mustExist: false })
+    }
   }
 }
 
 function isPathArg(arg: string): boolean {
   if (arg.startsWith("-") && !arg.includes("..") && !arg.includes("/") && !arg.includes("\\")) return false
   return arg.includes("/") || arg.includes("\\") || arg.startsWith(".") || path.isAbsolute(arg)
+}
+
+/** unittest, Django's manage.py test and pytest: an exit code of 0 is not enough when no test ran. */
+function isPythonTestCommand(args: readonly string[]): boolean {
+  return (args[0] === "-m" && (args[1] === "unittest" || args[1] === "pytest")) || (args[0] === "manage.py" && args[1] === "test")
+}
+
+function pythonTestReportedPass(stdout: string, stderr: string, truncated: boolean): boolean {
+  if (truncated) return false
+  const text = `${stdout}\n${stderr}`
+  const ran = [...text.matchAll(/^Ran (\d+) tests? in /gm)].at(-1)
+  if (ran) return Number(ran[1]) > 0 && /^OK\b/m.test(text)
+  const pytest = [...text.matchAll(/(\d+) passed/g)].at(-1)
+  return pytest !== undefined && Number(pytest[1]) > 0 && !/\d+ (?:failed|error)/.test(text)
 }
 
 function isNodeTestCommand(args: readonly string[]): boolean {

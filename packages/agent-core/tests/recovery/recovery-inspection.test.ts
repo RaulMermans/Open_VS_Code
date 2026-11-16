@@ -128,7 +128,7 @@ test("7C-R7: a corrupt journal is UNREADABLE with a code only, not content", asy
 })
 
 test("MAX_TURNS_EXCEEDED is continuable rather than a failed automatic retry", async () => {
-  const { root, coordinator } = await workspace()
+  const { coordinator } = await workspace()
   const runId = "session-turn-budget"
   await coordinator.checkpoint({
     runId,

@@ -52,6 +52,8 @@ export async function discoverVerificationCommand(
           scriptBody: "",
         }
       }
+      const python = await discoverPythonTestCommand(workspaceReal)
+      if (python) return python
     }
     if (missing) {
       throw new Error(`Failed to read package.json in workspace root: ${(error as Error).message}`, { cause: error })
@@ -87,6 +89,50 @@ export async function discoverVerificationCommand(
 }
 
 const NODE_TEST_FILE = /\.test\.(?:js|mjs|cjs|ts)$/
+const PYTHON_TEST_FILE = /^(?:test_.*|.*_test)\.py$/
+
+async function containedFileExists(workspaceReal: string, relative: string): Promise<boolean> {
+  try {
+    await resolveRepositoryPath(workspaceReal, relative, "file")
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function containedText(workspaceReal: string, relative: string): Promise<string> {
+  try {
+    const resolved = await resolveRepositoryPath(workspaceReal, relative, "file")
+    return await fs.readFile(resolved, "utf-8")
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * Python verifier registry for repositories without package.json. Only commands the repository already
+ * implies are used: Django's manage.py, a configured pytest, or stdlib unittest over existing test files.
+ * The interpreter is python3 from PATH and is refused when it resolves inside the workspace.
+ */
+async function discoverPythonTestCommand(workspaceReal: string): Promise<DiscoveredCommand | undefined> {
+  const testFiles = await collectContainedNodeTests(workspaceReal, workspaceReal, 0, PYTHON_TEST_FILE)
+  const djangoProject = await containedFileExists(workspaceReal, "manage.py")
+  if (testFiles.length === 0 && !djangoProject) return undefined
+  const executable = findExecutable("python3", { workspaceRoot: workspaceReal })
+  if (!executable) return undefined
+  const command = (args: string[]): DiscoveredCommand => ({ executable, args, packageJsonPath: "", packageJsonHash: "", scriptName: "", scriptBody: "" })
+  if (djangoProject) return command(["manage.py", "test"])
+  const pytestConfigured = await containedFileExists(workspaceReal, "pytest.ini")
+    || await containedFileExists(workspaceReal, "conftest.py")
+    || /^\[tool\.pytest/m.test(await containedText(workspaceReal, "pyproject.toml"))
+    || /^\[(?:tool:)?pytest\]/m.test(await containedText(workspaceReal, "setup.cfg"))
+    || /^\[pytest\]/m.test(await containedText(workspaceReal, "tox.ini"))
+  if (pytestConfigured) return command(["-m", "pytest", "-q"])
+  const topDirs = new Set(testFiles.map((file) => file.split(path.sep)[0]!))
+  const start = topDirs.size === 1 && testFiles.every((file) => file.includes(path.sep)) ? [...topDirs][0]! : "."
+  const importable = start === "." || await containedFileExists(workspaceReal, path.join(start, "__init__.py"))
+  return command(["-m", "unittest", "discover", "-s", start, ...(importable ? ["-t", "."] : [])])
+}
 const NODE_NAME = process.platform === "win32" ? "node.exe" : "node"
 
 export interface NodeBinaryOptions {
@@ -122,7 +168,7 @@ function findExecutable(name: string, options: NodeBinaryOptions): string | unde
   } catch {
     return undefined
   }
-  const ranked = versions.sort(compareNodeVersions).reverse()
+  const ranked = versions.toSorted(compareNodeVersions).toReversed()
   for (const version of ranked) {
     const candidate = path.join(nvmRoot, version, "bin", name)
     if (usableBinary(candidate, workspace)) return candidate
@@ -130,13 +176,16 @@ function findExecutable(name: string, options: NodeBinaryOptions): string | unde
   return undefined
 }
 
-function compareNodeVersions(left: string, right: string): number {
-  const parse = (name: string) => name.replace(/^v/, "").split(".").map((part) => {
+function parseNodeVersion(name: string): number[] {
+  return name.replace(/^v/, "").split(".").map((part) => {
     const value = Number.parseInt(part, 10)
     return Number.isFinite(value) ? value : 0
   })
-  const a = parse(left)
-  const b = parse(right)
+}
+
+function compareNodeVersions(left: string, right: string): number {
+  const a = parseNodeVersion(left)
+  const b = parseNodeVersion(right)
   const length = Math.max(a.length, b.length)
   for (let index = 0; index < length; index += 1) {
     const diff = (a[index] ?? 0) - (b[index] ?? 0)
@@ -171,7 +220,7 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 /** Test files whose real path stays inside the workspace. Symlinks that leave the workspace are ignored. */
-async function collectContainedNodeTests(workspaceReal: string, current = workspaceReal, depth = 0): Promise<string[]> {
+async function collectContainedNodeTests(workspaceReal: string, current = workspaceReal, depth = 0, pattern: RegExp = NODE_TEST_FILE): Promise<string[]> {
   if (depth > 4) return []
   let entries
   try {
@@ -181,7 +230,7 @@ async function collectContainedNodeTests(workspaceReal: string, current = worksp
   }
   const files: string[] = []
   for (const entry of entries) {
-    if (entry.name === "node_modules" || entry.name === ".git" || entry.name.startsWith(".")) continue
+    if (entry.name === "node_modules" || entry.name === "__pycache__" || entry.name === ".git" || entry.name.startsWith(".")) continue
     const full = path.join(current, entry.name)
     if (entry.isSymbolicLink()) {
       const real = existingRealpath(full)
@@ -192,14 +241,14 @@ async function collectContainedNodeTests(workspaceReal: string, current = worksp
       } catch {
         continue
       }
-      if (stat.isFile() && NODE_TEST_FILE.test(entry.name)) files.push(path.relative(workspaceReal, full))
+      if (stat.isFile() && pattern.test(entry.name)) files.push(path.relative(workspaceReal, full))
       continue
     }
     if (entry.isDirectory()) {
-      files.push(...await collectContainedNodeTests(workspaceReal, full, depth + 1))
-    } else if (NODE_TEST_FILE.test(entry.name)) {
+      files.push(...await collectContainedNodeTests(workspaceReal, full, depth + 1, pattern))
+    } else if (pattern.test(entry.name)) {
       files.push(path.relative(workspaceReal, full))
     }
   }
-  return files.sort()
+  return files.toSorted()
 }

@@ -275,7 +275,8 @@ export class RuntimeEvidenceCollector {
     this.#verificationCount++
     const combinedOutput = `${verification.stdout ?? ""}\n${verification.stderr ?? ""}`
     const failureSummary = verification.status !== "PASS" ? verificationFailureExcerpt(combinedOutput, 500) : undefined
-    const failureHash = failureSummary ? deterministicHash(`${verification.action}:${verification.status}:${failureSummary}`) : undefined
+    // An empty excerpt is still a failure: identical silent failures must hash identically so repeats are detected.
+    const failureHash = failureSummary !== undefined ? deterministicHash(`${verification.action}:${verification.status}:${verification.failedTestCount ?? ""}:${failureSummary}`) : undefined
 
     const record: BoundedVerificationOutcome = {
       executionId: verification.executionId,

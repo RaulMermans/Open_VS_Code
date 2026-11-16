@@ -2207,6 +2207,12 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
             model: "scripted",
             message: { role: "assistant", content: "Attempting completion 1" },
           },
+          // A genuine repair edit precedes reverification: identical reruns without a code change are refused.
+          {
+            model: "scripted",
+            message: { role: "assistant", content: "" },
+            toolCalls: [{ id: "m-2", name: "apply_edit", arguments: { targetFile: "app.ts" } }],
+          },
           {
             model: "scripted",
             message: { role: "assistant", content: "" },
@@ -2268,7 +2274,7 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         },
         expected: {
           status: "COMPLETED",
-          turns: 4,
+          turns: 5,
           postVerifDecisions: ["REVISE", "CONTINUE"],
           finalAnswer: "Fixed and tests pass!",
         },

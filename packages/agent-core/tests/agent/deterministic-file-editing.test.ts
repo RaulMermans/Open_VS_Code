@@ -307,7 +307,71 @@ test("an extensionless TypeScript import is rejected when only a .ts file exists
       projectInstructions: [],
     })
     assert.equal(await readFile(join(root, "src/greet.ts"), "utf8"), greetBefore)
-    assert.match(provider.requests.at(-1)?.messages[0]?.content ?? "", /these imports do not exist|\.\/format\.ts/i)
+    assert.match(provider.requests.at(-1)?.messages[0]?.content ?? "", /"\.\/format" must be written "\.\/format\.ts"/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+const GREET_SEARCH = "export function greet(first: string, last: string): string {\n  throw new Error('not implemented')\n}"
+
+async function patchGreetImport(root: string, specifier: string, readsBefore = 1) {
+  const reads = Array.from({ length: readsBefore }, (_, index) => response("", [{ id: `read-${index}`, name: "read_file", arguments: { path: "src/format.ts" } }]))
+  const provider = new ScriptedModelProvider([
+    ...reads,
+    response("", [{
+      id: "patch",
+      name: "apply_patch",
+      arguments: { path: "src/greet.ts", search: GREET_SEARCH, replace: `import { formatName } from '${specifier}'\nexport function greet(first: string, last: string): string {\n  return \`Hello, \${formatName(first, last)}\`\n}` },
+    }]),
+    response("done"),
+  ])
+  const runner = agent(provider, registry(root))
+  const first = await runner.run({
+    task: { id: "task", mode: "BUILD", instruction: "Implement greet in src/greet.ts using formatName." },
+    workspaceRoot: root,
+    maxTurns: readsBefore + 3,
+    contextBudget: budget,
+    projectInstructions: [],
+  })
+  const result = first.status === "PAUSED" ? await runner.resume("APPROVE") : first
+  return { provider, result, greet: await readFile(join(root, "src/greet.ts"), "utf8") }
+}
+
+test("a tsc or bundler TypeScript project accepts extensionless and .js spellings of an existing .ts file", async () => {
+  for (const specifier of ["./format", "./format.js"]) {
+    const root = await workspace()
+    try {
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext" } }))
+      const { greet } = await patchGreetImport(root, specifier)
+      assert.match(greet, new RegExp(`from '${specifier.replace(".", "\\.")}'`), specifier)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+})
+
+test("a project that runs TypeScript natively gets the exact .ts specifier even after repeated reads", async () => {
+  const root = await workspace()
+  try {
+    await writeFile(join(root, "tsconfig.json"), "{}")
+    await writeFile(join(root, "package.json"), JSON.stringify({ type: "module", scripts: { test: "node --experimental-strip-types --test" } }))
+    const before = await readFile(join(root, "src/greet.ts"), "utf8")
+    const { provider, greet } = await patchGreetImport(root, "./format", 3)
+    assert.equal(greet, before)
+    assert.match(provider.requests.at(-1)?.messages[0]?.content ?? "", /"\.\/format" must be written "\.\/format\.ts"/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("an import of a file that does not exist names the real file when exactly one matches", async () => {
+  const root = await workspace()
+  try {
+    const before = await readFile(join(root, "src/greet.ts"), "utf8")
+    const { provider, greet } = await patchGreetImport(root, "../lib/format.ts", 3)
+    assert.equal(greet, before)
+    assert.match(provider.requests.at(-1)?.messages[0]?.content ?? "", /"\.\.\/lib\/format\.ts" does not exist \(the named file is "\.\/format\.ts"\)/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

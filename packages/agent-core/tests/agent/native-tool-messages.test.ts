@@ -41,7 +41,7 @@ test("tool results are attributed as tool messages instead of one user blob", ()
   assert.equal(messages[3]?.role, "assistant")
   assert.equal(messages[4]?.role, "tool")
   assert.match(messages[4]?.content || "", /VERIFICATION_FAILED/)
-  const wire = formatWireMessages(messages)
+  const wire = formatWireMessages(messages) as ReadonlyArray<{ tool_calls?: ReadonlyArray<{ function?: { name?: string; arguments?: string } }>; tool_call_id?: string }>
   assert.equal(wire[1]?.tool_calls?.[0]?.function?.name, "read_file")
   assert.equal(wire[1]?.tool_calls?.[0]?.function?.arguments, JSON.stringify({ path: "src/add.js" }))
   assert.equal(wire[2]?.tool_call_id, "call-1")

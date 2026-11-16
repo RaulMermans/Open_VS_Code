@@ -275,9 +275,11 @@ export class ReconstructionEngine {
       }
 
       const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);
-      if (mutResult.status !== "APPLIED") {
-        this.#emitStage("implementation", "FAILED", `Failed to apply mutation on ${prep.path}: ${mutResult.error}`);
-        throw new Error(`Failed to apply mutation on "${prep.path}": ${mutResult.error}`);
+      // ALREADY_SATISFIED: the file already holds exactly the intended bytes, so no write was needed.
+      if (mutResult.status !== "APPLIED" && mutResult.status !== "ALREADY_SATISFIED") {
+        const detail = mutResult.error ? `${mutResult.status}: ${mutResult.error}` : mutResult.status;
+        this.#emitStage("implementation", "FAILED", `Failed to apply mutation on ${prep.path}: ${detail}`);
+        throw new Error(`Failed to apply mutation on "${prep.path}": ${detail}`);
       }
     }
 

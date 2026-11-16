@@ -20,7 +20,7 @@ export interface ToolObservationInput {
   readonly output?: unknown
   readonly error?: { readonly category: string; readonly message: string }
   readonly maxContentBytes?: number
-  readonly arguments?: Readonly<Record<string, unknown>>
+  readonly arguments?: Readonly<Record<string, unknown>> | undefined
 }
 
 function collectPaths(value: unknown, paths: Set<string>, depth = 0): void {

@@ -140,6 +140,9 @@ interface Session {
   nonProgress?: DirectNonProgressEvidence | undefined
   timeoutOccurred?: boolean | undefined
   contractFaults?: Map<string, number>
+  /** Identical refusals (tool + category + message) per workspace state; see #recordRefusal. */
+  refusals?: Map<string, number>
+  refusalStop?: boolean
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
   completedExploration?: Set<string>
@@ -761,7 +764,7 @@ export class AgentRunner {
       const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
       if (verifyName) {
         session.autoVerifyPending = true
-        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } })) {
+        if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }) || session.refusalStop) {
           return this.#result()
         }
         const verified = this.#codingGoalVerdict()
@@ -1408,7 +1411,7 @@ export class AgentRunner {
 
       let stopped = false
       for (const call of calls) {
-        if (await this.#handleCall(call)) {
+        if (await this.#handleCall(call) || session.refusalStop) {
           stopped = true
           break
         }
@@ -1607,13 +1610,9 @@ export class AgentRunner {
       const createdPath = String((prepared.arguments as { path?: unknown }).path ?? "")
       const createdContent = String((prepared.arguments as { content?: unknown }).content ?? "")
       const implementation = session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path))
-      const missingImports = await missingRelativeImports(session.input.workspaceRoot, createdPath, createdContent)
-      if (missingImports.length > 0) {
-        const hints = missingImports.map((specifier) => {
-          const suggestion = suggestedRelativeImport(createdPath, specifier, implementation)
-          return suggestion ? `${specifier} (the named file is ${suggestion})` : specifier
-        })
-        this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", `These imports do not exist: ${hints.join(", ")}. Import a file that is already in the workspace.`, "DENIED")
+      const importProblems = await relativeImportProblems(session.input.workspaceRoot, createdPath, createdContent)
+      if (importProblems.length > 0) {
+        this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", describeImportProblems(importProblems, createdPath, implementation), "DENIED")
         return false
       }
     }
@@ -1697,13 +1696,9 @@ export class AgentRunner {
               ...session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path)),
               ...session.evidenceLedger.filesRead.filter((path) => !isTestArtifactPath(path)),
             ]
-            const missingImports = await missingRelativeImports(session.input.workspaceRoot, proposedPath, proposedContent)
-            if (missingImports.length > 0) {
-              const hints = missingImports.map((specifier) => {
-                const suggestion = suggestedRelativeImport(proposedPath, specifier, implementation)
-                return suggestion ? `${specifier} (the named file is ${suggestion})` : specifier
-              })
-              const message = `These imports do not exist: ${hints.join(", ")}. Import a file that is already in the workspace.`
+            const importProblems = await relativeImportProblems(session.input.workspaceRoot, proposedPath, proposedContent)
+            if (importProblems.length > 0) {
+              const message = describeImportProblems(importProblems, proposedPath, implementation)
               this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", message, "FAILED")
               this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
               return false
@@ -2156,6 +2151,31 @@ export class AgentRunner {
     })
     session.observations.push(observation)
     session.toolCalls.push(recordCall(prepared, outcome, observation.truncated))
+    // Runtime-initiated verification (auto-verify-*) is not a model choice and does not count toward the bound.
+    if ((outcome === "DENIED" || outcome === "FAILED") && !prepared.id.startsWith("auto-verify-")) this.#recordRefusal(prepared.name, category, message)
+  }
+
+  /**
+   * Bounded repair: the same refusal repeated without any change to the workspace state (no applied
+   * mutation, no new verification run) is non-progress. Reads in between do not reset it. The run stops
+   * truthfully instead of looping until the user intervenes (the daily-driver turn budget is unlimited).
+   */
+  #recordRefusal(toolName: string, category: string, message: string): void {
+    const session = this.#requiredSession()
+    if (session.refusalStop) return
+    const evidence = session.evidenceCollector.getEvidence()
+    const state = `${evidence.mutationOutcomes.filter((mutation) => mutation.status === "APPLIED").length}:${evidence.verificationOutcomes.length}`
+    const key = `${state}\0${toolName}\0${category}\0${message.slice(0, 400)}`
+    const refusals = session.refusals ?? (session.refusals = new Map())
+    const count = (refusals.get(key) ?? 0) + 1
+    refusals.set(key, count)
+    if (count < REPEATED_REFUSAL_LIMIT) return
+    session.refusalStop = true
+    session.failureReason = "NON_PROGRESS"
+    session.terminationSource = "NON_PROGRESS_GUARD"
+    const verdict = this.#assessCoding("NOT_RUN")
+    session.finalAnswer = `Stopped: ${toolName} was refused ${count} times with the same reason and nothing in the workspace changed in between. Last reason: ${message.split("\n")[0]!.slice(0, 300)} ${verdict.summary}`.trim()
+    this.#emit("task.non_progress", { message: session.finalAnswer, threshold: REPEATED_REFUSAL_LIMIT, terminationSource: "NON_PROGRESS_GUARD" })
   }
 
   /**
@@ -3147,6 +3167,9 @@ export class AgentRunner {
   }
 }
 
+/** Identical refusals allowed per workspace state before the run stops as NON_PROGRESS. */
+const REPEATED_REFUSAL_LIMIT = 4
+
 function mutationOperation(toolName: string): "create" | "patch" | "delete" {
   if (toolName === "create_file") return "create"
   if (toolName === "delete_file") return "delete"
@@ -3172,7 +3195,7 @@ function stringField(value: unknown, key: string): string | undefined {
 function suggestedRelativeImport(filePath: string, specifier: string, implementationPaths: readonly string[]): string | undefined {
   const wanted = basename(specifier)
   const wantedStem = wanted.replace(/\.[^.]+$/, "")
-  const matches = implementationPaths.filter((path) => {
+  const matches = [...new Set(implementationPaths.map((path) => path.replaceAll("\\", "/")))].filter((path) => {
     const name = basename(path)
     return name === wanted || name.replace(/\.[^.]+$/, "") === wantedStem
   })
@@ -3182,37 +3205,106 @@ function suggestedRelativeImport(filePath: string, specifier: string, implementa
   return next === specifier ? undefined : next
 }
 
-async function missingRelativeImports(workspaceRoot: string, filePath: string, content: string): Promise<string[]> {
+interface RelativeImportProblem {
+  readonly specifier: string
+  /** The exact specifier that resolves under this project's toolchain, when one exists. */
+  readonly fix?: string
+}
+
+const TS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"]
+const JS_EXTENSIONS = [".js", ".jsx", ".mjs", ".cjs"]
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function readOptional(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8")
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * Whether relative imports in this file must spell the real file extension. True for native Node ESM
+ * (type: module, .mjs/.mts) and native TypeScript execution (type stripping, or no tsconfig at all).
+ * False for tsc/bundler projects, where "./format" or "./format.js" resolve to format.ts.
+ */
+async function requiresExplicitExtension(workspaceRoot: string, filePath: string): Promise<boolean> {
+  const importerExt = extname(filePath)
+  if (importerExt === ".mjs" || importerExt === ".mts") return true
+  let directory = dirname(join(workspaceRoot, filePath))
+  let packageText = ""
+  let tsconfigText = ""
+  let hasTsconfig = false
+  for (;;) {
+    if (!packageText) packageText = await readOptional(join(directory, "package.json"))
+    if (!hasTsconfig && await exists(join(directory, "tsconfig.json"))) {
+      hasTsconfig = true
+      tsconfigText = await readOptional(join(directory, "tsconfig.json"))
+    }
+    const parent = dirname(directory)
+    if (directory === workspaceRoot || parent === directory || relative(workspaceRoot, parent).startsWith("..")) break
+    directory = parent
+  }
+  const nativeTypeScript = /--experimental-(?:strip|transform)-types/.test(packageText) || /allowImportingTsExtensions|rewriteRelativeImportExtensions/.test(tsconfigText)
+  if (TS_EXTENSIONS.includes(importerExt)) return nativeTypeScript || !hasTsconfig
+  return /"type"\s*:\s*"module"/.test(packageText) && !hasTsconfig
+}
+
+/**
+ * Relative imports that will not resolve, each with the exact working specifier when the target file exists.
+ * One authority for create_file and apply_patch, so the model gets an actionable correction instead of a retry loop.
+ */
+async function relativeImportProblems(workspaceRoot: string, filePath: string, content: string): Promise<RelativeImportProblem[]> {
   const specifiers = new Set<string>()
   for (const match of content.matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
     if (match[1]) specifiers.add(match[1])
   }
-  const missing: string[] = []
+  const problems: RelativeImportProblem[] = []
+  let explicit: boolean | undefined
   for (const specifier of specifiers) {
     const base = normalize(join(workspaceRoot, dirname(filePath), specifier))
     const relativeToWorkspace = relative(workspaceRoot, base)
     if (!relativeToWorkspace || relativeToWorkspace.startsWith("..") || isAbsolute(relativeToWorkspace)) {
-      missing.push(specifier)
+      problems.push({ specifier })
       continue
     }
-    const importerExt = extname(filePath)
-    const specifierExt = extname(specifier)
-    const candidates = specifierExt
-      ? [base]
-      : importerExt === ".ts" || importerExt === ".tsx" || importerExt === ".mts"
-        ? [base, join(base, "index.ts"), join(base, "index.tsx")]
-        : [base, `${base}.js`, `${base}.mjs`, `${base}.cjs`, join(base, "index.js")]
-    let found = false
-    for (const candidate of candidates) {
-      try {
-        await access(candidate)
-        found = true
-        break
-      } catch {
-        found = false
-      }
+    if (await exists(base) && extname(specifier)) continue
+    // The file the specifier means, if any: same path plus an extension, a .js spelling of a .ts file, or an index file.
+    const stem = JS_EXTENSIONS.includes(extname(specifier)) ? base.slice(0, -extname(specifier).length) : base
+    let target: string | undefined
+    for (const candidate of [
+      ...TS_EXTENSIONS.map((ext) => `${stem}${ext}`),
+      ...JS_EXTENSIONS.map((ext) => `${stem}${ext}`),
+      ...[...TS_EXTENSIONS, ...JS_EXTENSIONS].map((ext) => join(base, `index${ext}`)),
+    ]) {
+      if (candidate !== base && await exists(candidate)) { target = candidate; break }
     }
-    if (!found) missing.push(specifier)
+    if (!target) {
+      if (!(await exists(base))) problems.push({ specifier })
+      continue
+    }
+    explicit ??= await requiresExplicitExtension(workspaceRoot, filePath)
+    if (!explicit) continue
+    let fix = relative(dirname(join(workspaceRoot, filePath)), target).replaceAll("\\", "/")
+    if (!fix.startsWith(".")) fix = `./${fix}`
+    problems.push({ specifier, fix })
   }
-  return missing
+  return problems
+}
+
+function describeImportProblems(problems: readonly RelativeImportProblem[], filePath: string, implementationPaths: readonly string[]): string {
+  const parts = problems.map((problem) => {
+    if (problem.fix) return `"${problem.specifier}" must be written "${problem.fix}" (this project resolves imports with the exact file extension)`
+    const suggestion = suggestedRelativeImport(filePath, problem.specifier, implementationPaths)
+    return suggestion ? `"${problem.specifier}" does not exist (the named file is "${suggestion}")` : `"${problem.specifier}" does not exist`
+  })
+  return `These imports do not exist: ${parts.join("; ")}. Use exactly the specifier shown, or import a file that is already in the workspace.`
 }
