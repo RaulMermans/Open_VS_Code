@@ -1,6 +1,7 @@
 import { readFile, writeFile, rename, unlink, mkdir, realpath, access, lstat } from "node:fs/promises"
 import { resolve, relative, dirname, isAbsolute, join, basename } from "node:path"
 import { createHash } from "node:crypto"
+import { danglingRenamedBinding } from "../agent/tool-contract.ts"
 import {
   type MutationRequest,
   type PreparedMutation,
@@ -19,6 +20,87 @@ import {
 
 export function sha256(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex")
+}
+
+/** Unique search/replace that yields `after` from `before` without replacing the whole file. */
+export function deriveUniquePatch(before: string, after: string): { search: string; replace: string } | undefined {
+  if (before === after || before.length === 0 || after.length === 0) return undefined
+  const nonempty = before.split("\n").filter((line) => line.trim().length > 0)
+  if (nonempty.length > 0) {
+    const retained = nonempty.filter((line) => after.includes(line)).length
+    if (retained / nonempty.length < 0.5) return undefined
+  }
+  let prefix = 0
+  const shared = Math.min(before.length, after.length)
+  while (prefix < shared && before[prefix] === after[prefix]) prefix++
+  let suffix = 0
+  while (
+    suffix < before.length - prefix
+    && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix++
+  }
+  if (prefix === 0 && suffix === 0) return undefined
+  let left = prefix
+  let right = suffix
+  const slice = () => ({
+    search: before.slice(left, before.length - right),
+    replace: after.slice(left, after.length - right),
+  })
+  let { search, replace } = slice()
+  if (search.length === 0) {
+    if (prefix > 0) left = Math.max(0, prefix - Math.min(32, prefix))
+    else if (suffix > 0) right = Math.max(0, suffix - Math.min(32, suffix))
+    else return undefined
+    ;({ search, replace } = slice())
+  }
+  const occurrenceCount = (needle: string): number => {
+    if (!needle) return 0
+    let count = 0
+    let from = 0
+    while (from <= before.length - needle.length) {
+      const at = before.indexOf(needle, from)
+      if (at === -1) break
+      count += 1
+      from = at + 1
+    }
+    return count
+  }
+  while (occurrenceCount(search) !== 1 && (left > 0 || right > 0)) {
+    if (left > 0) left -= 1
+    else right -= 1
+    ;({ search, replace } = slice())
+  }
+  if (occurrenceCount(search) !== 1 || search === before) return undefined
+  const at = before.indexOf(search)
+  const applied = before.slice(0, at) + replace + before.slice(at + search.length)
+  if (applied !== after) return undefined
+  return { search, replace }
+}
+
+export function existingFileCreateObservation(path: string, content: string): string {
+  const maxBytes = 2048
+  let bounded = content
+  let truncated = false
+  if (Buffer.byteLength(content) > maxBytes) {
+    truncated = true
+    bounded = ""
+    let bytes = 0
+    for (const character of content) {
+      const size = Buffer.byteLength(character)
+      if (bytes + size > maxBytes) break
+      bounded += character
+      bytes += size
+    }
+  }
+  return [
+    `FILE_ALREADY_EXISTS: create_file cannot overwrite ${path}. The file already exists.`,
+    "Do not call create_file again for this path. Do not overwrite it.",
+    `Read ${path} if you need more of the file, then call apply_patch with path ${path}, a search string copied exactly from the current file, and a replace string that keeps unrelated existing code.`,
+    `Current contents of ${path}${truncated ? " (truncated)" : ""}:`,
+    bounded,
+  ].join("\n")
 }
 
 /** The first exported function name that the text declares more than once. */
@@ -97,7 +179,7 @@ export async function resolveWritePath(
       if (!isContainedPath(root, resolvedParent)) {
         throw new MutationFailure("SYMLINK_ESCAPE", `Parent directory resolves outside workspace: ${requestedPath}`)
       }
-      const resolvedCandidate = join(resolvedParent, ...missing.slice().reverse(), basename(candidate))
+      const resolvedCandidate = join(resolvedParent, ...missing.slice().toReversed(), basename(candidate))
       if (!isContainedPath(root, resolvedCandidate)) {
         throw new MutationFailure("PATH_ESCAPE", `Resolved path escapes workspace: ${requestedPath}`)
       }
@@ -382,21 +464,26 @@ export class MutationEngine {
     const baseHash = sha256(beforeContent)
 
     // Apply patch: find search text and replace
+    const relForError = relative(root, resolvedPath).replaceAll("\\", "/")
     const searchIndex = beforeContent.indexOf(request.patch.search)
     if (searchIndex === -1) {
-      throw new MutationFailure("PATCH_MISMATCH", `Search text not found in ${request.path}`)
+      throw new MutationFailure("PATCH_MISMATCH", `PATCH_MISMATCH: search was not found in ${relForError}. Copy a unique exact substring from the current file into search. Do not call create_file.`)
     }
 
     // Check for ambiguity
     const secondIndex = beforeContent.indexOf(request.patch.search, searchIndex + 1)
     if (secondIndex !== -1) {
-      throw new MutationFailure("PATCH_AMBIGUOUS", `Search text found multiple times in ${request.path}`)
+      throw new MutationFailure("PATCH_AMBIGUOUS", `PATCH_AMBIGUOUS: search matched more than once in ${relForError}. Lengthen search until it matches exactly once.`)
     }
 
     const afterContent = beforeContent.slice(0, searchIndex) + request.patch.replace + beforeContent.slice(searchIndex + request.patch.search.length)
     const duplicate = duplicateExportFunction(afterContent)
     if (duplicate) {
-      throw new MutationFailure("INVALID_PATCH", `Patch would declare export function ${duplicate} more than once in ${request.path}`)
+      throw new MutationFailure("INVALID_PATCH", `Patch would declare export function ${duplicate} more than once in ${relForError}`)
+    }
+    const dangling = danglingRenamedBinding(beforeContent, afterContent)
+    if (dangling) {
+      throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${relForError} still calls it. Update that call in the same patch.`)
     }
     const resultHash = sha256(afterContent)
 
@@ -458,17 +545,65 @@ export class MutationEngine {
       throw new MutationFailure("OVERSIZED_FILE", `New file size ${contentBytes} exceeds budget ${this.#budgets.maxNewFileBytes}`)
     }
 
-    // Resolve path safely (must NOT exist)
     const root = await realpath(this.#workspaceRoot)
-    const resolvedPath = await resolveWritePath(root, request.path, { mustExist: false })
+    let existingPath: string | undefined
+    try {
+      existingPath = await resolveWritePath(root, request.path, { mustExist: true })
+    } catch (error) {
+      if (!(error instanceof MutationFailure) || error.code !== "FILE_NOT_FOUND") throw error
+    }
 
-    // Check file doesn't already exist
+    if (existingPath) {
+      const policyViolation = checkMutationPolicy(root, existingPath, this.#policy)
+      if (policyViolation) throw policyViolation
+      const rawBytes = await readFile(existingPath)
+      if (containsBinaryBytes(rawBytes) || hasBinaryExtension(existingPath)) {
+        throw new MutationFailure("BINARY_FILE", `Cannot create over binary file: ${request.path}`)
+      }
+      const beforeContent = rawBytes.toString("utf8")
+      const relPath = relative(root, existingPath).replaceAll("\\", "/")
+      if (sha256(beforeContent) === sha256(request.content)) {
+        const resultHash = sha256(request.content)
+        const diff = generateUnifiedDiff(relPath, beforeContent, request.content, this.#budgets.maxDiffBytes)
+        return {
+          id: this.#idFactory(),
+          operation: "create",
+          path: relPath,
+          resolvedPath: existingPath,
+          beforeContent,
+          proposedContent: request.content,
+          baseHash: resultHash,
+          resultHash,
+          diff,
+          fileChange: {
+            path: relPath,
+            operation: "create",
+            beforeSize: Buffer.byteLength(beforeContent),
+            afterSize: Buffer.byteLength(request.content),
+            beforeHash: resultHash,
+            afterHash: resultHash,
+          },
+          timestamp: this.#timestampFactory(),
+          valid: true,
+        }
+      }
+      const unique = deriveUniquePatch(beforeContent, request.content)
+      if (unique) {
+        try {
+          return await this.preparePatch({ operation: "patch", path: relPath, patch: unique })
+        } catch {
+          // Fall through to a typed create rejection. Never convert an ambiguous rewrite.
+        }
+      }
+      throw new MutationFailure("FILE_EXISTS", existingFileCreateObservation(relPath, beforeContent))
+    }
+
+    const resolvedPath = await resolveWritePath(root, request.path, { mustExist: false })
     try {
       await access(resolvedPath)
-      throw new MutationFailure("FILE_EXISTS", `Cannot create file that already exists: ${request.path}`)
+      throw new MutationFailure("FILE_EXISTS", existingFileCreateObservation(request.path, ""))
     } catch (error) {
       if (error instanceof MutationFailure) throw error
-      // File doesn't exist - good
     }
 
     // Policy check

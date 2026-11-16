@@ -159,10 +159,10 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
       return {
         category: "TEST_AUTHORING",
         allowedTools: ["read_file", "list_directory", "create_file", "apply_patch", "run_verification"],
-        recommendedInitialTools: ["read_file", "create_file"],
+        recommendedInitialTools: ["read_file", "apply_patch", "create_file"],
         defaultTurnBudget: 6,
         evidenceRequirements: [],
-        toolGuidance: `Create or update only ${named}. Use create_file when that file does not exist, and apply_patch when it already exists. create_file creates a missing parent directory. Do not try to create the directory first. Do not modify any other file.`,
+        toolGuidance: `Create or update only ${named}. Read the target first. Use apply_patch when that file already exists. Use create_file only when it is genuinely missing. create_file creates a missing parent directory. Do not try to create the directory first. Do not modify any other file.`,
         requiresCodeChange,
         explicitFilePaths: explicitFiles,
       }

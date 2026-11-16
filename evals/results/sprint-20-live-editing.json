@@ -1,0 +1,442 @@
+{
+  "model": "qwen3-coder:30b",
+  "endpoint": "http://127.0.0.1:11434/v1",
+  "generatedAt": "2026-11-14T07:13:39.747Z",
+  "threeFile": {
+    "total": 3,
+    "pass": 1
+  },
+  "rows": [
+    {
+      "id": "C-three-file",
+      "status": "COMPLETED",
+      "turns": 23,
+      "durationMs": 61545,
+      "independent": {
+        "pass": true,
+        "detail": "independent three-file tests ok"
+      },
+      "unchangedPreserved": true,
+      "createAttempts": [],
+      "toolCalls": [
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        }
+      ],
+      "files": {
+        "src/format.ts": "export function formatName(first: string, last: string): string {\n  return `${last}, ${first}`\n}\n",
+        "src/greet.ts": "import { formatName } from \"./format.ts\";\n\nexport function greet(first: string, last: string): string {\n  return `Hello, ${formatName(first, last)}`\n}\n",
+        "src/parse.ts": "export function parseName(value: string): { first: string; last: string } {\n  const [last, first] = value.split(\", \")\n  return { first, last }\n}\n",
+        "test/lib.test.ts": "import assert from \"node:assert/strict\"\nimport test from \"node:test\"\nimport { formatName } from \"../src/format.ts\"\nimport { greet } from \"../src/greet.ts\"\nimport { parseName } from \"../src/parse.ts\"\n\ntest(\"formatName returns Last, First\", () => {\n  assert.equal(formatName(\"Ada\", \"Lovelace\"), \"Lovelace, Ada\")\n})\n\ntest(\"greet uses formatName\", () => {\n  assert.equal(greet(\"Ada\", \"Lovelace\"), \"Hello, Lovelace, Ada\")\n})\n\ntest(\"parseName splits Last, First\", () => {\n  assert.deepEqual(parseName(\"Lovelace, Ada\"), { first: \"Ada\", last: \"Lovelace\" })\n})\n"
+      },
+      "pass": true,
+      "truthfulCompletion": true,
+      "repeat": 1
+    },
+    {
+      "id": "C-three-file",
+      "status": "FAILED",
+      "failureReason": "MAX_TURNS_EXCEEDED",
+      "turns": 23,
+      "durationMs": 69782,
+      "independent": {
+        "pass": false,
+        "detail": ",\n    -   last: 'Lovelace'\n      }\n    \n  code: 'ERR_ASSERTION'\n  name: 'AssertionError'\n  expected:\n    first: 'Ada'\n    last: 'Lovelace'\n  actual:\n    first: 'Lovelace, Ada'\n    last: ''\n  operator: 'deepStrictEqual'\n  stack: |-\n    TestContext.<anonymous> (file:///tmp/ovsc-s20-C-three-file-4Eqi37/test/lib.test.ts:16:10)\n    Test.runInAsyncScope (node:async_hooks:214:14)\n    Test.run (node:internal/test_runner/test:1047:25)\n    Test.processPendingSubtests (node:internal/test_runner/test:744:18)\n    Test.postRun (node:internal/test_runner/test:1173:19)\n    Test.run (node:internal/test_runner/test:1101:12)\n    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)\n  ...\n1..3\n# tests 3\n# suites 0\n# pass 2\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 59.760048\n"
+      },
+      "unchangedPreserved": true,
+      "createAttempts": [
+        "COMPLETED"
+      ],
+      "toolCalls": [
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "create_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        }
+      ],
+      "files": {
+        "src/format.ts": "export function formatName(first: string, last: string): string {\n  return `${last}, ${first}`\n}",
+        "src/greet.ts": "import { formatName } from './format.ts';\n\nexport function greet(first: string, last: string): string {\n  return `Hello, ${formatName(first, last)}`\n}\n",
+        "src/parse.ts": "export function parseName(value: string): { first: string; last: string } {\n  return { first: value, last: \"\" }\n}\n",
+        "test/lib.test.ts": "import assert from \"node:assert/strict\"\nimport test from \"node:test\"\nimport { formatName } from \"../src/format.ts\"\nimport { greet } from \"../src/greet.ts\"\nimport { parseName } from \"../src/parse.ts\"\n\ntest(\"formatName returns Last, First\", () => {\n  assert.equal(formatName(\"Ada\", \"Lovelace\"), \"Lovelace, Ada\")\n})\n\ntest(\"greet uses formatName\", () => {\n  assert.equal(greet(\"Ada\", \"Lovelace\"), \"Hello, Lovelace, Ada\")\n})\n\ntest(\"parseName splits Last, First\", () => {\n  assert.deepEqual(parseName(\"Lovelace, Ada\"), { first: \"Ada\", last: \"Lovelace\" })\n})\n"
+      },
+      "pass": false,
+      "truthfulCompletion": true,
+      "repeat": 2
+    },
+    {
+      "id": "C-three-file",
+      "status": "FAILED",
+      "failureReason": "MAX_TURNS_EXCEEDED",
+      "turns": 23,
+      "durationMs": 67029,
+      "independent": {
+        "pass": false,
+        "detail": "e: 'ReferenceError'\n  stack: |-\n    greet (file:///tmp/ovsc-s20-C-three-file-M52Ul6/src/greet.ts:2:3)\n    TestContext.<anonymous> (file:///tmp/ovsc-s20-C-three-file-M52Ul6/test/lib.test.ts:12:16)\n    Test.runInAsyncScope (node:async_hooks:214:14)\n    Test.run (node:internal/test_runner/test:1047:25)\n    Test.processPendingSubtests (node:internal/test_runner/test:744:18)\n    Test.postRun (node:internal/test_runner/test:1173:19)\n    Test.run (node:internal/test_runner/test:1101:12)\n    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)\n  ...\n# Subtest: parseName splits Last, First\nok 3 - parseName splits Last, First\n  ---\n  duration_ms: 0.332402\n  type: 'test'\n  ...\n1..3\n# tests 3\n# suites 0\n# pass 2\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 50.085135\n"
+      },
+      "unchangedPreserved": true,
+      "createAttempts": [
+        "FAILED"
+      ],
+      "toolCalls": [
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "create_file",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "apply_patch",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "run_verification",
+          "outcome": "DENIED"
+        },
+        {
+          "name": "list_directory",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        },
+        {
+          "name": "read_file",
+          "outcome": "COMPLETED"
+        }
+      ],
+      "files": {
+        "src/format.ts": "export function formatName(first: string, last: string): string {\n  return `${last}, ${first}`\n}\n",
+        "src/greet.ts": "export function greet(first: string, last: string): string {\n  return `Hello, ${formatName(first, last)}`\n}\n",
+        "src/parse.ts": "export function parseName(value: string): { first: string; last: string } {\n  const [last, first] = value.split(\", \");\n  return { first: first.trim(), last: last.trim() }\n}\n",
+        "test/lib.test.ts": "import assert from \"node:assert/strict\"\nimport test from \"node:test\"\nimport { formatName } from \"../src/format.ts\"\nimport { greet } from \"../src/greet.ts\"\nimport { parseName } from \"../src/parse.ts\"\n\ntest(\"formatName returns Last, First\", () => {\n  assert.equal(formatName(\"Ada\", \"Lovelace\"), \"Lovelace, Ada\")\n})\n\ntest(\"greet uses formatName\", () => {\n  assert.equal(greet(\"Ada\", \"Lovelace\"), \"Hello, Lovelace, Ada\")\n})\n\ntest(\"parseName splits Last, First\", () => {\n  assert.deepEqual(parseName(\"Lovelace, Ada\"), { first: \"Ada\", last: \"Lovelace\" })\n})\n"
+      },
+      "pass": false,
+      "truthfulCompletion": true,
+      "repeat": 3
+    }
+  ]
+}

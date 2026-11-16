@@ -42,13 +42,14 @@ import { readRepositoryFile } from "../tools/read-file.ts"
 import { searchText } from "../tools/search-text.ts"
 import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts"
 import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
-import { join, dirname, normalize, relative, isAbsolute, basename } from "node:path"
+import { join, dirname, normalize, relative, isAbsolute, basename, extname } from "node:path"
 import { access, readFile } from "node:fs/promises"
 import { MAX_NON_PROGRESS_RECOVERIES, type ProgressSignal, type ProgressThresholds } from "../progress/contracts.ts"
 import { DirectProgressGuard, dedupeObservations, type DirectNonProgressEvidence } from "../progress/direct-guard.ts"
 import { boundRecoveryText, buildNonProgressReport, buildRecoveryPlan, classifyStall, describeSignals, formatNonProgressReport, runDiagnosticCheck, stallNotice, type FailureCapture } from "../progress/recovery.ts"
 import { resolveRepositoryPath } from "../tools/path-safety.ts"
 import { sha256 } from "../tools/mutation-engine.ts"
+import { candidateOwnerPaths, classifyNamedEditTargets, inspectMutationTarget, misplacedExportPath, editingStrategyGuidance } from "../tools/mutation-recovery.ts"
 import { UNLIMITED_MAX_TURNS, isUnlimitedTurnBudget } from "./acceptance-budget.ts"
 
 export type ConfirmationDecision = "APPROVE" | "REJECT"
@@ -632,7 +633,7 @@ export class AgentRunner {
               path: (pending.prepared.arguments as any)?.targetFile || (pending.prepared.arguments as any)?.path || "",
               status: result.status === "APPLIED" ? "APPLIED" : result.status === "ALREADY_SATISFIED" ? "ALREADY_SATISFIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
               diffSummary: result.status === "ALREADY_SATISFIED" ? "already satisfied; no write" : ((reviewable.reviewPayload as any)?.summary || ""),
-              operation: mutationOperation(pending.prepared.name),
+              operation: result.operation ?? mutationOperation(pending.prepared.name),
             })
             if (result.status === "APPLIED") {
               session.evidenceCollector.resolveRecoveredToolContractFailures()
@@ -1115,10 +1116,23 @@ export class AgentRunner {
 
       const requestedPaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
       const testOnlyRequest = requestedPaths.length > 0 && requestedPaths.every((path) => isTestArtifactPath(path))
+      const namedTargets = await classifyNamedEditTargets(session.input.workspaceRoot, requestedPaths)
+      const observedExisting = session.evidenceLedger.filesRead
+      const mutationOutcomes = session.evidenceCollector.getEvidence().mutationOutcomes
+      const completedPaths = [...new Set(mutationOutcomes.filter((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED").map((mutation) => mutation.path).filter((path) => path.trim().length > 0))]
+      const pendingPaths = requestedPaths.filter((path) => !completedPaths.some((done) => pathsReferToSameFile(done, path)))
+      const strategyNote = editingStrategyGuidance({
+        existingNamed: namedTargets.existing,
+        missingNamed: namedTargets.missing,
+        observedExisting,
+        completed: completedPaths,
+        pending: pendingPaths,
+      })
+      const existingOnly = namedTargets.existing.length > 0 && namedTargets.missing.length === 0
       const dynamicBanner = editOutstanding
         ? testOnlyRequest
-          ? `\n\n[EDIT REQUIRED]\nCreate or update only ${requestedPaths.join(", ")}. Do not modify other files. Use create_file when that file does not exist yet.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
-          : `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. A test-only edit does not finish a behavior change. Use apply_patch for an existing file and create_file only for a new file.${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
+          ? `\n\n[EDIT REQUIRED]\nCreate or update only ${requestedPaths.join(", ")}. Do not modify other files. ${existingOnly ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist yet."}${strategyNote ? ` ${strategyNote}` : ""}${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
+          : `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. A test-only edit does not finish a behavior change. Use apply_patch for an existing file and create_file only for a new file.${strategyNote ? ` ${strategyNote}` : ""}${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
         : verificationOutstanding
           ? "\n\n[VERIFICATION REQUIRED]\nThe requested edit is applied. Run the tests before answering. Do not finish while verification is outstanding."
           : directReply
@@ -1133,8 +1147,8 @@ export class AgentRunner {
 
       const phaseInstruction = editOutstanding
         ? testOnlyRequest
-          ? `Create or update only ${requestedPaths.join(", ")}. Use create_file when that file does not exist, and apply_patch when it already exists. Do not modify other files. Strategy: ${session.taskProfile.toolGuidance}`
-          : `Apply the requested edit. Inspect the repository when needed, then call apply_patch or create_file. Strategy: ${session.taskProfile.toolGuidance}`
+          ? `Create or update only ${requestedPaths.join(", ")}. ${existingOnly ? "Use apply_patch; do not call create_file." : "Use create_file only when that file does not exist, and apply_patch when it already exists."} Do not modify other files. Strategy: ${session.taskProfile.toolGuidance}${strategyNote ? ` ${strategyNote}` : ""}`
+          : `Apply the requested edit. Inspect the repository when needed, then call apply_patch for existing files and create_file only for a genuinely new file. Strategy: ${session.taskProfile.toolGuidance}${strategyNote ? ` ${strategyNote}` : ""}`
         : verificationOutstanding
           ? "Run the project tests now. Inspection alone is not completion, and the edit is not complete until verification has run."
           : directReply
@@ -1276,13 +1290,15 @@ export class AgentRunner {
           session.continuationAttempts += 1
           const gatePaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
           const gateTestOnly = gatePaths.length > 0 && gatePaths.every((path) => isTestArtifactPath(path))
+          const gateTargets = await classifyNamedEditTargets(session.input.workspaceRoot, gatePaths)
+          const gateExisting = gateTargets.existing.length > 0 && gateTargets.missing.length === 0
           session.observations.push(createToolObservation({
             toolName: "coding_gate",
             callId: `edit-gate-${session.continuationAttempts}`,
             error: {
               category: "EDIT_REQUIRED",
               message: gateTestOnly
-                ? `[EDIT REQUIRED]\nCreate or update only ${gatePaths.join(", ")}. Use create_file when that file does not exist. A prose answer is not enough.`
+                ? `[EDIT REQUIRED]\nCreate or update only ${gatePaths.join(", ")}. ${gateExisting ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist."} A prose answer is not enough.`
                 : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
             },
             maxContentBytes: this.#observationMaxBytes,
@@ -1673,6 +1689,38 @@ export class AgentRunner {
           })
           if (reviewable.reviewPayload.truncated === true) {
             throw new Error("Diff is truncated and cannot be reviewed safely")
+          }
+          const proposedPath = String(reviewable.reviewPayload.path ?? (prepared.arguments as { path?: unknown }).path ?? "")
+          const proposedContent = typeof reviewable.reviewPayload.proposedContent === "string" ? reviewable.reviewPayload.proposedContent : ""
+          if (proposedPath && proposedContent && prepared.definition.action === "write_file") {
+            const implementation = [
+              ...session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path)),
+              ...session.evidenceLedger.filesRead.filter((path) => !isTestArtifactPath(path)),
+            ]
+            const missingImports = await missingRelativeImports(session.input.workspaceRoot, proposedPath, proposedContent)
+            if (missingImports.length > 0) {
+              const hints = missingImports.map((specifier) => {
+                const suggestion = suggestedRelativeImport(proposedPath, specifier, implementation)
+                return suggestion ? `${specifier} (the named file is ${suggestion})` : specifier
+              })
+              const message = `These imports do not exist: ${hints.join(", ")}. Import a file that is already in the workspace.`
+              this.#addErrorObservation(prepared, "INVALID_ARGUMENTS", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
+          }
+          const redirected = await this.#misplacedMutationOwner(prepared, reviewable.reviewPayload)
+          if (redirected) {
+            const message = `WRONG_FILE: this change belongs in ${redirected.owner}, not ${redirected.target}. Call apply_patch on ${redirected.owner} only. Do not add that code to ${redirected.target}.`
+            this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+            this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+            session.evidenceCollector.recordToolAction({
+              id: prepared.id,
+              toolName: prepared.name,
+              outcome: "FAILED",
+              error: message,
+            })
+            return false
           }
           session.pending = { prepared, signature, reviewable }
           this.#emit(isVerification ? "verification.confirmation_requested" : "mutation.confirmation_requested", {
@@ -2861,6 +2909,30 @@ export class AgentRunner {
     return { outcome: "UNAVAILABLE" }
   }
 
+  async #misplacedMutationOwner(
+    prepared: PreparedToolCall,
+    reviewPayload: { readonly path?: unknown; readonly beforeContent?: unknown; readonly proposedContent?: unknown },
+  ): Promise<{ target: string; owner: string } | undefined> {
+    if (prepared.definition.action !== "write_file") return undefined
+    const session = this.#requiredSession()
+    const target = String(reviewPayload.path ?? (prepared.arguments as { path?: unknown }).path ?? "").replaceAll("\\", "/")
+    const before = typeof reviewPayload.beforeContent === "string" ? reviewPayload.beforeContent : ""
+    const proposed = typeof reviewPayload.proposedContent === "string" ? reviewPayload.proposedContent : ""
+    if (!target || !proposed) return undefined
+    const known = [
+      ...session.evidenceLedger.filesRead,
+      ...session.evidenceCollector.getEvidence().mutationOutcomes.map((mutation) => mutation.path),
+      ...requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths),
+    ]
+    for (const sibling of candidateOwnerPaths(target, before, proposed)) {
+      const inspected = await inspectMutationTarget(session.input.workspaceRoot, sibling)
+      if (inspected.kind === "existing") known.push(inspected.path)
+    }
+    const owner = misplacedExportPath(target, before, proposed, known)
+    if (!owner) return undefined
+    return { target, owner }
+  }
+
   #stopRepeatedContract(message: string): boolean {
     const session = this.#requiredSession()
     session.failureReason = "INCOMPLETE"
@@ -3099,7 +3171,11 @@ function stringField(value: unknown, key: string): string | undefined {
 
 function suggestedRelativeImport(filePath: string, specifier: string, implementationPaths: readonly string[]): string | undefined {
   const wanted = basename(specifier)
-  const matches = implementationPaths.filter((path) => basename(path) === wanted)
+  const wantedStem = wanted.replace(/\.[^.]+$/, "")
+  const matches = implementationPaths.filter((path) => {
+    const name = basename(path)
+    return name === wanted || name.replace(/\.[^.]+$/, "") === wantedStem
+  })
   if (matches.length !== 1 || !matches[0]) return undefined
   let next = relative(dirname(filePath), matches[0]).replaceAll("\\", "/")
   if (!next.startsWith(".")) next = `./${next}`
@@ -3119,7 +3195,13 @@ async function missingRelativeImports(workspaceRoot: string, filePath: string, c
       missing.push(specifier)
       continue
     }
-    const candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, `${base}.cjs`, join(base, "index.ts"), join(base, "index.js")]
+    const importerExt = extname(filePath)
+    const specifierExt = extname(specifier)
+    const candidates = specifierExt
+      ? [base]
+      : importerExt === ".ts" || importerExt === ".tsx" || importerExt === ".mts"
+        ? [base, join(base, "index.ts"), join(base, "index.tsx")]
+        : [base, `${base}.js`, `${base}.mjs`, `${base}.cjs`, join(base, "index.js")]
     let found = false
     for (const candidate of candidates) {
       try {
