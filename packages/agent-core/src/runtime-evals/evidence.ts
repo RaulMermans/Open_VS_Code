@@ -95,6 +95,7 @@ export class RuntimeEvidenceCollector {
   readonly #toolOutcomes: BoundedActionRecord[] = []
   readonly #mutationOutcomes: BoundedMutationOutcome[] = []
   readonly #verificationOutcomes: BoundedVerificationOutcome[] = []
+  #sequence = 0
   readonly #securitySignals: BoundedSecuritySignal[] = []
   readonly #unresolvedFailures = new Map<string, BoundedFailureRecord>()
   readonly #routeSignals: BoundedRouteSignal[] = []
@@ -247,6 +248,7 @@ export class RuntimeEvidenceCollector {
       status: mutation.status,
       diffSummary: truncateBounded(mutation.diffSummary ?? "", 300),
       timestamp: new Date().toISOString(),
+      sequence: ++this.#sequence,
       ...(mutation.operation ? { operation: mutation.operation } : {}),
     }
 
@@ -287,6 +289,7 @@ export class RuntimeEvidenceCollector {
       failureSummary,
       failureHash,
       timestamp: new Date().toISOString(),
+      sequence: ++this.#sequence,
     }
 
     // Progress signal comparison with previous verification

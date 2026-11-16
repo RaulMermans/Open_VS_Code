@@ -3003,8 +3003,10 @@ export class AgentRunner {
     const evidence = session.evidenceCollector.getEvidence()
     const last = evidence.verificationOutcomes.at(-1)
     if (!last || last.status !== "FAIL") return false
-    // An edit recorded in the same millisecond as the failed run still follows it (a run must finish before an edit is applied).
-    return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && mutation.timestamp >= last.timestamp)
+    // Ordered by the collector's sequence: millisecond timestamps cannot order an edit and a run that tie.
+    return !evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && (
+      mutation.sequence !== undefined && last.sequence !== undefined ? mutation.sequence > last.sequence : mutation.timestamp > last.timestamp
+    ))
   }
 
   #codingGoalVerdict(): CodingCompletion | undefined {
