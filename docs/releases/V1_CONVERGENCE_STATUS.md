@@ -4,6 +4,10 @@ Date: 2026-11-16. Branch `sprint/v1-milestone-1-foundation`.
 
 **This is the authoritative Personal V1 record.** Sections after "Earlier verdict (2026-11-13)" are history.
 
+## Latest — Sprint 23 candidate `0.1.0-rc.23` (prepared, NOT installed)
+
+Daily driver remains `0.1.0-rc.21` (GO, supervised). rc.23: `794b2f9426`, `.deb` `7c5030b5792350024f7aef99280488c2d65251d1865195ada46bcfd733ff3242`, extension `379491575ba757b4a7edaab0e4cf412b5100ce6fd7672184d9f211dc960258e2`. Packaged-bytes GUI acceptance 13/14 (CODE-CONTINUE-COMPLETE hit the lab's 8-approval cap: more approvals per task now that typecheck is required). Real-repo dogfooding pilot 1–2/5 (target 4/5 not met). Verdict for rc.23: **CONDITIONAL GO — controlled trial only**; install only on explicit request. Details: `docs/sprints/SPRINT_23_DOGFOODING.md`.
+
 ## Current — `0.1.0-rc.21` installed (2026-11-16, Sprint 22)
 
 **GO — SUPERVISED PERSONAL V1**, now with agent commands sandboxed by default (ADR-046).

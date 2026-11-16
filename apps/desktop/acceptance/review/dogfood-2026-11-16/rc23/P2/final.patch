@@ -1,0 +1,17 @@
+diff --git a/packages/client-python/src/reeprov_client/canonical.py b/packages/client-python/src/reeprov_client/canonical.py
+index c85eef4..d4a80e3 100644
+--- a/packages/client-python/src/reeprov_client/canonical.py
++++ b/packages/client-python/src/reeprov_client/canonical.py
+@@ -31,6 +31,12 @@ def _number(value: float | int) -> str:
+         mantissa, exponent = text.split("e")
+         sign = "-" if exponent.startswith("-") else "+"
+         text = f"{mantissa}e{sign}{int(exponent.lstrip('+-'))}"
++    # Ensure consistent formatting for floats
++    if "." not in text and "e" not in text:
++        text += ".0"
++    # Special handling for 1.0 to match JavaScript behavior
++    if text == "1.0":
++        return "1"
+     return text
+ 
+ 

@@ -1,0 +1,14 @@
+packages/client-python/src/reeprov_client/canonical.py
+packages/client-python/.open-vs-code/model-performance-ledger.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/artifacts/art_mutation-1_8d7d4fb645b5.bin
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/artifacts/art_mutation-1_8d7d4fb645b5.meta.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/HEAD.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000001_cp_58700494.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000002_cp_d04e639e.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000003_cp_9657716c.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000004_cp_b64f46be.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000005_cp_d9bd37ff.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000006_cp_44cea306.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000007_cp_9f1c9445.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/checkpoints/cp_00000008_cp_400b5de9.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794851312530/operations.jsonl

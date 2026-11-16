@@ -1,0 +1,41 @@
+diff --git a/components/runs/RunSummaryView.tsx b/components/runs/RunSummaryView.tsx
+index 13162ec..7aca82a 100644
+--- a/components/runs/RunSummaryView.tsx
++++ b/components/runs/RunSummaryView.tsx
+@@ -3,6 +3,7 @@
+ import Link from "next/link";
+ import type { TraceEvent, EvalResult, RunRecord } from "@/lib/proof-layer/schemas";
+ import type { RunArtifact } from "@/lib/core/contracts/runArtifact";
++import { formatDuration } from "@/lib/utils/format";
+ 
+ interface RunSummaryViewProps {
+   runRecord: RunRecord;
+@@ -125,7 +126,7 @@ export function RunSummaryView({
+         <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
+           <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Duration</span>
+           <div className="mt-1 text-sm font-bold text-slate-900 font-mono">
+-            {runRecord.total_duration_ms != null ? `${(runRecord.total_duration_ms / 1000).toFixed(2)}s` : "—"}
++            {runRecord.total_duration_ms != null ? formatDuration(runRecord.total_duration_ms) : "—"}
+           </div>
+         </div>
+ 
+diff --git a/lib/utils/format.ts b/lib/utils/format.ts
+index c90efa3..f742ab1 100644
+--- a/lib/utils/format.ts
++++ b/lib/utils/format.ts
+@@ -47,3 +47,15 @@ export function scoreEntries(scores: Scores) {
+     ["Maintainability", scores.maintainability],
+   ] as const;
+ }
++
++export function formatDuration(ms: number): string {
++  if (ms < 1000) {
++    return `${Math.round(ms)} ms`;
++  } else if (ms < 60000) {
++    return `${(ms / 1000).toFixed(1)} s`;
++  } else {
++    const minutes = Math.floor(ms / 60000);
++    const seconds = Math.round((ms % 60000) / 1000);
++    return `${minutes}m ${seconds}s`;
++  }
++}
