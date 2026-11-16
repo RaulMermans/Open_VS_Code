@@ -13,6 +13,8 @@ Date: 2026-11-13. Branch: `sprint/v1-milestone-1-foundation`.
 | Personal V1 | `CONDITIONAL GO` for a supervised personal trial of unpacked/packaged `0.1.0-rc.19`. **Not installed.** Daily driver remains `0.1.0-rc.16`. |
 | Public beta | `NO-GO` |
 
+Sprint 20 source (`2026-11-14`): deterministic existing-file editing and `create_file` recovery are in tree. Live `qwen3-coder:30b` AgentRunner: small existing-file edit PASS; wrong-tool create recovers without overwrite; held-out TS PASS; three-file `continue-lib` **1/3** (engineering target 2/3 missed). Not packaged, not installed. Daily driver remains `0.1.0-rc.16`.
+
 Packaged live acceptance (`2026-11-13` evening): unpacked `open-vs-code_0.1.0-rc.19_amd64.deb` with bundled extension, local `qwen3-coder:30b`, isolated profiles. Critical safety and small-task coding passed. Production-budget three-file Continue completion **failed this payload run** (model `create_file` / `FILE_ALREADY_EXISTS`). Restart restored Continue but left tests 1/3. Appearance still needs a person. See packaged scorecard below.
 
 ## What is in the candidate

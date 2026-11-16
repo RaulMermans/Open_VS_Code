@@ -19,7 +19,8 @@
     "eval:workflow": "node --import tsx/esm tests/evals/run-workflow-eval.ts",
     "eval:progress": "node --import tsx/esm tests/evals/run-progress-eval.ts",
     "eval:learning": "node --import tsx/esm tests/evals/run-learning-eval.ts",
-    "eval:m3-opencode": "node --import tsx/esm tests/evals/m3-opencode-comparison.ts"
+    "eval:m3-opencode": "node --import tsx/esm tests/evals/m3-opencode-comparison.ts",
+    "eval:sprint20-editing": "node --import tsx/esm tests/evals/sprint-20-live-editing.ts"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

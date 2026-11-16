@@ -30,6 +30,8 @@
 
 ## Current sprint
 
+Sprint 20 — Deterministic file editing and wrong-tool recovery. Status: `IMPLEMENTED`. `create_file` on an existing file cannot overwrite; recovery is a typed `FILE_ALREADY_EXISTS` observation with bounded file contents; unique preserving hunks may convert to an unapproved patch; repeated invalid creates stop. See `docs/sprints/SPRINT_20_DETERMINISTIC_FILE_EDITING.md`. Packaged rc.19 remains the last installed-payload coding baseline (`CODE-CONTINUE-COMPLETE` FAIL on `create_file`). Daily driver remains `0.1.0-rc.16`.
+
 Milestone 3 — Real coding intelligence. Status: `VERIFIED`. Continuation safety held on a real `MAX_TURNS_EXCEEDED` pause with explicit Continue and stale-file protection. Overlay `CODE-CONTINUE-COMPLETE` passed 3/3. Packaged rc.19 live CDP: small coding and critical safety PASS; production Continue completion FAIL this payload (model tool-contract). Personal V1 `CONDITIONAL GO`, not installed. Daily driver remains `0.1.0-rc.16`. See `PLAN.md` and `docs/releases/V1_CONVERGENCE_STATUS.md`.
 
 Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. M2 presentation is in the M4 source line. UX-ACTIVITY and UX-DIFF appearance still need a person. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.

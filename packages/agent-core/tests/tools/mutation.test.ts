@@ -360,6 +360,61 @@ test("prepareCreate and apply creates a missing parent directory", async () => {
   }
 })
 
+test("create on identical existing content prepares a no-write mutation", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    await createFile(ws, "src/done.ts", "export const x = 1\n")
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "src/done.ts",
+      content: "export const x = 1\n",
+    })
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "ALREADY_SATISFIED")
+    assert.equal(await readFile(join(ws, "src/done.ts"), "utf8"), "export const x = 1\n")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("create on an existing file converts only a unique preserving patch", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const original = "export function add(a, b) {\n  return a - b\n}\n"
+    await createFile(ws, "src/add.ts", original)
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "src/add.ts",
+      content: "export function add(a, b) {\n  return a + b\n}\n",
+    })
+    assert.equal(prepared.operation, "patch")
+    assert.notEqual(prepared.proposedContent, original)
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "APPLIED")
+    assert.equal(await readFile(join(ws, "src/add.ts"), "utf8"), "export function add(a, b) {\n  return a + b\n}\n")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("create on an existing file refuses a snippet overwrite", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const original = "export function add(a, b) {\n  return a - b\n}\nexport function extra() {\n  return 1\n}\n"
+    await createFile(ws, "src/add.ts", original)
+    const engine = deterministicEngine(ws)
+    await assert.rejects(
+      engine.prepareCreate({ operation: "create", path: "src/add.ts", content: "return a + b\n" }),
+      (err: MutationFailure) => err.code === "FILE_EXISTS" && err.message.includes("FILE_ALREADY_EXISTS"),
+    )
+    assert.equal(await readFile(join(ws, "src/add.ts"), "utf8"), original)
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
 test("create rejects when file already exists", async () => {
   const ws = await createTempWorkspace()
   try {

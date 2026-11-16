@@ -30,12 +30,14 @@ export function describeToolContractFault(input: {
       message: `UNKNOWN_TOOL: ${input.toolName} is unavailable. Existing-file edits use apply_patch(path, search, replace). New files use create_file(path, content).`,
     }
   }
-  if (code === "FILE_EXISTS" || /already exists/i.test(input.message)) {
+  if (code === "FILE_EXISTS" || /already exists/i.test(input.message) || input.message.startsWith("FILE_ALREADY_EXISTS:")) {
     const target = path || "that file"
     return {
       category: "FILE_ALREADY_EXISTS",
       signature: `FILE_ALREADY_EXISTS|${input.toolName}|${path}`,
-      message: `FILE_ALREADY_EXISTS: create_file cannot overwrite ${target}. Use apply_patch for changes to existing files.`,
+      message: input.message.startsWith("FILE_ALREADY_EXISTS:")
+        ? input.message
+        : `FILE_ALREADY_EXISTS: create_file cannot overwrite ${target}. The file already exists. Read it, then call apply_patch(path, search, replace) with unique search text from that file. Do not call create_file again for ${target}.`,
     }
   }
   if (code === "FILE_NOT_FOUND" && input.toolName === "apply_patch" && !illegal) {
@@ -415,8 +417,8 @@ function calledBindings(source: string): Set<string> {
 export function mutationToolGuidance(toolNames: readonly string[]): string {
   if (!toolNames.includes("apply_patch") && !toolNames.includes("create_file")) return ""
   return [
-    "apply_patch(path, search, replace) modifies an existing file. search must match exactly once.",
-    "create_file(path, content) creates a new file only.",
+    "apply_patch(path, search, replace) is the only way to modify an existing file. search must match exactly once.",
+    "create_file(path, content) creates a genuinely new file only. It cannot overwrite or replace an existing file.",
     "modify_file is not available.",
     "Paths are workspace-relative, such as src/add.ts. Absolute paths and traversal are rejected.",
     "Edits require approval before they are written. Running tests does not write files.",

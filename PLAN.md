@@ -1,3 +1,12 @@
+Sprint 20 — Deterministic file editing
+STATUS: IMPLEMENTED
+  - Existing-file `create_file` is rejected or converted only when a unique preserving patch can be validated. Identical content is `ALREADY_SATISFIED`.
+  - Wrong-tool recovery includes bounded current file contents and an exact `apply_patch` instruction. The same invalid create is not retried indefinitely.
+  - Cross-file stuffing of an export that belongs in another existing sibling is rejected (`WRONG_FILE`).
+  - Live Qwen: existing-file edit PASS; wrong-tool create recovers to PASS; held-out TS PASS; held-out Python tests PASS with agent `MAX_TURNS_EXCEEDED`. Three-file `continue-lib` 1/3 after the import-extension correction (target 2/3 missed).
+  - Evidence: `evals/results/sprint-20-live-editing.json` and `evals/results/sprint-20-live-editing-round1.json`. CDP packaged rerun was not authorized this sprint.
+  - See `docs/sprints/SPRINT_20_DETERMINISTIC_FILE_EDITING.md`.
+
 Milestone 3 — Real coding intelligence
 STATUS: VERIFIED
   - Final correction: “Do not change the test” no longer classifies an implementation task as test-authoring. Remaining-work notices and exploration signatures are restored from the turn-budget checkpoint.
