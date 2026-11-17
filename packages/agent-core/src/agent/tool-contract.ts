@@ -437,8 +437,11 @@ export function handRenamedBinding(before: string, after: string, instruction: s
   // The target is the name the request gives after "to" following the old name; a patch that also adds
   // other exports (e.g. an extracted constant) must not be read as renaming to one of them.
   const escaped = from.replace(/\$/g, "\\$")
-  const stated = instruction.match(new RegExp(`(?<![\\w$])${escaped}(?![\\w$])[^;\\n]*?\\b(?:to|into|as)\\s+\x60?([$A-Za-z_][\\w$]*)`))?.[1]
-  const to = stated && added.includes(stated) ? stated : added.length === 1 && !stated ? added[0]! : undefined
+  // Every "to/into/as <name>" after a mention of the old name, in order; the first one the patch adds wins.
+  const at = instruction.search(new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`))
+  const stated = [...instruction.slice(Math.max(0, at)).matchAll(/\b(?:to|into|as)\s+\x60?([$A-Za-z_][\w$]*)/g)].map((match) => match[1]!)
+  // No fallback: a patch that adds a different name than the stated target is not redirected.
+  const to = stated.find((name) => added.includes(name))
   return to ? { from, to } : undefined
 }
 
