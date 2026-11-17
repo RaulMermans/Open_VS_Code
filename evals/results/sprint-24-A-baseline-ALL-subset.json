@@ -1,0 +1,99 @@
+{
+  "meta": {
+    "label": "sprint-24-A-baseline",
+    "model": "qwen3-coder:30b",
+    "modelDigest": "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "09410a310a",
+    "trackedDirty": false,
+    "startedAt": "2026-11-17T06:19:18.550Z",
+    "timeoutMin": 6,
+    "codeIntelligence": "none (baseline tools)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with buildStarterRoutingConfig (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "d07-rename-refactor",
+      "split": "DEV",
+      "category": "REFACTOR",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/average.ts",
+        "src/report.ts",
+        "src/totals.ts"
+      ],
+      "unchangedOk": {
+        "test/totals.test.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 92019,
+      "writeApprovals": 5,
+      "commandApprovals": 3,
+      "phases": [
+        {
+          "phase": "first",
+          "status": "COMPLETED",
+          "turns": 22,
+          "finalAnswer": "Changed: src/totals.ts. Approval was granted for the applied edit. Tests passed. The requested edit was applied.",
+          "toolSequence": [
+            "read_file:COMPLETED",
+            "search_text:COMPLETED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED",
+            "apply_patch:FAILED",
+            "apply_patch:COMPLETED",
+            "read_file:COMPLETED",
+            "run_verification:COMPLETED",
+            "search_text:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "search_text:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "apply_patch:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 6,
+          "patchApplied": 5,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 1,
+          "deniedToolCalls": 0,
+          "failureObservations": [
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: rc/report.ts:1 # import { calcTotal } from \"./totals.ts\" # ^^^^^^^^^ # SyntaxError: The requested module './totals.ts' does n",
+            "apply_patch: The patch removes the binding calcTotal but src/average.ts still calls it (line 4: return values.length === 0 ? 0 : calcTotal(values) / values.length). Rename that call in the same patch: include the import line and that",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: rc/report.ts:1 # import { calcTotal } from \"./totals.ts\" # ^^^^^^^^^ # SyntaxError: The requested module './totals.ts' does n",
+            "runtime_eval_replan: [RUNTIME EVALUATION - REPLAN REQUIRED] Current approach has repeated failures or non-progress loops (apply_patch {}: The patch removes the binding calcTotal but src/average.ts still calls it (line 4: return values.length"
+          ],
+          "verificationRuns": 3,
+          "toolCalls": 24,
+          "explorationCalls": 15,
+          "repeatedExploration": 9,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 1580,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 8
+        }
+      ]
+    }
+  ]
+}

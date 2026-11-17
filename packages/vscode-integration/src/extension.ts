@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { createVsCodeCodeIntelligence } from './code-intelligence-provider.js';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, type RoutingConfiguration, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
 import { buildStarterRoutingConfig, fetchLocalModelCatalog, localProviderBaseUrl } from './local-model-selection.js';
@@ -730,6 +731,8 @@ export function activate(context: vscode.ExtensionContext) {
         ...(routed ? { routingConfigOverride: routed } : {}),
         mcpCatalog: options.mcpCatalog,
         ...(browserManager ? { browserSessionManager: browserManager } : {}),
+        // Language-service symbol tools (ADR-047): find_symbol / rename_symbol via VS Code's providers.
+        codeIntelligence: createVsCodeCodeIntelligence(vscode),
         skills: skillsSettings(context),
         // Structured Engineering Loop (ADR-030); off by default.
         workflow: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('workflow.enabled', false) === true },

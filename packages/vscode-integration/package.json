@@ -256,6 +256,10 @@
           "description": "Launch governed Chromium browser in headless mode."
         }
       }
+    },
+    "configurationDefaults": {
+      "typescript.preferences.useAliasesForRenames": false,
+      "javascript.preferences.useAliasesForRenames": false
     }
   },
   "scripts": {
