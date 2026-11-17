@@ -9,6 +9,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
 import { AgentRunner } from "../../src/agent/runner.ts"
+import { mutationToolGuidance } from "../../src/agent/tool-contract.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
@@ -258,4 +259,9 @@ test("through the runner: one approval, every file recorded, and a rejection wri
       }
     } finally { await ws.cleanup() }
   }
+})
+
+test("edit guidance names rename_symbol only when it is available", () => {
+  assert.match(mutationToolGuidance(["apply_patch", "rename_symbol"]), /rename_symbol\(path, symbol, newName\)/)
+  assert.doesNotMatch(mutationToolGuidance(["apply_patch", "create_file"]), /rename_symbol/)
 })

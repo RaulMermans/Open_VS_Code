@@ -487,5 +487,6 @@ export function mutationToolGuidance(toolNames: readonly string[]): string {
     "modify_file is not available.",
     "Paths are workspace-relative, such as src/add.ts. Absolute paths and traversal are rejected.",
     "Edits require approval before they are written. Running tests does not write files.",
+    ...(toolNames.includes("rename_symbol") ? ["rename_symbol(path, symbol, newName) renames a function, type, constant or variable in its definition, imports, re-exports and every call site in one reviewed change, leaving unrelated same-named symbols alone. Use it for renames instead of apply_patch."] : []),
   ].map((line) => `- ${line}`).join("\n")
 }
