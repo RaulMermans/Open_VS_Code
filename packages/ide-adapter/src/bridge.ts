@@ -1,4 +1,4 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity, type RepairOrchestrator, type RepairResult, type RoutingConfiguration } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type CodeIntelligenceProvider, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity, type RepairOrchestrator, type RepairResult, type RoutingConfiguration } from "@open-vs-code/agent-core";
 import { createAgentRuntime, calculateBudget, isSkillApplied, classifyFailure, appliedPathsFromAgentResult, integrateRepairOutcome, lastFailedVerification, readMutationReview, readVerificationReview } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
@@ -23,6 +23,8 @@ export interface BridgeOptions {
   mcpCatalog?: McpCatalog;
   /** Governed BrowserSessionManager (Sprint 9A) */
   browserSessionManager?: BrowserSessionManager;
+  /** Language service for find_symbol / rename_symbol (Sprint 24). */
+  codeIntelligence?: CodeIntelligenceProvider;
   /** Sandbox for agent-initiated commands (ADR-046): "auto" (default), "required" or "off". */
   commandSandbox?: "auto" | "required" | "off";
   /** Authenticated account identity scope for evidence and session isolation */
@@ -43,6 +45,7 @@ export class AgentSessionBridge {
   private learning?: BridgeOptions["learning"];
   private mcpCatalog?: BridgeOptions["mcpCatalog"];
   private browserSessionManager?: BrowserSessionManager;
+  private codeIntelligence?: CodeIntelligenceProvider;
   private lastWorkflowState?: WorkflowState;
   private accountScope?: string;
   private commandSandbox: "auto" | "required" | "off";
@@ -66,6 +69,7 @@ export class AgentSessionBridge {
     this.learning = options.learning;
     this.mcpCatalog = options.mcpCatalog;
     this.browserSessionManager = options.browserSessionManager;
+    this.codeIntelligence = options.codeIntelligence;
     this.accountScope = options.accountScope;
     this.commandSandbox = options.commandSandbox ?? "auto";
   }
@@ -243,6 +247,7 @@ export class AgentSessionBridge {
         ...(resolvedProfile ? { resolvedProfile } : {}),
         ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),
         ...(this.browserSessionManager ? { browserSessionManager: this.browserSessionManager } : {}),
+        ...(this.codeIntelligence ? { codeIntelligence: this.codeIntelligence } : {}),
         ...(this.skills
           ? { skills: this.skills }
           : resolvedProfile?.appliedSkills && resolvedProfile.appliedSkills.length > 0
@@ -338,7 +343,7 @@ export class AgentSessionBridge {
       let approved = false;
       if (conf.action === "write_file") {
         const pm = conf.preparedMutation!;
-        const res = await this.host.requestConfirmation(`Approve mutation on ${pm.path}? (${pm.operation})`, pm);
+        const res = await this.host.requestConfirmation(mutationPrompt(pm), pm);
         approved = (res === "APPROVE");
       } else if (
         conf.action === "run_known_test"
@@ -530,4 +535,12 @@ export class AgentSessionBridge {
         break;
     }
   }
+}
+
+/** A grouped (language-service) edit names every file it would change; a single edit keeps the classic prompt. */
+export function mutationPrompt(pm: { path?: unknown; operation?: unknown; files?: unknown; summary?: unknown }): string {
+  const files = Array.isArray(pm.files) ? pm.files.map((file: any) => String(file?.path ?? "")).filter(Boolean) : [];
+  if (files.length === 0) return `Approve mutation on ${pm.path}? (${pm.operation})`;
+  const summary = typeof pm.summary === "string" ? ` (${pm.summary})` : "";
+  return `Approve mutation on ${files.length} files${summary}: ${files.join(", ")}? (${pm.operation})`;
 }

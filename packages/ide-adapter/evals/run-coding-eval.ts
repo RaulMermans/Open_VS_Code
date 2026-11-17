@@ -8,7 +8,10 @@
  *
  * Usage (from repo root):
  *   OPEN_VS_CODE_REAL_INFERENCE=1 node --import tsx/esm packages/ide-adapter/evals/run-coding-eval.ts \
- *     --label A --split DEV [--ids d01-clamp-bugfix,d03-three-file-lib] [--repeat 1] [--timeout-min 6]
+ *     --label A --split DEV [--ids d01-clamp-bugfix,d03-three-file-lib] [--repeat 1] [--timeout-min 6] [--code-intel]
+ *
+ * --code-intel gives the bridge the TypeScript language service (find_symbol / rename_symbol), the
+ * headless equivalent of the IDE's VS Code providers. Without it the run is the pre-Sprint-24 tool set.
  */
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -20,16 +23,19 @@ import { fileURLToPath } from "node:url"
 import { AgentSessionBridge } from "../src/bridge.ts"
 import type { IdeHost, IdeContextSnapshot } from "../src/contracts.ts"
 import { buildStarterRoutingConfig } from "../../vscode-integration/src/local-model-selection.ts"
+import { TypeScriptCodeIntelligence } from "../../agent-core/src/tools/typescript-code-intelligence.ts"
 import { CODING_TASKS, type CodingTask } from "./coding-tasks.ts"
 
 const MODEL = process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b"
 const ENDPOINT = process.env.OPEN_VS_CODE_MODEL_ENDPOINT ?? "http://127.0.0.1:11434/v1"
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..")
+const EXPLORATION = new Set(["read_file", "search_text", "find_files", "list_directory", "find_symbol"])
 const IGNORED_CHANGE = /^(\.open-vs-code\/|.*__pycache__\/|node_modules\/|.*\.pyc$)/
 
 interface Args {
   label: string
-  split: "DEV" | "HELD_OUT" | "ALL"
+  split: "DEV" | "HELD_OUT" | "S24" | "ALL"
+  codeIntel: boolean
   ids?: string[]
   repeat: number
   timeoutMin: number
@@ -49,6 +55,7 @@ function parseArgs(argv: readonly string[]): Args {
     ...(ids ? { ids } : {}),
     repeat: Number(value("--repeat") ?? 1),
     timeoutMin: Number(value("--timeout-min") ?? 6),
+    codeIntel: argv.includes("--code-intel"),
     ...(value("--trace") ? { traceDir: value("--trace")! } : {}),
   }
 }
@@ -188,6 +195,20 @@ function summarizeResult(result: any) {
       .map((item) => `${item.toolName}: ${item.content.replace(/\s+/g, " ").slice(0, 220)}`)
       .slice(0, 12),
     verificationRuns: toolCalls.filter((call) => call.name === "run_verification").length,
+    toolCalls: toolCalls.length,
+    explorationCalls: toolCalls.filter((call) => EXPLORATION.has(call.name)).length,
+    repeatedExploration: (() => {
+      const seen = new Set<string>()
+      let repeats = 0
+      for (const call of toolCalls as Array<{ name: string; arguments?: unknown }>) {
+        if (!EXPLORATION.has(call.name)) continue
+        const key = `${call.name}:${JSON.stringify(call.arguments ?? {})}`
+        if (seen.has(key)) repeats += 1
+        seen.add(key)
+      }
+      return repeats
+    })(),
+    symbolCalls: toolCalls.filter((call) => call.name === "find_symbol" || call.name === "rename_symbol").map((call) => `${call.name}:${call.outcome}`),
     context: (() => {
       const diagnostics = (result?.contextDiagnostics ?? []) as Array<{ totalEstimatedTokens: number; omittedItemIds: readonly string[] }>
       return {
@@ -216,7 +237,7 @@ async function runTask(task: CodingTask, args: Args, repeat: number) {
   for (const phase of (task.host === "INTERRUPT_AFTER_FIRST_WRITE" ? ["first", "resume"] : ["first"]) as Array<"first" | "resume">) {
     const controller = new AbortController()
     const host = new HeadlessHost(workspaceRoot, task, controller, phase)
-    const bridge = new AgentSessionBridge({ host, workspaceRoot, routingConfigOverride, skipWorkspaceRoutingFile: true, skills: { enabled: false }, workflow: { enabled: false }, progressMonitor: { enabled: false }, learning: { enabled: false } })
+    const bridge = new AgentSessionBridge({ host, workspaceRoot, routingConfigOverride, ...(args.codeIntel ? { codeIntelligence: new TypeScriptCodeIntelligence(workspaceRoot) } : {}), skipWorkspaceRoutingFile: true, skills: { enabled: false }, workflow: { enabled: false }, progressMonitor: { enabled: false }, learning: { enabled: false } })
     const timer = setTimeout(() => { timedOut = true; controller.abort() }, args.timeoutMin * 60_000)
     const instruction = phase === "resume" ? `Continue the task that was interrupted: ${task.instruction}` : task.instruction
     let result: any
@@ -299,7 +320,7 @@ async function main(): Promise<void> {
   const dirty = await run("git", ["status", "--porcelain", "--untracked-files=no"], REPO_ROOT)
   const tags = await fetch(ENDPOINT.replace(/\/v1$/, "/api/tags")).then((response) => response.json()).catch(() => ({ models: [] }))
   const digest = (tags.models ?? []).find((model: any) => model.name === MODEL)?.digest ?? "unknown"
-  const out = join(REPO_ROOT, "evals/results", `sprint-21-coding-${args.label}-${args.split}${args.ids ? "-subset" : ""}.json`)
+  const out = join(REPO_ROOT, "evals/results", `${args.label}-${args.split}${args.ids ? "-subset" : ""}.json`)
   const rows: Array<Record<string, unknown>> = []
   const meta = {
     label: args.label,
@@ -310,6 +331,7 @@ async function main(): Promise<void> {
     trackedDirty: dirty.out.trim().length > 0,
     startedAt: new Date().toISOString(),
     timeoutMin: args.timeoutMin,
+    codeIntelligence: args.codeIntel ? "typescript LanguageService (find_symbol, rename_symbol)" : "none (baseline tools)",
     path: "AgentSessionBridge.runTask -> createAgentRuntime with buildStarterRoutingConfig (desktop defaults: workflow/progressMonitor/learning off)",
   }
   for (const task of tasks) {
@@ -317,7 +339,7 @@ async function main(): Promise<void> {
       const row = await runTask(task, args, repeat)
       rows.push(row)
       const phase = (row.phases as any[]).at(-1)
-      console.log(`${row.pass ? "PASS" : "FAIL"} ${task.id} r${repeat} status=${phase.status}${phase.failureReason ? `/${phase.failureReason}` : ""} turns=${phase.turns} patches=${phase.patchApplied}/${phase.patchAttempts} ${Math.round((row.durationMs as number) / 1000)}s${row.falseCompletion ? " FALSE_COMPLETION" : ""}${(row.unauthorized as string[]).length ? ` OUT_OF_SCOPE=${(row.unauthorized as string[]).join(",")}` : ""}`)
+      console.log(`${row.pass ? "PASS" : "FAIL"} ${task.id} r${repeat} status=${phase.status}${phase.failureReason ? `/${phase.failureReason}` : ""} turns=${phase.turns} tools=${phase.toolCalls} explore=${phase.explorationCalls}(rep ${phase.repeatedExploration}) sym=${phase.symbolCalls.join(",") || "-"} patches=${phase.patchApplied}/${phase.patchAttempts} ${Math.round((row.durationMs as number) / 1000)}s${row.falseCompletion ? " FALSE_COMPLETION" : ""}${(row.unauthorized as string[]).length ? ` OUT_OF_SCOPE=${(row.unauthorized as string[]).join(",")}` : ""}`)
       await mkdir(dirname(out), { recursive: true })
       await writeFile(out, JSON.stringify({ meta, rows }, null, 2))
     }

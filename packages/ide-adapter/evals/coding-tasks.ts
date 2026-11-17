@@ -6,7 +6,10 @@
  * DEV tasks may be inspected while debugging. HELD_OUT tasks must not be used to tune the implementation.
  */
 
-export type TaskSplit = "DEV" | "HELD_OUT"
+import { fileURLToPath } from "node:url"
+
+/** S24: cross-file refactors written for Sprint 24 before any run; never used to tune. */
+export type TaskSplit = "DEV" | "HELD_OUT" | "S24"
 
 export type TaskCategory =
   | "BUGFIX"
@@ -47,6 +50,9 @@ export interface CodingTask {
 
 const TS_PKG = JSON.stringify({ name: "fixture", private: true, type: "module", scripts: { test: "node --experimental-strip-types --test" } }, null, 2) + "\n"
 const JS_PKG = JSON.stringify({ name: "fixture", private: true, type: "module", scripts: { test: "node --test" } }, null, 2) + "\n"
+
+const TSC = fileURLToPath(new URL("../../../node_modules/typescript/bin/tsc", import.meta.url))
+const tsconfig = (include: readonly string[]) => JSON.stringify({ compilerOptions: { strict: true, noEmit: true, allowImportingTsExtensions: true, module: "ESNext", moduleResolution: "Bundler", target: "ES2022", skipLibCheck: true, types: [] }, include }, null, 2) + "\n"
 
 const ts = (path: string) => `import assert from "node:assert/strict"\nimport test from "node:test"\n${path}`
 
@@ -499,4 +505,167 @@ export const CODING_TASKS: readonly CodingTask[] = [
     allowedChanges: ["src/user.ts", "src/describe.ts"],
     oracle: { kind: "node", script: "import { createUser } from 'WS/src/user.ts'\nimport { describeUser } from 'WS/src/describe.ts'\nif (describeUser({ id: 3, name: 'C' }) !== '#3 C' || createUser(4, 'D', 'd@e').email !== 'd@e') process.exit(1)\n" },
   },
+
+  // ---------------------------------------------------------------- S24 (unseen cross-file refactors)
+  ...S24_TASKS_FACTORY(),
 ]
+
+// Oracles typecheck independently with the repository's TypeScript, then check structure and behavior.
+function s24Oracle(body: string): Oracle {
+  return {
+    kind: "node",
+    script: [
+      "import { readFileSync } from 'node:fs'",
+      "import { execFileSync } from 'node:child_process'",
+      "const src = (f) => readFileSync('WS/' + f, 'utf8')",
+      "const fail = (m) => { console.log(m); process.exit(1) }",
+      "const has = (f, w) => new RegExp('(?<![\\\\w$])' + w + '(?![\\\\w$])').test(src(f))",
+      `try { execFileSync(process.execPath, [${JSON.stringify(TSC)}, '--noEmit', '-p', 'WS/tsconfig.json'], { stdio: 'pipe' }) } catch (e) { fail('typecheck: ' + String(e.stdout).slice(0, 400)) }`,
+      body,
+    ].join("\n") + "\n",
+  }
+}
+
+function S24_TASKS_FACTORY(): readonly CodingTask[] {
+  return [
+    {
+      id: "s01-reexport-barrel",
+      split: "S24",
+      category: "REFACTOR",
+      instruction: "Rename the roundTo helper in src/math/round.ts to roundToPlaces and update the math barrel (src/math/index.ts) and every file that uses it. src/legacy/format.ts has its own private roundTo; leave it alone. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/math/round.ts": "export function roundTo(value: number, places: number): number {\n  const factor = 10 ** places\n  return Math.round(value * factor) / factor\n}\n",
+        "src/math/clamp.ts": "export function clamp(value: number, low: number, high: number): number {\n  return Math.min(high, Math.max(low, value))\n}\n",
+        "src/math/index.ts": "export { roundTo } from \"./round.ts\"\nexport { clamp } from \"./clamp.ts\"\n",
+        "src/cart.ts": "import { clamp, roundTo } from \"./math/index.ts\"\n\nexport function cartTotal(prices: number[], discount: number): number {\n  const subtotal = prices.reduce((sum, price) => sum + price, 0)\n  return roundTo(subtotal * (1 - clamp(discount, 0, 1)), 2)\n}\n",
+        "src/invoice.ts": "import { roundTo } from \"./math/index.ts\"\n\nexport function taxLine(amount: number, rate: number): string {\n  return `tax: ${roundTo(amount * rate, 2).toFixed(2)}`\n}\n",
+        "src/legacy/format.ts": "// Trims a display label; unrelated to math/round.\nfunction roundTo(label: string): string {\n  return label.replace(/\\.\\d+$/, \"\")\n}\n\nexport function shortLabel(label: string): string {\n  return roundTo(label)\n}\n",
+        "test/round.test.ts": ts("import { roundToPlaces } from \"../src/math/index.ts\"\nimport { cartTotal } from \"../src/cart.ts\"\nimport { taxLine } from \"../src/invoice.ts\"\nimport { shortLabel } from \"../src/legacy/format.ts\"\ntest(\"roundToPlaces\", () => assert.equal(roundToPlaces(1.26, 1), 1.3))\ntest(\"cart\", () => assert.equal(cartTotal([10, 5], 0.5), 7.5))\ntest(\"tax\", () => assert.equal(taxLine(10, 0.25), \"tax: 2.50\"))\ntest(\"label\", () => assert.equal(shortLabel(\"v1.5\"), \"v1\"))\n"),
+      },
+      unchanged: ["test/round.test.ts", "src/legacy/format.ts", "src/math/clamp.ts"],
+      allowedChanges: ["src/math/round.ts", "src/math/index.ts", "src/cart.ts", "src/invoice.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/math/round.ts', 'src/math/index.ts', 'src/cart.ts', 'src/invoice.ts']) if (has(f, 'roundTo')) fail('roundTo left in ' + f)",
+        "const m = await import('WS/src/math/index.ts')",
+        "if (typeof m.roundToPlaces !== 'function' || 'roundTo' in m || m.roundToPlaces(2.345, 1) !== 2.3) fail('barrel')",
+        "const c = await import('WS/src/cart.ts'); if (c.cartTotal([1.111, 1], 0) !== 2.11) fail('cart')",
+      ].join("\n")),
+    },
+    {
+      id: "s02-shared-interface",
+      split: "S24",
+      category: "REFACTOR",
+      instruction: "Rename the UserRecord interface in src/types.ts to AccountRecord and update every file that uses it. src/admin/audit.ts has its own unrelated UserRecord interface; do not change that file. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/types.ts": "export interface UserRecord {\n  id: string\n  name: string\n  active: boolean\n}\n\nexport type UserMap = Record<string, UserRecord>\n",
+        "src/store.ts": "import type { UserMap, UserRecord } from \"./types.ts\"\n\nexport function indexUsers(users: UserRecord[]): UserMap {\n  const map: UserMap = {}\n  for (const user of users) map[user.id] = user\n  return map\n}\n\nexport function activeUsers(users: UserRecord[]): UserRecord[] {\n  return users.filter((user) => user.active)\n}\n",
+        "src/api.ts": "import type { UserRecord } from \"./types.ts\"\n\nexport function parseUser(raw: { id: string; name?: string; active?: boolean }): UserRecord {\n  return { id: raw.id, name: raw.name ?? \"unknown\", active: raw.active ?? true }\n}\n",
+        "src/view.ts": "import { type UserRecord } from \"./types.ts\"\n\nexport function label(user: UserRecord): string {\n  return `${user.name}${user.active ? \"\" : \" (inactive)\"}`\n}\n",
+        "src/admin/audit.ts": "// Admin audit rows have their own shape.\ninterface UserRecord {\n  userId: string\n  action: string\n}\n\nexport function describe(row: UserRecord): string {\n  return `${row.userId}: ${row.action}`\n}\n",
+        "test/users.test.ts": ts("import { indexUsers, activeUsers } from \"../src/store.ts\"\nimport { parseUser } from \"../src/api.ts\"\nimport { label } from \"../src/view.ts\"\nimport { describe as audit } from \"../src/admin/audit.ts\"\nconst a = parseUser({ id: \"a\", name: \"Ann\" })\nconst b = parseUser({ id: \"b\", active: false })\ntest(\"index\", () => assert.equal(indexUsers([a, b]).b, b))\ntest(\"active\", () => assert.deepEqual(activeUsers([a, b]), [a]))\ntest(\"label\", () => assert.equal(label(b), \"unknown (inactive)\"))\ntest(\"audit\", () => assert.equal(audit({ userId: \"u\", action: \"x\" }), \"u: x\"))\n"),
+      },
+      unchanged: ["test/users.test.ts", "src/admin/audit.ts"],
+      allowedChanges: ["src/types.ts", "src/store.ts", "src/api.ts", "src/view.ts"],
+      oracle: s24Oracle([
+        "if (!/export interface AccountRecord\\b/.test(src('src/types.ts'))) fail('no AccountRecord')",
+        "for (const f of ['src/types.ts', 'src/store.ts', 'src/api.ts', 'src/view.ts']) { if (has(f, 'UserRecord')) fail('UserRecord left in ' + f); if (!has(f, 'AccountRecord')) fail('AccountRecord missing in ' + f) }",
+        "if (!has('src/types.ts', 'UserMap')) fail('UserMap renamed')",
+      ].join("\n")),
+    },
+    {
+      id: "s03-monorepo-consumers",
+      split: "S24",
+      category: "MONOREPO",
+      instruction: "This is a monorepo. Rename toIsoDay in packages/core/src/time.ts to formatIsoDay and update its consumers in packages/web and packages/cli. Do not rename toIsoDayLabel. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["packages"]),
+        "packages/core/src/time.ts": "export function toIsoDay(date: Date): string {\n  return date.toISOString().slice(0, 10)\n}\n\nexport function addDays(date: Date, days: number): Date {\n  return new Date(date.getTime() + days * 86_400_000)\n}\n",
+        "packages/core/src/index.ts": "export * from \"./time.ts\"\n",
+        "packages/web/src/header.ts": "import { toIsoDay } from \"../../core/src/index.ts\"\n\nexport function headerText(now: Date): string {\n  return `Report for ${toIsoDay(now)}`\n}\n",
+        "packages/web/src/labels.ts": "export function toIsoDayLabel(day: string): string {\n  return `Day ${day}`\n}\n",
+        "packages/cli/src/print.ts": "import { addDays, toIsoDay } from \"../../core/src/time.ts\"\n\nexport function range(start: Date, days: number): string {\n  return `${toIsoDay(start)}..${toIsoDay(addDays(start, days))}`\n}\n",
+        "test/monorepo.test.ts": ts("import { formatIsoDay } from \"../packages/core/src/index.ts\"\nimport { headerText } from \"../packages/web/src/header.ts\"\nimport { range } from \"../packages/cli/src/print.ts\"\nimport { toIsoDayLabel } from \"../packages/web/src/labels.ts\"\nconst d = new Date(\"2026-03-04T10:00:00Z\")\ntest(\"format\", () => assert.equal(formatIsoDay(d), \"2026-03-04\"))\ntest(\"header\", () => assert.equal(headerText(d), \"Report for 2026-03-04\"))\ntest(\"range\", () => assert.equal(range(d, 2), \"2026-03-04..2026-03-06\"))\ntest(\"label\", () => assert.equal(toIsoDayLabel(\"x\"), \"Day x\"))\n"),
+      },
+      unchanged: ["test/monorepo.test.ts", "packages/web/src/labels.ts", "packages/core/src/index.ts"],
+      allowedChanges: ["packages/core/src/time.ts", "packages/web/src/header.ts", "packages/cli/src/print.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['packages/core/src/time.ts', 'packages/web/src/header.ts', 'packages/cli/src/print.ts']) if (has(f, 'toIsoDay')) fail('toIsoDay left in ' + f)",
+        "const t = await import('WS/packages/core/src/index.ts')",
+        "if (typeof t.formatIsoDay !== 'function' || 'toIsoDay' in t) fail('core exports')",
+      ].join("\n")),
+    },
+    {
+      id: "s04-similar-names",
+      split: "S24",
+      category: "REFACTOR",
+      instruction: "Rename the parseItem function in src/parse.ts to decodeItem and update its callers. Only parseItem: parseItems and parseItemId must keep their names. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/parse.ts": "export interface Item {\n  id: number\n  name: string\n}\n\nexport function parseItemId(raw: string): number {\n  return Number(raw.split(\":\")[0])\n}\n\nexport function parseItem(raw: string): Item {\n  const [id, name] = raw.split(\":\")\n  return { id: Number(id), name: name ?? \"\" }\n}\n\nexport function parseItems(raw: string): Item[] {\n  return raw.split(\",\").filter(Boolean).map(parseItem)\n}\n",
+        "src/import.ts": "import { parseItem, parseItems } from \"./parse.ts\"\n\nexport function importOne(line: string) {\n  return parseItem(line.trim())\n}\n\nexport function importMany(text: string) {\n  return parseItems(text.replace(/\\s+/g, \"\"))\n}\n",
+        "src/lookup.ts": "import { parseItem, parseItemId } from \"./parse.ts\"\n\nexport function sameId(a: string, b: string): boolean {\n  return parseItemId(a) === parseItem(b).id\n}\n",
+        "test/parse.test.ts": ts("import { decodeItem, parseItems, parseItemId } from \"../src/parse.ts\"\nimport { importOne, importMany } from \"../src/import.ts\"\nimport { sameId } from \"../src/lookup.ts\"\ntest(\"decode\", () => assert.deepEqual(decodeItem(\"1:a\"), { id: 1, name: \"a\" }))\ntest(\"many\", () => assert.equal(parseItems(\"1:a,2:b\").length, 2))\ntest(\"id\", () => assert.equal(parseItemId(\"7:x\"), 7))\ntest(\"importOne\", () => assert.equal(importOne(\" 3:c \").name, \"c\"))\ntest(\"importMany\", () => assert.equal(importMany(\"1:a, 2:b\")[1].id, 2))\ntest(\"sameId\", () => assert.equal(sameId(\"4:x\", \"4:y\"), true))\n"),
+      },
+      unchanged: ["test/parse.test.ts"],
+      allowedChanges: ["src/parse.ts", "src/import.ts", "src/lookup.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/parse.ts', 'src/import.ts', 'src/lookup.ts']) if (has(f, 'parseItem')) fail('parseItem left in ' + f)",
+        "if (!has('src/import.ts', 'parseItems') || !has('src/lookup.ts', 'parseItemId')) fail('similar names changed')",
+        "const p = await import('WS/src/parse.ts')",
+        "if (typeof p.decodeItem !== 'function' || typeof p.parseItems !== 'function' || typeof p.parseItemId !== 'function' || 'parseItem' in p) fail('exports')",
+      ].join("\n")),
+    },
+    {
+      id: "s05-constant-shadow",
+      split: "S24",
+      category: "REFACTOR",
+      instruction: "Rename the MAX_RETRIES constant exported from src/config.ts to RETRY_LIMIT and update every file that uses it. src/jobs/legacy.ts has its own MAX_RETRIES; do not change it. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/config.ts": "export const MAX_RETRIES = 3\nexport const TIMEOUT_MS = 500\n",
+        "src/http.ts": "import { MAX_RETRIES, TIMEOUT_MS } from \"./config.ts\"\n\nexport function plan(): string {\n  return `${MAX_RETRIES}x${TIMEOUT_MS}ms`\n}\n",
+        "src/jobs/queue.ts": "import { MAX_RETRIES } from \"../config.ts\"\n\nexport function shouldRetry(attempt: number): boolean {\n  return attempt < MAX_RETRIES\n}\n",
+        "src/jobs/worker.ts": "import * as config from \"../config.ts\"\n\nexport function budget(): number {\n  return config.MAX_RETRIES * config.TIMEOUT_MS\n}\n",
+        "src/jobs/legacy.ts": "const MAX_RETRIES = 10\n\nexport function legacyShouldRetry(attempt: number): boolean {\n  return attempt < MAX_RETRIES\n}\n",
+        "test/config.test.ts": ts("import { RETRY_LIMIT } from \"../src/config.ts\"\nimport { plan } from \"../src/http.ts\"\nimport { shouldRetry } from \"../src/jobs/queue.ts\"\nimport { budget } from \"../src/jobs/worker.ts\"\nimport { legacyShouldRetry } from \"../src/jobs/legacy.ts\"\ntest(\"limit\", () => assert.equal(RETRY_LIMIT, 3))\ntest(\"plan\", () => assert.equal(plan(), \"3x500ms\"))\ntest(\"retry\", () => assert.equal(shouldRetry(3), false))\ntest(\"budget\", () => assert.equal(budget(), 1500))\ntest(\"legacy\", () => assert.equal(legacyShouldRetry(5), true))\n"),
+      },
+      unchanged: ["test/config.test.ts", "src/jobs/legacy.ts"],
+      allowedChanges: ["src/config.ts", "src/http.ts", "src/jobs/queue.ts", "src/jobs/worker.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/config.ts', 'src/http.ts', 'src/jobs/queue.ts', 'src/jobs/worker.ts']) if (has(f, 'MAX_RETRIES')) fail('MAX_RETRIES left in ' + f)",
+        "const c = await import('WS/src/config.ts')",
+        "if (c.RETRY_LIMIT !== 3 || 'MAX_RETRIES' in c) fail('config exports')",
+      ].join("\n")),
+    },
+    {
+      id: "s06-alias-reexport",
+      split: "S24",
+      category: "IMPORT_EXPORT",
+      instruction: "Rename makeOrderId in src/ids.ts to createOrderId, including where it is re-exported and where it is imported under an alias. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/ids.ts": "export type OrderId = string\n\nlet counter = 0\n\nexport function makeOrderId(prefix: string): OrderId {\n  counter += 1\n  return `${prefix}-${counter}`\n}\n",
+        "src/checkout.ts": "import { makeOrderId as newId, type OrderId } from \"./ids.ts\"\n\nexport function startCheckout(): OrderId {\n  return newId(\"chk\")\n}\n",
+        "src/refunds.ts": "import { makeOrderId } from \"./ids.ts\"\n\nexport function refundId(): string {\n  return makeOrderId(\"ref\")\n}\n",
+        "src/orders/index.ts": "export { makeOrderId } from \"../ids.ts\"\nexport type { OrderId } from \"../ids.ts\"\n",
+        "src/orders/bulk.ts": "import { makeOrderId } from \"./index.ts\"\n\nexport function bulk(count: number): string[] {\n  return Array.from({ length: count }, () => makeOrderId(\"blk\"))\n}\n",
+        "test/ids.test.ts": ts("import { createOrderId } from \"../src/ids.ts\"\nimport { createOrderId as viaIndex } from \"../src/orders/index.ts\"\nimport { startCheckout } from \"../src/checkout.ts\"\nimport { refundId } from \"../src/refunds.ts\"\nimport { bulk } from \"../src/orders/bulk.ts\"\ntest(\"ids\", () => {\n  assert.match(createOrderId(\"x\"), /^x-\\d+$/)\n  assert.equal(viaIndex, createOrderId)\n  assert.match(startCheckout(), /^chk-\\d+$/)\n  assert.match(refundId(), /^ref-\\d+$/)\n  assert.equal(bulk(2).length, 2)\n})\n"),
+      },
+      unchanged: ["test/ids.test.ts"],
+      allowedChanges: ["src/ids.ts", "src/checkout.ts", "src/refunds.ts", "src/orders/index.ts", "src/orders/bulk.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/ids.ts', 'src/checkout.ts', 'src/refunds.ts', 'src/orders/index.ts', 'src/orders/bulk.ts']) if (has(f, 'makeOrderId')) fail('makeOrderId left in ' + f)",
+        "const o = await import('WS/src/orders/index.ts')",
+        "if (typeof o.createOrderId !== 'function' || 'makeOrderId' in o) fail('re-export')",
+      ].join("\n")),
+    },
+  ]
+}

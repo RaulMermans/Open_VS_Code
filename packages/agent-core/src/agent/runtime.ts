@@ -13,6 +13,7 @@ import { MutationEngine } from "../tools/mutation-engine.ts";
 import { VerificationEngine } from "../tools/verification-engine.ts";
 import { createReadOnlyToolRegistry } from "../tools/read-only-registry.ts";
 import { createMutationToolRegistrations } from "../tools/mutation-registry.ts";
+import { createCodeIntelligenceToolRegistrations, type CodeIntelligenceProvider } from "../tools/code-intelligence.ts";
 import type { CommandSandboxMode } from "../tools/command-sandbox.ts";
 import { createVerificationToolRegistrations } from "../tools/verification-registry.ts";
 import { McpCatalog, selectMcpTools, createMcpToolRegistration } from "../mcp/index.ts";
@@ -129,6 +130,11 @@ export interface CreateAgentRuntimeOptions {
    */
   browserSessionManager?: BrowserSessionManager;
   /**
+   * Optional language service (Sprint 24, ADR-047). When provided in a trusted workspace, exposes
+   * find_symbol and rename_symbol; renames still go through review and the MutationEngine.
+   */
+  codeIntelligence?: CodeIntelligenceProvider;
+  /**
    * Optional account scope for authorization and evidence provenance isolation (Sprint 10A.1C).
    */
   accountScope?: string;
@@ -242,6 +248,11 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     }
     for (const r of createVerificationToolRegistrations(options.workspaceRoot, { sandbox: commandSandbox })) {
       registry.register(r);
+    }
+    if (options.codeIntelligence) {
+      for (const r of createCodeIntelligenceToolRegistrations(options.codeIntelligence, mutationEngine)) {
+        registry.register(r);
+      }
     }
   }
 

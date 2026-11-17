@@ -674,6 +674,57 @@ export class MutationEngine {
     }
   }
 
+  /**
+   * Prepare a rewrite of an existing file from `baseContent` (the text a language service computed edits
+   * against) to `afterContent`. Same path, policy, binary and budget checks as preparePatch; the file on
+   * disk must still equal `baseContent` (STALE_BASE otherwise, e.g. unsaved editor changes). Grouped
+   * callers enforce their own file cap, so the per-step file budget is not consumed here.
+   */
+  async prepareRewrite(path: string, baseContent: string, afterContent: string): Promise<PreparedMutation> {
+    const root = await realpath(this.#workspaceRoot)
+    const resolvedPath = await resolveWritePath(root, path, { mustExist: true })
+    const policyViolation = checkMutationPolicy(root, resolvedPath, this.#policy)
+    if (policyViolation) throw policyViolation
+    const rawBytes = await readFile(resolvedPath)
+    if (containsBinaryBytes(rawBytes) || hasBinaryExtension(resolvedPath)) {
+      throw new MutationFailure("BINARY_FILE", `Cannot patch binary file: ${path}`)
+    }
+    const relPath = relative(root, resolvedPath).replaceAll("\\", "/")
+    const beforeContent = rawBytes.toString("utf8")
+    const baseHash = sha256(beforeContent)
+    if (baseHash !== sha256(baseContent)) {
+      throw new MutationFailure("STALE_BASE", `${relPath} differs from the text the language service analyzed (unsaved editor changes or a concurrent write)`)
+    }
+    if (containsBinaryBytes(Buffer.from(afterContent, "utf8"))) {
+      throw new MutationFailure("ENCODING_ERROR", `Rewrite result contains binary content`)
+    }
+    const diff = generateUnifiedDiff(relPath, beforeContent, afterContent, this.#budgets.maxDiffBytes)
+    const budgetViolation = checkBudgets(diff, this.#budgets)
+    if (budgetViolation) throw budgetViolation
+    const resultHash = sha256(afterContent)
+    return {
+      id: this.#idFactory(),
+      operation: "patch",
+      path: relPath,
+      resolvedPath,
+      beforeContent,
+      proposedContent: afterContent,
+      baseHash,
+      resultHash,
+      diff,
+      fileChange: {
+        path: relPath,
+        operation: "patch",
+        beforeSize: Buffer.byteLength(beforeContent),
+        afterSize: Buffer.byteLength(afterContent),
+        beforeHash: baseHash,
+        afterHash: resultHash,
+      },
+      timestamp: this.#timestampFactory(),
+      valid: true,
+    }
+  }
+
   async prepareCreate(request: MutationRequest): Promise<PreparedMutation> {
     if (request.operation !== "create") {
       throw new MutationFailure("INVALID_PATCH", "Operation must be 'create'")

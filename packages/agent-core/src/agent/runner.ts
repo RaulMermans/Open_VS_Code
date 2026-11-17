@@ -442,13 +442,30 @@ export class AgentRunner {
           }
           const reviewableId = reviewable.id
           let targetFilePath = ""
+          let groupTouched: string[] | undefined
+          let groupConditions: { preconditions: { path: string; expectedHash: string; exists: boolean }[]; expectedPostconditions: { path: string; expectedHash: string; exists: boolean }[] } | undefined
           if (this.#checkpointCoordinator && !isVerification && !isBrowserReview) {
             const payload = reviewable.reviewPayload as any
             targetFilePath = payload?.path ?? (pending.prepared.arguments as any)?.targetFile ?? (pending.prepared.arguments as any)?.path ?? ""
             if (!targetFilePath.startsWith("/") && session.input.workspaceRoot) {
               targetFilePath = join(session.input.workspaceRoot, targetFilePath)
             }
-            if (payload?.beforeContent !== undefined && payload?.beforeContent !== null && payload.beforeContent !== "") {
+            // A grouped edit stores one preimage per file (never the combined review text) and checks every base hash.
+            const group = groupedFiles(payload)?.map((file) => ({ ...file, absolute: file.path.startsWith("/") ? file.path : join(session.input.workspaceRoot, file.path) }))
+            if (group) {
+              for (const [index, file] of group.entries()) {
+                try {
+                  await this.#checkpointCoordinator.artifactStore.storePreimage(session.input.task.id, `${reviewable.id}-${index}`, file.absolute, Buffer.from(file.beforeContent, "utf8"))
+                } catch (err) {
+                  throw new Error(`DURABILITY_UNAVAILABLE: Failed to store preimage before mutation: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
+                }
+              }
+              groupTouched = group.map((file) => file.absolute)
+              groupConditions = {
+                preconditions: group.map((file) => ({ path: file.absolute, expectedHash: file.beforeHash, exists: true })),
+                expectedPostconditions: group.map((file) => ({ path: file.absolute, expectedHash: file.afterHash, exists: true })),
+              }
+            } else if (payload?.beforeContent !== undefined && payload?.beforeContent !== null && payload.beforeContent !== "") {
               try {
                 await this.#checkpointCoordinator.artifactStore.storePreimage(
                   session.input.task.id,
@@ -467,8 +484,10 @@ export class AgentRunner {
                 evidenceVersion: session.turns + 1,
                 kind: "MUTATION",
                 authorityId: "mutation-engine",
-                preconditions: payload?.beforeHash ? [{ path: targetFilePath, expectedHash: payload.beforeHash, exists: true }] : [],
-                expectedPostconditions: payload?.afterHash ? [{ path: targetFilePath, expectedHash: payload.afterHash, exists: true }] : [],
+                ...(groupConditions ?? {
+                  preconditions: payload?.beforeHash ? [{ path: targetFilePath, expectedHash: payload.beforeHash, exists: true }] : [],
+                  expectedPostconditions: payload?.afterHash ? [{ path: targetFilePath, expectedHash: payload.afterHash, exists: true }] : [],
+                }),
                 payload: { mutationId: reviewable.id },
               })
             } catch (err) {
@@ -488,7 +507,7 @@ export class AgentRunner {
                 turnId: session.turns,
                 evidenceVersion: session.turns + 1,
                 runtimeState: { status: "WAITING_FOR_TOOL" },
-                touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+                touchedFilePaths: groupTouched ?? (targetFilePath ? [targetFilePath] : []),
               })
             } catch (err) {
               throw new Error(`DURABILITY_UNAVAILABLE: Failed to record BEFORE_MUTATION checkpoint: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
@@ -579,7 +598,7 @@ export class AgentRunner {
                   turnId: session.turns,
                   evidenceVersion: session.turns + 1,
                   runtimeState: { status: "OBSERVING" },
-                  touchedFilePaths: targetFilePath ? [targetFilePath] : [],
+                  touchedFilePaths: groupTouched ?? (targetFilePath ? [targetFilePath] : []),
                 })
               }
             } catch (err) {
@@ -644,13 +663,16 @@ export class AgentRunner {
             } else {
               this.#emit("mutation.failed", { callId: pending.prepared.id, name: pending.prepared.name, mutationId: reviewable.id, error: result.error })
             }
-            session.evidenceCollector.recordMutationOutcome({
-              mutationId: reviewable.id,
-              path: (pending.prepared.arguments as any)?.targetFile || (pending.prepared.arguments as any)?.path || "",
-              status: result.status === "APPLIED" ? "APPLIED" : result.status === "ALREADY_SATISFIED" ? "ALREADY_SATISFIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
-              diffSummary: result.status === "ALREADY_SATISFIED" ? "already satisfied; no write" : ((reviewable.reviewPayload as any)?.summary || ""),
-              operation: result.operation ?? mutationOperation(pending.prepared.name),
-            })
+            // A grouped edit records every file it touched, so completion checks and verification selection see all of them.
+            for (const outcomePath of groupedFilePaths(reviewable.reviewPayload) ?? [(pending.prepared.arguments as any)?.targetFile || (pending.prepared.arguments as any)?.path || ""]) {
+              session.evidenceCollector.recordMutationOutcome({
+                mutationId: reviewable.id,
+                path: outcomePath,
+                status: result.status === "APPLIED" ? "APPLIED" : result.status === "ALREADY_SATISFIED" ? "ALREADY_SATISFIED" : (result.error?.code === "STALE_BASE" ? "STALE" : "FAILED"),
+                diffSummary: result.status === "ALREADY_SATISFIED" ? "already satisfied; no write" : ((reviewable.reviewPayload as any)?.summary || ""),
+                operation: result.operation ?? mutationOperation(pending.prepared.name),
+              })
+            }
             if (result.status === "APPLIED") {
               session.evidenceCollector.resolveRecoveredToolContractFailures()
               if (!isVerification) session.completedExploration?.clear()
@@ -1720,9 +1742,20 @@ export class AgentRunner {
           if (reviewable.reviewPayload.truncated === true) {
             throw new Error("Diff is truncated and cannot be reviewed safely")
           }
+          const groupPaths = groupedFilePaths(reviewable.reviewPayload)
+          if (groupPaths) {
+            // A language-service edit group: the same exclusions apply to every file it touches.
+            const excluded = excludedEditPaths(session.input.task.instruction)
+              .find((named) => groupPaths.some((path) => pathsReferToSameFile(path, named)))
+            if (excluded) {
+              const message = `The request said not to edit ${excluded}, and this change would edit it. Nothing was changed.`
+              this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
+              return false
+            }
+          }
           const proposedPath = String(reviewable.reviewPayload.path ?? (prepared.arguments as { path?: unknown }).path ?? "")
           const proposedContent = typeof reviewable.reviewPayload.proposedContent === "string" ? reviewable.reviewPayload.proposedContent : ""
-          if (proposedPath && proposedContent && prepared.definition.action === "write_file") {
+          if (!groupPaths && proposedPath && proposedContent && prepared.definition.action === "write_file") {
             const implementation = [
               ...session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path)),
               ...session.evidenceLedger.filesRead.filter((path) => !isTestArtifactPath(path)),
@@ -1735,7 +1768,7 @@ export class AgentRunner {
               return false
             }
           }
-          const redirected = await this.#misplacedMutationOwner(prepared, reviewable.reviewPayload)
+          const redirected = groupPaths ? undefined : await this.#misplacedMutationOwner(prepared, reviewable.reviewPayload)
           if (redirected) {
             const message = `WRONG_FILE: this change belongs in ${redirected.owner}, not ${redirected.target}. Call apply_patch on ${redirected.owner} only. Do not add that code to ${redirected.target}.`
             this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
@@ -3267,6 +3300,19 @@ function mutationOperation(toolName: string): "create" | "patch" | "delete" {
   if (toolName === "create_file") return "create"
   if (toolName === "delete_file") return "delete"
   return "patch"
+}
+
+interface GroupedFile { readonly path: string; readonly beforeHash: string; readonly afterHash: string; readonly beforeContent: string }
+
+/** Per-file entries of a grouped (language-service) review payload, or undefined for a single-file one. */
+function groupedFiles(reviewPayload: unknown): readonly GroupedFile[] | undefined {
+  const files = reviewPayload && typeof reviewPayload === "object" ? (reviewPayload as { files?: unknown }).files : undefined
+  if (!Array.isArray(files) || files.length === 0) return undefined
+  return files.filter((file): file is GroupedFile => Boolean(file) && typeof file.path === "string" && typeof file.beforeContent === "string")
+}
+
+function groupedFilePaths(reviewPayload: unknown): string[] | undefined {
+  return groupedFiles(reviewPayload)?.map((file) => file.path)
 }
 
 function mutationPathPayload(args: unknown, reviewPayload: unknown): { path?: string } {
