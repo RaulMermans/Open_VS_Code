@@ -161,6 +161,8 @@ interface Session {
    * here as ALREADY_OBSERVED instead of being refused. Cleared whenever the workspace changes.
    */
   observedLookups?: Map<string, ObservedLookup>
+  /** Renames applied in this task, so a repeated request is recognized as already done (not cross-task memory). */
+  completedRenames?: CompletedRename[]
   lastAssistantText?: string
   /** One "answer now" nudge has already been sent for a non-editing task. */
   conversationAnswerNudged?: boolean
@@ -179,6 +181,18 @@ interface ObservedLookup {
  * commands, not by edits made outside the agent mid-task; add a directory mtime check if that shows up.
  */
 const REPLAYABLE_LOOKUPS = new Set(["list_directory", "find_files", "search_text", "find_symbol", "read_file"])
+interface CompletedRename {
+  readonly path: string
+  readonly symbol: string
+  readonly newName: string
+  readonly mutationId: string
+  readonly files: readonly string[]
+  repeats: number
+}
+
+/** A whole identifier (not part of a longer name). */
+const identifierPattern = (name: string) => new RegExp(String.raw`(?<![\w$])${name.replace(/\$/g, "\\$")}(?![\w$])`)
+
 /** A lookup repeated this many times with no workspace change is answered once in full, then only briefly. */
 const FULL_REPLAYS = 1
 
@@ -696,6 +710,11 @@ export class AgentRunner {
             if (result.status === "APPLIED") {
               session.evidenceCollector.resolveRecoveredToolContractFailures()
               if (!isVerification) session.observedLookups?.clear()
+              if (pending.prepared.name === "rename_symbol") {
+                const args = pending.prepared.arguments as { path?: unknown; symbol?: unknown; newName?: unknown }
+                const renames = session.completedRenames ?? (session.completedRenames = [])
+                renames.push({ path: String(args.path), symbol: String(args.symbol), newName: String(args.newName), mutationId: reviewable.id, files: groupedFilePaths(reviewable.reviewPayload) ?? [String(args.path)], repeats: 0 })
+              }
             }
             if (result.status === "APPLIED" || result.status === "ALREADY_SATISFIED") await this.#refreshRequirementGaps()
           }
@@ -1664,6 +1683,7 @@ export class AgentRunner {
       this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
       return false
     }
+    if ((prepared.name === "rename_symbol" || prepared.name === "find_symbol") && await this.#answerCompletedRename(prepared)) return false
     // A repeated lookup is answered from the earlier result, not run again (read_file is re-read and compared below).
     const previousLookup = prepared.name !== "read_file" ? session.observedLookups?.get(signature) : undefined
     if (previousLookup && REPLAYABLE_LOOKUPS.has(prepared.name)) {
@@ -2271,6 +2291,41 @@ export class AgentRunner {
     session.observations.push(observation)
     session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", observation.truncated), alreadyObserved: true })
     return observation
+  }
+
+  /**
+   * A rename_symbol/find_symbol on a name this task already renamed: when the file still shows the rename (the
+   * old identifier gone, the new one present), answer ALREADY_SATISFIED with no new mutation or approval.
+   * Otherwise (the workspace changed, or a different symbol) the call runs normally.
+   */
+  async #answerCompletedRename(prepared: PreparedToolCall): Promise<boolean> {
+    const session = this.#requiredSession()
+    const args = prepared.arguments as { path?: unknown; symbol?: unknown; newName?: unknown }
+    const symbol = String(args.symbol ?? "")
+    const path = String(args.path ?? "")
+    const rename = session.completedRenames?.findLast((item) => item.symbol === symbol
+      && item.files.some((file) => pathsReferToSameFile(file, path))
+      && (prepared.name === "find_symbol" || args.newName === undefined || args.newName === item.newName))
+    if (!rename) return false
+    let text: string
+    try {
+      text = await readFile(isAbsolute(path) ? path : join(session.input.workspaceRoot, path), "utf8")
+    } catch {
+      return false
+    }
+    if (identifierPattern(symbol).test(text) || !identifierPattern(rename.newName).test(text)) return false
+    rename.repeats += 1
+    const verification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
+    const next = verification ? `The last test run ${verification.status === "PASS" ? "passed" : "did not pass"} after it.` : "Run the tests to verify it."
+    const content = `ALREADY_SATISFIED: ${symbol} was already renamed to ${rename.newName} in this task (${rename.files.join(", ")}). ${path} no longer contains ${symbol} and does contain ${rename.newName}. Nothing was changed and no approval is needed. ${next}`
+    const observation: ToolObservation = {
+      ...createToolObservation({ toolName: prepared.name, callId: prepared.id, output: content, maxContentBytes: this.#observationMaxBytes, ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}) }),
+      alreadyObserved: true,
+    }
+    session.observations.push(observation)
+    session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", false), alreadyObserved: true })
+    if (rename.repeats > 1) this.#recordRefusal(prepared.name, "ALREADY_SATISFIED", `${symbol} already renamed to ${rename.newName}`)
+    return true
   }
 
   #addErrorObservation(prepared: PreparedToolCall, category: string, message: string, outcome: AgentToolCallRecord["outcome"]): void {
