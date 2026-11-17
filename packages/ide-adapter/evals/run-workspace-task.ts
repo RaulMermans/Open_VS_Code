@@ -72,5 +72,17 @@ const summary = {
   approvals, finalAnswer: String(result?.finalAnswer ?? "").slice(0, 1500),
 }
 await writeFile(outFile, JSON.stringify(summary, null, 2))
+if (process.argv.includes("--trace")) {
+  // Full diagnostic trace: profile, every call with arguments, observations, context omissions, events.
+  const { classifyTaskProfile } = await import("../../agent-core/src/agent/task-profile.ts")
+  const profile = classifyTaskProfile(instruction, "BUILD")
+  await writeFile(outFile.replace(/\.json$/, ".trace.json"), JSON.stringify({
+    model: process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b",
+    profile: { category: profile.category, requiresCodeChange: profile.requiresCodeChange, explicitFilePaths: profile.explicitFilePaths, toolGuidance: profile.toolGuidance },
+    toolCalls, observations: (result?.observations ?? []).map((item: any) => ({ tool: item.toolName, ok: item.ok, arguments: item.arguments, content: String(item.content).slice(0, 2500) })),
+    contextDiagnostics: result?.contextDiagnostics ?? [], nonProgress: result?.nonProgress,
+    events: (result?.events ?? []).map((event: any) => ({ type: event.type, payload: JSON.stringify(event.payload ?? {}).slice(0, 400) })),
+  }, null, 2))
+}
 console.log(`status=${summary.status} turns=${summary.turns} tools=${summary.toolCalls} approvals=${approvals.length} ${Math.round(summary.durationMs / 1000)}s timedOut=${timedOut}`)
 process.exit(0)
