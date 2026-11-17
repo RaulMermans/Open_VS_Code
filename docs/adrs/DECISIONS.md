@@ -26,3 +26,4 @@
 - [ADR-039: Governed Playwright Browser Runtime & Agent Tool Integration](ADR-039-governed-playwright-browser-runtime.md)
 - [ADR-044: Native tool-message conversation encoding (opt-in)](ADR-044-native-tool-messages.md)
 
+- [ADR-047: Language-service symbol tools (find_symbol, rename_symbol)](ADR-047-language-service-symbol-tools.md)

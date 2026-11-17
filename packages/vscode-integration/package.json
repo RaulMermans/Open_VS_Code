@@ -258,6 +258,7 @@
       }
     },
     "configurationDefaults": {
+      "js/ts.preferences.useAliasesForRenames": false,
       "typescript.preferences.useAliasesForRenames": false,
       "javascript.preferences.useAliasesForRenames": false
     }
