@@ -302,3 +302,31 @@ test("through the runner: a hand rename of an export is refused unwritten and re
     assert.equal(await read(ws.root, "src/report.ts"), LIB["src/report.ts"].replaceAll("calcTotal", "computeTotal"))
   } finally { await ws.cleanup() }
 })
+
+test("a partial rename proposal (language server still loading) is retried once, then refused with nothing written", async () => {
+  for (const partialCalls of [1, Number.POSITIVE_INFINITY]) {
+    const ws = await workspace(LIB)
+    try {
+      const ts = new TypeScriptCodeIntelligence(ws.root)
+      let calls = 0
+      // Like tsserver before the project is loaded: only the file being renamed is covered.
+      const loading: CodeIntelligenceProvider = {
+        name: "vscode", readText: ts.readText.bind(ts), definitions: ts.definitions.bind(ts), references: ts.references.bind(ts),
+        rename: async (file, position, newName) => {
+          const outcome = await ts.rename(file, position, newName)
+          calls += 1
+          return outcome.ok && calls <= partialCalls ? { ...outcome, files: outcome.files.filter((entry) => entry.file === file) } : outcome
+        },
+      }
+      const attempt = tools(ws.root, loading).rename({ path: "src/totals.ts", symbol: "calcTotal", newName: "computeTotal" })
+      if (partialCalls === 1) {
+        const reviewable = await attempt
+        assert.equal((reviewable.reviewPayload.files as unknown[]).length, 5, "the retry covers every file")
+        assert.equal(calls, 2)
+      } else {
+        await assert.rejects(attempt, /does not cover .*src\/report\.ts.*Nothing was changed/)
+        assert.deepEqual(await snapshot(ws.root), Object.fromEntries(Object.entries(LIB)))
+      }
+    } finally { await ws.cleanup() }
+  }
+})

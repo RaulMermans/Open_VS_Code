@@ -284,8 +284,20 @@ export function createCodeIntelligenceToolRegistrations(provider: CodeIntelligen
       const symbol = input.symbol as string
       const newName = input.newName as string
       const resolved = await resolveSymbol(provider, root, input.path as string, symbol, input.line as number | undefined).catch(lookupFailure)
-      const outcome = await provider.rename(resolved.anchor.file, resolved.anchor.position, newName)
+      let outcome = await provider.rename(resolved.anchor.file, resolved.anchor.position, newName)
       if (!outcome.ok) throw new MutationFailure("INVALID_PATCH", `The ${provider.name} language service refused to rename ${symbol}: ${outcome.error}. Nothing was changed.`)
+      // A language server that is still loading the project (or has no project for some files) can propose a
+      // partial rename. Every other file whose use of the name resolves to this definition must be covered.
+      let missing = await uncoveredUses(provider, root, symbol, resolved.definition, outcome.files)
+      if (missing.length > 0) {
+        // Reading those files above opened them in the language service; ask once more.
+        outcome = await provider.rename(resolved.anchor.file, resolved.anchor.position, newName)
+        if (!outcome.ok) throw new MutationFailure("INVALID_PATCH", `The ${provider.name} language service refused to rename ${symbol}: ${outcome.error}. Nothing was changed.`)
+        missing = await uncoveredUses(provider, root, symbol, resolved.definition, outcome.files)
+      }
+      if (missing.length > 0) {
+        throw new MutationFailure("INVALID_PATCH", `The ${provider.name} language service's rename of ${symbol} does not cover ${missing.slice(0, 5).join(", ")}, which use${missing.length === 1 ? "s" : ""} the same symbol (the project may still be loading). Nothing was changed. Call rename_symbol again in a moment.`)
+      }
       if (outcome.resourceOperations.length > 0) {
         throw new MutationFailure("INVALID_PATCH", `The rename of ${symbol} also needs file operations (${outcome.resourceOperations.slice(0, 3).join("; ")}), which are not supported. Nothing was changed.`)
       }
@@ -371,6 +383,29 @@ export function createCodeIntelligenceToolRegistrations(provider: CodeIntelligen
     },
   }
   return [findTool, renameTool]
+}
+
+/** Workspace files outside a rename proposal that use `symbol` resolving to `definition` (bounded). */
+async function uncoveredUses(provider: CodeIntelligenceProvider, root: string, symbol: string, definition: CodeLocation, proposal: readonly FileEdits[]): Promise<string[]> {
+  const covered = new Set(await Promise.all(proposal.filter((file) => file.edits.length > 0).map((file) => workspaceRelative(root, file.file))))
+  const pattern = new RegExp(`(?<![\\w$])${symbol.replace(/\$/g, "\\$")}(?![\\w$])`)
+  const { results } = await searchText(root, symbol, { maxResults: 300 }).catch(() => ({ results: [] as const }))
+  const candidates = [...new Set(results.filter((result) => pattern.test(result.text) && /\.[cm]?[jt]sx?$/.test(result.path)).map((result) => result.path))]
+    .filter((path) => !covered.has(path))
+    .slice(0, 30)
+  const target = locationKey(definition)
+  const missing: string[] = []
+  for (const path of candidates) {
+    const file = await resolveRepositoryPath(root, path, "file").catch(() => undefined)
+    if (!file) continue
+    const text = await provider.readText(file).catch(() => undefined)
+    if (text === undefined) continue
+    for (const occurrence of identifierOccurrences(text, symbol).slice(0, 5)) {
+      const definitions = await provider.definitions(file, occurrence).catch(() => [])
+      if (definitions.some((item) => locationKey(item) === target)) { missing.push(path); break }
+    }
+  }
+  return missing
 }
 
 /** Source files still containing the old name as a word, for a truthful (lower-confidence) coverage note. */
