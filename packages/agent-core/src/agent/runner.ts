@@ -27,7 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
+import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
 import { AdaptiveControlPolicy, type AdaptiveDirective } from "../runtime-evals/adaptive-control-policy.ts"
@@ -1750,6 +1750,19 @@ export class AgentRunner {
             if (excluded) {
               const message = `The request said not to edit ${excluded}, and this change would edit it. Nothing was changed.`
               this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
+              return false
+            }
+          }
+          if (!groupPaths && prepared.name === "apply_patch" && this.#registry.listDefinitions().some((definition) => definition.name === "rename_symbol")) {
+            const payload = reviewable.reviewPayload as { path?: unknown; beforeContent?: unknown; proposedContent?: unknown }
+            const renamed = handRenamedBinding(String(payload.beforeContent ?? ""), String(payload.proposedContent ?? ""), session.input.task.instruction)
+            if (renamed) {
+              // Nothing is written: renaming one side by hand breaks every other file that uses the name.
+              const path = String(payload.path ?? "")
+              const message = `RENAME_BY_PATCH: this patch renames ${renamed.from} to ${renamed.to} in ${path} only, which would break every other file that uses ${renamed.from}. Nothing was changed. Call rename_symbol with path ${path}, symbol ${renamed.from}, newName ${renamed.to}: it renames the definition, imports, re-exports and call sites in all files in one reviewed change. Then use apply_patch for any other part of the request.`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              session.evidenceCollector.recordToolAction({ id: prepared.id, toolName: prepared.name, outcome: "FAILED", error: message })
               return false
             }
           }

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
 import { AgentRunner } from "../../src/agent/runner.ts"
-import { mutationToolGuidance } from "../../src/agent/tool-contract.ts"
+import { handRenamedBinding, mutationToolGuidance } from "../../src/agent/tool-contract.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
@@ -264,4 +264,35 @@ test("through the runner: one approval, every file recorded, and a rejection wri
 test("edit guidance names rename_symbol only when it is available", () => {
   assert.match(mutationToolGuidance(["apply_patch", "rename_symbol"]), /rename_symbol\(path, symbol, newName\)/)
   assert.doesNotMatch(mutationToolGuidance(["apply_patch", "create_file"]), /rename_symbol/)
+})
+
+test("hand renames of an exported or imported binding are recognized only when the request names both", () => {
+  const ask = "Rename calcTotal to computeTotal everywhere."
+  assert.deepEqual(handRenamedBinding("export function calcTotal() {}\n", "export function computeTotal() {}\n", ask), { from: "calcTotal", to: "computeTotal" })
+  assert.deepEqual(handRenamedBinding("import { calcTotal as t } from \"./a.ts\"\n", "import { computeTotal as t } from \"./a.ts\"\n", ask), { from: "calcTotal", to: "computeTotal" })
+  assert.deepEqual(handRenamedBinding("export { calcTotal } from \"./a.ts\"\n", "export { computeTotal } from \"./a.ts\"\n", ask), { from: "calcTotal", to: "computeTotal" })
+  assert.equal(handRenamedBinding("export function calcTotal() {}\n", "export function computeTotal() {}\n", "Replace the summing helper."), undefined)
+  assert.equal(handRenamedBinding("function calcTotal() {}\n", "function computeTotal() {}\n", ask), undefined, "a private helper is a single-file change")
+  assert.equal(handRenamedBinding("export const a = 1\n", "export const a = 1\nexport const SCORE = 2\n", "Add SCORE next to a"), undefined)
+})
+
+test("through the runner: a hand rename of an export is refused unwritten and redirected to rename_symbol", async () => {
+  const ws = await workspace(LIB)
+  try {
+    const engine = new MutationEngine(ws.root)
+    const registry = new ToolRegistry([...createMutationToolRegistrations({ engine }), ...createCodeIntelligenceToolRegistrations(new TypeScriptCodeIntelligence(ws.root), engine)])
+    const provider = new ScriptedModelProvider([
+      response("", [{ id: "p1", name: "apply_patch", arguments: { path: "src/totals.ts", search: "export function calcTotal(", replace: "export function computeTotal(" } }]),
+      response("", [{ id: "r1", name: "rename_symbol", arguments: { path: "src/totals.ts", symbol: "calcTotal", newName: "computeTotal" } }]),
+      response("Renamed."),
+      response("Done."),
+    ])
+    const runner = new AgentRunner({ provider, registry, eventFactory: { createId: () => "e", now: () => "2026-11-17T12:00:00.000Z" } })
+    let result = await runner.run({ task: { id: "t", mode: "BUILD", instruction: "Rename calcTotal to computeTotal everywhere." }, workspaceRoot: ws.root, maxTurns: 5, contextBudget: calculateBudget({ contextWindow: 8_000, reservedOutput: 400, reservedToolHistory: 400 }), projectInstructions: [] })
+    const firstPause = result.status
+    for (let i = 0; result.status === "PAUSED" && i < 5; i += 1) result = await runner.resume("APPROVE")
+    assert.equal(firstPause, "PAUSED", "the redirected rename_symbol reaches approval")
+    assert.ok(result.observations?.some((item) => /RENAME_BY_PATCH/.test(item.content)))
+    assert.equal(await read(ws.root, "src/report.ts"), LIB["src/report.ts"].replaceAll("calcTotal", "computeTotal"))
+  } finally { await ws.cleanup() }
 })

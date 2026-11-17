@@ -421,6 +421,45 @@ function verificationAfterMutation(
 }
 
 /**
+ * A patch that renames an exported or imported binding by hand: `from` disappears from the file's export
+ * or import names and `to` appears, and the instruction names both. Such a rename changes other files, so it
+ * belongs to the language service (rename_symbol), not to a single-file patch (ADR-047).
+ */
+export function handRenamedBinding(before: string, after: string, instruction: string): { from: string; to: string } | undefined {
+  const names = (source: string) => new Set([...exportedNames(source), ...importedNames(source)])
+  const was = names(before)
+  const now = names(after)
+  const mentioned = (name: string) => new RegExp(`(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(instruction)
+  const removed = [...was].filter((name) => !now.has(name) && mentioned(name))
+  const added = [...now].filter((name) => !was.has(name) && mentioned(name))
+  return removed.length === 1 && added.length >= 1 ? { from: removed[0]!, to: added[0]! } : undefined
+}
+
+function exportedNames(source: string): Set<string> {
+  const names = new Set<string>()
+  for (const match of source.matchAll(/\bexport\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|interface|type|enum)\s+([$A-Za-z_][\w$]*)/g)) names.add(match[1]!)
+  for (const match of source.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}/g)) {
+    for (const part of match[1]!.split(",")) {
+      const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]!.trim()
+      if (/^[$A-Za-z_][\w$]*$/.test(name)) names.add(name)
+    }
+  }
+  return names
+}
+
+/** Original (pre-alias) names in import clauses: `import { a as b }` yields a. */
+function importedNames(source: string): Set<string> {
+  const names = new Set<string>()
+  for (const match of source.matchAll(/import\s+(?:type\s+)?[^;]*?\{([^}]*)\}\s*from\s+['"][^'"]+['"]/g)) {
+    for (const part of match[1]!.split(",")) {
+      const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]!.trim()
+      if (/^[$A-Za-z_][\w$]*$/.test(name)) names.add(name)
+    }
+  }
+  return names
+}
+
+/**
  * A patch that drops an imported binding and still calls it. The name comes from
  * the file, so a rename has to update the call in the same patch.
  */
