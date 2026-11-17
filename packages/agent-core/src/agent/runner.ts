@@ -163,6 +163,8 @@ interface Session {
   observedLookups?: Map<string, ObservedLookup>
   /** Renames applied in this task, so a repeated request is recognized as already done (not cross-task memory). */
   completedRenames?: CompletedRename[]
+  /** Verification actions that could not run in this workspace (ENVIRONMENT), with the reason. */
+  environmentBlocked?: Map<string, string>
   lastAssistantText?: string
   /** One "answer now" nudge has already been sent for a non-editing task. */
   conversationAnswerNudged?: boolean
@@ -725,6 +727,11 @@ export class AgentRunner {
             maxContentBytes: this.#observationMaxBytes,
             ...(toolArguments(pending.prepared.arguments) ? { arguments: toolArguments(pending.prepared.arguments) } : {}),
           })
+          const environment = isVerification && result.status === "EXECUTION_ERROR" && typeof (result as { diagnosis?: unknown }).diagnosis === "string" && String((result as { diagnosis?: unknown }).diagnosis).startsWith("ENVIRONMENT:")
+          if (environment) {
+            const blocked = session.environmentBlocked ?? (session.environmentBlocked = new Map())
+            blocked.set(String((pending.prepared.arguments as { action?: unknown }).action ?? ""), String((result as { diagnosis?: unknown }).diagnosis).split("(")[1]?.split(")")[0] ?? "the environment cannot run it")
+          }
           session.observations.push(observation)
           session.toolCalls.push(recordCall(pending.prepared, reviewSucceeded ? "COMPLETED" : "FAILED", observation.truncated))
           session.evidenceLedger.recordObservation(
@@ -1478,6 +1485,12 @@ export class AgentRunner {
           && this.#verificationRequired()
         ) {
           const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
+          const blocked = session.environmentBlocked?.get(this.#nextVerificationAction())
+          if (verifyName && blocked) {
+            // The only thing left is a verification this workspace cannot run: end truthfully as unverified.
+            await this.#acceptCompletion(response.message.content, "UNAVAILABLE", `Verification could not run in this workspace: ${blocked}.`)
+            break
+          }
           if (verifyName) {
             session.autoVerifyPending = true
             calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: this.#nextVerificationAction() } }]
@@ -1675,6 +1688,12 @@ export class AgentRunner {
     }
     const signature = `${prepared.name}\0${stableValue(prepared.arguments)}`
     const effectiveAction = prepared.effectiveAction ?? prepared.definition.action
+    const blockedReason = effectiveAction === "run_known_test" ? session.environmentBlocked?.get(String((prepared.arguments as { action?: unknown }).action ?? "")) : undefined
+    if (blockedReason) {
+      // Asking again would only cost another approval: the workspace cannot run it in this task.
+      this.#addErrorObservation(prepared, "VERIFICATION_UNAVAILABLE", `This verification already could not run in this workspace (${blockedReason}). It will not run again in this task. Continue with the requested change and report verification as blocked.`, "DENIED")
+      return false
+    }
     if (effectiveAction === "run_known_test" && this.#verificationWaitingOnEdit(session)) {
       const last = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
       const diagnosisObservation = session.observations.toReversed().find((item) => item.toolName === "run_verification" && item.content.includes("### Diagnosis"))
@@ -3259,7 +3278,7 @@ export class AgentRunner {
     return this.#additionalVerification().find((action) => actionAfterMutation(mutations, verifications, paths, action) !== "PASS") ?? "TEST"
   }
 
-  async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {
+  async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN", note?: string): Promise<void> {
     const session = this.#requiredSession()
     const verdict = this.#assessCoding(scheduledVerification)
     if (session.input.task.metadata?.verificationOwner === "workflow") {
@@ -3268,8 +3287,8 @@ export class AgentRunner {
     }
     if (!verdict.accept) {
       session.failureReason = verdict.failureReason ?? "INCOMPLETE"
-      session.finalAnswer = verdict.summary
-      this.#emit("task.failed", { message: verdict.summary })
+      session.finalAnswer = note ? `${verdict.summary} ${note}` : verdict.summary
+      this.#emit("task.failed", { message: session.finalAnswer })
       return
     }
     const lastVerification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
