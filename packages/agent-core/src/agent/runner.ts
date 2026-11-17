@@ -1753,7 +1753,8 @@ export class AgentRunner {
               return false
             }
           }
-          if (!groupPaths && prepared.name === "apply_patch" && this.#registry.listDefinitions().some((definition) => definition.name === "rename_symbol")) {
+          // Any single-file write (apply_patch, or create_file over an existing file, which becomes a patch).
+          if (!groupPaths && prepared.definition.action === "write_file" && this.#registry.listDefinitions().some((definition) => definition.name === "rename_symbol")) {
             const payload = reviewable.reviewPayload as { path?: unknown; beforeContent?: unknown; proposedContent?: unknown }
             const renamed = handRenamedBinding(String(payload.beforeContent ?? ""), String(payload.proposedContent ?? ""), session.input.task.instruction)
             if (renamed) {

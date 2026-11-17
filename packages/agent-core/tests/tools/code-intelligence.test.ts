@@ -283,12 +283,15 @@ test("hand renames of an exported or imported binding are recognized only when t
 })
 
 test("through the runner: a hand rename of an export is refused unwritten and redirected to rename_symbol", async () => {
+  for (const viaCreate of [false, true]) {
   const ws = await workspace(LIB)
   try {
     const engine = new MutationEngine(ws.root)
     const registry = new ToolRegistry([...createMutationToolRegistrations({ engine }), ...createCodeIntelligenceToolRegistrations(new TypeScriptCodeIntelligence(ws.root), engine)])
     const provider = new ScriptedModelProvider([
-      response("", [{ id: "p1", name: "apply_patch", arguments: { path: "src/totals.ts", search: "export function calcTotal(", replace: "export function computeTotal(" } }]),
+      response("", [viaCreate
+        ? { id: "p1", name: "create_file", arguments: { path: "src/totals.ts", content: LIB["src/totals.ts"].replace("calcTotal", "computeTotal") } }
+        : { id: "p1", name: "apply_patch", arguments: { path: "src/totals.ts", search: "export function calcTotal(", replace: "export function computeTotal(" } }]),
       response("", [{ id: "r1", name: "rename_symbol", arguments: { path: "src/totals.ts", symbol: "calcTotal", newName: "computeTotal" } }]),
       response("Renamed."),
       response("Done."),
@@ -301,6 +304,7 @@ test("through the runner: a hand rename of an export is refused unwritten and re
     assert.ok(result.observations?.some((item) => /RENAME_BY_PATCH/.test(item.content)))
     assert.equal(await read(ws.root, "src/report.ts"), LIB["src/report.ts"].replaceAll("calcTotal", "computeTotal"))
   } finally { await ws.cleanup() }
+  }
 })
 
 test("a partial rename proposal (language server still loading) is retried once, then refused with nothing written", async () => {

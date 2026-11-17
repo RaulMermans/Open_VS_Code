@@ -141,7 +141,8 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
             bytesChanged: prepared.diff.bytesChanged,
             diff: prepared.diff.unified,
             truncated: prepared.diff.truncated,
-            beforeContent: "",
+            // A create over an existing file is prepared as a patch: keep its real before-text (review diff, preimage).
+            beforeContent: prepared.beforeContent ?? "",
             proposedContent: prepared.proposedContent,
           },
           apply: async () => {
