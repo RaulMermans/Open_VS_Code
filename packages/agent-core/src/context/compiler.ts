@@ -225,5 +225,10 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       ...(observation.errorCategory ? { errorCategory: observation.errorCategory } : {}),
     },
   }))
-  return fitContext([...required, ...guidanceItems, ...learnedItems, ...(input.codeContext ?? []), ...observations], input.budget)
+  const compiled = fitContext([...required, ...guidanceItems, ...learnedItems, ...(input.codeContext ?? []), ...observations], input.budget)
+  // Selection prefers the newest observations; presentation is chronological, so the latest result (and any
+  // runtime note on it) is the last thing the model reads, not the oldest.
+  const age = new Map(observations.map((item, index) => [item.id, index]))
+  const shown = compiled.items.filter((item) => age.has(item.id)).toSorted((a, b) => age.get(b.id)! - age.get(a.id)!)
+  return { ...compiled, items: [...compiled.items.filter((item) => !age.has(item.id)), ...shown] }
 }

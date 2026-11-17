@@ -75,3 +75,21 @@ test("the index stays bounded however long the task runs", () => {
   assert.ok(index.content.split("\n").length <= 31)
   assert.ok(index.estimatedTokens < 2_000)
 })
+
+test("observations are shown in chronological order, so the latest result is the last thing in the prompt", () => {
+  const observations = Array.from({ length: 4 }, (_, index) => read(`r${index}`, `src/file${index}.ts`))
+  const compiled = compileContext({ task: "Fix the bug.", projectInstructions: [], observations, budget })
+  const shown = compiled.items.filter((item) => item.id.startsWith("observation:")).map((item) => item.id)
+  assert.deepEqual(shown, ["observation:r0", "observation:r1", "observation:r2", "observation:r3"])
+  assert.equal(compiled.items.at(-1)!.id, "observation:r3")
+})
+
+test("under budget pressure the newest observations are kept, still in chronological order", () => {
+  const observations = Array.from({ length: 6 }, (_, index) => read(`r${index}`, `src/file${index}.ts`, "y".repeat(2_000)))
+  const tight = calculateBudget({ contextWindow: 2_400, reservedOutput: 100, reservedToolHistory: 100 })
+  const compiled = compileContext({ task: "Fix the bug.", projectInstructions: [], observations, budget: tight })
+  const shown = compiled.items.filter((item) => item.id.startsWith("observation:")).map((item) => item.id)
+  assert.ok(shown.length >= 1 && shown.length < 6, `kept ${shown.length}`)
+  assert.equal(shown.at(-1), "observation:r5", "the newest is kept and shown last")
+  assert.deepEqual(shown, [...shown].toSorted())
+})
