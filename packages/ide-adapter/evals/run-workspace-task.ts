@@ -10,7 +10,7 @@ import { readFile, realpath, writeFile } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
 import { AgentSessionBridge } from "../src/bridge.ts"
 import type { IdeContextSnapshot, IdeHost } from "../src/contracts.ts"
-import { buildStarterRoutingConfig } from "../../vscode-integration/src/local-model-selection.ts"
+import { applyChatModelSelection, buildStarterRoutingConfig } from "../../vscode-integration/src/local-model-selection.ts"
 import { TypeScriptCodeIntelligence } from "../../agent-core/src/tools/typescript-code-intelligence.ts"
 
 const [workspaceArg, promptFile, outFile] = process.argv.slice(2)
@@ -48,11 +48,22 @@ const host: IdeHost = {
   },
 } as IdeHost
 
+/**
+ * The desktop's routing for a chosen chat model (model-routing.ts: starter config, then the chat selection).
+ * The starter config alone falls back to qwen2.5-coder:7b for any model outside the Qwen-Coder families.
+ */
+function evalRoutingConfig(model: string) {
+  const config = applyChatModelSelection(buildStarterRoutingConfig([model]), model)
+  const served = config.deployments.find((deployment) => config.routes.coding?.includes(deployment.id))?.modelName
+  if (served !== model) throw new Error(`routing serves ${served}, not the requested ${model}`)
+  return config
+}
+
 const controller = new AbortController()
 let timedOut = false
 const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMin * 60_000)
 const bridge = new AgentSessionBridge({
-  host, workspaceRoot: root, routingConfigOverride: buildStarterRoutingConfig([process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b"]), skipWorkspaceRoutingFile: true,
+  host, workspaceRoot: root, routingConfigOverride: evalRoutingConfig(process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b"), skipWorkspaceRoutingFile: true,
   skills: { enabled: false }, workflow: { enabled: false }, progressMonitor: { enabled: false }, learning: { enabled: false },
   ...(codeIntel ? { codeIntelligence: new TypeScriptCodeIntelligence(root) } : {}),
 })
@@ -65,9 +76,11 @@ try {
 } finally {
   clearTimeout(timer)
 }
+// What Ollama actually had loaded at the end of the run (evidence that the requested model served it).
+const servedModels = await fetch("http://127.0.0.1:11434/api/ps").then((response) => response.json()).then((body: any) => (body.models ?? []).map((model: any) => model.name)).catch(() => [])
 const toolCalls = (result?.toolCalls ?? []) as Array<{ name: string; outcome: string }>
 const summary = {
-  codeIntel, timedOut, durationMs: Date.now() - started, status: result?.status, failureReason: result?.failureReason, turns: result?.turns,
+  model: process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b", servedModels, codeIntel, timedOut, durationMs: Date.now() - started, status: result?.status, failureReason: result?.failureReason, turns: result?.turns,
   toolCalls: toolCalls.length, toolSequence: toolCalls.map((call) => `${call.name}:${call.outcome}`),
   approvals, finalAnswer: String(result?.finalAnswer ?? "").slice(0, 1500),
 }
