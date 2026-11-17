@@ -34,7 +34,7 @@ const IGNORED_CHANGE = /^(\.open-vs-code\/|.*__pycache__\/|node_modules\/|.*\.py
 
 interface Args {
   label: string
-  split: "DEV" | "HELD_OUT" | "S24" | "ALL"
+  split: "DEV" | "HELD_OUT" | "S24" | "S24B" | "ALL"
   codeIntel: boolean
   ids?: string[]
   repeat: number

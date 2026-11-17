@@ -9,7 +9,7 @@
 import { fileURLToPath } from "node:url"
 
 /** S24: cross-file refactors written for Sprint 24 before any run; never used to tune. */
-export type TaskSplit = "DEV" | "HELD_OUT" | "S24"
+export type TaskSplit = "DEV" | "HELD_OUT" | "S24" | "S24B"
 
 export type TaskCategory =
   | "BUGFIX"
@@ -508,6 +508,8 @@ export const CODING_TASKS: readonly CodingTask[] = [
 
   // ---------------------------------------------------------------- S24 (unseen cross-file refactors)
   ...S24_TASKS_FACTORY(),
+  // ---------------------------------------------------------------- S24B (held out: written after S24 results informed a fix, before any S24B run)
+  ...S24B_TASKS_FACTORY(),
 ]
 
 // Oracles typecheck independently with the repository's TypeScript, then check structure and behavior.
@@ -665,6 +667,144 @@ function S24_TASKS_FACTORY(): readonly CodingTask[] {
         "for (const f of ['src/ids.ts', 'src/checkout.ts', 'src/refunds.ts', 'src/orders/index.ts', 'src/orders/bulk.ts']) if (has(f, 'makeOrderId')) fail('makeOrderId left in ' + f)",
         "const o = await import('WS/src/orders/index.ts')",
         "if (typeof o.createOrderId !== 'function' || 'makeOrderId' in o) fail('re-export')",
+      ].join("\n")),
+    },
+  ]
+}
+
+function S24B_TASKS_FACTORY(): readonly CodingTask[] {
+  return [
+    {
+      id: "t01-class-reexport",
+      split: "S24B",
+      category: "REFACTOR",
+      instruction: "Rename the Logger class in src/log/logger.ts to EventLogger everywhere it is used, including the src/log/index.ts barrel. src/legacy/console.ts has its own unrelated Logger class; leave it alone. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/log/logger.ts": "export class Logger {\n  readonly lines: string[] = []\n  readonly prefix: string\n  constructor(prefix: string) {\n    this.prefix = prefix\n  }\n  log(message: string): void {\n    this.lines.push(`${this.prefix} ${message}`)\n  }\n}\n",
+        "src/log/index.ts": "export { Logger } from \"./logger.ts\"\n",
+        "src/app.ts": "import { Logger } from \"./log/index.ts\"\n\nexport function start(): Logger {\n  const logger = new Logger(\"[app]\")\n  logger.log(\"started\")\n  return logger\n}\n",
+        "src/worker.ts": "import { Logger } from \"./log/logger.ts\"\n\nexport function isLogger(value: unknown): value is Logger {\n  return value instanceof Logger\n}\n",
+        "src/legacy/console.ts": "class Logger {\n  write(text: string): string {\n    return `legacy: ${text}`\n  }\n}\n\nexport const legacyWrite = (text: string) => new Logger().write(text)\n",
+        "test/log.test.ts": ts("import { EventLogger } from \"../src/log/index.ts\"\nimport { start } from \"../src/app.ts\"\nimport { isLogger } from \"../src/worker.ts\"\nimport { legacyWrite } from \"../src/legacy/console.ts\"\ntest(\"start\", () => assert.deepEqual(start().lines, [\"[app] started\"]))\ntest(\"isLogger\", () => assert.equal(isLogger(new EventLogger(\"x\")), true))\ntest(\"legacy\", () => assert.equal(legacyWrite(\"a\"), \"legacy: a\"))\n"),
+      },
+      unchanged: ["test/log.test.ts", "src/legacy/console.ts"],
+      allowedChanges: ["src/log/logger.ts", "src/log/index.ts", "src/app.ts", "src/worker.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/log/logger.ts', 'src/log/index.ts', 'src/app.ts', 'src/worker.ts']) if (has(f, 'Logger')) fail('Logger left in ' + f)",
+        "const l = await import('WS/src/log/index.ts')",
+        "if (typeof l.EventLogger !== 'function' || 'Logger' in l) fail('barrel')",
+      ].join("\n")),
+    },
+    {
+      id: "t02-type-alias-sibling",
+      split: "S24B",
+      category: "REFACTOR",
+      instruction: "Rename the Money type in src/money/types.ts to Amount and update every file that uses it. MoneyFormat is a different type and must keep its name. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/money/types.ts": "export type Money = { cents: number; currency: string }\n\nexport type MoneyFormat = \"short\" | \"long\"\n",
+        "src/money/format.ts": "import type { Money, MoneyFormat } from \"./types.ts\"\n\nexport function formatMoney(value: Money, style: MoneyFormat = \"short\"): string {\n  const amount = (value.cents / 100).toFixed(2)\n  return style === \"short\" ? amount : `${amount} ${value.currency}`\n}\n",
+        "src/cart/line.ts": "import type { Money } from \"../money/types.ts\"\n\nexport function lineTotal(price: Money, quantity: number): Money {\n  return { cents: price.cents * quantity, currency: price.currency }\n}\n",
+        "src/cart/total.ts": "import { type Money } from \"../money/types.ts\"\n\nexport function sum(values: Money[]): Money {\n  return { cents: values.reduce((total, value) => total + value.cents, 0), currency: values[0]?.currency ?? \"EUR\" }\n}\n",
+        "test/money.test.ts": ts("import { formatMoney } from \"../src/money/format.ts\"\nimport { lineTotal } from \"../src/cart/line.ts\"\nimport { sum } from \"../src/cart/total.ts\"\nconst p = { cents: 250, currency: \"EUR\" }\ntest(\"line\", () => assert.equal(lineTotal(p, 2).cents, 500))\ntest(\"sum\", () => assert.equal(sum([p, p]).cents, 500))\ntest(\"format\", () => assert.equal(formatMoney(p, \"long\"), \"2.50 EUR\"))\n"),
+      },
+      unchanged: ["test/money.test.ts"],
+      allowedChanges: ["src/money/types.ts", "src/money/format.ts", "src/cart/line.ts", "src/cart/total.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/money/types.ts', 'src/money/format.ts', 'src/cart/line.ts', 'src/cart/total.ts']) if (has(f, 'Money')) fail('Money left in ' + f)",
+        "if (!/export type Amount\\b/.test(src('src/money/types.ts')) || !has('src/money/types.ts', 'MoneyFormat') || !has('src/money/format.ts', 'MoneyFormat')) fail('types')",
+      ].join("\n")),
+    },
+    {
+      id: "t03-enum-monorepo",
+      split: "S24B",
+      category: "MONOREPO",
+      instruction: "In this monorepo, rename OrderStatus (the status constant and its type) in packages/shared/src/status.ts to FulfillmentStatus and update the api and ui packages that use it. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["packages"]),
+        "packages/shared/src/status.ts": "export const OrderStatus = {\n  Pending: \"pending\",\n  Shipped: \"shipped\",\n} as const\n\nexport type OrderStatus = (typeof OrderStatus)[keyof typeof OrderStatus]\n\nexport const isFinal = (status: OrderStatus) => status === OrderStatus.Shipped\n",
+        "packages/api/src/handler.ts": "import { OrderStatus } from \"../../shared/src/status.ts\"\n\nexport function nextStatus(current: OrderStatus): OrderStatus {\n  return current === OrderStatus.Pending ? OrderStatus.Shipped : current\n}\n",
+        "packages/ui/src/badge.ts": "import { isFinal, OrderStatus } from \"../../shared/src/status.ts\"\n\nexport function badge(status: OrderStatus): string {\n  return isFinal(status) ? \"done\" : status === OrderStatus.Pending ? \"waiting\" : \"?\"\n}\n",
+        "test/status.test.ts": ts("import { FulfillmentStatus } from \"../packages/shared/src/status.ts\"\nimport { nextStatus } from \"../packages/api/src/handler.ts\"\nimport { badge } from \"../packages/ui/src/badge.ts\"\ntest(\"next\", () => assert.equal(nextStatus(FulfillmentStatus.Pending), \"shipped\"))\ntest(\"badge\", () => assert.equal(badge(FulfillmentStatus.Pending), \"waiting\"))\n"),
+      },
+      unchanged: ["test/status.test.ts"],
+      allowedChanges: ["packages/shared/src/status.ts", "packages/api/src/handler.ts", "packages/ui/src/badge.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['packages/shared/src/status.ts', 'packages/api/src/handler.ts', 'packages/ui/src/badge.ts']) if (has(f, 'OrderStatus')) fail('OrderStatus left in ' + f)",
+        "const m = await import('WS/packages/shared/src/status.ts')",
+        "if (m.FulfillmentStatus?.Shipped !== 'shipped' || 'OrderStatus' in m) fail('status export')",
+      ].join("\n")),
+    },
+    {
+      id: "t04-aliased-similar",
+      split: "S24B",
+      category: "IMPORT_EXPORT",
+      instruction: "Rename slugify in src/text.ts to makeSlug, including the file that imports it under an alias. slugifyPath must keep its name. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/text.ts": "export function slugify(title: string): string {\n  return title.toLowerCase().trim().replace(/[^a-z0-9]+/g, \"-\").replace(/^-|-$/g, \"\")\n}\n\nexport function slugifyPath(parts: string[]): string {\n  return parts.map(slugify).join(\"/\")\n}\n",
+        "src/blog.ts": "import { slugify as toSlug } from \"./text.ts\"\n\nexport const postUrl = (title: string) => `/blog/${toSlug(title)}`\n",
+        "src/tags.ts": "import { slugify } from \"./text.ts\"\n\nexport const tagIds = (tags: string[]) => tags.map((tag) => slugify(tag))\n",
+        "src/routes.ts": "import { slugify, slugifyPath } from \"./text.ts\"\n\nexport const route = (section: string, page: string) => `${slugify(section)}:${slugifyPath([section, page])}`\n",
+        "test/text.test.ts": ts("import { makeSlug, slugifyPath } from \"../src/text.ts\"\nimport { postUrl } from \"../src/blog.ts\"\nimport { tagIds } from \"../src/tags.ts\"\nimport { route } from \"../src/routes.ts\"\ntest(\"slug\", () => assert.equal(makeSlug(\" Hello World! \"), \"hello-world\"))\ntest(\"path\", () => assert.equal(slugifyPath([\"A b\", \"C\"]), \"a-b/c\"))\ntest(\"blog\", () => assert.equal(postUrl(\"Hi There\"), \"/blog/hi-there\"))\ntest(\"tags\", () => assert.deepEqual(tagIds([\"X Y\"]), [\"x-y\"]))\ntest(\"route\", () => assert.equal(route(\"Docs\", \"Intro\"), \"docs:docs/intro\"))\n"),
+      },
+      unchanged: ["test/text.test.ts"],
+      allowedChanges: ["src/text.ts", "src/blog.ts", "src/tags.ts", "src/routes.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/text.ts', 'src/blog.ts', 'src/tags.ts', 'src/routes.ts']) if (has(f, 'slugify')) fail('slugify left in ' + f)",
+        "if (!has('src/routes.ts', 'slugifyPath')) fail('slugifyPath renamed')",
+        "const t = await import('WS/src/text.ts')",
+        "if (typeof t.makeSlug !== 'function' || typeof t.slugifyPath !== 'function' || 'slugify' in t) fail('exports')",
+      ].join("\n")),
+    },
+    {
+      id: "t05-namespace-shadow",
+      split: "S24B",
+      category: "REFACTOR",
+      instruction: "Rename DEFAULT_PAGE_SIZE in src/settings.ts to PAGE_SIZE and update every file that uses it. src/admin/table.ts has its own DEFAULT_PAGE_SIZE; do not change that file. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/settings.ts": "export const DEFAULT_PAGE_SIZE = 20\nexport const MAX_PAGES = 5\n",
+        "src/list.ts": "import * as settings from \"./settings.ts\"\n\nexport const visible = (items: number) => Math.min(items, settings.DEFAULT_PAGE_SIZE * settings.MAX_PAGES)\n",
+        "src/search.ts": "import { DEFAULT_PAGE_SIZE } from \"./settings.ts\"\n\nexport const pages = (results: number) => Math.ceil(results / DEFAULT_PAGE_SIZE)\n",
+        "src/admin/table.ts": "const DEFAULT_PAGE_SIZE = 50\n\nexport const adminRows = (rows: number) => Math.min(rows, DEFAULT_PAGE_SIZE)\n",
+        "test/settings.test.ts": ts("import { PAGE_SIZE } from \"../src/settings.ts\"\nimport { visible } from \"../src/list.ts\"\nimport { pages } from \"../src/search.ts\"\nimport { adminRows } from \"../src/admin/table.ts\"\ntest(\"size\", () => assert.equal(PAGE_SIZE, 20))\ntest(\"visible\", () => assert.equal(visible(500), 100))\ntest(\"pages\", () => assert.equal(pages(41), 3))\ntest(\"admin\", () => assert.equal(adminRows(70), 50))\n"),
+      },
+      unchanged: ["test/settings.test.ts", "src/admin/table.ts"],
+      allowedChanges: ["src/settings.ts", "src/list.ts", "src/search.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/settings.ts', 'src/list.ts', 'src/search.ts']) if (has(f, 'DEFAULT_PAGE_SIZE')) fail('DEFAULT_PAGE_SIZE left in ' + f)",
+        "const c = await import('WS/src/settings.ts')",
+        "if (c.PAGE_SIZE !== 20 || 'DEFAULT_PAGE_SIZE' in c) fail('settings')",
+      ].join("\n")),
+    },
+    {
+      id: "t06-star-reexport",
+      split: "S24B",
+      category: "IMPORT_EXPORT",
+      instruction: "Rename fetchUser in src/api/users.ts to loadUser. It is re-exported through src/api/index.ts and used by the pages. fetchUsers is a different function and keeps its name. Run the tests.",
+      files: {
+        "package.json": TS_PKG,
+        "tsconfig.json": tsconfig(["src"]),
+        "src/api/users.ts": "export interface User {\n  id: number\n  name: string\n}\n\nconst db: User[] = [{ id: 1, name: \"Ada\" }, { id: 2, name: \"Lin\" }]\n\nexport async function fetchUser(id: number): Promise<User | undefined> {\n  return db.find((user) => user.id === id)\n}\n\nexport async function fetchUsers(): Promise<User[]> {\n  return [...db]\n}\n",
+        "src/api/index.ts": "export * from \"./users.ts\"\n",
+        "src/pages/profile.ts": "import { fetchUser } from \"../api/index.ts\"\n\nexport async function profileTitle(id: number): Promise<string> {\n  const user = await fetchUser(id)\n  return user ? `Profile of ${user.name}` : \"Unknown\"\n}\n",
+        "src/pages/settings.ts": "import { fetchUser, fetchUsers } from \"../api/index.ts\"\n\nexport async function summary(id: number): Promise<string> {\n  const [user, all] = await Promise.all([fetchUser(id), fetchUsers()])\n  return `${user?.name ?? \"?\"} of ${all.length}`\n}\n",
+        "test/pages.test.ts": ts("import { loadUser, fetchUsers } from \"../src/api/index.ts\"\nimport { profileTitle } from \"../src/pages/profile.ts\"\nimport { summary } from \"../src/pages/settings.ts\"\ntest(\"load\", async () => assert.equal((await loadUser(2))?.name, \"Lin\"))\ntest(\"all\", async () => assert.equal((await fetchUsers()).length, 2))\ntest(\"profile\", async () => assert.equal(await profileTitle(1), \"Profile of Ada\"))\ntest(\"summary\", async () => assert.equal(await summary(2), \"Lin of 2\"))\n"),
+      },
+      unchanged: ["test/pages.test.ts", "src/api/index.ts"],
+      allowedChanges: ["src/api/users.ts", "src/pages/profile.ts", "src/pages/settings.ts"],
+      oracle: s24Oracle([
+        "for (const f of ['src/api/users.ts', 'src/pages/profile.ts', 'src/pages/settings.ts']) if (has(f, 'fetchUser')) fail('fetchUser left in ' + f)",
+        "if (!has('src/pages/settings.ts', 'fetchUsers')) fail('fetchUsers renamed')",
+        "const a = await import('WS/src/api/index.ts')",
+        "if (typeof a.loadUser !== 'function' || typeof a.fetchUsers !== 'function' || 'fetchUser' in a) fail('exports')",
       ].join("\n")),
     },
   ]
