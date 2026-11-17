@@ -432,7 +432,14 @@ export function handRenamedBinding(before: string, after: string, instruction: s
   const mentioned = (name: string) => new RegExp(`(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(instruction)
   const removed = [...was].filter((name) => !now.has(name) && mentioned(name))
   const added = [...now].filter((name) => !was.has(name) && mentioned(name))
-  return removed.length === 1 && added.length >= 1 ? { from: removed[0]!, to: added[0]! } : undefined
+  if (removed.length !== 1 || added.length === 0) return undefined
+  const from = removed[0]!
+  // The target is the name the request gives after "to" following the old name; a patch that also adds
+  // other exports (e.g. an extracted constant) must not be read as renaming to one of them.
+  const escaped = from.replace(/\$/g, "\\$")
+  const stated = instruction.match(new RegExp(`(?<![\\w$])${escaped}(?![\\w$])[^;\\n]*?\\b(?:to|into|as)\\s+\x60?([$A-Za-z_][\\w$]*)`))?.[1]
+  const to = stated && added.includes(stated) ? stated : added.length === 1 && !stated ? added[0]! : undefined
+  return to ? { from, to } : undefined
 }
 
 function exportedNames(source: string): Set<string> {

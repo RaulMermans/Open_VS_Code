@@ -274,6 +274,9 @@ test("hand renames of an exported or imported binding are recognized only when t
   assert.equal(handRenamedBinding("export function calcTotal() {}\n", "export function computeTotal() {}\n", "Replace the summing helper."), undefined)
   assert.equal(handRenamedBinding("function calcTotal() {}\n", "function computeTotal() {}\n", ask), undefined, "a private helper is a single-file change")
   assert.equal(handRenamedBinding("export const a = 1\n", "export const a = 1\nexport const SCORE = 2\n", "Add SCORE next to a"), undefined)
+  const r1 = "Extract them into an exported SCORE_THRESHOLDS constant and rename statusTone to scoreTone, updating every importer."
+  assert.deepEqual(handRenamedBinding("export function statusTone() {}\n", "export const SCORE_THRESHOLDS = {}\nexport function scoreTone() {}\n", r1), { from: "statusTone", to: "scoreTone" }, "the stated target, not the extracted constant")
+  assert.equal(handRenamedBinding("export function statusTone() {}\n", "export const SCORE_THRESHOLDS = {}\n", r1), undefined, "the stated target is not in the patch: no redirect")
 })
 
 test("through the runner: a hand rename of an export is refused unwritten and redirected to rename_symbol", async () => {
