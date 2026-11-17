@@ -156,11 +156,31 @@ interface Session {
   refusalStop?: boolean
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
-  completedExploration?: Set<string>
+  /**
+   * Task-scoped registry of successful read-only lookups (signature -> result). A repeat is answered from
+   * here as ALREADY_OBSERVED instead of being refused. Cleared whenever the workspace changes.
+   */
+  observedLookups?: Map<string, ObservedLookup>
   lastAssistantText?: string
   /** One "answer now" nudge has already been sent for a non-editing task. */
   conversationAnswerNudged?: boolean
 }
+
+interface ObservedLookup {
+  readonly callId: string
+  readonly content: string
+  readonly truncated: boolean
+  replays: number
+}
+
+/**
+ * Read-only lookups whose result depends only on workspace content. read_file is re-read and compared, so an
+ * outside change is always seen. shortcut: listings and searches are invalidated by the agent's own writes and
+ * commands, not by edits made outside the agent mid-task; add a directory mtime check if that shows up.
+ */
+const REPLAYABLE_LOOKUPS = new Set(["list_directory", "find_files", "search_text", "find_symbol", "read_file"])
+/** A lookup repeated this many times with no workspace change is answered once in full, then only briefly. */
+const FULL_REPLAYS = 1
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
 
@@ -675,7 +695,7 @@ export class AgentRunner {
             }
             if (result.status === "APPLIED") {
               session.evidenceCollector.resolveRecoveredToolContractFailures()
-              if (!isVerification) session.completedExploration?.clear()
+              if (!isVerification) session.observedLookups?.clear()
             }
             if (result.status === "APPLIED" || result.status === "ALREADY_SATISFIED") await this.#refreshRequirementGaps()
           }
@@ -1090,9 +1110,6 @@ export class AgentRunner {
       diagnostics: [],
       toolCalls: [...(working?.toolCalls ?? [])] as AgentToolCallRecord[],
       repeatedProgress: 0,
-      ...(working?.explorationSignatures && working.explorationSignatures.length > 0
-        ? { completedExploration: new Set(working.explorationSignatures) }
-        : {}),
     }
     if (working?.lastVerification) {
       this.#session.observations.push(createToolObservation({
@@ -1564,7 +1581,7 @@ export class AgentRunner {
         .map((mutation) => mutation.path),
     )].slice(-16)
     const lastVerification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
-    const explorationSignatures = [...(session.completedExploration ?? [])].slice(-32)
+    const explorationSignatures = [...(session.observedLookups?.keys() ?? [])].slice(-32)
     const touchedFilePaths = [...completedPaths, ...alreadyPresentPaths].map((path) => (
       isAbsolute(path) ? path : join(session.input.workspaceRoot, path)
     ))
@@ -1647,17 +1664,11 @@ export class AgentRunner {
       this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
       return false
     }
-    if (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text") {
-      const seen = session.completedExploration
-      if (seen?.has(signature)) {
-        const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
-        const target = pending.length > 0 ? ` Create or update ${pending.join(", ")} if that is the requested change.` : ""
-        // Name what the request still lacks (e.g. "add the tests"), so the model is not left to guess the next step.
-        await this.#refreshRequirementGaps()
-        const gaps = session.requirementGaps?.length ? ` Still missing: ${session.requirementGaps.join(" ")}` : ""
-        this.#addErrorObservation(prepared, "EDIT_REQUIRED", `That lookup already completed.${target}${gaps} Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference.`, "DENIED")
-        return false
-      }
+    // A repeated lookup is answered from the earlier result, not run again (read_file is re-read and compared below).
+    const previousLookup = prepared.name !== "read_file" ? session.observedLookups?.get(signature) : undefined
+    if (previousLookup && REPLAYABLE_LOOKUPS.has(prepared.name)) {
+      await this.#replayLookup(prepared, previousLookup, undefined)
+      return false
     }
     if (prepared.name === "create_file") {
       const createdPath = String((prepared.arguments as { path?: unknown }).path ?? "")
@@ -1834,6 +1845,8 @@ export class AgentRunner {
     const session = this.#requiredSession()
     this.#emit("tool.requested", { callId: prepared.id, name: prepared.name })
     let observation: ToolObservation
+    /** Tool output before any ALREADY_OBSERVED annotation; the repeat guard compares this. */
+    let rawContent: string | undefined
     let opId: string | undefined
     let targetFilePath = ""
     if (this.#checkpointCoordinator) {
@@ -1952,13 +1965,22 @@ export class AgentRunner {
         maxContentBytes: this.#observationMaxBytes,
         ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}),
       })
-      session.observations.push(observation)
-      session.toolCalls.push(recordCall(prepared, "COMPLETED", observation.truncated))
-      if (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text") {
-        const seen = session.completedExploration ?? new Set<string>()
-        seen.add(signature)
-        session.completedExploration = seen
+      let rereadUnchanged = false
+      rawContent = observation.content
+      if (REPLAYABLE_LOOKUPS.has(prepared.name)) {
+        const previous = session.observedLookups?.get(signature)
+        if (previous && previous.content === observation.content && !session.progressGuard) {
+          // The same file, unchanged since the last read: no new information. (When the direct progress
+          // guard is on, it owns repeated reads and their bounded recovery.)
+          observation = await this.#replayLookup(prepared, previous, observation)
+          rereadUnchanged = true
+        } else if (!previous || previous.content !== observation.content) {
+          const lookups = session.observedLookups ?? (session.observedLookups = new Map())
+          lookups.set(signature, { callId: prepared.id, content: observation.content, truncated: observation.truncated, replays: 0 })
+        }
       }
+      session.observations.push(observation)
+      session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", observation.truncated), ...(rereadUnchanged ? { alreadyObserved: true } : {}) })
       session.evidenceLedger.recordObservation(
         prepared.name,
         prepared.id,
@@ -1983,7 +2005,7 @@ export class AgentRunner {
       }
 
       if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
-        session.completedExploration?.clear()
+        session.observedLookups?.clear()
         session.evidenceCollector.recordMutationOutcome({
           mutationId: prepared.id,
           path: (prepared.arguments as any)?.targetFile || (prepared.arguments as any)?.path || "",
@@ -2057,7 +2079,7 @@ export class AgentRunner {
       }
     }
     if (await this.#observeProgress(prepared, observation)) return true
-    const progressKey = `${signature}\0${observation.ok}\0${observation.content}`
+    const progressKey = `${signature}\0${observation.ok}\0${rawContent ?? observation.content}`
     session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
     session.lastProgressKey = progressKey
     const codingProgress = this.#codingGoalVerdict()
@@ -2219,6 +2241,38 @@ export class AgentRunner {
     session.nonProgress = { ...evidence, recoveryOutcome }
   }
 
+  /**
+   * Answers a repeated read-only lookup with its earlier result (ALREADY_OBSERVED). This is not a refusal or
+   * a failure: the first repeat returns the full result. Further repeats with no workspace change get a short
+   * answer and count toward the repeated-refusal bound, so a lookup loop still ends.
+   */
+  async #replayLookup(prepared: PreparedToolCall, previous: ObservedLookup, fresh: ToolObservation | undefined): Promise<ToolObservation> {
+    const session = this.#requiredSession()
+    previous.replays += 1
+    await this.#refreshRequirementGaps()
+    const gaps = session.requirementGaps?.length ? ` Still missing from the request: ${session.requirementGaps.join(" ")}` : ""
+    const done = session.evidenceCollector.getEvidence().mutationOutcomes.filter((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED").map((mutation) => mutation.path)
+    const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths).filter((path) => !done.some((path2) => pathsReferToSameFile(path2, path)))
+    const target = pending.length > 0 ? ` The request names ${pending.join(", ")} as a file to create or update; it is not done yet.` : ""
+    const what = prepared.name === "read_file" ? "This file is unchanged since you last read it" : "This lookup already ran with the same arguments and nothing in the workspace has changed since, so it was not run again"
+    const next = "Repeating it gives no new information. Next, read a file that result names and you have not read, search for something you have not searched, or make the requested change."
+    const full = previous.replays <= FULL_REPLAYS
+    const content = full
+      ? `ALREADY_OBSERVED: ${what}. ${next}${target}${gaps}\n\nEarlier result:\n${previous.content}`
+      : `ALREADY_OBSERVED: ${what}; its result is already above. ${next}${target}${gaps}`
+    const observation: ToolObservation = {
+      ...(fresh ?? createToolObservation({ toolName: prepared.name, callId: prepared.id, output: "", maxContentBytes: this.#observationMaxBytes, ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}) })),
+      content,
+      truncated: full && previous.truncated,
+      alreadyObserved: true,
+    }
+    if (!full) this.#recordRefusal(prepared.name, "ALREADY_OBSERVED", `${prepared.name} repeated without new information`)
+    if (fresh) return observation // a re-read: the caller records it on the normal completion path
+    session.observations.push(observation)
+    session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", observation.truncated), alreadyObserved: true })
+    return observation
+  }
+
   #addErrorObservation(prepared: PreparedToolCall, category: string, message: string, outcome: AgentToolCallRecord["outcome"]): void {
     const session = this.#requiredSession()
     const observation = createToolObservation({
@@ -2253,7 +2307,9 @@ export class AgentRunner {
     session.failureReason = "NON_PROGRESS"
     session.terminationSource = "NON_PROGRESS_GUARD"
     const verdict = this.#assessCoding("NOT_RUN")
-    session.finalAnswer = `Stopped: ${toolName} was refused ${count} times with the same reason and nothing in the workspace changed in between. Last reason: ${message.split("\n")[0]!.slice(0, 300)} ${verdict.summary}`.trim()
+    session.finalAnswer = (category === "ALREADY_OBSERVED"
+      ? `Stopped: ${toolName} was repeated ${count + FULL_REPLAYS + 1} times with the same arguments and returned no new information, and nothing in the workspace changed in between. ${verdict.summary}`
+      : `Stopped: ${toolName} was refused ${count} times with the same reason and nothing in the workspace changed in between. Last reason: ${message.split("\n")[0]!.slice(0, 300)} ${verdict.summary}`).trim()
     // The terminal event is emitted by #finishRefusalStop once the current tool call has finished its own
     // events (a refused patch still emits tool.rejected after this point).
   }

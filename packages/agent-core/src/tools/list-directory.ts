@@ -15,7 +15,7 @@ export async function listDirectory(
   workspaceRoot: string,
   requestedPath = ".",
   options: { readonly maxEntries?: number; readonly ignoredDirectories?: readonly string[] } = {},
-): Promise<{ readonly entries: readonly DirectoryEntry[]; readonly truncated: boolean }> {
+): Promise<{ readonly entries: readonly DirectoryEntry[]; readonly truncated: boolean; readonly total: number }> {
   const maxEntries = options.maxEntries ?? 200
   if (!Number.isInteger(maxEntries) || maxEntries <= 0) throw new TypeError("maxEntries must be a positive integer")
   const ignored = new Set(options.ignoredDirectories ?? DEFAULT_IGNORED_DIRECTORIES)
@@ -28,5 +28,5 @@ export async function listDirectory(
     path: relative(workspaceRoot, join(directory, entry.name)).replaceAll("\\", "/"),
     type: entry.isFile() ? "file" : entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "other",
   }))
-  return { entries, truncated: all.length > entries.length }
+  return { entries, truncated: all.length > entries.length, total: all.length }
 }
