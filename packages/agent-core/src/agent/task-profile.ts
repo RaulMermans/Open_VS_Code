@@ -13,6 +13,7 @@ export type TaskCategory =
   | "ARCHITECTURE"
   | "CROSS_FILE_REASONING"
   | "RULES_QUERY"
+  | "IMPLEMENTATION"
 
 export type EvidenceRequirementKind =
   | "FILE_READ"
@@ -91,6 +92,14 @@ export function requestsCodeEdit(instruction: string): boolean {
     && /\b(?:file|test|tests|function|implementation|code|method|body|title|export)\b/i.test(head)
 }
 
+/** Several headed sections, or a long request with many listed requirements. */
+export function isMultiPartRequest(instruction: string): boolean {
+  const head = instruction.split("[Attached context]")[0] ?? instruction
+  const headings = head.match(/^#{1,6}\s+\S/gm)?.length ?? 0
+  const items = head.match(/^\s*(?:\d+[.)]|[-*])\s+\S/gm)?.length ?? 0
+  return headings >= 3 || (head.length > 1_500 && items >= 5)
+}
+
 export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"): TaskProfile {
   const text = instruction.toLowerCase()
   const explicitFiles = extractExplicitFilePaths(instruction)
@@ -110,8 +119,9 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
     }
   }
 
-  // 1. Rules Query (AGENTS.md, guidelines, rules)
-  if (/\b(?:agents\.md|guidelines?|rules?|policy|conventions?)\b/i.test(text)) {
+  // 1. Rules Query (AGENTS.md, guidelines, rules). A request to change code that only mentions the rules
+  // ("follow AGENTS.md", "read AGENTS.md, then implement ...") is not a question about them.
+  if (!requiresCodeChange && /\b(?:agents\.md|guidelines?|rules?|policy|conventions?)\b/i.test(text)) {
     return {
       category: "RULES_QUERY",
       allowedTools: ["read_file", "search_text", "find_files"],
@@ -166,6 +176,21 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
         requiresCodeChange,
         explicitFilePaths: explicitFiles,
       }
+    }
+  }
+
+  // 2b. A multi-part engineering brief (several headed sections or a long list of requirements): the work is
+  // found by exploring the repository, not by reading the files the brief happens to name.
+  if (requiresCodeChange && isMultiPartRequest(instruction)) {
+    return {
+      category: "IMPLEMENTATION",
+      allowedTools: ["list_directory", "find_files", "search_text", "read_file", "create_file", "apply_patch", "run_verification"],
+      recommendedInitialTools: ["list_directory", "find_files", "search_text"],
+      defaultTurnBudget: 12,
+      evidenceRequirements: [],
+      toolGuidance: "This is a multi-part engineering task. First locate the code each requirement concerns: list the source directories, then use find_files and search_text for the components it names, and read the files you will change. Read each project rule file once. Then make the local changes the request allows, run the tests, and report what is done, what is blocked (for example actions that need the operator's approval) and why.",
+      requiresCodeChange,
+      explicitFilePaths: explicitFiles,
     }
   }
 

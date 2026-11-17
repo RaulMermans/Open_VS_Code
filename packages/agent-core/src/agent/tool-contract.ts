@@ -127,6 +127,7 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
   const negated = [
     ...excludedEditPaths(instruction),
     ...dependencyPaths(instruction),
+    ...readContextPaths(instruction),
   ]
   let kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
   if (forbidsTestEdits(instruction)) {
@@ -134,6 +135,26 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
     if (kept.length === 0 && paths.every((path) => isTestArtifactPath(path))) return []
   }
   return kept.length > 0 ? kept : paths
+}
+
+/**
+ * Paths in a clause that starts with a reading verb ("Read AGENTS.md, CLAUDE.md and the ADRs.") are context,
+ * unless an edit verb also names them. A clause ends at a sentence stop or a line break.
+ */
+function readContextPaths(instruction: string): string[] {
+  const edited = new Set<string>()
+  for (const match of instruction.matchAll(new RegExp(String.raw`\b(?:fix|change|edit|modify|update|rename|create|write|produce|add)\s+(?:only\s+)?\x60?${EDIT_PATH}`, "gi"))) {
+    if (match[1]) edited.add(match[1].replace(/^\.\//, "").toLowerCase())
+  }
+  const cited: string[] = []
+  const clause = /(?:^|[.!?]\s+|\n\s*(?:[-*]\s+)?)(?:read|inspect|review|consult|study|see)\b([^\n]*?)(?=[.!?](?:\s|$)|\n|$)/gi
+  for (const match of instruction.matchAll(clause)) {
+    for (const path of match[1]?.matchAll(new RegExp(EDIT_PATH, "g")) ?? []) {
+      const named = path[1]!.replace(/^\.\//, "")
+      if (!edited.has(named.toLowerCase())) cited.push(named)
+    }
+  }
+  return cited
 }
 
 /** A path cited as "from src/format.js" is context unless an edit verb names it. */
