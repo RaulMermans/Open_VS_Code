@@ -41,6 +41,8 @@ export interface CodeIntelligenceProvider {
 
 export const REFERENCE_PAGE_SIZE = 25
 export const MAX_RENAME_FILES = 25
+const COVERAGE_RETRIES = 4
+const COVERAGE_RETRY_MS = 1500
 const MAX_PROBED_OCCURRENCES = 40
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
 
@@ -289,14 +291,15 @@ export function createCodeIntelligenceToolRegistrations(provider: CodeIntelligen
       // A language server that is still loading the project (or has no project for some files) can propose a
       // partial rename. Every other file whose use of the name resolves to this definition must be covered.
       let missing = await uncoveredUses(provider, root, symbol, resolved.definition, outcome.files)
-      if (missing.length > 0) {
-        // Reading those files above opened them in the language service; ask once more.
+      // Reading those files opened them in the language service; give a loading project a few seconds.
+      for (let attempt = 0; missing.length > 0 && attempt < COVERAGE_RETRIES; attempt += 1) {
+        await new Promise((done) => setTimeout(done, COVERAGE_RETRY_MS))
         outcome = await provider.rename(resolved.anchor.file, resolved.anchor.position, newName)
         if (!outcome.ok) throw new MutationFailure("INVALID_PATCH", `The ${provider.name} language service refused to rename ${symbol}: ${outcome.error}. Nothing was changed.`)
         missing = await uncoveredUses(provider, root, symbol, resolved.definition, outcome.files)
       }
       if (missing.length > 0) {
-        throw new MutationFailure("INVALID_PATCH", `The ${provider.name} language service's rename of ${symbol} does not cover ${missing.slice(0, 5).join(", ")}, which use${missing.length === 1 ? "s" : ""} the same symbol (the project may still be loading). Nothing was changed. Call rename_symbol again in a moment.`)
+        throw new MutationFailure("INVALID_PATCH", `The ${provider.name} language service's rename of ${symbol} does not cover ${missing.slice(0, 5).join(", ")}, which use${missing.length === 1 ? "s" : ""} or import${missing.length === 1 ? "s" : ""} the same name and could not be confirmed as covered (the language server may still be loading the project). Nothing was changed. Call rename_symbol again in a moment.`)
       }
       if (outcome.resourceOperations.length > 0) {
         throw new MutationFailure("INVALID_PATCH", `The rename of ${symbol} also needs file operations (${outcome.resourceOperations.slice(0, 3).join("; ")}), which are not supported. Nothing was changed.`)
@@ -400,9 +403,14 @@ async function uncoveredUses(provider: CodeIntelligenceProvider, root: string, s
     if (!file) continue
     const text = await provider.readText(file).catch(() => undefined)
     if (text === undefined) continue
+    const lines = text.split("\n")
     for (const occurrence of identifierOccurrences(text, symbol).slice(0, 5)) {
       const definitions = await provider.definitions(file, occurrence).catch(() => [])
       if (definitions.some((item) => locationKey(item) === target)) { missing.push(path); break }
+      // An import the service cannot resolve past itself (project still loading) cannot be confirmed as unrelated.
+      const importLine = /^\s*(?:import|export)\b|\bfrom\s+["'][^"']+["']/.test(lines[occurrence.line] ?? "")
+      const unresolved = definitions.every((item) => item.file === file && /^\s*(?:import|export)\b|\bfrom\s+["']/.test(lines[item.range.start.line] ?? ""))
+      if (importLine && unresolved) { missing.push(path); break }
     }
   }
   return missing

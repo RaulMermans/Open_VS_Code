@@ -307,7 +307,7 @@ test("through the runner: a hand rename of an export is refused unwritten and re
   }
 })
 
-test("a partial rename proposal (language server still loading) is retried once, then refused with nothing written", async () => {
+test("a partial rename proposal (language server still loading) is retried while loading, then refused with nothing written", async () => {
   for (const partialCalls of [1, Number.POSITIVE_INFINITY]) {
     const ws = await workspace(LIB)
     try {
@@ -315,7 +315,11 @@ test("a partial rename proposal (language server still loading) is retried once,
       let calls = 0
       // Like tsserver before the project is loaded: only the file being renamed is covered.
       const loading: CodeIntelligenceProvider = {
-        name: "vscode", readText: ts.readText.bind(ts), definitions: ts.definitions.bind(ts), references: ts.references.bind(ts),
+        name: "vscode", readText: ts.readText.bind(ts), references: ts.references.bind(ts),
+        // While loading, an import in another file resolves only to its own binding (as tsserver's partial mode does).
+        definitions: async (file, position) => calls <= partialCalls && !file.endsWith("src/totals.ts")
+          ? [{ file, range: { start: position, end: position } }]
+          : ts.definitions(file, position),
         rename: async (file, position, newName) => {
           const outcome = await ts.rename(file, position, newName)
           calls += 1
