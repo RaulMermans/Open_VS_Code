@@ -3,7 +3,7 @@
  * (ALREADY_OBSERVED), refreshed after workspace changes, bounded, and never replayed for writes.
  */
 import assert from "node:assert/strict"
-import { writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -189,6 +189,62 @@ test("a repeated lookup names only requested edit targets, never files the reque
     ], "Read AGENTS.md first. Then fix src/add.ts so add returns the sum.", countingRegistry(root))
     assert.match(replay, /src\/add\.ts as a file to create or update/)
     assert.doesNotMatch(replay, /AGENTS\.md as a file to create or update/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a lookup refused for path traversal is never cached: each repeat is checked and refused again", async () => {
+  const root = await fixture()
+  try {
+    const { result } = await run(root, [
+      call("t1", "list_directory", { path: "../" }),
+      call("t2", "list_directory", { path: "../" }),
+      answer("That path is outside the workspace."),
+    ], "List the parent directory. Do not edit files.", countingRegistry(root))
+    const calls = result.toolCalls.filter((item) => item.name === "list_directory")
+    assert.equal(calls.length, 2)
+    assert.ok(calls.every((item) => item.outcome !== "COMPLETED" && item.alreadyObserved !== true), JSON.stringify(calls))
+    assert.equal(executions(result, "list_directory"), 2, "the second call was evaluated, not answered from a cache")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a failed lookup (missing path) is not cached, so it can succeed once the path exists", async () => {
+  const root = await fixture()
+  try {
+    const { result } = await run(root, [
+      call("m1", "list_directory", { path: "lib" }),
+      () => {
+        mkdirSync(join(root, "lib"))
+        writeFileSync(join(root, "lib/new.ts"), "export {}\n")
+        return call("m2", "list_directory", { path: "lib" })
+      },
+      answer("lib now has new.ts."),
+    ], "What is in lib? Do not edit files.", countingRegistry(root))
+    assert.equal(result.toolCalls.find((item) => item.id === "m1")?.outcome, "FAILED")
+    const second = result.observations?.find((item) => item.callId === "m2")
+    assert.equal(second?.ok, true)
+    assert.notEqual(second?.alreadyObserved, true)
+    assert.match(String(second?.content), /lib\/new\.ts/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a lookup the permission policy denies is never answered from the registry", async () => {
+  const root = await fixture()
+  try {
+    const provider = new ScriptedModelProvider([
+      call("d1", "search_text", { query: "add" }),
+      call("d2", "search_text", { query: "add" }),
+      answer("Search is not allowed here."),
+    ])
+    const agent = new AgentRunner({ provider, registry: countingRegistry(root), eventFactory: events, permissionEvaluator: (input) => input.action === "search_repository" ? "DENY" : "ALLOW" })
+    const result = await agent.run({ task: { id: "task", mode: "BUILD", instruction: "Where is add defined? Do not edit files." }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
+    const searches = result.toolCalls.filter((item) => item.name === "search_text")
+    assert.ok(searches.every((item) => item.outcome === "DENIED" && item.alreadyObserved !== true), JSON.stringify(searches))
   } finally {
     await rm(root, { recursive: true, force: true })
   }
