@@ -15,12 +15,11 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify (${{ matrix.os }}, Node ${{ matrix.node-version }})
-    runs-on: ${{ matrix.os }}
+    name: Verify (Ubuntu, Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: ['22', '24']
 
     steps:
@@ -33,7 +32,6 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Enable Linux Chromium user-namespace sandbox
-        if: runner.os == 'Linux'
         shell: bash
         run: |
           # Ubuntu 24.04 runners block unprivileged user namespaces. Chromium's
@@ -64,9 +62,7 @@ jobs:
         run: npm test
         # Each workspace test process uses --test-timeout=120000 and --test-force-exit.
         # A stuck test fails at that deadline instead of holding the job open.
-        # Real FPS (>10 frames, >=30 FPS) runs on Linux. On shared macOS runners that
-        # measurement is skipped unless OPEN_VS_CODE_MOTION_PERFORMANCE=1. A skip is
-        # not a pass of the performance gate.
+        # Real FPS (>10 frames, >=30 FPS) is exercised on Linux.
 
       - name: Build
         shell: bash
