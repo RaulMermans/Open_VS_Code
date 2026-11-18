@@ -14,7 +14,7 @@ Candidate: `0.1.0-rc.25` from `203bdf81d7`, **not installed**. Evidence: `~/.cac
 
 ## 2. HALO VC-02 root cause
 
-The original instruction was recovered from the installed app's conversation store (`c-432e645462dbabbf`, run `session-1794940660160`). The app keeps no per-tool trace, so model inputs and observations of the original run are **not recoverable**; the diagnosis below is from a **reproduction** with the exact instruction on rc.24 code in a disposable copy of the same workspace (`~/Desktop/halo-control`, a snapshot without Git or `node_modules`).
+The original instruction was recovered from the installed app's conversation store (`c-432e645462dbabbf`, run `session-1794940660160`). The app keeps no per-tool trace, so model inputs and observations of the original run are **not recoverable**; the diagnosis below is from a **reproduction** with the exact instruction on rc.24 code in a disposable copy of the same workspace (a local HALO Control snapshot without Git or `node_modules`).
 
 Reproduction: Qwen3-Coder 3/3 and Qwen3.6 3/3 end `NON_PROGRESS: list_directory was refused 4 times`; Coder reproduces the original message byte for byte. The original runs were most likely served by Qwen3-Coder (the Qwen3.6 blob was written at 19:35, after the first failing conversation at 18:56); not proven.
 
