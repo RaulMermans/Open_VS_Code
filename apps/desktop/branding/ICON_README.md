@@ -1,23 +1,23 @@
-# Open VS Code — Cyberpunk icon replacement pack
+# Open VS Code — `<VS>` icon
 
-The source image is the last user-selected borderless cyberpunk mark from this conversation.
-It is designed to have a transparent background and no rounded-square container.
+`icon-source-vs.png` is the approved source artwork (1995×788, transparent background): the `<VS>` mark
+with cyan brackets, a blue V and a violet-to-magenta S. It replaces the earlier cyberpunk mark (Sprint 25).
 
-## Install into repository
+## Regenerate
 
-Extract this archive at the root of `Open_VS_Code` (the ZIP contains the correct `apps/desktop/branding/` prefix).
-This replaces `render-icon.py`, `ICON_README.md`, and the four old icon PNGs.
-It also adds `icon-source-cyberpunk.png` as the permanent source asset.
+```text
+python3 apps/desktop/branding/render-icon.py
+```
 
-Run `python3 apps/desktop/branding/render-icon.py` to reproduce the PNGs.
-Commit the source image and all outputs together.
+The script (Pillow) centers the visible mark on a transparent square with a 7.5% margin and writes
+`icon-48.png`, `icon-128.png`, `icon.png` (256) and `icon-512.png`. Commit the source and all outputs together.
+Packaging installs them as the Linux hicolor icons and the window icon (`resources/linux/code.png`).
 
-## Release verification
+## Notes
 
-1. Confirm packaging includes these icons (Linux .desktop icon and installed window icon).
-2. Rebuild and install a new clean versioned Debian package; current rc.6 remains the rollback version.
-3. Check the dock, launcher, task switcher and window icon after logging out/in if icon caches persist.
-4. Test the icon at 48px; if the small size is unclear, add a simple small-size variant while preserving the main identity.
-5. Verify that no script regenerates the previous green diamond mark.
-
-Never claim the image has been deployed until the installed application actually displays it.
+- The mark is wide, so it fills about 37% of the square's height; at 48 px it is legible but small. If launcher
+  or task-switcher sizes look unclear, add a small-size variant that keeps the same identity.
+- The activity-bar icon (`packages/vscode-integration/media/agent.svg`) is a separate monochrome SVG, as VS Code
+  requires there; it is not generated from this artwork.
+- Never claim the icon is deployed until the installed application actually displays it (icon caches may need
+  a log-out/in).

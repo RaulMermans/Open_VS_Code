@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
-SOURCE = ROOT / "icon-source-cyberpunk.png"
+SOURCE = ROOT / "icon-source-vs.png"
 SIZES = {48: "icon-48.png", 128: "icon-128.png", 256: "icon.png", 512: "icon-512.png"}
 
 
