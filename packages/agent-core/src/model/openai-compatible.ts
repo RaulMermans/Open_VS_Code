@@ -77,9 +77,6 @@ export class OpenAICompatibleProvider implements ModelProvider {
       throw new ModelProviderError("INVALID_REQUEST", error instanceof Error ? error.message : "Invalid model request", undefined, { cause: error })
     }
 
-    const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
-    const signal = request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal
-
     const tools = request.tools ?? (
       Array.isArray(request.metadata?.tools) ? request.metadata.tools as readonly ToolDefinition[] : undefined
     )
@@ -95,6 +92,29 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ...(wireTools ? { tools: wireTools, tool_choice: "auto" } : {}),
       ...(this.contextWindow ? { options: { num_ctx: this.contextWindow } } : {}),
     }
+    // Agent turns (with tools) get an output cap, so a runaway reasoning chain ends by itself instead of
+    // running into the request timeout. Measured normal turns: 50-1,500 tokens, p99 about 5,000.
+    const capped = wireTools !== undefined && request.maxOutputTokens === undefined
+    if (capped) requestBody.max_tokens = AGENT_TURN_MAX_OUTPUT_TOKENS
+    let first: ModelResponse
+    try {
+      first = await this.#attempt(request, requestBody, wireMessages, wireTools)
+    } catch (error) {
+      if (!capped || !(error instanceof ModelProviderError) || error.code !== "TIMEOUT") throw error
+      // One retry of this turn without reasoning; if that fails too, the timeout stands.
+      return this.#attempt(request, { ...requestBody, reasoning_effort: "none" }, wireMessages, wireTools).catch(() => { throw error })
+    }
+    if (capped && first.finishReason === "length" && !first.toolCalls?.length && !first.message.content.trim()) {
+      // The cap cut the turn off while it was still reasoning: retry once without reasoning.
+      return this.#attempt(request, { ...requestBody, reasoning_effort: "none" }, wireMessages, wireTools).catch(() => first)
+    }
+    return first
+  }
+
+  /** One request with its own timeout (and the existing bounded retry of transient endpoint failures). */
+  async #attempt(request: ModelRequest, requestBody: Record<string, unknown>, wireMessages: ReturnType<typeof formatWireMessages>, wireTools: ReturnType<typeof formatWireTools>): Promise<ModelResponse> {
+    const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
+    const signal = request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal
     if (process.env["OPEN_VS_CODE_MODEL_TRACE"] === "1") {
       const lastMessage = wireMessages.at(-1)
       const lastContent = lastMessage?.content
@@ -156,11 +176,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
         rawToolCallCount: Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls.length : 0,
         contentChars: normalized.message.content.length,
         contentPrefix: normalized.message.content.slice(0, 400),
+        reasoningOff: requestBody.reasoning_effort === "none",
       })}\n`)
     }
     return normalized
   }
 }
+
+/** Output cap for agent turns: at the measured ~40-80 tokens/s on the local endpoint, well under the timeout. */
+export const AGENT_TURN_MAX_OUTPUT_TOKENS = 6_144
 
 /** Waits between retries of a transient model endpoint failure. */
 export const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000]
