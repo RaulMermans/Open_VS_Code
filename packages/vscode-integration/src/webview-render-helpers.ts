@@ -731,7 +731,10 @@ export function renderConnectionStatus(container: any, connection: any, doc?: an
   var backendLabel =
     status.backend === "halo" ? "HALO" :
     status.backend === "standalone-local" ? "Local" : "Backend";
-  var modelName = status.selectedModel || status.modelLabel || "";
+  // Auto shows the model that actually served the last turn, never the one it might pick next.
+  var modelName = status.selectedModel === "auto"
+    ? "Auto" + (status.modelLabel && status.modelLabel !== "auto" ? " · " + status.modelLabel : "")
+    : status.selectedModel || status.modelLabel || "";
   var model = modelName ? " · " + modelName : "";
   var stateLabel =
     status.state === "ready" ? "Ready" :
