@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { accessSync, constants, existsSync, realpathSync } from "node:fs"
+import { accessSync, constants, existsSync, readlinkSync, realpathSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
@@ -59,9 +59,9 @@ export function detectBubblewrap(): { available: boolean; path?: string; reason?
   return (probeCache = { available: true, path: bwrap })
 }
 
-/** Test seam: forget the cached probe. */
-export function resetBubblewrapProbe(): void {
-  probeCache = undefined
+/** Test seam: forget the cached probe, or force its result (e.g. bubblewrap unavailable). */
+export function resetBubblewrapProbe(forced?: { available: boolean; path?: string; reason?: string }): void {
+  probeCache = forced
   limitsCache = undefined
 }
 
@@ -119,6 +119,32 @@ function toolchainBinds(home: string, pathEntries: readonly string[], executable
   return sorted.filter((dir, index) => !sorted.slice(0, index).some((parent) => isInside(parent, dir)))
 }
 
+/**
+ * Each hop of the executable's symlink chain that lives under the hidden HOME (a virtualenv's bin/python ->
+ * ~/tools/python/cpython-3.12/bin/python3.12, itself a symlinked directory): that hop's install prefix
+ * (the parent of its bin/), exposed read-only at the path the link uses, so the chain resolves in the
+ * sandbox. Returns [source, destination] pairs; nothing outside the interpreter's own installation.
+ */
+function symlinkChainBinds(home: string, executable: string): Array<[string, string]> {
+  const pairs: Array<[string, string]> = []
+  let current = executable
+  for (let hop = 0; hop < 8; hop += 1) {
+    let target: string
+    try {
+      target = readlinkSync(current)
+    } catch {
+      break
+    }
+    const next = path.resolve(path.dirname(current), target)
+    const dir = path.dirname(next)
+    const prefix = path.basename(dir) === "bin" ? path.dirname(dir) : dir
+    const real = realOrUndefined(prefix)
+    if (real && prefix !== home && isInside(home, prefix) && real !== home && isInside(home, real)) pairs.push([real, prefix])
+    current = next
+  }
+  return pairs
+}
+
 export function planSandboxedCommand(input: {
   readonly mode: CommandSandboxMode
   readonly workspaceRoot: string
@@ -126,6 +152,8 @@ export function planSandboxedCommand(input: {
   readonly executable: string
   readonly args: readonly string[]
   readonly env: Record<string, string>
+  /** Extra host directories exposed read-only (validated by the caller), e.g. a cached package manager. */
+  readonly readOnlyBinds?: readonly string[]
 }): SandboxPlan | { readonly error: string; readonly status: SandboxStatus } {
   const unsandboxed = (reason: string): SandboxPlan => ({
     executable: input.executable,
@@ -158,6 +186,10 @@ export function planSandboxedCommand(input: {
   args.push("--tmpfs", home)
   const pathEntries = (input.env.PATH ?? "").split(path.delimiter).filter(Boolean)
   for (const dir of toolchainBinds(home, pathEntries, input.executable)) args.push("--ro-bind", dir, dir)
+  for (const dir of input.readOnlyBinds ?? []) args.push("--ro-bind", dir, dir)
+  for (const [source, destination] of symlinkChainBinds(home, input.executable)) {
+    if (source !== destination) args.push("--ro-bind", source, destination)
+  }
   // The workspace is the only writable host path. It may live outside HOME (for example under /tmp).
   args.push("--bind", workspace, workspace)
   args.push("--chdir", cwd)

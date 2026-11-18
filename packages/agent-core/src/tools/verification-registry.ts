@@ -59,7 +59,9 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
         packageJsonHash: command.packageJsonHash,
         scriptName: command.scriptName,
         scriptBody: command.scriptBody,
-        sandboxPreview: describeSandbox(predictSandbox(sandbox)),
+        sandboxPreview: `${describeSandbox(predictSandbox(command.requiresSandbox ? "required" : sandbox))}${command.requiresSandbox ? " Sandbox required: this uses the project's virtualenv and never runs outside the sandbox." : ""}`,
+        ...(command.requiresSandbox ? { requiresSandbox: true } : {}),
+        ...(command.readOnlyBinds ? { readOnlyBinds: command.readOnlyBinds } : {}),
       }
 
       return {
@@ -67,11 +69,13 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
         reviewPayload: prepared as any,
         apply: async (applyContext: ToolExecutionContext): Promise<VerificationResult> => {
           const result = await engine.execute(prepared, applyContext.signal, applyContext.onOutput)
+          const setup = result.status === "EXECUTION_ERROR" && result.stderr.startsWith("ENVIRONMENT_SETUP_REQUIRED:") ? result.stderr.slice("ENVIRONMENT_SETUP_REQUIRED: ".length).trim() : undefined
+          if (setup) return { ...result, diagnosis: `ENVIRONMENT_SETUP_REQUIRED: ${setup} This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.` }
           if (result.status !== "FAIL") return result
           const blocked = environmentBlocker(`${result.stdout}\n${result.stderr}`)
           if (blocked) {
             // The command could not run here; that says nothing about the code, so it is not a test failure.
-            return { ...result, status: "EXECUTION_ERROR", diagnosis: `ENVIRONMENT: verification could not run in this workspace (${blocked}). This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.` }
+            return { ...result, status: "EXECUTION_ERROR", diagnosis: `ENVIRONMENT_SETUP_REQUIRED: verification could not run in this workspace (${blocked}). This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.` }
           }
           // Read-only workspace scan; never changes the verdict.
           const diagnosis = await diagnoseUnresolvedSymbols(workspaceRoot, `${result.stdout}\n${result.stderr}`).catch(() => undefined)

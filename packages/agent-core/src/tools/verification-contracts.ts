@@ -33,6 +33,10 @@ export interface PreparedVerification {
   readonly env?: Readonly<Record<string, string>>
   /** Predicted sandbox for the approval card (ADR-046); the engine re-decides at execution. */
   readonly sandboxPreview?: string
+  /** A workspace-local toolchain (project virtualenv): runs only in sandbox mode "required". */
+  readonly requiresSandbox?: boolean
+  /** Host directories exposed read-only in the sandbox (the cached package manager); re-validated at execution. */
+  readonly readOnlyBinds?: readonly string[]
 }
 
 export interface VerificationResult {

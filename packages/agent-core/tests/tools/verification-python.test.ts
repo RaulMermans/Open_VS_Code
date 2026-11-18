@@ -89,7 +89,9 @@ test("Django-style projects use manage.py test and pytest is used only when the 
   try {
     assert.deepEqual((await discoverVerificationCommand(django, "TEST")).args, ["manage.py", "test"])
     assert.equal((await execute(django)).result.status, "FAIL", "a fake manage.py that runs no tests is not a PASS")
-    assert.deepEqual((await discoverVerificationCommand(pytestRepo, "TEST")).args, ["-m", "pytest", "-q"])
+    // Configured pytest runs only where pytest is installed; otherwise the workspace needs setup (Sprint 25).
+    const configured = await discoverVerificationCommand(pytestRepo, "TEST").then((command) => command.args, (error: Error) => error.message)
+    assert.ok(JSON.stringify(configured) === JSON.stringify(["-m", "pytest", "-q"]) || String(configured).startsWith("ENVIRONMENT_SETUP_REQUIRED: pytest is not installed"), String(configured))
   } finally {
     await rm(django, { recursive: true, force: true })
     await rm(pytestRepo, { recursive: true, force: true })

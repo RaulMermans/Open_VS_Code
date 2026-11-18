@@ -14,7 +14,7 @@ Candidate: `0.1.0-rc.25` from `203bdf81d7`, **not installed**. Evidence: `~/.cac
 
 ## 2. HALO VC-02 root cause
 
-The original instruction was recovered from the installed app's conversation store (`c-432e645462dbabbf`, run `session-1794940660160`). The app keeps no per-tool trace, so model inputs and observations of the original run are **not recoverable**; the diagnosis below is from a **reproduction** with the exact instruction on rc.24 code in a disposable copy of the same workspace (`~/Desktop/halo-control`, a snapshot without Git or `node_modules`).
+The original instruction was recovered from the installed app's conversation store (`c-432e645462dbabbf`, run `session-1794940660160`). The app keeps no per-tool trace, so model inputs and observations of the original run are **not recoverable**; the diagnosis below is from a **reproduction** with the exact instruction on rc.24 code in a disposable copy of the same workspace (a local HALO Control snapshot without Git or `node_modules`).
 
 Reproduction: Qwen3-Coder 3/3 and Qwen3.6 3/3 end `NON_PROGRESS: list_directory was refused 4 times`; Coder reproduces the original message byte for byte. The original runs were most likely served by Qwen3-Coder (the Qwen3.6 blob was written at 19:35, after the first failing conversation at 18:56); not proven.
 
@@ -129,3 +129,74 @@ Model: **Qwen3.6 35B for coding** on measured success (unseen 7/12 vs 2/12; HALO
 ## 8. Next step
 
 **Make verification runnable in real workspaces.** It ended more candidate runs than any model error: every Python run (the workspace `.venv` is refused by policy, so pytest is "not installed"), the HALO snapshot and GUI B (pnpm through Corepack in the no-network sandbox), and the `package.json` edits models make to get a test command. A decision on trusted workspace interpreters and package managers in the sandbox (ADR-046) is the single most useful change for everyday coding.
+
+## 9. Follow-up (owner-approved, 2026-11-18): verification in real workspaces, bounded reasoning, new icon
+
+Approved by the owner: push for CI (draft PR #98, not merged), trusted workspace virtualenvs and existing package
+managers inside the command sandbox, and the new `<VS>` icon. Decision record: ADR-049.
+
+| Commit | Change |
+| --- | --- |
+| `f3838e3f3f`, `95079706d0` | Project `.venv` (static path/symlink/containment checks; sandbox mode `required`, never a host fallback; re-checked at execution; symlinked install prefixes exposed read-only). Declared pnpm/yarn from the Corepack cache, read-only, network off. `ENVIRONMENT_SETUP_REQUIRED` before any approval, with the setup command; nothing installed. `test:unit` fallback. pytest `-q` only when the project does not set it |
+| `3a9d915c91` | Agent turns capped at 6,144 output tokens; a cut-off or timed-out turn retried once with `reasoning_effort: "none"`. Timeout unchanged |
+| `7501e8457f` | Only *new* `package.json` scripts are refused when unrequested (the first version also blocked a legitimate repair; caught by Linux CI in `packages/cli`, which had not been run locally) |
+| `f9d24068b6` | `<VS>` icon from `icon-source-vs.png`; previous source removed |
+
+Qwen3.6 timeout investigation: over 1,661 requests, p50 3.1 s, p99 70 s, 2 at the 180 s limit. Replaying a captured
+late-turn request: default thinking 2.9-5.4 s (194-421 tokens, valid tool call); `reasoning_effort: "none"`
+0.7-1.2 s with a valid tool call; `think: false` ignored on `/v1`. The limit hits were rare runaway reasoning, not slow
+normal turns. After the fix: 0 requests at the limit and 0 `MODEL_ERROR` in the reruns below.
+
+Tests: 41 new deterministic tests (virtualenv selection, symlink escapes and impostors, missing tools, approval
+rejection, sandbox-off and no-bubblewrap refusal, Corepack env and bind validation, setup pre-flight, `test:unit`,
+`package.json` guard, symlinked install prefix, pytest `-q`, runaway turn cap and retry, cancellation). All workspaces
+pass; CI green on `f9d24068b6` (Node 22 and 24).
+
+Real verification in the sandbox (before the agent ran): Clipping_agents pytest through its `.venv` 221 passed;
+Eyes `test:unit` 656 passed and typecheck pass via the cached pnpm; HALO snapshot reports `ENVIRONMENT_SETUP_REQUIRED`
+(no `node_modules`) before any approval.
+
+Reruns of the same frozen tasks (no longer held out), headless, Qwen3.6:
+
+| | Before (§4) | After |
+| --- | --- | --- |
+| Oracle passes | 7/12 (3/6, 4/6) | 7/12 (4/6, 3/6) |
+| Passing runs that ended `COMPLETED` and verified | 4 of 7 | **7 of 7** |
+| False completions | 0 | 0 |
+| `MODEL_ERROR` (timeouts) | 2 | 0 |
+| Unrequested `package.json` edits | 5 | 0 |
+| HALO VC-02 oracle | 3/3 | 2/2 |
+| Median s per model turn | 22.2 | 20.7 |
+
+Qwen3-Coder: 0/6 on the same code (it still repeats calls until stopped). t2 (NDJSON feature) still exceeds 10 minutes;
+t3 rename is still refused by the mutation size budget.
+
+**Packaged GUI (build `7501e8457f`, extension bundle `a1643e87…`, identical in the candidate), Qwen3.6, model switch
+confirmed by the status line and by Ollama:**
+
+| Task | Result |
+| --- | --- |
+| p5 Python bug fix | **"Task completed. Tests passed."** Verification `.venv/bin/python -m pytest` in the sandbox; hidden oracle PASS; 188 s, 3 approvals |
+| t1 TypeScript cross-file bug fix | **"Task completed. Tests passed. Typecheck passed."** Hidden oracle PASS (unit + typecheck); 182 s, 3 approvals |
+
+Critical acceptance on the candidate build: 18/20, all safety scenarios pass; `UX-MODELS`, `LIFE-FIRST` unchanged
+(pre-existing).
+
+Icon: all packaged icon files (hicolor 48/128/256/512, launcher, window `resources/linux/code.png`) match the new
+renders. Not seen in a running desktop: on Wayland the dock/window icon comes from the installed `.desktop` entry,
+and the candidate is not installed.
+
+### Release: candidate `0.1.0-rc.25` from `f9d24068b6`, GO for installation at the owner's decision
+
+| Item | Value |
+| --- | --- |
+| `.deb` SHA-256 | `68913f39a5452923b9c6bf4d777d578a8fc1ca03163440fbbdb100464f059b52` |
+| tarball SHA-256 | `1ff76a4c4260b178a1da5fbb20d7eb83c4f1541b89fef6065e98f47b45d45c76` |
+| bundled `extension.js` | `a1643e873b7e361979114a43f985924613a0cc16e861e1da3c11c8662589407a` |
+| CI | green on `f9d24068b6` |
+| Installed | `0.1.0-rc.24`, unchanged |
+| Rollback | rc.24 `.deb` `fd911e10…eb8b`, verified |
+
+Remaining, not blocking: the model picker drops a change made while the panel is still syncing on startup (the status
+line is truthful); approved dependency installation is not built; t2/t3 classes above; Qwen3-Coder should not be
+the coding default.
