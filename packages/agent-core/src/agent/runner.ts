@@ -2349,7 +2349,7 @@ export class AgentRunner {
       truncated: full && previous.truncated,
       alreadyObserved: true,
     }
-    if (!full) this.#recordRefusal(prepared.name, "ALREADY_OBSERVED", `${prepared.name} repeated without new information`)
+    if (!full) this.#recordRefusal(prepared.name, "ALREADY_OBSERVED", `${prepared.name} ${JSON.stringify(toolArguments(prepared.arguments) ?? {})} repeated without new information`)
     if (fresh) return observation // a re-read: the caller records it on the normal completion path
     session.observations.push(observation)
     session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", observation.truncated), alreadyObserved: true })
