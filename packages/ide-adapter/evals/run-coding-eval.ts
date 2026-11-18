@@ -22,7 +22,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { AgentSessionBridge } from "../src/bridge.ts"
 import type { IdeHost, IdeContextSnapshot } from "../src/contracts.ts"
-import { buildStarterRoutingConfig } from "../../vscode-integration/src/local-model-selection.ts"
+import { applyChatModelSelection, buildStarterRoutingConfig } from "../../vscode-integration/src/local-model-selection.ts"
 import { TypeScriptCodeIntelligence } from "../../agent-core/src/tools/typescript-code-intelligence.ts"
 import { CODING_TASKS, type CodingTask } from "./coding-tasks.ts"
 
@@ -31,6 +31,17 @@ const ENDPOINT = process.env.OPEN_VS_CODE_MODEL_ENDPOINT ?? "http://127.0.0.1:11
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..")
 const EXPLORATION = new Set(["read_file", "search_text", "find_files", "list_directory", "find_symbol"])
 const IGNORED_CHANGE = /^(\.open-vs-code\/|.*__pycache__\/|node_modules\/|.*\.pyc$)/
+
+/**
+ * The desktop's routing for a chosen chat model (model-routing.ts: starter config, then the chat selection).
+ * The starter config alone falls back to qwen2.5-coder:7b for any model outside the Qwen-Coder families.
+ */
+function evalRoutingConfig(model: string) {
+  const config = applyChatModelSelection(buildStarterRoutingConfig([model]), model)
+  const served = config.deployments.find((deployment) => config.routes.coding?.includes(deployment.id))?.modelName
+  if (served !== model) throw new Error(`routing serves ${served}, not the requested ${model}`)
+  return config
+}
 
 interface Args {
   label: string
@@ -229,7 +240,7 @@ async function runTask(task: CodingTask, args: Args, repeat: number) {
   const before = Object.fromEntries(task.unchanged.map((path) => [path, sha(task.files[path] ?? "")]))
   const started = Date.now()
   // Same routing the desktop builds for a fresh install with this model selected (extension.ts -> modelRouting.config).
-  const routingConfigOverride = buildStarterRoutingConfig([MODEL])
+  const routingConfigOverride = evalRoutingConfig(MODEL)
   const phases: Array<Record<string, unknown>> = []
   const approvals: Approval[] = []
   let timedOut = false
@@ -332,7 +343,7 @@ async function main(): Promise<void> {
     startedAt: new Date().toISOString(),
     timeoutMin: args.timeoutMin,
     codeIntelligence: args.codeIntel ? "typescript LanguageService (find_symbol, rename_symbol)" : "none (baseline tools)",
-    path: "AgentSessionBridge.runTask -> createAgentRuntime with buildStarterRoutingConfig (desktop defaults: workflow/progressMonitor/learning off)",
+    path: "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)",
   }
   for (const task of tasks) {
     for (let repeat = 1; repeat <= args.repeat; repeat += 1) {

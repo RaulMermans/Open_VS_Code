@@ -16,7 +16,7 @@ import { ToolRegistry, type ToolRegistration } from "../../src/tools/registry.ts
 const budget = calculateBudget({ contextWindow: 8_000, reservedOutput: 400, reservedToolHistory: 400 })
 const call = (id: string, name: string, args: Record<string, unknown>): ModelResponse => ({ model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id, name, arguments: args }] })
 
-test("a repeated lookup refusal names the part of the request that is still missing (the tests)", async () => {
+test("a repeated lookup (ALREADY_OBSERVED) names the part of the request that is still missing (the tests)", async () => {
   const root = await mkdtemp(join(tmpdir(), "ovsc-gap-"))
   try {
     await mkdir(join(root, "src"))
@@ -32,7 +32,7 @@ test("a repeated lookup refusal names the part of the request that is still miss
     let result = await agent.run({ task: { id: "task", mode: "BUILD", instruction: "Fix src/add.ts so add returns the sum, and add a unit test for it." }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
     for (let guard = 0; result.status === "PAUSED" && guard < 20; guard += 1) result = await agent.resume("APPROVE")
     const seen = JSON.stringify(provider.requests.at(-1))
-    assert.match(seen, /That lookup already completed\..*Still missing: .*test/)
+    assert.match(seen, /ALREADY_OBSERVED: This lookup already ran.*Still missing from the request: .*test/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

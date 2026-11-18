@@ -12,6 +12,8 @@ export interface ToolObservation {
   readonly provenance: ObservationProvenance
   readonly errorCategory?: string
   readonly arguments?: Readonly<Record<string, unknown>>
+  /** ALREADY_OBSERVED: a repeated read-only lookup answered from its earlier result; not a failure. */
+  readonly alreadyObserved?: boolean
 }
 
 export interface ToolObservationInput {
@@ -72,20 +74,24 @@ function formatObservationContent(output: unknown, toolName: string): string {
           : unknownTail ? `\n[More may follow: call read_file with path "${path}" and startLine ${end! + 1}.]` : ""
       return `${header}\n\`\`\`\n${record.content}\n\`\`\`${footer}`
     }
+    // Truncation is stated, so a partial result is never read as the complete answer.
+    const more = (shown: number, what: string, narrow: string) => record.truncated === true
+      ? `\n[Incomplete: only the first ${shown} ${what}${typeof record.total === "number" ? ` of ${record.total}` : ""} are shown. ${narrow}]`
+      : ""
     if (toolName === "search_text" && Array.isArray(record.results)) {
       const results = record.results as Array<{ path: string; line: number; text: string }>
-      if (results.length === 0) return "No matching text found."
-      return `Found ${results.length} matches:\n${results.map((r) => `${r.path}:${r.line}: ${r.text}`).join("\n")}`
+      if (results.length === 0) return record.truncated === true ? "No matching text found in the part searched; the search stopped early. Narrow the path or query." : "No matching text found."
+      return `Found ${results.length} matches:\n${results.map((r) => `${r.path}:${r.line}: ${r.text}`).join("\n")}${more(results.length, "matches", "Narrow the query or search a subdirectory to see the rest.")}`
     }
     if (toolName === "find_files" && Array.isArray(record.paths)) {
       const paths = record.paths as string[]
       if (paths.length === 0) return "No matching files found."
-      return `Found ${paths.length} matching files:\n${paths.map((p) => `- ${p}`).join("\n")}`
+      return `Found ${paths.length} matching files:\n${paths.map((p) => `- ${p}`).join("\n")}${more(paths.length, "files", "Use a narrower glob to see the rest.")}`
     }
     if (toolName === "list_directory" && Array.isArray(record.entries)) {
       const entries = record.entries as Array<{ name: string; path: string; type: string }>
       if (entries.length === 0) return "Directory is empty."
-      return `Directory entries:\n${entries.map((e) => `- [${e.type}] ${e.path}`).join("\n")}`
+      return `Directory entries:\n${entries.map((e) => `- [${e.type}] ${e.path}`).join("\n")}${more(entries.length, "entries", "List a subdirectory, or use find_files with a glob, to see the rest.")}`
     }
     if (toolName === "run_verification" || toolName === "run_known_test") {
       const status = record.status as string

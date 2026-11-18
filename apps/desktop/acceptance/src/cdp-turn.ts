@@ -130,6 +130,7 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
     let sawRunningAfterContinue = false;
     let stable = 0;
     let modeAttempts = 0;
+    let modelWaits = 0;
     const timeoutMs = typeof op.timeoutMs === "number" ? op.timeoutMs : 20000;
     const timer = setInterval(() => {
       const elapsed = Date.now() - started;
@@ -174,6 +175,13 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
           if (model.value !== op.model) {
             model.value = op.model;
             model.dispatchEvent(new Event("change", { bubbles: true }));
+            return;
+          }
+          // The app applies a model change asynchronously; send only once its status line confirms the model,
+          // or the turn would still run on the previous one.
+          if (status && readyText.indexOf(op.model) < 0) {
+            modelWaits += 1;
+            if (modelWaits > 120) return finish({ reason: "model switch to " + op.model + " was not confirmed by the app" });
             return;
           }
         }
@@ -372,9 +380,18 @@ export const CDP_SURFACE_RUNTIME = `function cdpSurface(op) {
       bodyText: String((doc.body && doc.body.innerText) || "").slice(0, 4000),
       reviews: Array.from(doc.querySelectorAll(".review-item")).map((node) => String(node.textContent || "").replace(/\\s+/g, " ").trim()).slice(0, 20),
       continueVisible: visible(doc.querySelector(".btn-continue-run")),
+      modelValue: doc.getElementById("model-selector") ? String(doc.getElementById("model-selector").value || "") : "",
+      statusText: doc.getElementById("connection-status") ? String(doc.getElementById("connection-status").textContent || "").trim() : "",
     };
   };
   if (op.op === "snapshot") return snapshot();
+  if (op.op === "selectModel") {
+    const picker = doc.getElementById("model-selector");
+    if (!picker) return Object.assign(snapshot(), { found: false, reason: "missing #model-selector" });
+    picker.value = String(op.value || "");
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    return snapshot();
+  }
   if (op.op === "fill" && composer) {
     composer.focus();
     composer.value = String(op.value || "");

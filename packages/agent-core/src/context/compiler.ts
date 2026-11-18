@@ -43,6 +43,29 @@ function recentObservations(observations: readonly ToolObservation[], limit: num
   return selected
 }
 
+const INDEX_LINES = 30
+
+/**
+ * Successful lookups that fell out of the recent-observation window, one line each with the call that
+ * returns them again (answered from the earlier result while the workspace is unchanged). Keeps what was
+ * already found in view without keeping every output. Failures and repeats are left out.
+ */
+function observedIndex(all: readonly ToolObservation[], shown: readonly ToolObservation[]): ContextItem | undefined {
+  const shownIds = new Set(shown.map((observation) => observation.callId))
+  const lines = new Map<string, string>()
+  for (const observation of all) {
+    if (!observation.ok || observation.alreadyObserved || shownIds.has(observation.callId) || !observation.arguments) continue
+    const call = `${observation.toolName} ${JSON.stringify(observation.arguments).slice(0, 120)}`
+    const first = observation.content.split("\n").find((line) => line.trim())?.slice(0, 100) ?? ""
+    const size = observation.content.split("\n").length
+    lines.delete(call)
+    lines.set(call, `- ${call} -> ${first}${size > 1 ? ` (${size} lines)` : ""}`)
+  }
+  if (lines.size === 0) return undefined
+  const content = `Already observed in this task (older results not shown here; repeat the exact call to get one back):\n${[...lines.values()].slice(-INDEX_LINES).join("\n")}`
+  return { id: "observed-index", source: { kind: "observation" }, content, priority: 900, estimatedTokens: estimateTokens(content), required: true }
+}
+
 export function compileContext(input: ContextCompilerInput): CompiledContext {
   if (!input.task.trim()) throw new TypeError("Context compiler task must not be empty")
   const required: ContextItem[] = input.projectInstructions.map((instruction) => ({
@@ -183,7 +206,10 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     }
   }
 
-  const observations = recentObservations(input.observations ?? [], input.maxObservations ?? 6).map((observation, index): ContextItem => ({
+  const recent = recentObservations(input.observations ?? [], input.maxObservations ?? 6)
+  const observed = observedIndex(input.observations ?? [], recent)
+  if (observed) required.push(observed)
+  const observations = recent.map((observation, index): ContextItem => ({
     id: `observation:${observation.callId}`,
     source: { kind: "observation", ...(observation.provenance.paths[0] ? { path: observation.provenance.paths[0] } : {}) },
     content: observation.content,
@@ -199,5 +225,10 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
       ...(observation.errorCategory ? { errorCategory: observation.errorCategory } : {}),
     },
   }))
-  return fitContext([...required, ...guidanceItems, ...learnedItems, ...(input.codeContext ?? []), ...observations], input.budget)
+  const compiled = fitContext([...required, ...guidanceItems, ...learnedItems, ...(input.codeContext ?? []), ...observations], input.budget)
+  // Selection prefers the newest observations; presentation is chronological, so the latest result (and any
+  // runtime note on it) is the last thing the model reads, not the oldest.
+  const age = new Map(observations.map((item, index) => [item.id, index]))
+  const shown = compiled.items.filter((item) => age.has(item.id)).toSorted((a, b) => age.get(b.id)! - age.get(a.id)!)
+  return { ...compiled, items: [...compiled.items.filter((item) => !age.has(item.id)), ...shown] }
 }

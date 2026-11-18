@@ -80,7 +80,7 @@ const registrations: readonly ToolRegistration[] = [
   {
     definition: {
       name: "list_directory",
-      description: "List entries in one repository directory.",
+      description: "List one directory (not recursive, up to 100 entries); says when the list is incomplete.",
       action: "read_repository",
       inputSchema: { type: "object", properties: { path: { type: "string" } }, additionalProperties: false },
     },
@@ -94,7 +94,7 @@ const registrations: readonly ToolRegistration[] = [
   {
     definition: {
       name: "search_text",
-      description: "Search text across repository files.",
+      description: "Search file contents for literal text (up to 50 path:line matches); says if incomplete.",
       action: "search_repository",
       inputSchema: {
         type: "object",
@@ -120,7 +120,7 @@ const registrations: readonly ToolRegistration[] = [
   {
     definition: {
       name: "find_files",
-      description: "Find repository files by glob pattern.",
+      description: "Find files by glob, e.g. src/**/*.ts (up to 200 paths); says if the list is incomplete.",
       action: "search_repository",
       inputSchema: {
         type: "object",

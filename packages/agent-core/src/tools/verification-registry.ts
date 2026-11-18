@@ -68,6 +68,11 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
         apply: async (applyContext: ToolExecutionContext): Promise<VerificationResult> => {
           const result = await engine.execute(prepared, applyContext.signal, applyContext.onOutput)
           if (result.status !== "FAIL") return result
+          const blocked = environmentBlocker(`${result.stdout}\n${result.stderr}`)
+          if (blocked) {
+            // The command could not run here; that says nothing about the code, so it is not a test failure.
+            return { ...result, status: "EXECUTION_ERROR", diagnosis: `ENVIRONMENT: verification could not run in this workspace (${blocked}). This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.` }
+          }
           // Read-only workspace scan; never changes the verdict.
           const diagnosis = await diagnoseUnresolvedSymbols(workspaceRoot, `${result.stdout}\n${result.stderr}`).catch(() => undefined)
           return diagnosis ? { ...result, diagnosis } : result
@@ -84,4 +89,18 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
 
 export function createVerificationToolRegistry(workspaceRoot: string): ToolRegistry {
   return new ToolRegistry(createVerificationToolRegistrations(workspaceRoot))
+}
+
+/**
+ * A verification command that failed before testing anything: the toolchain or dependencies are missing, or
+ * it tried to reach the network (the sandbox has none). Only unambiguous signals; anything else stays FAIL.
+ */
+export function environmentBlocker(output: string): string | undefined {
+  if (/Corepack is about to download|corepack[^\n]*(?:fetch failed|ENOTFOUND|EAI_AGAIN)/i.test(output)) return "the package manager is not installed and the sandbox has no network to download it"
+  if (/\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED)\b[^\n]*registry|getaddrinfo[^\n]*registry|ERR_PNPM_(?:FETCH|META_FETCH)|npm ERR! network/i.test(output)) return "it needs network access to a package registry, which the sandbox does not have"
+  const missing = /(?:^|\n)(?:sh: \d+: |\/bin\/sh: \d+: |)(tsc|vitest|jest|mocha|eslint|vite|tsx|pnpm|yarn|pytest|ruff): (?:command )?not found/.exec(output)
+  if (missing) return `${missing[1]} is not installed in the workspace; its dependencies have not been installed`
+  if (/No module named '?pytest'?/.test(output)) return "pytest is not installed in the workspace's Python environment"
+  if (/node_modules missing, did you mean to install|Local package\.json exists, but node_modules missing/i.test(output)) return "the workspace's node_modules are not installed"
+  return undefined
 }

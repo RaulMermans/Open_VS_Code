@@ -156,11 +156,47 @@ interface Session {
   refusalStop?: boolean
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
-  completedExploration?: Set<string>
+  /**
+   * Task-scoped registry of successful read-only lookups (signature -> result). A repeat is answered from
+   * here as ALREADY_OBSERVED instead of being refused. Cleared whenever the workspace changes.
+   */
+  observedLookups?: Map<string, ObservedLookup>
+  /** Renames applied in this task, so a repeated request is recognized as already done (not cross-task memory). */
+  completedRenames?: CompletedRename[]
+  /** Verification actions that could not run in this workspace (ENVIRONMENT), with the reason. */
+  environmentBlocked?: Map<string, string>
   lastAssistantText?: string
   /** One "answer now" nudge has already been sent for a non-editing task. */
   conversationAnswerNudged?: boolean
 }
+
+interface ObservedLookup {
+  readonly callId: string
+  readonly content: string
+  readonly truncated: boolean
+  replays: number
+}
+
+/**
+ * Read-only lookups whose result depends only on workspace content. read_file is re-read and compared, so an
+ * outside change is always seen. shortcut: listings and searches are invalidated by the agent's own writes and
+ * commands, not by edits made outside the agent mid-task; add a directory mtime check if that shows up.
+ */
+const REPLAYABLE_LOOKUPS = new Set(["list_directory", "find_files", "search_text", "find_symbol", "read_file"])
+interface CompletedRename {
+  readonly path: string
+  readonly symbol: string
+  readonly newName: string
+  readonly mutationId: string
+  readonly files: readonly string[]
+  repeats: number
+}
+
+/** A whole identifier (not part of a longer name). */
+const identifierPattern = (name: string) => new RegExp(String.raw`(?<![\w$])${name.replace(/\$/g, "\\$")}(?![\w$])`)
+
+/** A lookup repeated this many times with no workspace change is answered once in full, then only briefly. */
+const FULL_REPLAYS = 1
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
 
@@ -675,7 +711,12 @@ export class AgentRunner {
             }
             if (result.status === "APPLIED") {
               session.evidenceCollector.resolveRecoveredToolContractFailures()
-              if (!isVerification) session.completedExploration?.clear()
+              if (!isVerification) session.observedLookups?.clear()
+              if (pending.prepared.name === "rename_symbol") {
+                const args = pending.prepared.arguments as { path?: unknown; symbol?: unknown; newName?: unknown }
+                const renames = session.completedRenames ?? (session.completedRenames = [])
+                renames.push({ path: String(args.path), symbol: String(args.symbol), newName: String(args.newName), mutationId: reviewable.id, files: groupedFilePaths(reviewable.reviewPayload) ?? [String(args.path)], repeats: 0 })
+              }
             }
             if (result.status === "APPLIED" || result.status === "ALREADY_SATISFIED") await this.#refreshRequirementGaps()
           }
@@ -686,6 +727,11 @@ export class AgentRunner {
             maxContentBytes: this.#observationMaxBytes,
             ...(toolArguments(pending.prepared.arguments) ? { arguments: toolArguments(pending.prepared.arguments) } : {}),
           })
+          const environment = isVerification && result.status === "EXECUTION_ERROR" && typeof (result as { diagnosis?: unknown }).diagnosis === "string" && String((result as { diagnosis?: unknown }).diagnosis).startsWith("ENVIRONMENT:")
+          if (environment) {
+            const blocked = session.environmentBlocked ?? (session.environmentBlocked = new Map())
+            blocked.set(String((pending.prepared.arguments as { action?: unknown }).action ?? ""), String((result as { diagnosis?: unknown }).diagnosis).split("(")[1]?.split(")")[0] ?? "the environment cannot run it")
+          }
           session.observations.push(observation)
           session.toolCalls.push(recordCall(pending.prepared, reviewSucceeded ? "COMPLETED" : "FAILED", observation.truncated))
           session.evidenceLedger.recordObservation(
@@ -1090,9 +1136,6 @@ export class AgentRunner {
       diagnostics: [],
       toolCalls: [...(working?.toolCalls ?? [])] as AgentToolCallRecord[],
       repeatedProgress: 0,
-      ...(working?.explorationSignatures && working.explorationSignatures.length > 0
-        ? { completedExploration: new Set(working.explorationSignatures) }
-        : {}),
     }
     if (working?.lastVerification) {
       this.#session.observations.push(createToolObservation({
@@ -1442,6 +1485,12 @@ export class AgentRunner {
           && this.#verificationRequired()
         ) {
           const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification" || definition.name === "run_known_test")?.name
+          const blocked = session.environmentBlocked?.get(this.#nextVerificationAction())
+          if (verifyName && blocked) {
+            // The only thing left is a verification this workspace cannot run: end truthfully as unverified.
+            await this.#acceptCompletion(response.message.content, "UNAVAILABLE", `Verification could not run in this workspace: ${blocked}.`)
+            break
+          }
           if (verifyName) {
             session.autoVerifyPending = true
             calls = [{ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: this.#nextVerificationAction() } }]
@@ -1564,7 +1613,7 @@ export class AgentRunner {
         .map((mutation) => mutation.path),
     )].slice(-16)
     const lastVerification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
-    const explorationSignatures = [...(session.completedExploration ?? [])].slice(-32)
+    const explorationSignatures = [...(session.observedLookups?.keys() ?? [])].slice(-32)
     const touchedFilePaths = [...completedPaths, ...alreadyPresentPaths].map((path) => (
       isAbsolute(path) ? path : join(session.input.workspaceRoot, path)
     ))
@@ -1639,6 +1688,12 @@ export class AgentRunner {
     }
     const signature = `${prepared.name}\0${stableValue(prepared.arguments)}`
     const effectiveAction = prepared.effectiveAction ?? prepared.definition.action
+    const blockedReason = effectiveAction === "run_known_test" ? session.environmentBlocked?.get(String((prepared.arguments as { action?: unknown }).action ?? "")) : undefined
+    if (blockedReason) {
+      // Asking again would only cost another approval: the workspace cannot run it in this task.
+      this.#addErrorObservation(prepared, "VERIFICATION_UNAVAILABLE", `This verification already could not run in this workspace (${blockedReason}). It will not run again in this task. Continue with the requested change and report verification as blocked.`, "DENIED")
+      return false
+    }
     if (effectiveAction === "run_known_test" && this.#verificationWaitingOnEdit(session)) {
       const last = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
       const diagnosisObservation = session.observations.toReversed().find((item) => item.toolName === "run_verification" && item.content.includes("### Diagnosis"))
@@ -1647,17 +1702,12 @@ export class AgentRunner {
       this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
       return false
     }
-    if (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text") {
-      const seen = session.completedExploration
-      if (seen?.has(signature)) {
-        const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
-        const target = pending.length > 0 ? ` Create or update ${pending.join(", ")} if that is the requested change.` : ""
-        // Name what the request still lacks (e.g. "add the tests"), so the model is not left to guess the next step.
-        await this.#refreshRequirementGaps()
-        const gaps = session.requirementGaps?.length ? ` Still missing: ${session.requirementGaps.join(" ")}` : ""
-        this.#addErrorObservation(prepared, "EDIT_REQUIRED", `That lookup already completed.${target}${gaps} Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference.`, "DENIED")
-        return false
-      }
+    if ((prepared.name === "rename_symbol" || prepared.name === "find_symbol") && await this.#answerCompletedRename(prepared)) return false
+    // A repeated lookup is answered from the earlier result, not run again (read_file is re-read and compared below).
+    const previousLookup = prepared.name !== "read_file" ? session.observedLookups?.get(signature) : undefined
+    if (previousLookup && REPLAYABLE_LOOKUPS.has(prepared.name)) {
+      await this.#replayLookup(prepared, previousLookup, undefined)
+      return false
     }
     if (prepared.name === "create_file") {
       const createdPath = String((prepared.arguments as { path?: unknown }).path ?? "")
@@ -1834,6 +1884,8 @@ export class AgentRunner {
     const session = this.#requiredSession()
     this.#emit("tool.requested", { callId: prepared.id, name: prepared.name })
     let observation: ToolObservation
+    /** Tool output before any ALREADY_OBSERVED annotation; the repeat guard compares this. */
+    let rawContent: string | undefined
     let opId: string | undefined
     let targetFilePath = ""
     if (this.#checkpointCoordinator) {
@@ -1952,13 +2004,22 @@ export class AgentRunner {
         maxContentBytes: this.#observationMaxBytes,
         ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}),
       })
-      session.observations.push(observation)
-      session.toolCalls.push(recordCall(prepared, "COMPLETED", observation.truncated))
-      if (prepared.name === "list_directory" || prepared.name === "find_files" || prepared.name === "search_text") {
-        const seen = session.completedExploration ?? new Set<string>()
-        seen.add(signature)
-        session.completedExploration = seen
+      let rereadUnchanged = false
+      rawContent = observation.content
+      if (REPLAYABLE_LOOKUPS.has(prepared.name)) {
+        const previous = session.observedLookups?.get(signature)
+        if (previous && previous.content === observation.content && !session.progressGuard) {
+          // The same file, unchanged since the last read: no new information. (When the direct progress
+          // guard is on, it owns repeated reads and their bounded recovery.)
+          observation = await this.#replayLookup(prepared, previous, observation)
+          rereadUnchanged = true
+        } else if (!previous || previous.content !== observation.content) {
+          const lookups = session.observedLookups ?? (session.observedLookups = new Map())
+          lookups.set(signature, { callId: prepared.id, content: observation.content, truncated: observation.truncated, replays: 0 })
+        }
       }
+      session.observations.push(observation)
+      session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", observation.truncated), ...(rereadUnchanged ? { alreadyObserved: true } : {}) })
       session.evidenceLedger.recordObservation(
         prepared.name,
         prepared.id,
@@ -1983,7 +2044,7 @@ export class AgentRunner {
       }
 
       if (prepared.definition.action === "write_file" || prepared.definition.action === "delete_file") {
-        session.completedExploration?.clear()
+        session.observedLookups?.clear()
         session.evidenceCollector.recordMutationOutcome({
           mutationId: prepared.id,
           path: (prepared.arguments as any)?.targetFile || (prepared.arguments as any)?.path || "",
@@ -2057,7 +2118,7 @@ export class AgentRunner {
       }
     }
     if (await this.#observeProgress(prepared, observation)) return true
-    const progressKey = `${signature}\0${observation.ok}\0${observation.content}`
+    const progressKey = `${signature}\0${observation.ok}\0${rawContent ?? observation.content}`
     session.repeatedProgress = session.lastProgressKey === progressKey ? session.repeatedProgress + 1 : 1
     session.lastProgressKey = progressKey
     const codingProgress = this.#codingGoalVerdict()
@@ -2219,6 +2280,73 @@ export class AgentRunner {
     session.nonProgress = { ...evidence, recoveryOutcome }
   }
 
+  /**
+   * Answers a repeated read-only lookup with its earlier result (ALREADY_OBSERVED). This is not a refusal or
+   * a failure: the first repeat returns the full result. Further repeats with no workspace change get a short
+   * answer and count toward the repeated-refusal bound, so a lookup loop still ends.
+   */
+  async #replayLookup(prepared: PreparedToolCall, previous: ObservedLookup, fresh: ToolObservation | undefined): Promise<ToolObservation> {
+    const session = this.#requiredSession()
+    previous.replays += 1
+    await this.#refreshRequirementGaps()
+    const gaps = session.requirementGaps?.length ? ` Still missing from the request: ${session.requirementGaps.join(" ")}` : ""
+    const done = session.evidenceCollector.getEvidence().mutationOutcomes.filter((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED").map((mutation) => mutation.path)
+    const pending = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths).filter((path) => !done.some((path2) => pathsReferToSameFile(path2, path)))
+    const target = pending.length > 0 ? ` The request names ${pending.join(", ")} as a file to create or update; it is not done yet.` : ""
+    const what = prepared.name === "read_file" ? "This file is unchanged since you last read it" : "This lookup already ran with the same arguments and nothing in the workspace has changed since, so it was not run again"
+    const next = "Repeating it gives no new information. Next, read a file that result names and you have not read, search for something you have not searched, or make the requested change."
+    const full = previous.replays <= FULL_REPLAYS
+    const content = full
+      ? `ALREADY_OBSERVED: ${what}. ${next}${target}${gaps}\n\nEarlier result:\n${previous.content}`
+      : `ALREADY_OBSERVED: ${what}; its result is already above. ${next}${target}${gaps}`
+    const observation: ToolObservation = {
+      ...(fresh ?? createToolObservation({ toolName: prepared.name, callId: prepared.id, output: "", maxContentBytes: this.#observationMaxBytes, ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}) })),
+      content,
+      truncated: full && previous.truncated,
+      alreadyObserved: true,
+    }
+    if (!full) this.#recordRefusal(prepared.name, "ALREADY_OBSERVED", `${prepared.name} repeated without new information`)
+    if (fresh) return observation // a re-read: the caller records it on the normal completion path
+    session.observations.push(observation)
+    session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", observation.truncated), alreadyObserved: true })
+    return observation
+  }
+
+  /**
+   * A rename_symbol/find_symbol on a name this task already renamed: when the file still shows the rename (the
+   * old identifier gone, the new one present), answer ALREADY_SATISFIED with no new mutation or approval.
+   * Otherwise (the workspace changed, or a different symbol) the call runs normally.
+   */
+  async #answerCompletedRename(prepared: PreparedToolCall): Promise<boolean> {
+    const session = this.#requiredSession()
+    const args = prepared.arguments as { path?: unknown; symbol?: unknown; newName?: unknown }
+    const symbol = String(args.symbol ?? "")
+    const path = String(args.path ?? "")
+    const rename = session.completedRenames?.findLast((item) => item.symbol === symbol
+      && item.files.some((file) => pathsReferToSameFile(file, path))
+      && (prepared.name === "find_symbol" || args.newName === undefined || args.newName === item.newName))
+    if (!rename) return false
+    let text: string
+    try {
+      text = await readFile(isAbsolute(path) ? path : join(session.input.workspaceRoot, path), "utf8")
+    } catch {
+      return false
+    }
+    if (identifierPattern(symbol).test(text) || !identifierPattern(rename.newName).test(text)) return false
+    rename.repeats += 1
+    const verification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
+    const next = verification ? `The last test run ${verification.status === "PASS" ? "passed" : "did not pass"} after it.` : "Run the tests to verify it."
+    const content = `ALREADY_SATISFIED: ${symbol} was already renamed to ${rename.newName} in this task (${rename.files.join(", ")}). ${path} no longer contains ${symbol} and does contain ${rename.newName}. Nothing was changed and no approval is needed. ${next}`
+    const observation: ToolObservation = {
+      ...createToolObservation({ toolName: prepared.name, callId: prepared.id, output: content, maxContentBytes: this.#observationMaxBytes, ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}) }),
+      alreadyObserved: true,
+    }
+    session.observations.push(observation)
+    session.toolCalls.push({ ...recordCall(prepared, "COMPLETED", false), alreadyObserved: true })
+    if (rename.repeats > 1) this.#recordRefusal(prepared.name, "ALREADY_SATISFIED", `${symbol} already renamed to ${rename.newName}`)
+    return true
+  }
+
   #addErrorObservation(prepared: PreparedToolCall, category: string, message: string, outcome: AgentToolCallRecord["outcome"]): void {
     const session = this.#requiredSession()
     const observation = createToolObservation({
@@ -2253,7 +2381,9 @@ export class AgentRunner {
     session.failureReason = "NON_PROGRESS"
     session.terminationSource = "NON_PROGRESS_GUARD"
     const verdict = this.#assessCoding("NOT_RUN")
-    session.finalAnswer = `Stopped: ${toolName} was refused ${count} times with the same reason and nothing in the workspace changed in between. Last reason: ${message.split("\n")[0]!.slice(0, 300)} ${verdict.summary}`.trim()
+    session.finalAnswer = (category === "ALREADY_OBSERVED"
+      ? `Stopped: ${toolName} was repeated ${count + FULL_REPLAYS + 1} times with the same arguments and returned no new information, and nothing in the workspace changed in between. ${verdict.summary}`
+      : `Stopped: ${toolName} was refused ${count} times with the same reason and nothing in the workspace changed in between. Last reason: ${message.split("\n")[0]!.slice(0, 300)} ${verdict.summary}`).trim()
     // The terminal event is emitted by #finishRefusalStop once the current tool call has finished its own
     // events (a refused patch still emits tool.rejected after this point).
   }
@@ -3148,7 +3278,7 @@ export class AgentRunner {
     return this.#additionalVerification().find((action) => actionAfterMutation(mutations, verifications, paths, action) !== "PASS") ?? "TEST"
   }
 
-  async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): Promise<void> {
+  async #acceptCompletion(content: string, scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN", note?: string): Promise<void> {
     const session = this.#requiredSession()
     const verdict = this.#assessCoding(scheduledVerification)
     if (session.input.task.metadata?.verificationOwner === "workflow") {
@@ -3157,8 +3287,8 @@ export class AgentRunner {
     }
     if (!verdict.accept) {
       session.failureReason = verdict.failureReason ?? "INCOMPLETE"
-      session.finalAnswer = verdict.summary
-      this.#emit("task.failed", { message: verdict.summary })
+      session.finalAnswer = note ? `${verdict.summary} ${note}` : verdict.summary
+      this.#emit("task.failed", { message: session.finalAnswer })
       return
     }
     const lastVerification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)

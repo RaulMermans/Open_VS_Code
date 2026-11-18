@@ -54,6 +54,8 @@ export interface AgentToolCallRecord {
   readonly outcome: AgentToolCallOutcome
   readonly truncated?: boolean
   readonly arguments?: Readonly<Record<string, unknown>>
+  /** ALREADY_OBSERVED: answered from an earlier identical lookup; nothing was run again. */
+  readonly alreadyObserved?: boolean
 }
 
 export interface MutationReviewPayload {

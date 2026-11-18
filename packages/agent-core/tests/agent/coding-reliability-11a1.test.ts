@@ -510,7 +510,7 @@ test("a node test failure excerpt keeps the assertion", () => {
   assert.ok(excerpt.indexOf("Expected values") < 120)
 })
 
-test("a second directory listing is refused while the requested file is missing", async () => {
+test("a second identical directory listing is answered ALREADY_OBSERVED and names the file still to create", async () => {
   const root = await workspace()
   const listTool: ToolRegistration = {
     definition: { name: "list_directory", description: "List one directory.", action: "read_repository", inputSchema: { type: "object" } },
@@ -521,7 +521,9 @@ test("a second directory listing is refused while the requested file is missing"
     response("", [{ id: "list-1", name: "list_directory", arguments: {} }]),
     response("", [{ id: "list-2", name: "list_directory", arguments: {} }]),
     (request) => {
-      assert.match(JSON.stringify(request.messages), /Create or update test\/greeting\.test\.js/)
+      const seen = JSON.stringify(request.messages)
+      assert.match(seen, /ALREADY_OBSERVED/)
+      assert.match(seen, /test\/greeting\.test\.js as a file to create or update; it is not done yet/)
       return response("The test file is not written yet.")
     },
   ])
@@ -529,7 +531,8 @@ test("a second directory listing is refused while the requested file is missing"
     const { result } = await runTask(provider, root, "Add test/greeting.test.js that uses node:test and asserts greeting('Ada') is Hello, Ada. Do not change hello.ts.", "BUILD", 8, [listTool])
     const listed = result.toolCalls.filter((call) => call.name === "list_directory")
     assert.equal(listed[0]?.outcome, "COMPLETED")
-    assert.ok(listed.slice(1).every((call) => call.outcome === "DENIED"))
+    // Not a refusal or a failure: the earlier result is returned and nothing runs again.
+    assert.ok(listed.slice(1).every((call) => call.outcome === "COMPLETED" && call.alreadyObserved === true))
   } finally {
     await rm(root, { recursive: true, force: true })
   }
