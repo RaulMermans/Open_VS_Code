@@ -27,7 +27,9 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
+import { proposedContentProblems } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
+import { deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
 import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
@@ -155,6 +157,8 @@ interface Session {
   /** Unfinished explicit parts of the request, refreshed after each applied edit. */
   requirementGaps?: string[]
   refusalStop?: boolean
+  /** Engineering Outcome Ledger for a multi-part brief; recomputed from durable evidence, never stored. */
+  outcomes?: Outcome[]
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
   /**
@@ -1462,7 +1466,8 @@ export class AgentRunner {
 
             if (verifOutcome === "UNAVAILABLE") {
               if (hasMutations && isVerificationRequired) {
-                session.failureReason = "INTERNAL_ERROR"
+                session.failureReason = "VERIFICATION_UNAVAILABLE"
+                session.finalAnswer ??= this.#assessCoding("UNAVAILABLE").summary
                 this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })
                 break
               }
@@ -1862,6 +1867,15 @@ export class AgentRunner {
               ...session.taskProfile.explicitFilePaths.filter((path) => !isTestArtifactPath(path)),
               ...session.evidenceLedger.filesRead.filter((path) => !isTestArtifactPath(path)),
             ]
+            const before = await readFile(isAbsolute(proposedPath) ? proposedPath : join(session.input.workspaceRoot, proposedPath), "utf8").catch(() => "")
+            const existing = new Set(proposedContentProblems(proposedPath, before).map((problem) => problem.replace(/^line \d+: /, "")))
+            const codeProblems = proposedContentProblems(proposedPath, proposedContent).filter((problem) => !existing.has(problem.replace(/^line \d+: /, "")))
+            if (codeProblems.length > 0) {
+              const message = `INVALID_CODE: this edit would leave ${proposedPath} invalid (${codeProblems.join("; ")}). Nothing was changed. Read the current file and send a patch that applies cleanly without repeating declarations that already exist.`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
             const importProblems = await relativeImportProblems(session.input.workspaceRoot, proposedPath, proposedContent)
             if (importProblems.length > 0) {
               const message = describeImportProblems(importProblems, proposedPath, implementation)
@@ -2582,7 +2596,8 @@ export class AgentRunner {
         const hasMutations = session.evidenceCollector.getEvidence().mutationOutcomes.some((m) => m.status === "APPLIED")
         const isVerificationRequired = this.#verificationRequired()
         if (verifOutcome === "UNAVAILABLE" && hasMutations && isVerificationRequired) {
-          session.failureReason = "INTERNAL_ERROR"
+          session.failureReason = "VERIFICATION_UNAVAILABLE"
+          session.finalAnswer ??= this.#assessCoding("UNAVAILABLE").summary
           this.#emit("task.failed", { message: "VERIFICATION_UNAVAILABLE: Verification was required following code mutation but verification capability is unavailable" })
           return true
         }
@@ -3254,7 +3269,11 @@ export class AgentRunner {
   #assessCoding(scheduledVerification: "PASSED" | "UNAVAILABLE" | "NOT_RUN"): CodingCompletion {
     const session = this.#requiredSession()
     const evidence = session.evidenceCollector.getEvidence()
-    const editPaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
+    // A multi-part brief's outcomes (the ledger) decide what is required; files it mentions are context, and any
+    // applied source edit counts. Targeted requests keep the named-file rules.
+    const editPaths = isSubstantial(deriveOutcomes(session.input.task.instruction))
+      ? []
+      : requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
     return assessCodingCompletion({
       requiresCodeChange: session.taskProfile.requiresCodeChange,
       explicitPaths: editPaths,
@@ -3284,12 +3303,25 @@ export class AgentRunner {
       .filter((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED")
       .map((mutation) => mutation.path)
       .filter((path) => path.trim().length > 0)
-    session.requirementGaps = await requirementGaps({
+    const gaps: string[] = await requirementGaps({
       workspaceRoot: session.input.workspaceRoot,
       instruction: session.input.task.instruction,
       appliedPaths,
       isTestPath: isTestArtifactPath,
     }).catch(() => [])
+    const derived = deriveOutcomes(session.input.task.instruction)
+    if (isSubstantial(derived)) {
+      const evidence = session.evidenceCollector.getEvidence()
+      const files = await Promise.all([...new Set(appliedPaths)].slice(-12).map(async (path) => ({
+        path,
+        content: (await readFile(isAbsolute(path) ? path : join(session.input.workspaceRoot, path), "utf8").catch(() => "")).slice(0, 40_000),
+      })))
+      const lastEdit = evidence.mutationOutcomes.filter((m) => m.status === "APPLIED").map((m) => m.timestamp).sort().at(-1) ?? ""
+      const lastVerification = evidence.verificationOutcomes.at(-1)
+      session.outcomes = evaluateOutcomes(derived, files, lastVerification ? { status: lastVerification.status, afterLastEdit: lastVerification.timestamp >= lastEdit } : undefined)
+      gaps.push(...outcomeGaps(session.outcomes))
+    }
+    session.requirementGaps = gaps
   }
 
   /**
@@ -3443,6 +3475,9 @@ export class AgentRunner {
       ? "PAUSED"
       : session.state.status as AgentResult["status"]
     this.#settleDirectRecovery()
+    if (session.outcomes && session.finalAnswer && !session.finalAnswer.includes("\nOutcomes:\n") && (status === "FAILED" || session.outcomes.some((o) => o.status !== "VERIFIED" && o.status !== "BLOCKED"))) {
+      session.finalAnswer = `${session.finalAnswer}\n\n${formatOutcomeReport(session.outcomes)}`
+    }
     return {
       status,
       ...(session.finalAnswer !== undefined ? { finalAnswer: session.finalAnswer } : {}),

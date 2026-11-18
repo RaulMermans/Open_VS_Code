@@ -2339,7 +2339,7 @@ export async function runRuntimeEvalEvaluation(): Promise<readonly RuntimeEvalSc
         },
         expected: {
           status: "FAILED",
-          failureReason: "INTERNAL_ERROR",
+          failureReason: "VERIFICATION_UNAVAILABLE",
           hasUnavailMessage: true,
         },
       })
