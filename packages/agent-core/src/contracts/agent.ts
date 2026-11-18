@@ -39,6 +39,8 @@ export type AgentFailureReason =
   | "REJECTED"
   | "VERIFICATION_FAILED"
   | "VERIFICATION_UNAVAILABLE"
+  /** Verification cannot run until the workspace is set up (tools or dependencies missing). Not a code defect. */
+  | "ENVIRONMENT_SETUP_REQUIRED"
 
 export interface AgentContextDiagnostic {
   readonly turn: number

@@ -192,6 +192,11 @@ interface CompletedRename {
   repeats: number
 }
 
+/** The request is about the manifest itself: package.json, its scripts or its dependencies. */
+function mentionsPackageManifest(instruction: string): boolean {
+  return /\bpackage\.json\b|\bscripts?\b|\b(?:dev)?dependenc(?:y|ies)\b|\bpackageManager\b/i.test(instruction.split("[Attached context]")[0] ?? instruction)
+}
+
 /** A whole identifier (not part of a longer name). */
 const identifierPattern = (name: string) => new RegExp(String.raw`(?<![\w$])${name.replace(/\$/g, "\\$")}(?![\w$])`)
 
@@ -727,10 +732,10 @@ export class AgentRunner {
             maxContentBytes: this.#observationMaxBytes,
             ...(toolArguments(pending.prepared.arguments) ? { arguments: toolArguments(pending.prepared.arguments) } : {}),
           })
-          const environment = isVerification && result.status === "EXECUTION_ERROR" && typeof (result as { diagnosis?: unknown }).diagnosis === "string" && String((result as { diagnosis?: unknown }).diagnosis).startsWith("ENVIRONMENT:")
-          if (environment) {
+          const diagnosis = String((result as { diagnosis?: unknown }).diagnosis ?? "")
+          if (isVerification && result.status === "EXECUTION_ERROR" && diagnosis.startsWith("ENVIRONMENT_SETUP_REQUIRED:")) {
             const blocked = session.environmentBlocked ?? (session.environmentBlocked = new Map())
-            blocked.set(String((pending.prepared.arguments as { action?: unknown }).action ?? ""), String((result as { diagnosis?: unknown }).diagnosis).split("(")[1]?.split(")")[0] ?? "the environment cannot run it")
+            blocked.set(String((pending.prepared.arguments as { action?: unknown }).action ?? ""), diagnosis.split(" This is not")[0]!)
           }
           session.observations.push(observation)
           session.toolCalls.push(recordCall(pending.prepared, reviewSucceeded ? "COMPLETED" : "FAILED", observation.truncated))
@@ -1488,7 +1493,8 @@ export class AgentRunner {
           const blocked = session.environmentBlocked?.get(this.#nextVerificationAction())
           if (verifyName && blocked) {
             // The only thing left is a verification this workspace cannot run: end truthfully as unverified.
-            await this.#acceptCompletion(response.message.content, "UNAVAILABLE", `Verification could not run in this workspace: ${blocked}.`)
+            await this.#acceptCompletion(response.message.content, "UNAVAILABLE", blocked)
+            if (session.failureReason === "VERIFICATION_UNAVAILABLE") session.failureReason = "ENVIRONMENT_SETUP_REQUIRED"
             break
           }
           if (verifyName) {
@@ -1691,7 +1697,7 @@ export class AgentRunner {
     const blockedReason = effectiveAction === "run_known_test" ? session.environmentBlocked?.get(String((prepared.arguments as { action?: unknown }).action ?? "")) : undefined
     if (blockedReason) {
       // Asking again would only cost another approval: the workspace cannot run it in this task.
-      this.#addErrorObservation(prepared, "VERIFICATION_UNAVAILABLE", `This verification already could not run in this workspace (${blockedReason}). It will not run again in this task. Continue with the requested change and report verification as blocked.`, "DENIED")
+      this.#addErrorObservation(prepared, "ENVIRONMENT_SETUP_REQUIRED", `This verification cannot run in this workspace yet. ${blockedReason} It will not run again in this task. Continue with the requested change and report verification as blocked.`, "DENIED")
       return false
     }
     if (effectiveAction === "run_known_test" && this.#verificationWaitingOnEdit(session)) {
@@ -1768,6 +1774,12 @@ export class AgentRunner {
           .find((named) => target && pathsReferToSameFile(target, named))
         if (denied) {
           const message = `The request said not to edit ${denied}.`
+          this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
+          return false
+        }
+        // Verification uses the project's existing scripts; package.json is not edited to make it run.
+        if (basename(target) === "package.json" && !mentionsPackageManifest(session.input.task.instruction)) {
+          const message = "The request does not ask to change package.json. Do not edit it to make verification run: verification uses the project's existing scripts (a missing \"test\" script falls back to \"test:unit\"). If verification cannot run, report it as blocked. Nothing was changed."
           this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
           return false
         }
@@ -1855,6 +1867,13 @@ export class AgentRunner {
           return true
         } catch (error) {
           const message = error instanceof Error ? error.message : "Tool preparation failed"
+          if (prepared.definition.action === "run_known_test" && message.startsWith("ENVIRONMENT_SETUP_REQUIRED:")) {
+            // Found before running: the workspace is not set up. Not a code defect; nothing to approve or revise.
+            const blocked = session.environmentBlocked ?? (session.environmentBlocked = new Map())
+            blocked.set(String((prepared.arguments as { action?: unknown }).action ?? ""), message)
+            this.#addErrorObservation(prepared, "ENVIRONMENT_SETUP_REQUIRED", `${message} Do not change code or project files to work around it. Continue with the requested change and report verification as blocked.`, "FAILED")
+            return false
+          }
           const contract = this.#applyContractFault(prepared.name, message, errorCode(error), argumentPath(prepared.arguments))
           this.#addErrorObservation(prepared, contract.category ?? "TOOL_PREPARATION_ERROR", contract.message, "FAILED")
           this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message: contract.message })

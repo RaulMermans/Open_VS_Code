@@ -8,6 +8,7 @@ import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
 import { resolveWritePath } from "./mutation-engine.ts"
 import { killProcessTree } from "./kill-process-tree.ts"
 import { type CommandSandboxMode, planSandboxedCommand } from "./command-sandbox.ts"
+import { COREPACK_OFFLINE_ENV, corepackHome, workspaceVenv } from "./verification-discovery.ts"
 
 const MAX_OUTPUT_BYTES = 16 * 1024 // 16KB
 
@@ -144,8 +145,19 @@ export class VerificationEngine {
       PATH: absolutePathEntries(process.env.PATH || ""),
       NODE_ENV: process.env.NODE_ENV || "test",
     }
-    // Prepared environment: only PYTHONPATH, and every entry must resolve inside the workspace.
+    // Prepared environment: workspace PYTHONPATH, the fixed offline Corepack settings, and COREPACK_HOME only as
+    // the real Corepack cache root. Anything else is refused.
     for (const [key, value] of Object.entries(prepared.env ?? {})) {
+      if (key in COREPACK_OFFLINE_ENV) {
+        if (value !== COREPACK_OFFLINE_ENV[key]) return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: `${key} must be ${COREPACK_OFFLINE_ENV[key]} for verification`, durationMs: Date.now() - startTime }
+        env[key] = value
+        continue
+      }
+      if (key === "COREPACK_HOME") {
+        if (value !== corepackHome()) return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: "COREPACK_HOME must be the Corepack cache", durationMs: Date.now() - startTime }
+        env[key] = value
+        continue
+      }
       if (key !== "PYTHONPATH") {
         return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: `Environment variable ${key} is not allowed for verification`, durationMs: Date.now() - startTime }
       }
@@ -163,8 +175,31 @@ export class VerificationEngine {
       }
     }
 
+    // Workspace-local toolchains and cached package managers: re-checked now, sandbox mode "required" only.
+    const workspaceReal = await fs.realpath(this.options.workspaceRoot)
+    const configuredMode = this.options.sandbox ?? "off"
+    if (prepared.requiresSandbox || isInsideReal(workspaceReal, path.resolve(prepared.executable))) {
+      const venv = workspaceVenv(workspaceReal)
+      if (!venv || path.resolve(prepared.executable) !== venv.python) {
+        return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: "The workspace interpreter is no longer a valid project virtualenv", durationMs: Date.now() - startTime }
+      }
+      if (configuredMode === "off") {
+        return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: "ENVIRONMENT_SETUP_REQUIRED: this verification uses the project's virtualenv, which runs only inside the command sandbox, and the sandbox is turned off.", durationMs: Date.now() - startTime }
+      }
+    }
+    const readOnlyBinds: string[] = []
+    for (const dir of prepared.readOnlyBinds ?? []) {
+      const real = await fs.realpath(dir).catch(() => undefined)
+      const cacheRoot = await fs.realpath(path.join(corepackHome(), "v1")).catch(() => undefined)
+      if (!real || real !== dir || !cacheRoot || !isInsideReal(cacheRoot, real) || real === cacheRoot || isInsideReal(workspaceReal, real)) {
+        return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: `Read-only bind refused: ${dir} is not a cached package manager`, durationMs: Date.now() - startTime }
+      }
+      readOnlyBinds.push(real)
+    }
+    const sandboxed = prepared.requiresSandbox || isInsideReal(workspaceReal, path.resolve(prepared.executable))
     const plan = planSandboxedCommand({
-      mode: this.options.sandbox ?? "off",
+      mode: sandboxed ? "required" : configuredMode,
+      readOnlyBinds,
       workspaceRoot: this.options.workspaceRoot,
       cwd: resolvedCwd,
       executable: prepared.executable,
@@ -348,6 +383,11 @@ async function assertArgsContained(workspaceRoot: string, args: readonly string[
       await resolveWritePath(workspaceRoot, arg, { mustExist: false })
     }
   }
+}
+
+function isInsideReal(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
 }
 
 function isPathArg(arg: string): boolean {

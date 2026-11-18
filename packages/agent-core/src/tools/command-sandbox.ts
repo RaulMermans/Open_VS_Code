@@ -59,9 +59,9 @@ export function detectBubblewrap(): { available: boolean; path?: string; reason?
   return (probeCache = { available: true, path: bwrap })
 }
 
-/** Test seam: forget the cached probe. */
-export function resetBubblewrapProbe(): void {
-  probeCache = undefined
+/** Test seam: forget the cached probe, or force its result (e.g. bubblewrap unavailable). */
+export function resetBubblewrapProbe(forced?: { available: boolean; path?: string; reason?: string }): void {
+  probeCache = forced
   limitsCache = undefined
 }
 
@@ -126,6 +126,8 @@ export function planSandboxedCommand(input: {
   readonly executable: string
   readonly args: readonly string[]
   readonly env: Record<string, string>
+  /** Extra host directories exposed read-only (validated by the caller), e.g. a cached package manager. */
+  readonly readOnlyBinds?: readonly string[]
 }): SandboxPlan | { readonly error: string; readonly status: SandboxStatus } {
   const unsandboxed = (reason: string): SandboxPlan => ({
     executable: input.executable,
@@ -158,6 +160,7 @@ export function planSandboxedCommand(input: {
   args.push("--tmpfs", home)
   const pathEntries = (input.env.PATH ?? "").split(path.delimiter).filter(Boolean)
   for (const dir of toolchainBinds(home, pathEntries, input.executable)) args.push("--ro-bind", dir, dir)
+  for (const dir of input.readOnlyBinds ?? []) args.push("--ro-bind", dir, dir)
   // The workspace is the only writable host path. It may live outside HOME (for example under /tmp).
   args.push("--bind", workspace, workspace)
   args.push("--chdir", cwd)

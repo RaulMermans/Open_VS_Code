@@ -40,7 +40,7 @@ test("environment blockers are recognized only from unambiguous signals", () => 
 test("through the runner: blocked verification is not a code failure, is not re-run, and the outcome says unverified", async () => {
   const root = await mkdtemp(join(tmpdir(), "ovsc-s25-env-"))
   try {
-    const script = `node -e "console.error(${JSON.stringify(COREPACK.split("\n")[0])}); process.exit(1)"`
+    const script = `node -e 'console.error(${JSON.stringify(COREPACK.split("\n")[0])}); process.exit(1)'`
     await writeFile(join(root, "package.json"), JSON.stringify({ name: "fixture", private: true, scripts: { test: script } }, null, 2))
     await writeFile(join(root, "add.js"), "export const add = (a, b) => a - b\n")
     const seen: string[] = []
@@ -64,13 +64,13 @@ test("through the runner: blocked verification is not a code failure, is not re-
     assert.equal(ran.length, 1, "the command ran once")
     const v1 = String(ran[0]?.content)
     assert.match(v1, /Verification Status: EXECUTION_ERROR/)
-    assert.match(v1, /### Diagnosis\nENVIRONMENT: verification could not run in this workspace \(the package manager is not installed/)
+    assert.match(v1, /### Diagnosis\nENVIRONMENT_SETUP_REQUIRED: verification could not run in this workspace \(the package manager is not installed/)
     assert.doesNotMatch(seen.join(""), /propose a corrective mutation/, "no request to change code for an environment problem")
     assert.equal(result.toolCalls.find((item) => item.id === "v2")?.outcome, "DENIED", "not run again")
     assert.notEqual(result.status, "COMPLETED", "an unverified change is not reported as complete")
     assert.notEqual(result.failureReason, "MODEL_ERROR", "the run ends by itself, without exhausting the model script")
-    assert.equal(result.failureReason, "VERIFICATION_UNAVAILABLE")
-    assert.match(result.finalAnswer ?? "", /Tests did not run because verification is unavailable\. Incomplete: the edit is unverified\. Verification could not run in this workspace: the package manager is not installed/)
+    assert.equal(result.failureReason, "ENVIRONMENT_SETUP_REQUIRED")
+    assert.match(result.finalAnswer ?? "", /Tests did not run because verification is unavailable\. Incomplete: the edit is unverified\. ENVIRONMENT_SETUP_REQUIRED: verification could not run in this workspace \(the package manager is not installed/)
     assert.doesNotMatch(result.finalAnswer ?? "", /Tests (?:passed|failed)/)
   } finally {
     await rm(root, { recursive: true, force: true })
