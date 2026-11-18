@@ -267,7 +267,10 @@ async function discoverPythonTestCommand(workspaceReal: string): Promise<Discove
     || /^\[pytest\]/m.test(await containedText(workspaceReal, "tox.ini"))
   if (pytestConfigured) {
     if (!hasPytest()) throw new EnvironmentSetupRequiredError(`pytest is not installed in ${venv ? "the project virtualenv" : "the host python3, and the project has no usable .venv"}`, pytestSetup)
-    return command(["-m", "pytest", "-q"])
+    // A project addopts "-q" plus ours is -qq, which drops the "N passed" summary the engine requires.
+    const configText = `${await containedText(workspaceReal, "pyproject.toml")}\n${await containedText(workspaceReal, "pytest.ini")}\n${await containedText(workspaceReal, "setup.cfg")}\n${await containedText(workspaceReal, "tox.ini")}`
+    const quietConfigured = /^\s*addopts\s*=.*(?:^|[\s"'[,])-q\b/m.test(configText)
+    return command(quietConfigured ? ["-m", "pytest"] : ["-m", "pytest", "-q"])
   }
   // Plain `def test_*` functions are invisible to unittest discovery ("Ran 0 tests"), which would look like a
   // failing run that no code change can fix. Such tests need pytest; without it, report no verifier instead.

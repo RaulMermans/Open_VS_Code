@@ -268,3 +268,43 @@ test("package.json is not edited to make verification run unless the request is 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("a virtualenv interpreter reached through a symlinked install directory under HOME resolves in the sandbox", async () => {
+  const fakeHome = await realpath(await mkdtemp(join(tmpdir(), "ovsc-s25-home-")))
+  const saved = process.env.HOME
+  process.env.HOME = fakeHome
+  try {
+    // ~/tools/python/cpython-3.12 -> cpython-3.12.16 (as uv lays it out); the venv links through the alias.
+    const realPrefix = join(fakeHome, "tools", "cpython-3.12.16")
+    await mkdir(join(realPrefix, "bin"), { recursive: true })
+    await writeFile(join(realPrefix, "bin", "python3.12"), "", { mode: 0o755 })
+    await symlink(realPrefix, join(fakeHome, "tools", "cpython-3.12"))
+    const root = await workspace()
+    await mkdir(join(root, ".venv", "bin"), { recursive: true })
+    await symlink(join(fakeHome, "tools", "cpython-3.12", "bin", "python3.12"), join(root, ".venv", "bin", "python"))
+    const plan = planSandboxedCommand({ mode: "required", workspaceRoot: root, cwd: root, executable: join(root, ".venv", "bin", "python"), args: [], env: { PATH: "/usr/bin" } })
+    await rm(root, { recursive: true, force: true })
+    if ("error" in plan) return // bubblewrap not available here
+    const args = plan.args.join(" ")
+    assert.match(args, new RegExp(`--ro-bind ${realPrefix} ${join(fakeHome, "tools", "cpython-3.12")}(?: |$)`), "the alias path is backed by the real install, read-only")
+    assert.match(args, new RegExp(`--tmpfs ${fakeHome}`), "HOME itself stays hidden")
+    assert.doesNotMatch(args, new RegExp(`--bind ${fakeHome} `))
+  } finally {
+    process.env.HOME = saved
+    await rm(fakeHome, { recursive: true, force: true })
+  }
+})
+
+test("pytest gets -q only when the project's addopts does not already set it (-qq hides the pass summary)", { skip: !hasPython }, async () => {
+  const quiet = await workspace({ "pyproject.toml": '[tool.pytest.ini_options]\naddopts = "-q"\n', "tests/test_a.py": "def test_a():\n    assert True\n" })
+  const plain = await workspace(PYTEST_REPO)
+  try {
+    await makeVenv(quiet, { pytest: true })
+    await makeVenv(plain, { pytest: true })
+    assert.deepEqual((await discoverVerificationCommand(quiet, "TEST")).args, ["-m", "pytest"])
+    assert.deepEqual((await discoverVerificationCommand(plain, "TEST")).args, ["-m", "pytest", "-q"])
+  } finally {
+    await rm(quiet, { recursive: true, force: true })
+    await rm(plain, { recursive: true, force: true })
+  }
+})
