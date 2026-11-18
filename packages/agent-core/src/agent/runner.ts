@@ -27,6 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
+import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
@@ -3456,6 +3457,7 @@ export class AgentRunner {
       evalSummary: session.evalAnalytics?.formatDeveloperSummary(session.input.task.id),
       observations: session.observations,
       ...(appliedMutations.length > 0 ? { appliedMutations } : {}),
+      ...(status === "FAILED" || session.failureReason ? { diagnostics: this.#diagnostics(status) } : {}),
       ...(session.nonProgress ? { nonProgress: session.nonProgress } : {}),
       ...(session.pending ? {
         confirmation: {
@@ -3473,6 +3475,23 @@ export class AgentRunner {
         confirmation: session.recoveredConfirmation,
       } : {}),
     }
+  }
+
+  #diagnostics(status: string) {
+    const session = this.#requiredSession()
+    const evidence = session.evidenceCollector.getEvidence()
+    return buildRunDiagnostics({
+      runId: session.input.task.id,
+      status,
+      failureReason: session.failureReason,
+      finalAnswer: session.finalAnswer,
+      events: session.state.events,
+      toolCalls: session.toolCalls,
+      mutations: evidence.mutationOutcomes,
+      verifications: evidence.verificationOutcomes,
+      pendingApproval: Boolean(session.pending),
+      hasCheckpoint: Boolean(this.#checkpointCoordinator),
+    })
   }
 
   #requiredSession(): Session {
