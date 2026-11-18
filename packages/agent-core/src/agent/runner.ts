@@ -192,6 +192,28 @@ interface CompletedRename {
   repeats: number
 }
 
+const scriptNames = (text: string) => Object.keys((JSON.parse(text) as { scripts?: Record<string, unknown> }).scripts ?? {})
+
+/** Script names a package.json edit would add (apply_patch search/replace, or full content). Unparseable: none. */
+async function addedScriptNames(workspaceRoot: string, target: string, args: Record<string, unknown>): Promise<string[]> {
+  let before: string
+  try {
+    before = await readFile(isAbsolute(target) ? target : join(workspaceRoot, target), "utf8")
+  } catch {
+    return []
+  }
+  const after = typeof args.content === "string"
+    ? args.content
+    : typeof args.search === "string" && typeof args.replace === "string" ? before.replace(args.search, () => String(args.replace)) : undefined
+  if (after === undefined) return []
+  try {
+    const existing = new Set(scriptNames(before))
+    return scriptNames(after).filter((name) => !existing.has(name))
+  } catch {
+    return []
+  }
+}
+
 /** The request is about the manifest itself: package.json, its scripts or its dependencies. */
 function mentionsPackageManifest(instruction: string): boolean {
   return /\bpackage\.json\b|\bscripts?\b|\b(?:dev)?dependenc(?:y|ies)\b|\bpackageManager\b/i.test(instruction.split("[Attached context]")[0] ?? instruction)
@@ -1777,9 +1799,12 @@ export class AgentRunner {
           this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
           return false
         }
-        // Verification uses the project's existing scripts; package.json is not edited to make it run.
-        if (basename(target) === "package.json" && !mentionsPackageManifest(session.input.task.instruction)) {
-          const message = "The request does not ask to change package.json. Do not edit it to make verification run: verification uses the project's existing scripts (a missing \"test\" script falls back to \"test:unit\"). If verification cannot run, report it as blocked. Nothing was changed."
+        // Verification uses the project's existing scripts; package.json does not get new scripts to make it run.
+        const added = basename(target) === "package.json" && !mentionsPackageManifest(session.input.task.instruction)
+          ? await addedScriptNames(session.input.workspaceRoot, target, prepared.arguments as Record<string, unknown>)
+          : []
+        if (added.length > 0) {
+          const message = `The request does not ask to change package.json scripts. Do not add ${added.map((name) => `"${name}"`).join(", ")} to make verification run: verification uses the project's existing scripts (a missing "test" script falls back to "test:unit"). If verification cannot run, report it as blocked. Nothing was changed.`
           this.#addErrorObservation(prepared, "PERMISSION_DENIED", message, "DENIED")
           return false
         }

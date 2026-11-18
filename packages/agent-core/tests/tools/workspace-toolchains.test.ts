@@ -252,14 +252,14 @@ test("rejecting the approval of a virtualenv verification runs nothing", { skip:
   }
 })
 
-test("package.json is not edited to make verification run unless the request is about it", async () => {
+test("package.json does not get a new script to make verification run unless the request is about it", async () => {
   const pkg = JSON.stringify({ name: "x", scripts: { "test:unit": "node --test" } }, null, 2)
   const patch = { path: "package.json", search: '"test:unit": "node --test"', replace: '"test": "node --test",\n    "test:unit": "node --test"' }
   const root = await workspace({ "package.json": pkg, "src/a.js": "export const a = 1\n" })
   try {
     const { result } = await runAgent(root, [call("p1", "apply_patch", patch), reply("Left package.json alone.")], "Fix src/a.js so a is 2.", "APPROVE")
     assert.equal(result.toolCalls.find((item) => item.id === "p1")?.outcome, "DENIED")
-    assert.match(String(result.observations?.find((item) => item.callId === "p1")?.content), /does not ask to change package\.json/)
+    assert.match(String(result.observations?.find((item) => item.callId === "p1")?.content), /does not ask to change package\.json scripts\. Do not add "test"/)
     assert.equal(await import("node:fs/promises").then((fs) => fs.readFile(join(root, "package.json"), "utf8")), pkg)
     // A request about the scripts may edit them (after the normal review).
     const asked = await runAgent(root, [call("p2", "apply_patch", patch), reply("Added the test script.")], "Add a test script to package.json that runs node --test.", "APPROVE")
