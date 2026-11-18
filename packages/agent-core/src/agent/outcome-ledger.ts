@@ -12,6 +12,8 @@ export interface Outcome {
   readonly kind: OutcomeKind
   readonly title: string
   readonly terms: readonly string[]
+  /** The brief's own words for this outcome (bounded), shown when it becomes the current work unit. */
+  readonly brief: string
   readonly status: OutcomeStatus
   readonly files: readonly string[]
   readonly blocker?: string
@@ -59,7 +61,7 @@ export function deriveOutcomes(instruction: string): Outcome[] {
         : /\b(?:plan|procedure|runbook|document|report|strategy|deployment|safety)\b/i.test(heading) && !/\b(?:implement|build|config)/i.test(heading) ? "DOCUMENTATION"
           : "IMPLEMENTATION"
     out.push({
-      id: `O${out.length + 1}`, kind, title: heading.replace(/^Phase\s+\d+\s*[—:-]\s*/i, "").slice(0, 80), terms: termsOf(heading, body),
+      id: `O${out.length + 1}`, kind, title: heading.replace(/^Phase\s+\d+\s*[—:-]\s*/i, "").slice(0, 80), terms: termsOf(heading, body), brief: body.trim().slice(0, 900),
       status: external ? "BLOCKED" : "PENDING", files: [],
       ...(external ? { blocker: "needs the operator's explicit approval; not performed" } : {}),
     })
@@ -109,4 +111,17 @@ export function formatOutcomeReport(outcomes: readonly Outcome[]): string {
   if (outcomes.length === 0) return ""
   const lines = outcomes.map((o) => `- ${o.id} [${o.status}] ${o.title}${o.files.length ? ` (${o.files.slice(0, 3).join(", ")})` : ""}${o.blocker ? ` — ${o.blocker}` : ""}`)
   return `Outcomes:\n${lines.join("\n")}`
+}
+
+/** The first outcome still owed, in the brief's order: the bounded work unit the next turns should finish. */
+export function currentWorkUnit(outcomes: readonly Outcome[]): Outcome | undefined {
+  return outcomes.find((o) => o.kind !== "EXTERNAL" && (o.status === "PENDING" || o.status === "IN_PROGRESS" || o.status === "FAILED" || o.status === "UNVERIFIED"))
+}
+
+export function formatWorkUnit(outcomes: readonly Outcome[]): string {
+  const unit = currentWorkUnit(outcomes)
+  if (!unit) return ""
+  const done = outcomes.filter((o) => o.status === "VERIFIED" || o.status === "IMPLEMENTED").map((o) => o.id)
+  const how = unit.kind === "DOCUMENTATION" ? "Write the document." : unit.status === "UNVERIFIED" ? "Its edits are made; run the tests." : "Make the code change, then run the tests."
+  return `\n\n[CURRENT WORK UNIT ${unit.id} of ${outcomes.length}: ${unit.title}]\n${unit.brief}\n${how} Finish this unit before the others${done.length ? ` (done: ${done.join(", ")})` : ""}. If something it names does not exist in this workspace, say so and continue with what does.`
 }

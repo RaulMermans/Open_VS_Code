@@ -50,3 +50,14 @@ test("a doc edit does not satisfy an implementation outcome; a code edit does no
   const code = evaluateOutcomes(o, [{ path: "src/x.ts", content: "rollback deployment procedure" }], undefined)
   assert.equal(code[2]!.status, "PENDING")
 })
+
+test("the current work unit is the first outstanding outcome, with its own brief; approval-gated work is never a unit", async () => {
+  const { currentWorkUnit, formatWorkUnit } = await import("../../src/agent/outcome-ledger.ts")
+  const o = deriveOutcomes(BRIEF)
+  assert.equal(currentWorkUnit(o)?.id, "O1")
+  assert.match(formatWorkUnit(o), /CURRENT WORK UNIT O1 of 4: Invoice numbering[\s\S]*invoiceNumber/)
+  const edit = { path: "src/billing.ts", content: "invoiceNumber INVOICE_PREFIX" }
+  const next = evaluateOutcomes(o, [edit], { status: "PASS", afterLastEdit: true })
+  assert.equal(currentWorkUnit(next)?.id, "O2")
+  assert.match(formatWorkUnit(next), /done: O1/)
+})

@@ -29,7 +29,7 @@ import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } 
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
 import { proposedContentProblems } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
-import { deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
+import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
 import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
@@ -1251,7 +1251,9 @@ export class AgentRunner {
         pending: pendingPaths,
       })
       const existingOnly = namedTargets.existing.length > 0 && namedTargets.missing.length === 0
-      const dynamicBanner = editOutstanding
+      const briefOutcomes = session.outcomes ?? (() => { const d = deriveOutcomes(session.input.task.instruction); return isSubstantial(d) ? d : undefined })()
+      const workUnit = briefOutcomes && session.taskProfile.requiresCodeChange && currentWorkUnit(briefOutcomes) ? formatWorkUnit(briefOutcomes) : ""
+      const dynamicBanner = workUnit + (editOutstanding
         ? testOnlyRequest
           ? `\n\n[EDIT REQUIRED]\nCreate or update only ${requestedPaths.join(", ")}. Do not modify other files. ${existingOnly ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist yet."}${strategyNote ? ` ${strategyNote}` : ""}${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
           : `\n\n[EDIT REQUIRED]\nApply the requested code change before answering. A test-only edit does not finish a behavior change. Use apply_patch for an existing file and create_file only for a new file.${strategyNote ? ` ${strategyNote}` : ""}${isTurnBudgetTight ? " The turn budget is almost exhausted." : ""}`
@@ -1265,7 +1267,7 @@ export class AgentRunner {
               ? "\n\n[NO EDIT REQUIRED]\nThis request does not ask for a source change. Answer it. Use a tool only when the answer depends on a repository fact."
             : isTurnBudgetTight
               ? "\n\n[TURN BUDGET WARNING]\nYou are approaching your turn limit. Provide your grounded answer now without calling any further tools."
-              : ""
+              : "")
 
       const phaseInstruction = editOutstanding
         ? testOnlyRequest
