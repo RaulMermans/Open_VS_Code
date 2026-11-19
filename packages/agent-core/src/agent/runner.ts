@@ -168,6 +168,8 @@ interface Session {
   autoVerifyPending?: boolean
   /** Files whose proposed edit changed an exported type; checked by an early typecheck after the turn's edits. */
   typeShapePaths?: Set<string>
+  /** Applied-edit count when the completion gate last nudged; the nudge limit resets when it grows. */
+  gateAppliedMark?: number
   /** Context items the latest model request actually contained (older observations are reduced to an index line). */
   shownItemIds?: Set<string>
   /** The current work unit (only when unitBudgetMs is set): its number, deadline and progress at its start. */
@@ -1449,6 +1451,10 @@ export class AgentRunner {
           await this.#completeTask(response.message.content.trim() || codingVerdict.summary)
           break
         }
+        // The bound is on nudges with no new edit between them: a long task may be nudged again after real progress.
+        const appliedNow = this.#progressCount().applied
+        if (appliedNow > (session.gateAppliedMark ?? 0)) session.continuationAttempts = 0
+        session.gateAppliedMark = appliedNow
         if (codingVerdict && !codingVerdict.editsSatisfied && session.continuationAttempts < this.#maxContinuations) {
           session.continuationAttempts += 1
           const gatePaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
