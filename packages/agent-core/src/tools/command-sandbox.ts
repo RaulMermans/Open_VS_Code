@@ -65,7 +65,8 @@ export function resetBubblewrapProbe(forced?: { available: boolean; path?: strin
   limitsCache = undefined
 }
 
-export const SANDBOX_LIMITS = { memory: "4G", tasks: 512 } as const
+/** 512 tasks made ordinary pnpm-monorepo test runs fail (vitest worker pools across packages): measured fail at 512, pass at 2048. Still a hard fork-bomb bound. */
+export const SANDBOX_LIMITS = { memory: "4G", tasks: 2048 } as const
 let limitsCache: { available: boolean; path?: string; env?: Record<string, string> } | undefined
 
 /**
