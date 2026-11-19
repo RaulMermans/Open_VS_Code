@@ -59,6 +59,23 @@ for name, setup, want_flag, want_cleaned in sup:
     ok = r["supplementary"]["ROUTES_CLEANED_STAGED"] == want_flag and r["outcomes"]["ROUTES_CLEANED"] == want_cleaned and r["verdict"] == "PARTIAL"
     print(("ok  " if ok else "FAIL"), name, "->", r["verdict"], r["supplementary"])
     bad_sup = 0 if ok else 1
+def stub_tests(w):
+    full(w)
+    w("apps/halo-core/tests/qualify.test.ts", "import { it, expect } from 'vitest'\nit('q', () => { const a = 'qwen3-4b-q4km'; expect(a).toBeDefined() })\n")
+
+def real_tests(w):
+    full(w)
+    w("apps/halo-core/tests/qualify.test.ts", "import { it, expect } from 'vitest'\nimport { qualify } from '../src/version'\nit('q', () => { expect(qualify('qwen3-4b-q4km')).toBe(true) })\n")
+
+for name, setup, key, want in [
+        ("stub test with only local constants is not project-exercising", stub_tests, "QUALIFY_TESTS_EXERCISE_PROJECT_CODE", False),
+        ("test importing project code is project-exercising", real_tests, "QUALIFY_TESTS_EXERCISE_PROJECT_CODE", True),
+        ("route to a model id missing from models.json is inconsistent", lambda w: (full(w), w("config/routes.json", json.dumps({"routes": {"general": {"modelId": "ghost"}}}))), "ROUTES_CONSISTENT", False),
+        ("route to a registered model is consistent", lambda w: full(w), "ROUTES_CONSISTENT", True)]:
+    r = run(setup, "Done.", "COMPLETED", [OK])
+    ok = r["supplementary"][key] == want
+    print(("ok  " if ok else "FAIL"), name, "->", key, r["supplementary"][key])
+    bad_sup += 0 if ok else 1
 bad = 0
 for name, setup, final, status, calls, want in cases:
     got = run(setup, final, status, calls)["verdict"]

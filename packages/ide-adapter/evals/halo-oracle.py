@@ -130,7 +130,24 @@ def judge(summary, trace, ws):
                 continue
             if "general" in sr and not any(k in sr for k in ("vision", "embeddings")):
                 staged = True
-    supplementary = {"ROUTES_CLEANED_STAGED": staged, "met_if_staged_counts": len(met) + (1 if staged and not o["ROUTES_CLEANED"] else 0)}
+    # Substance audit (also supplementary): the required-outcome patterns above match text, not behaviour.
+    try:
+        known = {m["id"] for m in json.loads(read(ws, "config/models.json")).get("models", [])}
+        cfgs = [p for p in changed if re.match(r"config/[^/]+\.json$", p) and p != "config/models.json"]
+        refs = [r.get("modelId") for p in cfgs for r in json.loads(read(ws, p)).get("routes", {}).values() if isinstance(r, dict)]
+        routes_consistent = all(ref in known for ref in refs)
+    except (ValueError, KeyError, AttributeError):
+        routes_consistent = False
+    framework = re.compile(r"^(vitest|node:.*|jest|@jest/.*|chai|mocha|fs|path|url|os|child_process|assert|crypto)$")
+    def exercises_project(p):
+        text = read(ws, p)
+        specs = re.findall(r"""(?:from|require\()\s*['"]([^'"]+)['"]""", text)
+        return any(sp.startswith(".") or (not framework.match(sp) and not sp.startswith("node:")) for sp in specs) and bool(re.search(r"\b(expect|assert)\b", text))
+    substantive_tests = [p for p in tests if exercises_project(p)]
+    qualify_substantive = any(re.search(r"qwen3-4b-q4km|QUALIFY_MODEL_ID", read(ws, p)) for p in substantive_tests)
+    supplementary = {"ROUTES_CLEANED_STAGED": staged, "met_if_staged_counts": len(met) + (1 if staged and not o["ROUTES_CLEANED"] else 0),
+                     "ROUTES_CONSISTENT": routes_consistent, "QUALIFY_TESTS_EXERCISE_PROJECT_CODE": qualify_substantive,
+                     "TESTS_EXERCISE_PROJECT_CODE": len(substantive_tests), "TESTS_TOTAL": len(tests)}
     return {"verdict": verdict, "PASS": verdict == "SUCCESS", "supplementary": supplementary, "outcomes": o, "met": len(met), "required": len(required),
             "flags": flags, "verification": verification, "changed": changed, "status": summary.get("status"),
             "failureReason": summary.get("failureReason"), "turns": summary.get("turns"), "toolCalls": len(calls),

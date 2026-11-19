@@ -27,3 +27,14 @@ test("await inside a non-async function is reported in .js and .ts; type and imp
   assert.deepEqual(proposedContentProblems("a.js", "import { x } from './missing'\nexport const y = x.nope\n"), [])
   assert.deepEqual(proposedContentProblems("a.ts", "async function f() { return await import('node:fs') }\n"), [])
 })
+
+import { testExercisesNoProjectCode } from "../../src/tools/pre-write-check.ts"
+
+test("a test that imports no project code is reported; one that imports the module, or runs a process, is not", () => {
+  const stub = "import { it, expect } from 'vitest'\nit('q', () => { const a = 'x'; expect(a).toBeDefined() })\n"
+  assert.match(testExercisesNoProjectCode("apps/a/test/q.test.ts", stub) ?? "", /imports nothing from the project/)
+  assert.equal(testExercisesNoProjectCode("apps/a/test/q.test.ts", "import { it, expect } from 'vitest'\nimport { q } from '../src/q'\nit('q', () => expect(q()).toBe(1))\n"), undefined)
+  assert.equal(testExercisesNoProjectCode("apps/a/test/q.test.ts", "import { it, expect } from 'vitest'\nimport { execFileSync } from 'node:child_process'\nit('cli', () => expect(execFileSync('node', ['x'])).toBeTruthy())\n"), undefined)
+  assert.equal(testExercisesNoProjectCode("src/q.ts", stub), undefined)
+  assert.equal(testExercisesNoProjectCode("a.test.ts", "import { it } from 'vitest'\nit('todo', () => {})\n"), undefined)
+})

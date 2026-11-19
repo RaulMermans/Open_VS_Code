@@ -27,7 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { exportedTypeShapeChanged, proposedContentProblems } from "../tools/pre-write-check.ts"
+import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
 import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
@@ -1948,6 +1948,13 @@ export class AgentRunner {
               return false
             }
             if (exportedTypeShapeChanged(proposedPath, before, proposedContent)) (session.typeShapePaths ??= new Set()).add(proposedPath)
+            const emptyTest = testExercisesNoProjectCode(proposedPath, proposedContent)
+            if (emptyTest) {
+              const message = `INVALID_TEST: ${emptyTest}. Nothing was changed. Import the module under test (for example the file you implemented) and assert on what it returns or does.`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
             const importProblems = await relativeImportProblems(session.input.workspaceRoot, proposedPath, proposedContent)
             if (importProblems.length > 0) {
               const message = describeImportProblems(importProblems, proposedPath, implementation)
