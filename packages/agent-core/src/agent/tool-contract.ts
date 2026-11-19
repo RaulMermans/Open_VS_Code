@@ -19,6 +19,7 @@ export function describeToolContractFault(input: {
   readonly code?: string | undefined
   readonly message: string
   readonly path?: string | undefined
+  readonly workspaceRoot?: string | undefined
 }): ToolContractFault | undefined {
   const path = input.path?.trim() ?? ""
   const illegal = path ? isIllegalWorkspacePath(path) : false
@@ -57,7 +58,7 @@ export function describeToolContractFault(input: {
     return {
       category: "INVALID_PATH",
       signature: `INVALID_PATH|${input.toolName}|${path}`,
-      message: "INVALID_PATH: use a workspace-relative path such as src/add.ts. Absolute paths and path traversal are not permitted.",
+      message: `INVALID_PATH: use a workspace-relative path such as src/add.ts, or "." for the workspace root${input.workspaceRoot ? ` (${input.workspaceRoot})` : ""}. Absolute paths outside the workspace and path traversal are not permitted; a repository path named in the request that is not under the workspace root is not reachable.`,
     }
   }
   return undefined

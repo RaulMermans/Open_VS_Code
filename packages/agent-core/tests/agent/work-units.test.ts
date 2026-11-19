@@ -67,3 +67,21 @@ test("the not-done-yet nudge says so when the model claims an edit the workspace
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("two identical path faults in one turn are one mistake; the same fault in a later turn stops the run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ovsc-fault-"))
+  try {
+    await writeFile(join(root, "a.ts"), "export const a = 1\n")
+    const bad = { id: "x", name: "list_directory", arguments: { path: "/etc" } }
+    const twice: ModelResponse = { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ ...bad, id: "b1" }, { ...bad, id: "b2" }] }
+    const again: ModelResponse = { model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ ...bad, id: "b3" }] }
+    const provider = new ScriptedModelProvider([twice, again, again])
+    const agent = new AgentRunner({ provider, registry: createReadOnlyToolRegistry(), eventFactory: { createId: () => "event", now: () => "2026-11-16T12:00:00.000Z" } })
+    const result = await agent.run({ task: { id: "task", mode: "BUILD", instruction: "Fix a.ts." }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
+    assert.equal(provider.requests.length, 2, "turn 1 (two faults) did not stop the run; the repeat on turn 2 did")
+    assert.match(String(result.finalAnswer), /repeated tool-contract error/)
+    assert.match(JSON.stringify(provider.requests.at(-1)), new RegExp(root.replace(/[/.]/g, "\\$&")))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

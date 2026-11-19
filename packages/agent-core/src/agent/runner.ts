@@ -154,6 +154,7 @@ interface Session {
   progressGuard?: DirectProgressGuard | undefined
   nonProgress?: DirectNonProgressEvidence | undefined
   timeoutOccurred?: boolean | undefined
+  /** Contract-fault signature → the turn it first happened on. */
   contractFaults?: Map<string, number>
   /** Identical refusals (tool + category + message) per workspace state; see #recordRefusal. */
   refusals?: Map<string, number>
@@ -3321,13 +3322,15 @@ export class AgentRunner {
   }
 
   #applyContractFault(toolName: string, message: string, code: string | undefined, path: string | undefined): { message: string; category?: string; stop: boolean } {
-    const fault = describeToolContractFault({ toolName, message, code, path })
+    const fault = describeToolContractFault({ toolName, message, code, path, workspaceRoot: this.#requiredSession().input.workspaceRoot })
     if (!fault) return { message, stop: false }
     const session = this.#requiredSession()
     const seen = session.contractFaults ?? (session.contractFaults = new Map())
-    const count = seen.get(fault.signature) ?? 0
-    if (count >= 1) return { message: fault.message, category: fault.category, stop: true }
-    seen.set(fault.signature, count + 1)
+    const first = seen.get(fault.signature)
+    // The same fault twice in one turn is one mistake: the model has not yet seen the correction. Stop only when
+    // it repeats the fault in a later turn, after the message reached it.
+    if (first !== undefined && session.turns > first) return { message: fault.message, category: fault.category, stop: true }
+    if (first === undefined) seen.set(fault.signature, session.turns)
     return { message: fault.message, category: fault.category, stop: false }
   }
 
