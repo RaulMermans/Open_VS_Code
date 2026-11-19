@@ -168,6 +168,8 @@ interface Session {
   autoVerifyPending?: boolean
   /** Files whose proposed edit changed an exported type; checked by an early typecheck after the turn's edits. */
   typeShapePaths?: Set<string>
+  /** Context items the latest model request actually contained (older observations are reduced to an index line). */
+  shownItemIds?: Set<string>
   /** The current work unit (only when unitBudgetMs is set): its number, deadline and progress at its start. */
   unit?: { index: number; deadline: number; appliedAtStart: number; metAtStart: number }
   /**
@@ -1359,6 +1361,7 @@ export class AgentRunner {
       }
       const turn = session.turns + 1
       session.diagnostics.push({ turn, totalEstimatedTokens: compiled.totalEstimatedTokens, omittedItemIds: compiled.omittedItemIds })
+      session.shownItemIds = new Set(compiled.items.map((item) => item.id))
       this.#emit("context.compiled", { turn, estimatedTokens: compiled.totalEstimatedTokens, omittedCount: compiled.omittedItemIds.length })
 
       let promptContent = renderContext(compiled)
@@ -2417,8 +2420,8 @@ export class AgentRunner {
     const what = prepared.name === "read_file" ? "This file is unchanged since you last read it" : "This lookup already ran with the same arguments and nothing in the workspace has changed since, so it was not run again"
     const next = "Repeating it gives no new information. Next, read a file that result names and you have not read, search for something you have not searched, or make the requested change."
     // A result the context budget has since dropped is not "above": the model must be given it again, and that is
-    // not a repeat. shortcut: only the latest compiled context is checked; a result dropped earlier and kept since cannot occur.
-    const evicted = session.diagnostics.at(-1)?.omittedItemIds.includes(`observation:${previous.callId}`) ?? false
+    // not a repeat. shortcut: covers both the token budget and the recent-observation window.
+    const evicted = session.shownItemIds !== undefined && !session.shownItemIds.has(`observation:${previous.callId}`)
     const full = previous.replays <= FULL_REPLAYS || evicted
     const content = full
       ? `ALREADY_OBSERVED: ${what}. ${next}${target}${gaps}\n\nEarlier result:\n${previous.content}`
