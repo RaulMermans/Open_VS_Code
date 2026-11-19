@@ -44,6 +44,8 @@ function recentObservations(observations: readonly ToolObservation[], limit: num
 }
 
 const INDEX_LINES = 30
+/** Upper bound only: the token budget drops the oldest observations first, so a larger context shows more of them. */
+const DEFAULT_RECENT_OBSERVATIONS = 40
 
 /**
  * Successful lookups that fell out of the recent-observation window, one line each with the call that
@@ -206,7 +208,7 @@ export function compileContext(input: ContextCompilerInput): CompiledContext {
     }
   }
 
-  const recent = recentObservations(input.observations ?? [], input.maxObservations ?? 6)
+  const recent = recentObservations(input.observations ?? [], input.maxObservations ?? DEFAULT_RECENT_OBSERVATIONS)
   const observed = observedIndex(input.observations ?? [], recent)
   if (observed) required.push(observed)
   const observations = recent.map((observation, index): ContextItem => ({

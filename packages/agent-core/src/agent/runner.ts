@@ -27,7 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { proposedContentProblems } from "../tools/pre-write-check.ts"
+import { exportedTypeShapeChanged, proposedContentProblems } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
 import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
@@ -74,6 +74,11 @@ export interface AgentRunnerInput {
   readonly signal?: AbortSignal
   readonly taskProfile?: TaskProfile
   readonly repairCycles?: number
+  /**
+   * Supervised long tasks: the run pauses at a turn boundary after this much wall-clock time (a work unit) with
+   * everything kept, and can be continued up to MAX_WORK_UNITS times while each unit makes progress.
+   */
+  readonly unitBudgetMs?: number
   /** Isolated A/B switch. Default remains a single compiled user message. */
   readonly conversationEncoding?: ConversationEncoding
 }
@@ -161,6 +166,14 @@ interface Session {
   outcomes?: Outcome[]
   mutationRejectedByUser?: boolean
   autoVerifyPending?: boolean
+  /** Files whose proposed edit changed an exported type; checked by an early typecheck after the turn's edits. */
+  typeShapePaths?: Set<string>
+  /** Applied-edit count when the completion gate last nudged; the nudge limit resets when it grows. */
+  gateAppliedMark?: number
+  /** Context items the latest model request actually contained (older observations are reduced to an index line). */
+  shownItemIds?: Set<string>
+  /** The current work unit (only when unitBudgetMs is set): its number, deadline and progress at its start. */
+  unit?: { index: number; deadline: number; appliedAtStart: number; metAtStart: number }
   /**
    * Task-scoped registry of successful read-only lookups (signature -> result). A repeat is answered from
    * here as ALREADY_OBSERVED instead of being refused. Cleared whenever the workspace changes.
@@ -229,6 +242,8 @@ const identifierPattern = (name: string) => new RegExp(String.raw`(?<![\w$])${na
 
 /** A lookup repeated this many times with no workspace change is answered once in full, then only briefly. */
 const FULL_REPLAYS = 1
+/** A supervised long task may use at most this many work units (the first plus two continuations). */
+const MAX_WORK_UNITS = 3
 
 export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
 
@@ -424,6 +439,20 @@ export class AgentRunner {
     }
     if (!Number.isInteger(additionalTurns) || additionalTurns <= 0) {
       throw new AgentRunnerError("INVALID_INPUT", "additionalTurns must be a positive integer")
+    }
+    if (session.unit) {
+      const now = this.#progressCount()
+      if (now.applied <= session.unit.appliedAtStart && now.met <= session.unit.metAtStart) {
+        session.failureReason = "NON_PROGRESS"
+        session.finalAnswer = `Stopped after work unit ${session.unit.index}: it made no edit and met no new requirement, so another unit would repeat it. ${this.#assessCoding("NOT_RUN").summary}`
+        return this.#result()
+      }
+      if (session.unit.index >= MAX_WORK_UNITS) {
+        session.failureReason = "INCOMPLETE"
+        session.finalAnswer = `Stopped after ${MAX_WORK_UNITS} work units. ${this.#assessCoding("NOT_RUN").summary}`
+        return this.#result()
+      }
+      session.unit = { index: session.unit.index + 1, deadline: Date.now() + (session.input.unitBudgetMs ?? 0), appliedAtStart: now.applied, metAtStart: now.met }
     }
     const nextBudget = session.input.maxTurns + additionalTurns
     session.input = { ...session.input, maxTurns: nextBudget }
@@ -1197,6 +1226,17 @@ export class AgentRunner {
         this.#finishRefusalStop()
         break
       }
+      if (session.input.unitBudgetMs !== undefined) {
+        session.unit ??= { index: 1, deadline: Date.now() + session.input.unitBudgetMs, appliedAtStart: this.#progressCount().applied, metAtStart: this.#progressCount().met }
+        if (Date.now() >= session.unit.deadline && !this.#codingGoalVerdict()?.accept) {
+          // A work-unit boundary, not a failure: state, edits and the outcome report are kept for continueFromLimit.
+          session.failureReason = "MAX_TURNS_EXCEEDED"
+          this.#recordTurnExhaustion()
+          this.#emit("task.max_turns", { message: `Work unit ${session.unit.index} of ${MAX_WORK_UNITS} reached its ${Math.round(session.input.unitBudgetMs / 60_000)}-minute budget` })
+          await this.#persistTurnLimitCheckpoint()
+          break
+        }
+      }
       if (!isUnlimitedTurnBudget(session.input.maxTurns) && session.turns >= session.input.maxTurns) {
         const met = this.#codingGoalVerdict()
         if (met?.accept) {
@@ -1323,6 +1363,7 @@ export class AgentRunner {
       }
       const turn = session.turns + 1
       session.diagnostics.push({ turn, totalEstimatedTokens: compiled.totalEstimatedTokens, omittedItemIds: compiled.omittedItemIds })
+      session.shownItemIds = new Set(compiled.items.map((item) => item.id))
       this.#emit("context.compiled", { turn, estimatedTokens: compiled.totalEstimatedTokens, omittedCount: compiled.omittedItemIds.length })
 
       let promptContent = renderContext(compiled)
@@ -1410,22 +1451,27 @@ export class AgentRunner {
           await this.#completeTask(response.message.content.trim() || codingVerdict.summary)
           break
         }
+        // The bound is on nudges with no new edit between them: a long task may be nudged again after real progress.
+        const appliedNow = this.#progressCount().applied
+        if (appliedNow > (session.gateAppliedMark ?? 0)) session.continuationAttempts = 0
+        session.gateAppliedMark = appliedNow
         if (codingVerdict && !codingVerdict.editsSatisfied && session.continuationAttempts < this.#maxContinuations) {
           session.continuationAttempts += 1
           const gatePaths = requiredEditPaths(session.input.task.instruction, session.taskProfile.explicitFilePaths)
           const gateTestOnly = gatePaths.length > 0 && gatePaths.every((path) => isTestArtifactPath(path))
           const gateTargets = await classifyNamedEditTargets(session.input.workspaceRoot, gatePaths)
           const gateExisting = gateTargets.existing.length > 0 && gateTargets.missing.length === 0
+          const claimNote = /\b(?:I(?:'ve| have)?|we(?:'ve| have)?)\s+(?:applied|created|written|wrote|added|implemented|updated)\b/i.test(response.message.content) ? "Your last message says changes were applied, but the workspace does not show them. " : ""
           session.observations.push(createToolObservation({
             toolName: "coding_gate",
             callId: `edit-gate-${session.continuationAttempts}`,
             error: {
               category: "EDIT_REQUIRED",
               message: gateTestOnly
-                ? `[EDIT REQUIRED]\nCreate or update only ${gatePaths.join(", ")}. ${gateExisting ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist."} A prose answer is not enough.`
+                ? `[EDIT REQUIRED]\n${claimNote}Create or update only ${gatePaths.join(", ")}. ${gateExisting ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist."} A prose answer is not enough.`
                 : codingVerdict.gaps && codingVerdict.gaps.length > 0
-                  ? `[NOT DONE YET]\nParts of the request are still missing:\n${codingVerdict.gaps.map((gap) => `- ${gap}`).join("\n")}\nMake those changes before answering.`
-                  : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+                  ? `[NOT DONE YET]\n${claimNote}Parts of the request are still missing:\n${codingVerdict.gaps.map((gap) => `- ${gap}`).join("\n")}\nCall apply_patch or create_file for them now; a message describing the change is not the change.`
+                  : `[EDIT REQUIRED]\n${claimNote}The requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.`,
             },
             maxContentBytes: this.#observationMaxBytes,
           }))
@@ -1549,6 +1595,20 @@ export class AgentRunner {
           break
         }
       }
+      if (!stopped && session.typeShapePaths?.size && this.#additionalVerification().includes("TYPECHECK")) {
+        // One typecheck per turn, after the turn's edits, so a changed exported type shows the files it broke.
+        const changed = [...session.typeShapePaths]
+        session.typeShapePaths.clear()
+        const applied = session.evidenceCollector.getEvidence().mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && changed.some((path) => pathsReferToSameFile(mutation.path, path)))
+        const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification")?.name
+        if (applied && verifyName) {
+          await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TYPECHECK" } })
+          if (session.refusalStop) {
+            this.#finishRefusalStop()
+            stopped = true
+          }
+        }
+      }
       if (!stopped) {
         const afterTools = this.#codingGoalVerdict()
         if (afterTools?.accept && (session.autoVerifyPending || response.message.content.trim())) {
@@ -1564,6 +1624,14 @@ export class AgentRunner {
       }
     }
     return this.#result()
+  }
+
+  /** Edits applied and outcomes met so far: what a work unit must increase to be worth continuing. */
+  #progressCount(): { applied: number; met: number } {
+    const session = this.#requiredSession()
+    const applied = session.evidenceCollector.getEvidence().mutationOutcomes.filter((mutation) => mutation.status === "APPLIED").length
+    const met = (session.outcomes ?? []).filter((outcome) => outcome.status === "IMPLEMENTED" || outcome.status === "VERIFIED").length
+    return { applied, met }
   }
 
   /** Turn exhaustion without new evidence is reported as a bounded non-progress blocker. */
@@ -1629,6 +1697,7 @@ export class AgentRunner {
       `Already-correct files (no write): ${present}.`,
       `Remaining requested files: ${leftover}.`,
       `Last verification: ${verification}.`,
+      ...(session.outcomes?.length ? [formatOutcomeReport(session.outcomes).replace(/\n/g, " ")] : []),
       "Do not repeat completed writes or directory listings already done. Finish remaining work only.",
     ].join(" ")
   }
@@ -1878,6 +1947,7 @@ export class AgentRunner {
               this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
               return false
             }
+            if (exportedTypeShapeChanged(proposedPath, before, proposedContent)) (session.typeShapePaths ??= new Set()).add(proposedPath)
             const importProblems = await relativeImportProblems(session.input.workspaceRoot, proposedPath, proposedContent)
             if (importProblems.length > 0) {
               const message = describeImportProblems(importProblems, proposedPath, implementation)
@@ -2357,8 +2427,8 @@ export class AgentRunner {
     const what = prepared.name === "read_file" ? "This file is unchanged since you last read it" : "This lookup already ran with the same arguments and nothing in the workspace has changed since, so it was not run again"
     const next = "Repeating it gives no new information. Next, read a file that result names and you have not read, search for something you have not searched, or make the requested change."
     // A result the context budget has since dropped is not "above": the model must be given it again, and that is
-    // not a repeat. shortcut: only the latest compiled context is checked; a result dropped earlier and kept since cannot occur.
-    const evicted = session.diagnostics.at(-1)?.omittedItemIds.includes(`observation:${previous.callId}`) ?? false
+    // not a repeat. shortcut: covers both the token budget and the recent-observation window.
+    const evicted = session.shownItemIds !== undefined && !session.shownItemIds.has(`observation:${previous.callId}`)
     const full = previous.replays <= FULL_REPLAYS || evicted
     const content = full
       ? `ALREADY_OBSERVED: ${what}. ${next}${target}${gaps}\n\nEarlier result:\n${previous.content}`
@@ -3655,7 +3725,8 @@ async function relativeImportProblems(workspaceRoot: string, filePath: string, c
   }
   const problems: RelativeImportProblem[] = []
   let explicit: boolean | undefined
-  for (const specifier of specifiers) {
+  for (const spec of specifiers) {
+    const specifier = spec.replace(/[?#].*$/, "") // a bundler suffix such as "?url" or "?raw" is not part of the file name
     const base = normalize(join(workspaceRoot, dirname(filePath), specifier))
     const relativeToWorkspace = relative(workspaceRoot, base)
     if (!relativeToWorkspace || relativeToWorkspace.startsWith("..") || isAbsolute(relativeToWorkspace)) {

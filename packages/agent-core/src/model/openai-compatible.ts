@@ -95,7 +95,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
     // Agent turns (with tools) get an output cap, so a runaway reasoning chain ends by itself instead of
     // running into the request timeout. Measured normal turns: 50-1,500 tokens, p99 about 5,000.
     const capped = wireTools !== undefined && request.maxOutputTokens === undefined
-    if (capped) requestBody.max_tokens = AGENT_TURN_MAX_OUTPUT_TOKENS
+    if (capped) requestBody.max_tokens = Number(process.env["OPEN_VS_CODE_AGENT_MAX_TOKENS"]) || AGENT_TURN_MAX_OUTPUT_TOKENS
+    // Evaluation knob for bounding reasoning on agent turns (low | medium | high); unset keeps the model default.
+    const effort = process.env["OPEN_VS_CODE_REASONING_EFFORT"]
+    if (wireTools && effort) requestBody.reasoning_effort = effort
     let first: ModelResponse
     try {
       first = await this.#attempt(request, requestBody, wireMessages, wireTools)
@@ -131,6 +134,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     // A local endpoint restarting (service restart, model reload) returns 5xx or drops the connection for a
     // moment; one such blip must not discard a long task. Bounded, abortable, never on 4xx or cancellation.
+    const requestStarted = Date.now()
     let response: Response | undefined
     for (let attempt = 0; ; attempt += 1) {
       let failure: ModelProviderError
@@ -177,6 +181,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
         contentChars: normalized.message.content.length,
         contentPrefix: normalized.message.content.slice(0, 400),
         reasoningOff: requestBody.reasoning_effort === "none",
+        elapsedMs: Date.now() - requestStarted,
+        usage: (payload as { usage?: unknown } | null)?.usage,
+        reasoningChars: String((payload as { choices?: { message?: { reasoning?: unknown; reasoning_content?: unknown } }[] } | null)?.choices?.[0]?.message?.reasoning ?? (payload as { choices?: { message?: { reasoning_content?: unknown } }[] } | null)?.choices?.[0]?.message?.reasoning_content ?? "").length,
       })}\n`)
     }
     return normalized

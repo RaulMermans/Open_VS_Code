@@ -17,6 +17,8 @@ export interface Outcome {
   readonly status: OutcomeStatus
   readonly files: readonly string[]
   readonly blocker?: string
+  /** The section itself asks for tests ("Test in isolation: …"): its code is not done until a test file covers it. */
+  readonly testsRequired?: boolean
 }
 
 export interface AppliedFile { readonly path: string; readonly content: string }
@@ -63,6 +65,7 @@ export function deriveOutcomes(instruction: string): Outcome[] {
     out.push({
       id: `O${out.length + 1}`, kind, title: heading.replace(/^Phase\s+\d+\s*[—:-]\s*/i, "").slice(0, 80), terms: termsOf(heading, body), brief: body.trim().slice(0, 900),
       status: external ? "BLOCKED" : "PENDING", files: [],
+      ...(kind === "IMPLEMENTATION" && /^\s*(?:[-*]\s*)?(?:test|tests|verify|add tests?)\b/im.test(body) ? { testsRequired: true } : {}),
       ...(external ? { blocker: "needs the operator's explicit approval; not performed" } : {}),
     })
   }
@@ -89,6 +92,8 @@ export function evaluateOutcomes(outcomes: readonly Outcome[], applied: readonly
     const files = relevant.map((m) => m.file.path)
     const strong = relevant.some((m) => m.n >= 2 || m.n / Math.max(outcome.terms.length, 1) >= 0.25)
     let status: OutcomeStatus = relevant.length === 0 ? "PENDING" : strong ? "IMPLEMENTED" : "IN_PROGRESS"
+    const testsMissing = outcome.testsRequired === true && !scored.some((m) => isTest(m.file.path))
+    if (testsMissing && status === "IMPLEMENTED") status = "IN_PROGRESS"
     if (status === "IMPLEMENTED" && outcome.kind === "DOCUMENTATION") status = "VERIFIED"
     else if (status === "IMPLEMENTED") {
       status = !verification || !verification.afterLastEdit ? "UNVERIFIED"
@@ -103,7 +108,7 @@ export function evaluateOutcomes(outcomes: readonly Outcome[], applied: readonly
 export function outcomeGaps(outcomes: readonly Outcome[]): string[] {
   return outcomes
     .filter((o) => (o.kind === "IMPLEMENTATION" || o.kind === "TESTS") && (o.status === "PENDING" || o.status === "IN_PROGRESS" || o.status === "FAILED"))
-    .map((o) => `${o.id} ${o.title}: ${o.status === "FAILED" ? "tests fail after its edits" : o.status === "PENDING" ? "no edit yet" : "edits do not yet cover it"}.`)
+    .map((o) => `${o.id} ${o.title}: ${o.status === "FAILED" ? "tests fail after its edits" : o.status === "PENDING" ? "no edit yet" : o.testsRequired ? "its code is edited but the tests it asks for are not written" : "edits do not yet cover it"}.`)
     .slice(0, 6)
 }
 

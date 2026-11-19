@@ -134,6 +134,8 @@ export interface CreateAgentRuntimeOptions {
    * find_symbol and rename_symbol; renames still go through review and the MutationEngine.
    */
   codeIntelligence?: CodeIntelligenceProvider;
+  /** Supervised long tasks: pause for continuation after this many ms per work unit (see AgentRunnerInput). */
+  unitBudgetMs?: number;
   /**
    * Optional account scope for authorization and evidence provenance isolation (Sprint 10A.1C).
    */
@@ -445,6 +447,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...(skillGuidance.length > 0 ? { skillGuidance } : {}),
     ...(learnedMemory.length > 0 ? { learnedMemory } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.unitBudgetMs ? { unitBudgetMs: options.unitBudgetMs } : {}),
   };
 
   const progressMonitorEnabled = options.progressMonitor?.enabled === true;

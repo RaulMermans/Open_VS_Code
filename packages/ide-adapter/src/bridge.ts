@@ -25,6 +25,8 @@ export interface BridgeOptions {
   browserSessionManager?: BrowserSessionManager;
   /** Language service for find_symbol / rename_symbol (Sprint 24). */
   codeIntelligence?: CodeIntelligenceProvider;
+  /** Supervised long tasks: wall-clock budget per work unit; the task then pauses for continueTurnBudget. */
+  unitBudgetMs?: number;
   /** Sandbox for agent-initiated commands (ADR-046): "auto" (default), "required" or "off". */
   commandSandbox?: "auto" | "required" | "off";
   /** Authenticated account identity scope for evidence and session isolation */
@@ -46,6 +48,7 @@ export class AgentSessionBridge {
   private mcpCatalog?: BridgeOptions["mcpCatalog"];
   private browserSessionManager?: BrowserSessionManager;
   private codeIntelligence?: CodeIntelligenceProvider;
+  private unitBudgetMs?: number;
   private lastWorkflowState?: WorkflowState;
   private accountScope?: string;
   private commandSandbox: "auto" | "required" | "off";
@@ -70,6 +73,7 @@ export class AgentSessionBridge {
     this.mcpCatalog = options.mcpCatalog;
     this.browserSessionManager = options.browserSessionManager;
     this.codeIntelligence = options.codeIntelligence;
+    this.unitBudgetMs = options.unitBudgetMs;
     this.accountScope = options.accountScope;
     this.commandSandbox = options.commandSandbox ?? "auto";
   }
@@ -248,6 +252,7 @@ export class AgentSessionBridge {
         ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),
         ...(this.browserSessionManager ? { browserSessionManager: this.browserSessionManager } : {}),
         ...(this.codeIntelligence ? { codeIntelligence: this.codeIntelligence } : {}),
+        ...(this.unitBudgetMs ? { unitBudgetMs: this.unitBudgetMs } : {}),
         ...(this.skills
           ? { skills: this.skills }
           : resolvedProfile?.appliedSkills && resolvedProfile.appliedSkills.length > 0
