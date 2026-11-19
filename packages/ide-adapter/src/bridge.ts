@@ -543,9 +543,14 @@ export class AgentSessionBridge {
 }
 
 /** A grouped (language-service) edit names every file it would change; a single edit keeps the classic prompt. */
+/** Package manifests and lockfiles: an edit changes dependencies or scripts, which is never approved implicitly. */
+export const DEPENDENCY_MANIFEST = /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|Cargo\.toml|Cargo\.lock|go\.mod|go\.sum|Gemfile(\.lock)?)$/i;
+
 export function mutationPrompt(pm: { path?: unknown; operation?: unknown; files?: unknown; summary?: unknown }): string {
   const files = Array.isArray(pm.files) ? pm.files.map((file: any) => String(file?.path ?? "")).filter(Boolean) : [];
-  if (files.length === 0) return `Approve mutation on ${pm.path}? (${pm.operation})`;
+  const touched = files.length > 0 ? files : [String(pm.path ?? "")];
+  const warning = touched.some((path) => DEPENDENCY_MANIFEST.test(path)) ? "This changes project dependencies or scripts. " : "";
+  if (files.length === 0) return `${warning}Approve mutation on ${pm.path}? (${pm.operation})`;
   const summary = typeof pm.summary === "string" ? ` (${pm.summary})` : "";
-  return `Approve mutation on ${files.length} files${summary}: ${files.join(", ")}? (${pm.operation})`;
+  return `${warning}Approve mutation on ${files.length} files${summary}: ${files.join(", ")}? (${pm.operation})`;
 }

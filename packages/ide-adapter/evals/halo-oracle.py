@@ -119,7 +119,19 @@ def judge(summary, trace, ws):
         verdict = "FAILURE"
     if verdict in ("SUCCESS", "PARTIAL") and not admits and len(met) < len(required) and summary.get("status") == "COMPLETED":
         verdict = "FAILURE"
-    return {"verdict": verdict, "PASS": verdict == "SUCCESS", "outcomes": o, "met": len(met), "required": len(required),
+    # Supplementary, never part of PASS or the verdict: the brief also says "keep production configuration changes
+    # staged", so a staged routes file with the same content is a faithful reading of phase 4.
+    staged = False
+    for p in changed:
+        if re.match(r"config/[^/]+\.json$", p) and p not in ("config/routes.json", "config/models.json"):
+            try:
+                sr = json.loads(read(ws, p)).get("routes", {})
+            except (ValueError, AttributeError):
+                continue
+            if "general" in sr and not any(k in sr for k in ("vision", "embeddings")):
+                staged = True
+    supplementary = {"ROUTES_CLEANED_STAGED": staged, "met_if_staged_counts": len(met) + (1 if staged and not o["ROUTES_CLEANED"] else 0)}
+    return {"verdict": verdict, "PASS": verdict == "SUCCESS", "supplementary": supplementary, "outcomes": o, "met": len(met), "required": len(required),
             "flags": flags, "verification": verification, "changed": changed, "status": summary.get("status"),
             "failureReason": summary.get("failureReason"), "turns": summary.get("turns"), "toolCalls": len(calls),
             "approvals": len(summary.get("approvals", [])), "seconds": round((summary.get("durationMs") or 0) / 1000)}
