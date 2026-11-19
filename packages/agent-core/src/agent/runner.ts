@@ -1461,16 +1461,17 @@ export class AgentRunner {
           const gateTestOnly = gatePaths.length > 0 && gatePaths.every((path) => isTestArtifactPath(path))
           const gateTargets = await classifyNamedEditTargets(session.input.workspaceRoot, gatePaths)
           const gateExisting = gateTargets.existing.length > 0 && gateTargets.missing.length === 0
+          const claimNote = /\b(?:I(?:'ve| have)?|we(?:'ve| have)?)\s+(?:applied|created|written|wrote|added|implemented|updated)\b/i.test(response.message.content) ? "Your last message says changes were applied, but the workspace does not show them. " : ""
           session.observations.push(createToolObservation({
             toolName: "coding_gate",
             callId: `edit-gate-${session.continuationAttempts}`,
             error: {
               category: "EDIT_REQUIRED",
               message: gateTestOnly
-                ? `[EDIT REQUIRED]\nCreate or update only ${gatePaths.join(", ")}. ${gateExisting ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist."} A prose answer is not enough.`
+                ? `[EDIT REQUIRED]\n${claimNote}Create or update only ${gatePaths.join(", ")}. ${gateExisting ? "Those files already exist. Use apply_patch only." : "Use create_file only when that file does not exist."} A prose answer is not enough.`
                 : codingVerdict.gaps && codingVerdict.gaps.length > 0
-                  ? `[NOT DONE YET]\nParts of the request are still missing:\n${codingVerdict.gaps.map((gap) => `- ${gap}`).join("\n")}\nMake those changes before answering.`
-                  : "[EDIT REQUIRED]\nThe requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+                  ? `[NOT DONE YET]\n${claimNote}Parts of the request are still missing:\n${codingVerdict.gaps.map((gap) => `- ${gap}`).join("\n")}\nCall apply_patch or create_file for them now; a message describing the change is not the change.`
+                  : `[EDIT REQUIRED]\n${claimNote}The requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.`,
             },
             maxContentBytes: this.#observationMaxBytes,
           }))

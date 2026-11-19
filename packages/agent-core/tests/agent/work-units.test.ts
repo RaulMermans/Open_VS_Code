@@ -53,3 +53,17 @@ test("the done-but-incomplete nudge is bounded per stretch without an edit, not 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("the not-done-yet nudge says so when the model claims an edit the workspace does not show", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ovsc-claim-"))
+  try {
+    await writeFile(join(root, "add.ts"), "export const add = (a: number, b: number) => a - b\n")
+    const claim: ModelResponse = { model: "scripted", message: { role: "assistant", content: "I have applied the fix and added the test." } }
+    const provider = new ScriptedModelProvider([claim, claim])
+    const agent = new AgentRunner({ provider, registry: createReadOnlyToolRegistry(), eventFactory: { createId: () => "event", now: () => "2026-11-16T12:00:00.000Z" } })
+    await agent.run({ task: { id: "task", mode: "BUILD", instruction: "Fix add.ts so add returns the sum, and add a unit test for it." }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
+    assert.match(JSON.stringify(provider.requests.at(-1)), /says changes were applied, but the workspace does not show them/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
