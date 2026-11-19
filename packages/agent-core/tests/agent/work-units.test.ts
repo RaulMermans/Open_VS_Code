@@ -85,3 +85,38 @@ test("two identical path faults in one turn are one mistake; the same fault in a
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("declining one edit of a multi-outcome brief keeps the run going; a single-edit task still stops", async () => {
+  const { MutationEngine } = await import("../../src/tools/mutation-engine.ts")
+  const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
+  const { ToolRegistry } = await import("../../src/tools/registry.ts")
+  for (const [instruction, wantStopped] of [
+    ["# Brief\n\n## Phase 1 — Adder\nImplement the sum in add.ts.\n\n## Phase 2 — Multiplier\nImplement the product in mul.ts.\n", false],
+    ["Fix add.ts so add returns the sum.", true],
+  ] as const) {
+    const root = await mkdtemp(join(tmpdir(), "ovsc-decline-"))
+    try {
+      await writeFile(join(root, "add.ts"), "export const add = (a: number, b: number) => a - b\n")
+      await writeFile(join(root, "mul.ts"), "export const mul = (a: number, b: number) => a + b\n")
+      const provider = new ScriptedModelProvider([
+        call("p1", "apply_patch", { path: "add.ts", search: "a - b", replace: "a + b" }),
+        call("p2", "apply_patch", { path: "mul.ts", search: "a + b", replace: "a * b" }),
+        { model: "scripted", message: { role: "assistant", content: "Left mul.ts undone." } },
+      ])
+      const registry = new ToolRegistry([...createMutationToolRegistrations({ engine: new MutationEngine(root) })])
+      const agent = new AgentRunner({ provider, registry, eventFactory: { createId: () => "event", now: () => "2026-11-16T12:00:00.000Z" } })
+      let result = await agent.run({ task: { id: "task", mode: "BUILD", instruction }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
+      // multi-outcome: approve the first edit, decline the second; single edit: decline it
+      let seen = 0
+      for (let guard = 0; result.status === "PAUSED" && guard < 10; guard += 1) { result = await agent.resume(wantStopped || seen > 0 ? "REJECT" : "APPROVE"); seen += 1 }
+      if (wantStopped) assert.equal(result.failureReason, "REJECTED")
+      else {
+        assert.notEqual(result.failureReason, "REJECTED")
+        assert.ok(provider.requests.length >= 3, "the model got another turn after the declined edit")
+        assert.match(JSON.stringify(provider.requests.at(-1)), /The user declined this edit to mul\.ts/)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+})

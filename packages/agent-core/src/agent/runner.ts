@@ -501,10 +501,20 @@ export class AgentRunner {
       } else {
         this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
       }
-      this.#addErrorObservation(pending.prepared, "PERMISSION_REJECTED", "Caller rejected this tool request", "REJECTED")
+      // A brief with several outcomes survives one declined edit: the decline is recorded and the rest continues.
+      const multiOutcome = isSubstantial(deriveOutcomes(session.input.task.instruction))
+      const declinedPath = String((pending.prepared.arguments as { path?: unknown }).path ?? "")
+      this.#addErrorObservation(
+        pending.prepared,
+        "PERMISSION_REJECTED",
+        multiOutcome && pending.prepared.definition.action === "write_file"
+          ? `The user declined this edit${declinedPath ? ` to ${declinedPath}` : ""}. Do not propose it again. Continue with the remaining outcomes and say in your final answer what was left undone.`
+          : "Caller rejected this tool request",
+        "REJECTED",
+      )
       if (pending.prepared.definition.action === "write_file") {
         session.mutationRejectedByUser = true
-        if (session.taskProfile.requiresCodeChange) {
+        if (session.taskProfile.requiresCodeChange && !multiOutcome) {
           const verdict = this.#codingGoalVerdict()
           if (verdict?.accept) {
             await this.#completeTask(verdict.summary)
