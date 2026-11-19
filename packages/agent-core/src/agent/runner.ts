@@ -2356,7 +2356,10 @@ export class AgentRunner {
     const target = pending.length > 0 ? ` The request names ${pending.join(", ")} as a file to create or update; it is not done yet.` : ""
     const what = prepared.name === "read_file" ? "This file is unchanged since you last read it" : "This lookup already ran with the same arguments and nothing in the workspace has changed since, so it was not run again"
     const next = "Repeating it gives no new information. Next, read a file that result names and you have not read, search for something you have not searched, or make the requested change."
-    const full = previous.replays <= FULL_REPLAYS
+    // A result the context budget has since dropped is not "above": the model must be given it again, and that is
+    // not a repeat. shortcut: only the latest compiled context is checked; a result dropped earlier and kept since cannot occur.
+    const evicted = session.diagnostics.at(-1)?.omittedItemIds.includes(`observation:${previous.callId}`) ?? false
+    const full = previous.replays <= FULL_REPLAYS || evicted
     const content = full
       ? `ALREADY_OBSERVED: ${what}. ${next}${target}${gaps}\n\nEarlier result:\n${previous.content}`
       : `ALREADY_OBSERVED: ${what}; its result is already above. ${next}${target}${gaps}`
