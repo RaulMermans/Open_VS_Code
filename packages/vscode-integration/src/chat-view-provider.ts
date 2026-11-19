@@ -1651,9 +1651,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         var lastModelSig = '__initial__';
         var syncingModels = false;
         function preferredModelRank(name) {
-            if (name.indexOf('qwen3-coder') === 0) return 0;
-            if (name.indexOf('qwen2.5-coder') === 0) return 1;
-            return 2;
+            if (name.indexOf('qwen3.6') === 0) return 0;
+            if (name.indexOf('qwen3-coder') === 0) return 1;
+            if (name.indexOf('qwen2.5-coder') === 0) return 2;
+            return 3;
         }
         function syncModelSelector(connection) {
             if (!modelSelector) return;
@@ -1677,6 +1678,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 syncingModels = false;
                 return;
             }
+            var autoCapable = models.some(function(name) {
+                var m = /(\\d+(?:\\.\\d+)?)b\\b/i.exec(name);
+                return m && Number(m[1]) >= 14 && !/embed/i.test(name);
+            });
+            if (autoCapable) {
+                var autoOpt = document.createElement('option');
+                autoOpt.value = 'auto';
+                autoOpt.textContent = 'Auto';
+                modelSelector.appendChild(autoOpt);
+            }
             models.forEach(function(name) {
                 var opt = document.createElement('option');
                 opt.value = name;
@@ -1684,7 +1695,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 modelSelector.appendChild(opt);
             });
             modelSelector.disabled = !!(currentState && currentState.activeTurn);
-            if (selected && models.indexOf(selected) >= 0) modelSelector.value = selected;
+            if (selected === 'auto' && autoCapable) modelSelector.value = 'auto';
+            else if (selected && models.indexOf(selected) >= 0) modelSelector.value = selected;
             syncingModels = false;
         }
         if (modelSelector) {

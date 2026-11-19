@@ -82,7 +82,7 @@ const toolCalls = (result?.toolCalls ?? []) as Array<{ name: string; outcome: st
 const summary = {
   model: process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b", servedModels, codeIntel, timedOut, durationMs: Date.now() - started, status: result?.status, failureReason: result?.failureReason, turns: result?.turns,
   toolCalls: toolCalls.length, toolSequence: toolCalls.map((call) => `${call.name}:${call.outcome}`),
-  approvals, finalAnswer: String(result?.finalAnswer ?? "").slice(0, 1500),
+  approvals, finalAnswer: String(result?.finalAnswer ?? "").slice(0, 1500), diagnostics: result?.diagnostics,
 }
 await writeFile(outFile, JSON.stringify(summary, null, 2))
 if (process.argv.includes("--trace")) {

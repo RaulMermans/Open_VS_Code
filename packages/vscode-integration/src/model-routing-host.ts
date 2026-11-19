@@ -1,7 +1,7 @@
 import * as vscode from "vscode"
 import { validateRoutingConfig, type RoutingConfiguration } from "@open-vs-code/agent-core"
 import { readWorkspaceRoutingOverride } from "./model-routing-file.js"
-import { fetchLocalModelCatalog, localProviderBaseUrl } from "./local-model-selection.js"
+import { AUTO_MODEL, autoEligibleModels, fetchLocalModelCatalog, localProviderBaseUrl } from "./local-model-selection.js"
 import {
   DEFAULT_LOCAL_ENDPOINT,
   LOCAL_INFERENCE_SECRET_KEY,
@@ -220,9 +220,14 @@ export class ModelRoutingHost {
   }
 
   async #saveSelection(kind: "chat" | "autocomplete", name: string): Promise<string | undefined> {
+    // A pick made while the first discovery is still running used to be rejected against an empty catalog and lost.
+    if (!this.#snapshot) await this.refresh()
     const installed = this.#snapshot?.installedModels || []
     if (this.#snapshot?.endpointError) return `Ollama is offline at ${this.#snapshot.endpoint}. ${this.#snapshot.endpointError}`
-    if (!installed.includes(name)) return `${name} is not installed at ${this.#snapshot?.endpoint || DEFAULT_LOCAL_ENDPOINT}.`
+    if (name === AUTO_MODEL) {
+      if (kind !== "chat") return "Auto applies to chat and agent tasks only. Autocomplete keeps its own model."
+      if (autoEligibleModels(installed).length === 0) return "Auto needs an installed coding model of at least 14B parameters, such as Qwen3.6 or Qwen3-Coder."
+    } else if (!installed.includes(name)) return `${name} is not installed at ${this.#snapshot?.endpoint || DEFAULT_LOCAL_ENDPOINT}.`
     const current = this.#currentPreferences()
     const endpoint = current?.endpoint || this.#snapshot?.endpoint || DEFAULT_LOCAL_ENDPOINT
     const plan = kind === "chat"

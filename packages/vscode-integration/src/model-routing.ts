@@ -2,6 +2,8 @@ import { resolveCanonicalEndpoints, validateRoutingConfig, type RoutingConfigura
 import {
   applyAutocompleteModelSelection,
   applyChatModelSelection,
+  applyAutoModelSelection,
+  AUTO_MODEL,
   buildStarterRoutingConfig,
   chooseInstalledModel,
   localProviderBaseUrl,
@@ -156,13 +158,16 @@ export function routingFromSelection(options: {
   chatModel: string
   autocompleteModel: string
   credentialConfigured: boolean
+  /** Installed model names; needed to expand Auto. */
+  installed?: readonly string[]
 }): RoutingConfiguration {
   const endpoint = options.endpoint.trim()
   resolveCanonicalEndpoints(endpoint)
   const chatModel = options.chatModel.trim()
   const autocompleteModel = options.autocompleteModel.trim()
   if (!chatModel || !autocompleteModel) throw new Error("MODEL_NAME_REQUIRED")
-  let config = buildStarterRoutingConfig([chatModel, autocompleteModel])
+  const auto = chatModel === AUTO_MODEL
+  let config = buildStarterRoutingConfig(auto ? [autocompleteModel] : [chatModel, autocompleteModel])
   config = {
     ...config,
     providers: config.providers.map((provider) => {
@@ -174,7 +179,7 @@ export function routingFromSelection(options: {
       }
     }),
   }
-  config = applyChatModelSelection(config, chatModel)
+  config = auto ? applyAutoModelSelection(config, options.installed ?? []) : applyChatModelSelection(config, chatModel)
   config = applyAutocompleteModelSelection(config, autocompleteModel)
   return validateRoutingConfig(config)
 }
@@ -200,7 +205,7 @@ export function resolveModelRouting(input: RoutingResolutionInput): RoutingResol
       notice: "Workspace models.json is the active route. A global preference change stays saved and does not switch this route. Use global models to suspend the override. The file is not modified.",
     }
   }
-  const globalConfig = configFromPreferences(input.globalPreferences, input.credentialConfigured)
+  const globalConfig = configFromPreferences(input.globalPreferences, input.credentialConfigured, input.discoveredModelNames)
   if (globalConfig) {
     const endpoint = localProviderBaseUrl(globalConfig) || input.globalPreferences?.endpoint
     return {
@@ -211,7 +216,7 @@ export function resolveModelRouting(input: RoutingResolutionInput): RoutingResol
       workspaceOverrideIgnored: ignored,
       workspaceConfigInvalid: invalid,
       endpoint,
-      chatModel: routeModelName(globalConfig, "default") || routeModelName(globalConfig, "coding"),
+      chatModel: input.globalPreferences?.chatModel === AUTO_MODEL && !input.globalPreferences.advanced ? AUTO_MODEL : routeModelName(globalConfig, "default") || routeModelName(globalConfig, "coding"),
       autocompleteModel: routeModelName(globalConfig, "autocomplete"),
       notice: globalNotice(ignored, invalid, input.overrideSuspended && filePresent && trusted),
     }
@@ -267,7 +272,7 @@ export function planChatSelection(input: {
   resolveCanonicalEndpoints(endpoint)
   const chatModel = input.chatModel.trim()
   if (!chatModel) throw new Error("MODEL_NAME_REQUIRED")
-  const autocompleteModel = (input.autocompleteModel || input.current?.autocompleteModel || chatModel).trim()
+  const autocompleteModel = (input.autocompleteModel || input.current?.autocompleteModel || (chatModel === AUTO_MODEL ? PREFERRED_AUTOCOMPLETE_MODEL : chatModel)).trim()
   return {
     preferences: { version: 1, endpoint, chatModel, autocompleteModel },
     suspendWorkspaceOverride: input.overrideActive && false,
@@ -343,17 +348,18 @@ export function snapshotFromResolution(input: {
   }
 }
 
-function configFromPreferences(preferences: GlobalModelPreferences | null, credentialConfigured: boolean): RoutingConfiguration | null {
+function configFromPreferences(preferences: GlobalModelPreferences | null, credentialConfigured: boolean, installed: readonly string[] = []): RoutingConfiguration | null {
   if (!preferences) return null
   if (preferences.advanced) return preferences.advanced
   if (!preferences.chatModel) return null
-  const autocompleteModel = preferences.autocompleteModel || preferences.chatModel
+  const autocompleteModel = preferences.autocompleteModel || (preferences.chatModel === AUTO_MODEL ? PREFERRED_AUTOCOMPLETE_MODEL : preferences.chatModel)
   try {
     return routingFromSelection({
       endpoint: preferences.endpoint,
       chatModel: preferences.chatModel,
       autocompleteModel,
       credentialConfigured,
+      installed,
     })
   } catch {
     return null

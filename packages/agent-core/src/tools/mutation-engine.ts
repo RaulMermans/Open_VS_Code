@@ -284,7 +284,29 @@ export function generateUnifiedDiff(
   const hunkLenBefore = hunkEndBefore - hunkStartBefore + 1
   const hunkLenAfter = hunkEndAfter - hunkStartAfter + 1
 
-  if (firstDiff <= lastDiffBefore || firstDiff <= lastDiffAfter || beforeContent !== afterContent) {
+  // An in-place edit (same line count, e.g. a rename with uses far apart) is rendered as one hunk per cluster of
+  // changed lines; the untouched span between them is neither shown nor counted against the budgets.
+  if (lastDiffBefore - firstDiff === lastDiffAfter - firstDiff && lastDiffBefore > firstDiff) {
+    const changed: number[] = []
+    for (let i = firstDiff; i <= lastDiffBefore; i++) if (beforeLines[i] !== afterLines[i]) changed.push(i)
+    let linesAddedHere = 0
+    for (let c = 0; c < changed.length; ) {
+      let end = c
+      while (end + 1 < changed.length && changed[end + 1]! - changed[end]! <= 2 * contextSize) end++
+      const from = Math.max(0, changed[c]! - contextSize)
+      const to = Math.min(beforeLines.length - 1, changed[end]! + contextSize)
+      diffLines.push(`@@ -${from + 1},${to - from + 1} +${from + 1},${to - from + 1} @@`)
+      for (let i = from; i <= to; i++) {
+        if (beforeLines[i] === afterLines[i]) diffLines.push(` ${beforeLines[i]}`)
+        else {
+          diffLines.push(`-${beforeLines[i]}`, `+${afterLines[i]}`)
+          linesAddedHere++
+        }
+      }
+      c = end + 1
+    }
+    linesAdded = linesRemoved = linesAddedHere
+  } else if (firstDiff <= lastDiffBefore || firstDiff <= lastDiffAfter || beforeContent !== afterContent) {
     diffLines.push(`@@ -${hunkStartBefore + 1},${hunkLenBefore} +${hunkStartAfter + 1},${hunkLenAfter} @@`)
 
     // Context before change

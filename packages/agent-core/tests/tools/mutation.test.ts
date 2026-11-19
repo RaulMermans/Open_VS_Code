@@ -937,3 +937,15 @@ test("mutation engine does not import model/inference dependencies", async () =>
   assert.ok(!engineSource.includes("openai"), "Must not reference openai")
   assert.ok(!engineSource.includes("@anthropic"), "Must not reference anthropic")
 })
+
+test("generateUnifiedDiff counts only differing lines for a same-length edit spanning distant lines", () => {
+  const before = Array.from({ length: 400 }, (_, i) => `line ${i}`)
+  const after = [...before]
+  after[0] = "line 0 renamed"
+  after[399] = "line 399 renamed"
+  const diff = generateUnifiedDiff("a.ts", before.join("\n"), after.join("\n"), 1_000_000)
+  assert.equal(diff.linesAdded, 2)
+  assert.equal(diff.linesRemoved, 2)
+  assert.equal(diff.truncated, false)
+  assert.ok(diff.unified.length < 600, "the untouched span between the edits is not printed")
+})

@@ -162,6 +162,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   let healthChecker: HealthChecker | undefined;
   let performanceLedger: ModelPerformanceLedger | undefined;
   let routingConfig: RoutingConfiguration | undefined;
+  let configuredWindow: number | undefined;
 
   if (!provider) {
     const readWorkspaceFile = options.isTrusted === true && options.skipWorkspaceRoutingFile !== true
@@ -196,6 +197,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
         if (headers) authHeadersMap.set(d.id, headers);
         const modelConfig = config.models.find((m: any) => m.id === d.modelId);
         const wireModel = resolveServedModelId(d, modelConfig);
+        const window = d.contextWindow ?? modelConfig?.contextWindow
+        if (typeof window === "number" && window > 0) configuredWindow = Math.min(configuredWindow ?? window, window)
         providers.set(d.id, new OpenAICompatibleProvider({
           baseUrl: ep,
           model: wireModel,
@@ -307,7 +310,9 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...mcpStats
   });
 
-  const contextBudget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 });
+  // The compile budget follows the smallest configured model window (clamped), not a fixed 8000: with 8000 the
+  // observations of a multi-file task were dropped after ~6K tokens and the model re-read what it had already read.
+  const contextBudget = calculateBudget({ contextWindow: Math.min(Math.max(configuredWindow ?? 8000, 8000), 24_576), reservedOutput: 1000, reservedToolHistory: 500 });
   
   const memoryLoader = new ProjectMemoryLoader(options.workspaceRoot);
   const memorySnapshot = await memoryLoader.load();

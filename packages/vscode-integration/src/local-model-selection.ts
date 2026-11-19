@@ -4,6 +4,11 @@ export const CHAT_MODEL_DEPLOYMENT_ID = "open-vs-code-chat"
 export const AUTOCOMPLETE_MODEL_DEPLOYMENT_ID = "open-vs-code-autocomplete"
 export const PREFERRED_CODING_MODEL = "qwen3-coder:30b"
 export const PREFERRED_AUTOCOMPLETE_MODEL = "qwen2.5-coder:7b"
+/** Stored as the chat preference when the user picks Auto; expanded to the eligible installed models at routing time. */
+export const AUTO_MODEL = "auto"
+/** Complex-coding preference order for Auto: current evidence favours Qwen3.6, then Qwen3-Coder. */
+export const AUTO_MODEL_PREFERENCE = ["qwen3.6", "qwen3-coder"] as const
+const AUTO_MIN_BILLIONS = 14
 
 /** Routes the chat picker is allowed to retarget. Autocomplete and any other key stay put. */
 const CHAT_ROUTE_KEYS = new Set(["default", "general", "planning", "coding", "debugging", "review"])
@@ -86,6 +91,56 @@ export function applyChatModelSelection(config: RoutingConfiguration, servedMode
     providers: config.providers,
     models: [...config.models.filter((entry) => entry.id !== modelId), model],
     deployments: [...config.deployments.filter((entry) => entry.id !== CHAT_MODEL_DEPLOYMENT_ID), deployment],
+    routes,
+  }
+}
+
+/**
+ * Installed models Auto may route substantial coding to, best first. Embedding, autocomplete-sized (<14B) and
+ * unsized models are never eligible, so the 7B completion model can never serve an agent task as a convenience.
+ */
+export function autoEligibleModels(installed: readonly string[]): string[] {
+  const eligible = installed.map((name) => name.trim()).filter((name) => {
+    if (!name || /embed/i.test(name)) return false
+    const billions = Number(/(\d+(?:\.\d+)?)b\b/i.exec(name)?.[1])
+    return Number.isFinite(billions) && billions >= AUTO_MIN_BILLIONS
+  })
+  const rank = (name: string) => {
+    const i = AUTO_MODEL_PREFERENCE.findIndex((family) => name === family || name.startsWith(`${family}:`))
+    return i < 0 ? AUTO_MODEL_PREFERENCE.length : i
+  }
+  return [...eligible].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+}
+
+/**
+ * Auto Model: chat and coding routes list every eligible installed model in preference order. The existing
+ * ModelRouter ranks them (health, context, performance ledger) and falls back only across this list.
+ * Throws NO_AUTO_MODEL when nothing eligible is installed, so Auto never degrades to a small model.
+ */
+export function applyAutoModelSelection(config: RoutingConfiguration, installed: readonly string[]): RoutingConfiguration {
+  const names = autoEligibleModels(installed)
+  if (names.length === 0) throw new Error("NO_AUTO_MODEL")
+  const provider = config.providers.find((entry) => entry.kind === "openai_compatible_local" && entry.baseUrl)
+  if (!provider) throw new Error("NO_LOCAL_PROVIDER")
+  const ids = names.map((_, index) => `${CHAT_MODEL_DEPLOYMENT_ID}-auto-${index + 1}`)
+  const models: ModelDescriptor[] = names.map((name) => ({
+    id: `local-${slugModelId(name)}`, displayName: name, family: "local", contextWindow: 32768,
+    capabilities: ["toolUse", "coding"], specialization: "coding", provenance: "Selected by Auto from the local inference endpoint", modelName: name,
+  }))
+  const deployments: ModelDeployment[] = names.map((name, index) => ({
+    id: ids[index]!, providerId: provider.id, modelId: models[index]!.id, modelName: name, enabled: true, priority: 100 - index,
+  }))
+  const routes: Record<string, readonly string[]> = {}
+  for (const [key, value] of Object.entries(config.routes)) {
+    if (value) routes[key] = CHAT_ROUTE_KEYS.has(key) ? ids : [...value]
+  }
+  routes.default ??= ids
+  routes.coding ??= ids
+  return {
+    ...(config.$schema ? { $schema: config.$schema } : {}),
+    providers: config.providers,
+    models: [...config.models.filter((entry) => !models.some((m) => m.id === entry.id)), ...models],
+    deployments: [...config.deployments.filter((entry) => !entry.id.startsWith(CHAT_MODEL_DEPLOYMENT_ID)), ...deployments],
     routes,
   }
 }
