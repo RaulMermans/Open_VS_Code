@@ -411,3 +411,13 @@ test("a multi-file task never applies a patch to an unintended path", async () =
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("a bundler query suffix such as ?raw is not part of the file name an import must resolve to", async () => {
+  const root = await workspace()
+  try {
+    const { greet } = await patchGreetImport(root, "./format.ts?raw")
+    assert.match(greet, /from '\.\/format\.ts\?raw'/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

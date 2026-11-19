@@ -26,3 +26,25 @@ export function proposedContentProblems(path: string, content: string): string[]
     return `line ${line}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`
   })
 }
+
+/**
+ * True when an exported type alias, interface or enum was added or changed. Such an edit can break files that
+ * use the type (a missing member of a `Record<Union, …>`, a switch that no longer covers every case), which only
+ * a project typecheck reveals, so the runner checks early instead of at completion.
+ */
+export function exportedTypeShapeChanged(path: string, before: string, after: string): boolean {
+  if (!/\.(?:tsx?|mts|cts)$/i.test(path)) return false
+  const shapes = (text: string): Map<string, string> => {
+    const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, false)
+    const found = new Map<string, string>()
+    for (const node of file.statements) {
+      if (!(ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isEnumDeclaration(node))) continue
+      if (!node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue
+      found.set(node.name.text, node.getText(file))
+    }
+    return found
+  }
+  const next = shapes(after)
+  const previous = shapes(before)
+  return [...next].some(([name, text]) => previous.get(name) !== text)
+}

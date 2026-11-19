@@ -21,6 +21,8 @@ if (!workspaceArg || !promptFile || !outFile || process.env.OPEN_VS_CODE_REAL_IN
 const codeIntel = process.argv.includes("--code-intel")
 const timeoutIndex = process.argv.indexOf("--timeout-min")
 const timeoutMin = timeoutIndex > 0 ? Number(process.argv[timeoutIndex + 1]) : 15
+// Extended session: up to three work units of --timeout-min each, continued only while a unit made progress.
+const units = process.argv.includes("--units") ? Number(process.argv[process.argv.indexOf("--units") + 1]) : 1
 const root = await realpath(workspaceArg)
 const instruction = (await readFile(promptFile, "utf8")).trim()
 const inside = (path: string) => {
@@ -61,16 +63,24 @@ function evalRoutingConfig(model: string) {
 
 const controller = new AbortController()
 let timedOut = false
-const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMin * 60_000)
+const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMin * 60_000 * units)
 const bridge = new AgentSessionBridge({
   host, workspaceRoot: root, routingConfigOverride: evalRoutingConfig(process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b"), skipWorkspaceRoutingFile: true,
   skills: { enabled: false }, workflow: { enabled: false }, progressMonitor: { enabled: false }, learning: { enabled: false },
   ...(codeIntel ? { codeIntelligence: new TypeScriptCodeIntelligence(root) } : {}),
+  ...(units > 1 ? { unitBudgetMs: timeoutMin * 60_000 } : {}),
 })
 const started = Date.now()
 let result: any
+let unitsUsed = 1
+const unitLog: Array<{ unit: number; seconds: number; toolCalls: number }> = []
 try {
   result = await bridge.runTask(instruction, "BUILD", controller.signal)
+  while (units > 1 && result?.failureReason === "MAX_TURNS_EXCEEDED" && unitsUsed < units) {
+    unitsUsed += 1
+    unitLog.push({ unit: unitsUsed - 1, seconds: Math.round((Date.now() - started) / 1000), toolCalls: result.toolCalls?.length ?? 0 })
+    result = await bridge.continueTurnBudget(result.runId ?? result.diagnostics?.runId, controller.signal)
+  }
 } catch (error) {
   result = { status: "HARNESS_ERROR", failureReason: String(error).slice(0, 300) }
 } finally {
@@ -82,7 +92,7 @@ const toolCalls = (result?.toolCalls ?? []) as Array<{ name: string; outcome: st
 const summary = {
   model: process.env.OPEN_VS_CODE_EVAL_MODEL ?? "qwen3-coder:30b", servedModels, codeIntel, timedOut, durationMs: Date.now() - started, status: result?.status, failureReason: result?.failureReason, turns: result?.turns,
   toolCalls: toolCalls.length, toolSequence: toolCalls.map((call) => `${call.name}:${call.outcome}`),
-  approvals, finalAnswer: String(result?.finalAnswer ?? "").slice(0, 1500), diagnostics: result?.diagnostics,
+  unitsUsed, unitLog, approvals, finalAnswer: String(result?.finalAnswer ?? "").slice(0, 1500), diagnostics: result?.diagnostics,
 }
 await writeFile(outFile, JSON.stringify(summary, null, 2))
 if (process.argv.includes("--trace")) {
