@@ -20,3 +20,10 @@ test("an exported type or union that gains a member is flagged; unrelated edits 
   assert.equal(exportedTypeShapeChanged("a.ts", "type L = 1\n", "type L = 1 | 2\n"), false)
   assert.equal(exportedTypeShapeChanged("a.md", before, before + "x"), false)
 })
+
+test("await inside a non-async function is reported in .js and .ts; type and import errors still are not", () => {
+  const src = "function f() {\n  const { x } = await import('node:fs')\n  return x\n}\n"
+  for (const path of ["a.js", "a.ts"]) assert.match(proposedContentProblems(path, src)[0] ?? "", /await/)
+  assert.deepEqual(proposedContentProblems("a.js", "import { x } from './missing'\nexport const y = x.nope\n"), [])
+  assert.deepEqual(proposedContentProblems("a.ts", "async function f() { return await import('node:fs') }\n"), [])
+})

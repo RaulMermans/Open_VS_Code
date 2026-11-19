@@ -1,7 +1,7 @@
 import ts from "typescript"
 
-/** Binder errors that make a file invalid on its own (no module resolution needed): duplicate declarations. */
-const SELF_CONTAINED = new Set([2300, 2393, 2451, 2528, 2440])
+/** Errors that make a file invalid on its own (no module resolution needed): duplicate declarations and await outside async. */
+const SELF_CONTAINED = new Set([2300, 2393, 2451, 2528, 2440, 1308]) // 1308: await inside a function that is not async
 
 /**
  * Problems in proposed JS/TS content that can be seen from the file alone: syntax errors and duplicate
@@ -10,7 +10,7 @@ const SELF_CONTAINED = new Set([2300, 2393, 2451, 2528, 2440])
  */
 export function proposedContentProblems(path: string, content: string): string[] {
   if (!/\.(?:tsx?|jsx?|mts|cts|mjs|cjs)$/i.test(path)) return []
-  const options: ts.CompilerOptions = { noResolve: true, noLib: true, allowJs: true, checkJs: false, noEmit: true, types: [], skipLibCheck: true }
+  const options: ts.CompilerOptions = { noResolve: true, noLib: true, allowJs: true, checkJs: true, noEmit: true, types: [], skipLibCheck: true }
   const host = ts.createCompilerHost(options)
   const original = host.getSourceFile.bind(host)
   host.getSourceFile = (name, languageVersion, ...rest) => name === "/proposed/" + path.split("/").pop()
