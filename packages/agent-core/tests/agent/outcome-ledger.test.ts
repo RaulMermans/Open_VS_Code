@@ -61,3 +61,14 @@ test("the current work unit is the first outstanding outcome, with its own brief
   assert.equal(currentWorkUnit(next)?.id, "O2")
   assert.match(formatWorkUnit(next), /done: O1/)
 })
+
+test("a section that asks for tests is not met by its code alone", () => {
+  const o = deriveOutcomes(`## Phase 1 — Qualification\nAdd \`QUALIFY_ALIAS\` checking to the gateway.\n\nTest in isolation:\n- alias missing\n- wrong alias\n`)
+  assert.equal(o[0]!.testsRequired, true)
+  const code = { path: "src/gateway.ts", content: "const QUALIFY_ALIAS = 1; function qualification() {}" }
+  const codeOnly = evaluateOutcomes(o, [code], undefined)
+  assert.equal(codeOnly[0]!.status, "IN_PROGRESS")
+  assert.match(outcomeGaps(codeOnly)[0]!, /tests it asks for are not written/)
+  const withTest = evaluateOutcomes(o, [code, { path: "test/gateway.test.ts", content: "expect(QUALIFY_ALIAS)" }], undefined)
+  assert.equal(withTest[0]!.status, "UNVERIFIED")
+})
