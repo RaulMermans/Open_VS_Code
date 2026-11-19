@@ -68,7 +68,7 @@ test("a section that asks for tests is not met by its code alone", () => {
   const code = { path: "src/gateway.ts", content: "const QUALIFY_ALIAS = 1; function qualification() {}" }
   const codeOnly = evaluateOutcomes(o, [code], undefined)
   assert.equal(codeOnly[0]!.status, "IN_PROGRESS")
-  assert.match(outcomeGaps(codeOnly)[0]!, /tests it asks for are not written/)
+  assert.match(outcomeGaps(codeOnly)[0]!, /tests it asks for are not written.*Cases the request lists: alias missing; wrong alias/)
   const withTest = evaluateOutcomes(o, [code, { path: "test/gateway.test.ts", content: "expect(QUALIFY_ALIAS)" }], undefined)
   assert.equal(withTest[0]!.status, "UNVERIFIED")
 })
