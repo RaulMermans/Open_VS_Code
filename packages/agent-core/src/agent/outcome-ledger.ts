@@ -90,7 +90,9 @@ export function evaluateOutcomes(outcomes: readonly Outcome[], applied: readonly
     const relevant = scored.filter((m) => outcome.kind === "TESTS" ? isTest(m.file.path)
       : outcome.kind === "DOCUMENTATION" ? /\.md$/i.test(m.file.path) : !isTest(m.file.path) && !/\.md$/i.test(m.file.path))
     const files = relevant.map((m) => m.file.path)
-    const strong = relevant.some((m) => m.n >= 2 || m.n / Math.max(outcome.terms.length, 1) >= 0.25)
+    // A section that asks for tests is evidenced by its code and its tests together; tests alone never count.
+    const testEvidence = outcome.testsRequired === true && relevant.length > 0 ? scored.filter((m) => isTest(m.file.path)) : []
+    const strong = [...relevant, ...testEvidence].some((m) => m.n >= 2 || m.n / Math.max(outcome.terms.length, 1) >= 0.25)
     let status: OutcomeStatus = relevant.length === 0 ? "PENDING" : strong ? "IMPLEMENTED" : "IN_PROGRESS"
     const testsMissing = outcome.testsRequired === true && !scored.some((m) => isTest(m.file.path))
     if (testsMissing && status === "IMPLEMENTED") status = "IN_PROGRESS"
