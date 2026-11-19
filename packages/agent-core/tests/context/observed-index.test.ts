@@ -48,7 +48,7 @@ test("search and find results distinguish complete, incomplete and empty", () =>
 
 test("successful lookups pushed out of the recent window stay listed in a required index", () => {
   const observations = Array.from({ length: 9 }, (_, index) => read(`r${index}`, `src/file${index}.ts`))
-  const compiled = compileContext({ task: "Fix the bug.", projectInstructions: [], observations, budget })
+  const compiled = compileContext({ task: "Fix the bug.", projectInstructions: [], observations, budget, maxObservations: 6 })
   const index = compiled.items.find((item) => item.id === "observed-index")
   assert.ok(index, "an index is added when older observations are not shown")
   assert.equal(index.required, true)
@@ -61,11 +61,11 @@ test("the index leaves out failures and ALREADY_OBSERVED repeats, and is absent 
   const failed = createToolObservation({ toolName: "read_file", callId: "bad", error: { category: "NOT_FOUND", message: "missing" }, arguments: { path: "nope.ts" } })
   const repeat: ToolObservation = { ...read("rep", "src/file0.ts"), alreadyObserved: true }
   const observations = [failed, repeat, ...Array.from({ length: 8 }, (_, index) => read(`r${index}`, `src/file${index}.ts`))]
-  const index = compileContext({ task: "Fix the bug.", projectInstructions: [], observations, budget }).items.find((item) => item.id === "observed-index")
+  const index = compileContext({ task: "Fix the bug.", projectInstructions: [], observations, budget, maxObservations: 6 }).items.find((item) => item.id === "observed-index")
   assert.ok(index)
   assert.doesNotMatch(index.content, /nope\.ts/)
   assert.equal(index.content.match(/read_file \{"path":"src\/file0\.ts"\}/g)?.length, 1, "one line per distinct call")
-  const few = compileContext({ task: "Fix the bug.", projectInstructions: [], observations: [read("a", "a.ts"), read("b", "b.ts")], budget })
+  const few = compileContext({ task: "Fix the bug.", projectInstructions: [], observations: [read("a", "a.ts"), read("b", "b.ts")], budget, maxObservations: 6 })
   assert.equal(few.items.some((item) => item.id === "observed-index"), false)
 })
 

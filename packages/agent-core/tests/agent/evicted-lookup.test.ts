@@ -19,8 +19,8 @@ test("a file the context budget has dropped is given again on a re-read, not ref
     await mkdir(join(root, "docs"))
     await writeFile(join(root, "docs/a.md"), "ALPHA-MARKER\n" + "alpha line of context\n".repeat(120))
     await writeFile(join(root, "docs/b.md"), "BETA\n" + "beta line of context\n".repeat(400))
-    const budget = calculateBudget({ contextWindow: 24_000, reservedOutput: 300, reservedToolHistory: 300 })
-    const steps = [call("1", { path: "docs/a.md" }), ...[2, 3, 4, 5, 6, 7].map((n) => call(String(n), { path: "docs/b.md", startLine: n })), ...[8, 9].map((n) => call(String(n), { path: "docs/a.md" }))]
+    const budget = calculateBudget({ contextWindow: 3_000, reservedOutput: 300, reservedToolHistory: 300 })
+    const steps = [call("1", { path: "docs/a.md" }), call("2", { path: "docs/b.md" }), ...[3, 4, 5].map((n) => call(String(n), { path: "docs/a.md" }))]
     const provider = new ScriptedModelProvider(steps)
     const agent = new AgentRunner({ provider, registry: createReadOnlyToolRegistry(), eventFactory: { createId: () => "event", now: () => "2026-11-16T12:00:00.000Z" } })
     const result = await agent.run({ task: { id: "task", mode: "ASK", instruction: "Summarise docs/a.md." }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
