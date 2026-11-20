@@ -28,7 +28,7 @@ import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
 import { danglingReferences } from "../tools/json-references.ts"
-import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode } from "../tools/pre-write-check.ts"
+import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode, unresolvedTestReads } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
 import { unchangedFailures } from "./verification-stagnation.ts"
@@ -1997,6 +1997,13 @@ export class AgentRunner {
             if (firstTime.length > 0) {
               for (const ref of firstTime) session.danglingWarned!.add(`${proposedPath}|${ref.value}`)
               const message = `DANGLING_REFERENCE: ${proposedPath} refers to ${firstTime.map((ref) => `${ref.key} "${ref.value}"`).join(", ")}, but no JSON file in the workspace defines an id "${firstTime[0]!.value}" (ids that exist: ${firstTime[0]!.known.join(", ") || "none"}). Nothing was changed. Define it where the other ids are defined, or refer to one that exists; if it is defined outside the repository, send the same edit again.`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
+            const missingReads = unresolvedTestReads(session.input.workspaceRoot, proposedPath, proposedContent)
+            if (missingReads.length > 0) {
+              const message = `INVALID_TEST: this test reads a file that is not in the workspace (${missingReads.join("; ")}). Nothing was changed. Use a path that exists from this test file (join(__dirname, …) or a relative readFileSync).`
               this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
               this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
               return false
