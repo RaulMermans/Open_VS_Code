@@ -65,7 +65,7 @@ export function buildRunDiagnostics(input: {
     }
   }
   const applied = input.mutations.filter((mutation) => mutation.status === "APPLIED")
-  const lastMutationAt = applied.map((mutation) => mutation.timestamp ?? "").sort().at(-1)
+  const lastMutationAt = applied.map((mutation) => mutation.timestamp ?? "").toSorted().at(-1)
   const lastVerification = input.verifications.at(-1)
   const ranAfter = Boolean(lastVerification && (!lastMutationAt || (lastVerification.timestamp ?? "") >= lastMutationAt))
   const lastCall = input.toolCalls.at(-1)

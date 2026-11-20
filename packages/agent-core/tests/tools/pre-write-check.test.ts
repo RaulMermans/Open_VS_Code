@@ -28,7 +28,10 @@ test("await inside a non-async function is reported in .js and .ts; type and imp
   assert.deepEqual(proposedContentProblems("a.ts", "async function f() { return await import('node:fs') }\n"), [])
 })
 
-import { testExercisesNoProjectCode } from "../../src/tools/pre-write-check.ts"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { testExercisesNoProjectCode, unresolvedTestReads } from "../../src/tools/pre-write-check.ts"
 
 test("a test that imports no project code is reported; one that imports the module, or runs a process, is not", () => {
   const stub = "import { it, expect } from 'vitest'\nit('q', () => { const a = 'x'; expect(a).toBeDefined() })\n"
@@ -37,4 +40,21 @@ test("a test that imports no project code is reported; one that imports the modu
   assert.equal(testExercisesNoProjectCode("apps/a/test/q.test.ts", "import { it, expect } from 'vitest'\nimport { execFileSync } from 'node:child_process'\nit('cli', () => expect(execFileSync('node', ['x'])).toBeTruthy())\n"), undefined)
   assert.equal(testExercisesNoProjectCode("src/q.ts", stub), undefined)
   assert.equal(testExercisesNoProjectCode("a.test.ts", "import { it } from 'vitest'\nit('todo', () => {})\n"), undefined)
+})
+
+test("a test that join(__dirname) to a missing file is reported and a unique existing basename is named", () => {
+  const root = mkdtempSync(join(tmpdir(), "ovsc-reads-"))
+  try {
+    mkdirSync(join(root, "apps/halo-core/test"), { recursive: true })
+    mkdirSync(join(root, "config"), { recursive: true })
+    writeFileSync(join(root, "config/model-qualification.json"), "{}\n")
+    const src = "import { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\nconst p = join(__dirname, '..', '..', 'config', 'model-qualification.json')\nreadFileSync(p)\n"
+    const problems = unresolvedTestReads(root, "apps/halo-core/test/modelQualification.test.ts", src)
+    assert.match(problems[0] ?? "", /apps\/config\/model-qualification\.json does not exist/)
+    assert.match(problems[0] ?? "", /exists at config\/model-qualification.json/)
+    const ok = "import { join } from 'node:path'\njoin(__dirname, '..', '..', '..', 'config', 'model-qualification.json')\n"
+    assert.deepEqual(unresolvedTestReads(root, "apps/halo-core/test/modelQualification.test.ts", ok), [])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

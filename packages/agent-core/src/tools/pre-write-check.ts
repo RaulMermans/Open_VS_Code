@@ -1,3 +1,5 @@
+import { existsSync, readdirSync } from "node:fs"
+import { dirname, isAbsolute, join, normalize, relative } from "node:path"
 import ts from "typescript"
 
 /** Errors that make a file invalid on its own (no module resolution needed): duplicate declarations and await outside async. */
@@ -71,4 +73,74 @@ export function testExercisesNoProjectCode(path: string, content: string): strin
   visit(file)
   return specifiers.some((specifier) => !TEST_FRAMEWORK_OR_BUILTIN.test(specifier)) ? undefined
     : "this test file imports nothing from the project, so its assertions only check values defined in the test and it cannot fail when the project is wrong"
+}
+
+const READ_CALLS = new Set(["readFileSync", "readFile", "readFileSyncUtf8"])
+
+/**
+ * A test that reads a relative path which is not on disk (join(__dirname, …) or readFileSync("./…")).
+ * That file cannot load; the correction names the path that does exist when the basename is unique.
+ */
+export function unresolvedTestReads(workspaceRoot: string, path: string, content: string): string[] {
+  if (!TEST_FILE.test(path)) return []
+  const fromFile = isAbsolute(path) ? path : join(workspaceRoot, path)
+  const file = ts.createSourceFile(fromFile, content, ts.ScriptTarget.Latest, false)
+  const missing: string[] = []
+  const visit = (node: ts.Node): void => {
+    const target = dirnameJoinTarget(fromFile, node) ?? literalReadTarget(fromFile, node)
+    if (target) {
+      const rel = relative(workspaceRoot, target)
+      if (rel && !rel.startsWith("..") && !isAbsolute(rel) && !existsSync(target)) {
+        const found = findWorkspaceFile(workspaceRoot, target.split(/[/\\]/).pop() ?? "")
+        const hint = found ? `; that name exists at ${found}` : ""
+        missing.push(`${rel} does not exist${hint}`)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return [...new Set(missing)].slice(0, 3)
+}
+
+function dirnameJoinTarget(fromFile: string, node: ts.Node): string | undefined {
+  if (!ts.isCallExpression(node)) return undefined
+  const callee = node.expression
+  if (!(ts.isIdentifier(callee) && callee.text === "join") && !(ts.isPropertyAccessExpression(callee) && callee.name.text === "join")) return undefined
+  const args = node.arguments
+  if (args.length < 2 || !ts.isIdentifier(args[0]!) || args[0].text !== "__dirname") return undefined
+  const parts: string[] = []
+  for (const arg of args.slice(1)) {
+    if (!ts.isStringLiteralLike(arg)) return undefined
+    parts.push(arg.text)
+  }
+  return normalize(join(dirname(fromFile), ...parts))
+}
+
+function literalReadTarget(fromFile: string, node: ts.Node): string | undefined {
+  if (!ts.isCallExpression(node) || node.arguments.length === 0) return undefined
+  const callee = node.expression
+  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : ""
+  if (!READ_CALLS.has(name)) return undefined
+  const first = node.arguments[0]!
+  if (!ts.isStringLiteralLike(first) || !first.text.startsWith(".")) return undefined
+  return normalize(join(dirname(fromFile), first.text))
+}
+
+function findWorkspaceFile(root: string, basename: string): string | undefined {
+  if (!basename || basename === "." || basename === "..") return undefined
+  const hits: string[] = []
+  const walk = (dir: string, depth: number): void => {
+    if (hits.length > 1 || depth < 0) return
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) walk(full, depth - 1)
+      else if (entry.isFile() && entry.name === basename) hits.push(relative(root, full).replaceAll("\\", "/"))
+      if (hits.length > 1) return
+    }
+  }
+  walk(root, 6)
+  return hits.length === 1 ? hits[0] : undefined
 }

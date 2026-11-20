@@ -1,6 +1,6 @@
-# Dependencies
+# Dependencies (including accidental workspace symlinks — never git-add these)
 node_modules/
-**/node_modules/
+**/node_modules
 .pnpm-store/
 !packages/agent-core/tests/fixtures/**/node_modules/
 !packages/agent-core/tests/fixtures/**/node_modules/**

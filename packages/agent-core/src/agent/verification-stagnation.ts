@@ -1,6 +1,6 @@
 import type { ToolObservation } from "./observations.ts"
 
-const ANSI = /\u001b\[[0-9;]*m/g
+const ANSI = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g")
 // Lines that name a failing test or suite in the common runners (vitest/jest, node:test/TAP, pytest, go test).
 const FAILING = /^\s*(?:[×✗✘✕]|FAIL(?:ED)?\b|not ok\b|--- FAIL\b|ERROR\b)\s*(.*)$/i
 

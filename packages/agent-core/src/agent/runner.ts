@@ -28,7 +28,7 @@ import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
 import { danglingReferences } from "../tools/json-references.ts"
-import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode } from "../tools/pre-write-check.ts"
+import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode, unresolvedTestReads } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
 import { unchangedFailures } from "./verification-stagnation.ts"
@@ -2001,6 +2001,13 @@ export class AgentRunner {
               this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
               return false
             }
+            const missingReads = unresolvedTestReads(session.input.workspaceRoot, proposedPath, proposedContent)
+            if (missingReads.length > 0) {
+              const message = `INVALID_TEST: this test reads a file that is not in the workspace (${missingReads.join("; ")}). Nothing was changed. Use a path that exists from this test file (join(__dirname, …) or a relative readFileSync).`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
             const emptyTest = testExercisesNoProjectCode(proposedPath, proposedContent)
             if (emptyTest) {
               const message = `INVALID_TEST: ${emptyTest}. Nothing was changed. Import the module under test (for example the file you implemented) and assert on what it returns or does.`
@@ -3453,7 +3460,7 @@ export class AgentRunner {
         path,
         content: (await readFile(isAbsolute(path) ? path : join(session.input.workspaceRoot, path), "utf8").catch(() => "")).slice(0, 40_000),
       })))
-      const lastEdit = evidence.mutationOutcomes.filter((m) => m.status === "APPLIED").map((m) => m.timestamp).sort().at(-1) ?? ""
+      const lastEdit = evidence.mutationOutcomes.filter((m) => m.status === "APPLIED").map((m) => m.timestamp).toSorted().at(-1) ?? ""
       const lastVerification = evidence.verificationOutcomes.at(-1)
       const unchangedFailure = lastVerification?.status === "FAIL" && unchangedFailures(session.observations).length > 0
       session.outcomes = evaluateOutcomes(derived, files, lastVerification ? { status: unchangedFailure ? "UNCHANGED_FAILURE" : lastVerification.status, afterLastEdit: lastVerification.timestamp >= lastEdit } : undefined)

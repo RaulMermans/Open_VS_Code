@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -13,7 +14,6 @@ import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.t
 
 const budget = calculateBudget({ contextWindow: 8_000, reservedOutput: 400, reservedToolHistory: 400 })
 const call = (id: string, name: string, args: Record<string, unknown>): ModelResponse => ({ model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id, name, arguments: args }] })
-const sleepBeforeNextTurn = () => new Promise((done) => setTimeout(done, 15))
 
 test("a work unit pauses with its state kept; a unit that changed nothing is not continued", async () => {
   const root = await mkdtemp(join(tmpdir(), "ovsc-unit-"))
@@ -142,6 +142,33 @@ test("writing a test file triggers a test run in the same turn, without the mode
     assert.ok(result.toolCalls.some((record) => record.name === "run_verification"))
     // a second outcome is still open, so the end-of-task check has not happened yet: the run came from the test file itself
     assert.match(JSON.stringify(provider.requests[1]), /Verification Status/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a test that reads a missing join(__dirname) path is not written", async () => {
+  const { MutationEngine } = await import("../../src/tools/mutation-engine.ts")
+  const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
+  const { ToolRegistry } = await import("../../src/tools/registry.ts")
+  const root = await mkdtemp(join(tmpdir(), "ovsc-badread-"))
+  try {
+    await mkdir(join(root, "apps/halo-core/test"), { recursive: true })
+    await mkdir(join(root, "config"), { recursive: true })
+    await writeFile(join(root, "config/model-qualification.json"), "{}\n")
+    const content = "import { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\nimport { expect, it } from 'vitest'\nconst p = join(__dirname, '..', '..', 'config', 'model-qualification.json')\nit('q', () => expect(JSON.parse(readFileSync(p, 'utf8'))).toBeDefined())\n"
+    const registry = new ToolRegistry([...createMutationToolRegistrations({ engine: new MutationEngine(root) })])
+    const provider = new ScriptedModelProvider([
+      call("t1", "create_file", { path: "apps/halo-core/test/modelQualification.test.ts", content }),
+      { model: "scripted", message: { role: "assistant", content: "Done." } },
+    ])
+    const agent = new AgentRunner({ provider, registry, eventFactory: { createId: () => "event", now: () => "2026-11-16T12:00:00.000Z" } })
+    await agent.run({ task: { id: "task", mode: "BUILD", instruction: "Add qualification tests." }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
+    await access(join(root, "apps/halo-core/test/modelQualification.test.ts")).then(
+      () => { throw new Error("missing-path test must not be written") },
+      () => undefined,
+    )
+    assert.match(JSON.stringify(provider.requests.at(-1)), /INVALID_TEST.*apps\/config\/model-qualification\.json/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
