@@ -68,7 +68,15 @@ test("a section that asks for tests is not met by its code alone", () => {
   const code = { path: "src/gateway.ts", content: "const QUALIFY_ALIAS = 1; function qualification() {}" }
   const codeOnly = evaluateOutcomes(o, [code], undefined)
   assert.equal(codeOnly[0]!.status, "IN_PROGRESS")
-  assert.match(outcomeGaps(codeOnly)[0]!, /tests it asks for are not written/)
+  assert.match(outcomeGaps(codeOnly)[0]!, /tests it asks for are not written.*Cases the request lists: alias missing; wrong alias/)
   const withTest = evaluateOutcomes(o, [code, { path: "test/gateway.test.ts", content: "expect(QUALIFY_ALIAS)" }], undefined)
   assert.equal(withTest[0]!.status, "UNVERIFIED")
+})
+
+test("a section's tests count toward it once its code is edited, but tests alone do not", () => {
+  const o = deriveOutcomes(`## Phase 1 — Qualification\nImplement \`QUALIFY_ALIAS\` and \`alias-q4km\` checking at startup.\n\nTest in isolation:\n- alias missing\n`)
+  const config = { path: "config/routes.json", content: "alias-q4km" }
+  const test = { path: "test/q.test.ts", content: "expect(QUALIFY_ALIAS).toBe('alias-q4km')" }
+  assert.equal(evaluateOutcomes(o, [config, test], undefined)[0]!.status, "UNVERIFIED")
+  assert.equal(evaluateOutcomes(o, [test], undefined)[0]!.status, "PENDING")
 })

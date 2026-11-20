@@ -27,9 +27,11 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
-import { exportedTypeShapeChanged, proposedContentProblems } from "../tools/pre-write-check.ts"
+import { danglingReferences } from "../tools/json-references.ts"
+import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
+import { unchangedFailures } from "./verification-stagnation.ts"
 import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
@@ -154,6 +156,7 @@ interface Session {
   progressGuard?: DirectProgressGuard | undefined
   nonProgress?: DirectNonProgressEvidence | undefined
   timeoutOccurred?: boolean | undefined
+  /** Contract-fault signature → the turn it first happened on. */
   contractFaults?: Map<string, number>
   /** Identical refusals (tool + category + message) per workspace state; see #recordRefusal. */
   refusals?: Map<string, number>
@@ -168,6 +171,8 @@ interface Session {
   autoVerifyPending?: boolean
   /** Files whose proposed edit changed an exported type; checked by an early typecheck after the turn's edits. */
   typeShapePaths?: Set<string>
+  /** `path|value` pairs already warned about as dangling references; a repeated edit goes through. */
+  danglingWarned?: Set<string>
   /** Applied-edit count when the completion gate last nudged; the nudge limit resets when it grows. */
   gateAppliedMark?: number
   /** Context items the latest model request actually contained (older observations are reduced to an index line). */
@@ -500,10 +505,20 @@ export class AgentRunner {
       } else {
         this.#emit("permission.rejected", { callId: pending.prepared.id, name: pending.prepared.name })
       }
-      this.#addErrorObservation(pending.prepared, "PERMISSION_REJECTED", "Caller rejected this tool request", "REJECTED")
+      // A brief with several outcomes survives one declined edit: the decline is recorded and the rest continues.
+      const multiOutcome = isSubstantial(deriveOutcomes(session.input.task.instruction))
+      const declinedPath = String((pending.prepared.arguments as { path?: unknown }).path ?? "")
+      this.#addErrorObservation(
+        pending.prepared,
+        "PERMISSION_REJECTED",
+        multiOutcome && pending.prepared.definition.action === "write_file"
+          ? `The user declined this edit${declinedPath ? ` to ${declinedPath}` : ""}. Do not propose it again. Continue with the remaining outcomes and say in your final answer what was left undone.`
+          : "Caller rejected this tool request",
+        "REJECTED",
+      )
       if (pending.prepared.definition.action === "write_file") {
         session.mutationRejectedByUser = true
-        if (session.taskProfile.requiresCodeChange) {
+        if (session.taskProfile.requiresCodeChange && !multiOutcome) {
           const verdict = this.#codingGoalVerdict()
           if (verdict?.accept) {
             await this.#completeTask(verdict.summary)
@@ -892,6 +907,7 @@ export class AgentRunner {
         if (await this.#execute(pending.prepared, pending.signature)) return this.#result()
       }
     }
+    if (await this.#earlyChecks()) return this.#result()
     const afterApproval = this.#codingGoalVerdict()
     if (afterApproval?.accept && session.autoVerifyPending) {
       session.autoVerifyPending = false
@@ -1595,20 +1611,7 @@ export class AgentRunner {
           break
         }
       }
-      if (!stopped && session.typeShapePaths?.size && this.#additionalVerification().includes("TYPECHECK")) {
-        // One typecheck per turn, after the turn's edits, so a changed exported type shows the files it broke.
-        const changed = [...session.typeShapePaths]
-        session.typeShapePaths.clear()
-        const applied = session.evidenceCollector.getEvidence().mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && changed.some((path) => pathsReferToSameFile(mutation.path, path)))
-        const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification")?.name
-        if (applied && verifyName) {
-          await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TYPECHECK" } })
-          if (session.refusalStop) {
-            this.#finishRefusalStop()
-            stopped = true
-          }
-        }
-      }
+      if (!stopped && (await this.#earlyChecks())) stopped = true
       if (!stopped) {
         const afterTools = this.#codingGoalVerdict()
         if (afterTools?.accept && (session.autoVerifyPending || response.message.content.trim())) {
@@ -1624,6 +1627,39 @@ export class AgentRunner {
       }
     }
     return this.#result()
+  }
+
+  /**
+   * Checks that should not wait for the end of the task: the tests once a test file was written or changed, and a
+   * typecheck once an exported type changed. Each runs at most once per batch of edits. True when the run must stop.
+   */
+  async #earlyChecks(): Promise<boolean> {
+    const session = this.#requiredSession()
+    const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification")?.name
+    if (!verifyName) return false
+    if (this.#testFileEditedSinceVerification() && !session.environmentBlocked?.get("TEST")) {
+      if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }) || session.refusalStop) { this.#finishRefusalStop(); return true }
+      if (session.state.status === "WAITING_FOR_CONFIRMATION") return true // the run is waiting for the user to approve the test run
+    }
+    if (session.typeShapePaths?.size && this.#additionalVerification().includes("TYPECHECK")) {
+      const changed = [...session.typeShapePaths]
+      session.typeShapePaths.clear()
+      const applied = session.evidenceCollector.getEvidence().mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && changed.some((path) => pathsReferToSameFile(mutation.path, path)))
+      if (applied) {
+        if (await this.#handleCall({ id: `auto-verify-${session.turns}-types`, name: verifyName, arguments: { action: "TYPECHECK" } }) || session.refusalStop) { this.#finishRefusalStop(); return true }
+        if (session.state.status === "WAITING_FOR_CONFIRMATION") return true
+      }
+    }
+    return false
+  }
+
+  /** True when a test file was written or changed after the last verification (ordered by the collector's sequence). */
+  #testFileEditedSinceVerification(): boolean {
+    const evidence = this.#requiredSession().evidenceCollector.getEvidence()
+    const last = evidence.verificationOutcomes.at(-1)
+    return evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && isTestArtifactPath(mutation.path) && (
+      !last || (mutation.sequence !== undefined && last.sequence !== undefined ? mutation.sequence > last.sequence : mutation.timestamp > last.timestamp)
+    ))
   }
 
   /** Edits applied and outcomes met so far: what a work unit must increase to be worth continuing. */
@@ -1804,7 +1840,15 @@ export class AgentRunner {
       const diagnosisObservation = session.observations.toReversed().find((item) => item.toolName === "run_verification" && item.content.includes("### Diagnosis"))
       const diagnosis = diagnosisObservation ? `\n${diagnosisObservation.content.slice(diagnosisObservation.content.indexOf("### Diagnosis"), diagnosisObservation.content.indexOf("### Diagnosis") + 1_600)}` : ""
       const detail = diagnosis || (last?.failureSummary ? `\n${last.failureSummary}` : "")
-      this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
+      const unchanged = unchangedFailures(session.observations)
+      this.#addErrorObservation(
+        prepared,
+        "VERIFICATION_FAILED",
+        unchanged.length > 0
+          ? `These tests failed before and after your edits, so more edits will not clear them (they predate this task or come from the environment): ${unchanged.slice(0, 5).join("; ")}. Do not keep re-running or trying to fix them. Continue with the remaining requested work and list them as failing in your final answer.`
+          : `The last test run already failed. Change the code before running the tests again.${detail}`,
+        "DENIED",
+      )
       return false
     }
     if ((prepared.name === "rename_symbol" || prepared.name === "find_symbol") && await this.#answerCompletedRename(prepared)) return false
@@ -1948,6 +1992,22 @@ export class AgentRunner {
               return false
             }
             if (exportedTypeShapeChanged(proposedPath, before, proposedContent)) (session.typeShapePaths ??= new Set()).add(proposedPath)
+            const dangling = await danglingReferences(session.input.workspaceRoot, proposedPath, before, proposedContent).catch(() => [])
+            const firstTime = dangling.filter((ref) => !(session.danglingWarned ??= new Set()).has(`${proposedPath}|${ref.value}`))
+            if (firstTime.length > 0) {
+              for (const ref of firstTime) session.danglingWarned!.add(`${proposedPath}|${ref.value}`)
+              const message = `DANGLING_REFERENCE: ${proposedPath} refers to ${firstTime.map((ref) => `${ref.key} "${ref.value}"`).join(", ")}, but no JSON file in the workspace defines an id "${firstTime[0]!.value}" (ids that exist: ${firstTime[0]!.known.join(", ") || "none"}). Nothing was changed. Define it where the other ids are defined, or refer to one that exists; if it is defined outside the repository, send the same edit again.`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
+            const emptyTest = testExercisesNoProjectCode(proposedPath, proposedContent)
+            if (emptyTest) {
+              const message = `INVALID_TEST: ${emptyTest}. Nothing was changed. Import the module under test (for example the file you implemented) and assert on what it returns or does.`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
             const importProblems = await relativeImportProblems(session.input.workspaceRoot, proposedPath, proposedContent)
             if (importProblems.length > 0) {
               const message = describeImportProblems(importProblems, proposedPath, implementation)
@@ -3314,13 +3374,15 @@ export class AgentRunner {
   }
 
   #applyContractFault(toolName: string, message: string, code: string | undefined, path: string | undefined): { message: string; category?: string; stop: boolean } {
-    const fault = describeToolContractFault({ toolName, message, code, path })
+    const fault = describeToolContractFault({ toolName, message, code, path, workspaceRoot: this.#requiredSession().input.workspaceRoot })
     if (!fault) return { message, stop: false }
     const session = this.#requiredSession()
     const seen = session.contractFaults ?? (session.contractFaults = new Map())
-    const count = seen.get(fault.signature) ?? 0
-    if (count >= 1) return { message: fault.message, category: fault.category, stop: true }
-    seen.set(fault.signature, count + 1)
+    const first = seen.get(fault.signature)
+    // The same fault twice in one turn is one mistake: the model has not yet seen the correction. Stop only when
+    // it repeats the fault in a later turn, after the message reached it.
+    if (first !== undefined && session.turns > first) return { message: fault.message, category: fault.category, stop: true }
+    if (first === undefined) seen.set(fault.signature, session.turns)
     return { message: fault.message, category: fault.category, stop: false }
   }
 
@@ -3393,7 +3455,8 @@ export class AgentRunner {
       })))
       const lastEdit = evidence.mutationOutcomes.filter((m) => m.status === "APPLIED").map((m) => m.timestamp).sort().at(-1) ?? ""
       const lastVerification = evidence.verificationOutcomes.at(-1)
-      session.outcomes = evaluateOutcomes(derived, files, lastVerification ? { status: lastVerification.status, afterLastEdit: lastVerification.timestamp >= lastEdit } : undefined)
+      const unchangedFailure = lastVerification?.status === "FAIL" && unchangedFailures(session.observations).length > 0
+      session.outcomes = evaluateOutcomes(derived, files, lastVerification ? { status: unchangedFailure ? "UNCHANGED_FAILURE" : lastVerification.status, afterLastEdit: lastVerification.timestamp >= lastEdit } : undefined)
       gaps.push(...outcomeGaps(session.outcomes))
     }
     session.requirementGaps = gaps
@@ -3601,6 +3664,7 @@ export class AgentRunner {
       verifications: evidence.verificationOutcomes,
       pendingApproval: Boolean(session.pending),
       hasCheckpoint: Boolean(this.#checkpointCoordinator),
+      unchangedFailures: unchangedFailures(session.observations),
     })
   }
 

@@ -8,7 +8,7 @@
  */
 import { readFile, realpath, writeFile } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
-import { AgentSessionBridge } from "../src/bridge.ts"
+import { AgentSessionBridge, DEPENDENCY_MANIFEST } from "../src/bridge.ts"
 import type { IdeContextSnapshot, IdeHost } from "../src/contracts.ts"
 import { applyChatModelSelection, buildStarterRoutingConfig } from "../../vscode-integration/src/local-model-selection.ts"
 import { TypeScriptCodeIntelligence } from "../../agent-core/src/tools/typescript-code-intelligence.ts"
@@ -44,7 +44,8 @@ const host: IdeHost = {
   requestConfirmation: async (prompt: string, payload: any) => {
     const paths = Array.isArray(payload?.files) ? payload.files.map((file: any) => String(file.path)) : payload?.path ? [String(payload.path)] : []
     const cwd = payload?.preparedCommand?.cwd
-    const decision = paths.every(inside) && (!cwd || inside(cwd)) ? "APPROVE" : "REJECT"
+    // Dependency manifests are never auto-approved (a dependency or script change needs a person), like anything outside the workspace.
+    const decision = paths.every(inside) && !paths.some((path) => DEPENDENCY_MANIFEST.test(path)) && (!cwd || inside(cwd)) ? "APPROVE" : "REJECT"
     approvals.push({ prompt: prompt.slice(0, 300), decision })
     return decision
   },

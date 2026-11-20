@@ -19,6 +19,8 @@ export interface Outcome {
   readonly blocker?: string
   /** The section itself asks for tests ("Test in isolation: …"): its code is not done until a test file covers it. */
   readonly testsRequired?: boolean
+  /** The cases the section's own test list names (its bullets), quoted back when the tests are still owed. */
+  readonly testCases?: readonly string[]
 }
 
 export interface AppliedFile { readonly path: string; readonly content: string }
@@ -48,6 +50,22 @@ function termsOf(heading: string, body: string): string[] {
 }
 
 /** Outcomes the instruction asks for. Empty for anything that is not a multi-part engineering brief. */
+/** Bullet items under a line that starts with "test"/"verify" (the brief's own list of cases to cover). */
+function testCasesOf(body: string): string[] {
+  const lines = body.split("\n")
+  for (let start = 0; start < lines.length; start += 1) {
+    if (!/^\s*(?:[-*]\s*)?(?:test|tests|verify|add tests?)\b/i.test(lines[start]!)) continue
+    const cases: string[] = []
+    for (const line of lines.slice(start + 1)) {
+      const item = /^\s*[-*]\s+(.+)$/.exec(line)
+      if (item) cases.push(item[1]!.trim().slice(0, 100))
+      else if (line.trim()) break
+    }
+    if (cases.length > 0) return cases.slice(0, 10)
+  }
+  return []
+}
+
 export function deriveOutcomes(instruction: string): Outcome[] {
   const out: Outcome[] = []
   for (const { heading, body } of sections(instruction)) {
@@ -65,7 +83,7 @@ export function deriveOutcomes(instruction: string): Outcome[] {
     out.push({
       id: `O${out.length + 1}`, kind, title: heading.replace(/^Phase\s+\d+\s*[—:-]\s*/i, "").slice(0, 80), terms: termsOf(heading, body), brief: body.trim().slice(0, 900),
       status: external ? "BLOCKED" : "PENDING", files: [],
-      ...(kind === "IMPLEMENTATION" && /^\s*(?:[-*]\s*)?(?:test|tests|verify|add tests?)\b/im.test(body) ? { testsRequired: true } : {}),
+      ...(kind === "IMPLEMENTATION" && /^\s*(?:[-*]\s*)?(?:test|tests|verify|add tests?)\b/im.test(body) ? { testsRequired: true, testCases: testCasesOf(body) } : {}),
       ...(external ? { blocker: "needs the operator's explicit approval; not performed" } : {}),
     })
   }
@@ -90,7 +108,9 @@ export function evaluateOutcomes(outcomes: readonly Outcome[], applied: readonly
     const relevant = scored.filter((m) => outcome.kind === "TESTS" ? isTest(m.file.path)
       : outcome.kind === "DOCUMENTATION" ? /\.md$/i.test(m.file.path) : !isTest(m.file.path) && !/\.md$/i.test(m.file.path))
     const files = relevant.map((m) => m.file.path)
-    const strong = relevant.some((m) => m.n >= 2 || m.n / Math.max(outcome.terms.length, 1) >= 0.25)
+    // A section that asks for tests is evidenced by its code and its tests together; tests alone never count.
+    const testEvidence = outcome.testsRequired === true && relevant.length > 0 ? scored.filter((m) => isTest(m.file.path)) : []
+    const strong = [...relevant, ...testEvidence].some((m) => m.n >= 2 || m.n / Math.max(outcome.terms.length, 1) >= 0.25)
     let status: OutcomeStatus = relevant.length === 0 ? "PENDING" : strong ? "IMPLEMENTED" : "IN_PROGRESS"
     const testsMissing = outcome.testsRequired === true && !scored.some((m) => isTest(m.file.path))
     if (testsMissing && status === "IMPLEMENTED") status = "IN_PROGRESS"
@@ -108,7 +128,7 @@ export function evaluateOutcomes(outcomes: readonly Outcome[], applied: readonly
 export function outcomeGaps(outcomes: readonly Outcome[]): string[] {
   return outcomes
     .filter((o) => (o.kind === "IMPLEMENTATION" || o.kind === "TESTS") && (o.status === "PENDING" || o.status === "IN_PROGRESS" || o.status === "FAILED"))
-    .map((o) => `${o.id} ${o.title}: ${o.status === "FAILED" ? "tests fail after its edits" : o.status === "PENDING" ? "no edit yet" : o.testsRequired ? "its code is edited but the tests it asks for are not written" : "edits do not yet cover it"}.`)
+    .map((o) => `${o.id} ${o.title}: ${o.status === "FAILED" ? "tests fail after its edits" : o.status === "PENDING" ? "no edit yet" : o.testsRequired ? `its code is edited but the tests it asks for are not written${o.testCases?.length ? ` in a test file that covers it. Cases the request lists: ${o.testCases.join("; ")}` : ""}` : "edits do not yet cover it"}.`)
     .slice(0, 6)
 }
 

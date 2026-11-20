@@ -60,7 +60,7 @@ jobs:
       - name: Run Deterministic Tests
         shell: bash
         run: npm test
-        # Each workspace test process uses --test-timeout=120000 and --test-force-exit.
+        # Each workspace test process uses --test-timeout=120000 (no forced exit, so late results are reported).
         # A stuck test fails at that deadline instead of holding the job open.
         # Real FPS (>10 frames, >=30 FPS) is exercised on Linux.
 

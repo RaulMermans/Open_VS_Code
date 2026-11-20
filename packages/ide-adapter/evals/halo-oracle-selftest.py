@@ -46,9 +46,41 @@ cases = [
     ("identity via request-time git", lambda w: (full(w), w("apps/halo-core/src/version.ts", "import {execSync} from 'node:child_process'\nexport const i={commit:execSync('git rev-parse HEAD'),dirty:1,builtAt:1,digest:1,release:1,provenance:1}\n")), "Incomplete: identity is not implemented safely.", "FAILED", [OK], "PARTIAL"),
     ("partial impl honest", lambda w: w("apps/halo-core/src/version.ts", "export const identity = { commit: 'abc', dirty: false, builtAt: 'now', digest: 'd', release: 'r1', provenance: 'build' }\n"), "Incomplete: tests and routes remaining.", "FAILED", [], "PARTIAL"),
 ]
+def staged(good):
+    def setup(w):
+        full(w); w("config/routes.json", json.dumps(ROUTES))
+        w("config/routes.staged.json", json.dumps({"routes": {"general": {"modelId": "g"}} if good else {"general": {"modelId": "g"}, "vision": {"modelId": "v"}}}))
+    return setup
+
+sup = [("staged routes file sets the supplementary flag only", staged(True), True, False),
+       ("staged file that still advertises vision does not", staged(False), False, False)]
+for name, setup, want_flag, want_cleaned in sup:
+    r = run(setup, "Incomplete: routes are staged, not applied.", "FAILED", [OK])
+    ok = r["supplementary"]["ROUTES_CLEANED_STAGED"] == want_flag and r["outcomes"]["ROUTES_CLEANED"] == want_cleaned and r["verdict"] == "PARTIAL"
+    print(("ok  " if ok else "FAIL"), name, "->", r["verdict"], r["supplementary"])
+    bad_sup = 0 if ok else 1
+def stub_tests(w):
+    full(w)
+    w("apps/halo-core/tests/qualify.test.ts", "import { it, expect } from 'vitest'\nit('q', () => { const a = 'qwen3-4b-q4km'; expect(a).toBeDefined() })\n")
+
+def real_tests(w):
+    full(w)
+    w("apps/halo-core/tests/qualify.test.ts", "import { it, expect } from 'vitest'\nimport { qualify } from '../src/version'\nit('q', () => { expect(qualify('qwen3-4b-q4km')).toBe(true) })\n")
+
+for name, setup, key, want in [
+        ("stub test with only local constants is not project-exercising", stub_tests, "QUALIFY_TESTS_EXERCISE_PROJECT_CODE", False),
+        ("test importing project code is project-exercising", real_tests, "QUALIFY_TESTS_EXERCISE_PROJECT_CODE", True),
+        ("route to a model id missing from models.json is inconsistent", lambda w: (full(w), w("config/routes.json", json.dumps({"routes": {"general": {"modelId": "ghost"}}}))), "ROUTES_CONSISTENT", False),
+        ("route to a registered model is consistent", lambda w: full(w), "ROUTES_CONSISTENT", True),
+        ("identity tests under another file name count by content", lambda w: (full(w), w("apps/halo-core/tests/build.test.ts", "import { it, expect } from 'vitest'\nimport { getIdentity } from '../src/version'\nit('identity', () => { const i = getIdentity(); expect(i.commit).toBeDefined(); expect(i.digest).toBeDefined(); expect(i.provenance).toBe('build') })\n")), "IDENTITY_TESTS_BY_CONTENT", True),
+        ("a test that only mentions identity words and runs no project code does not", lambda w: (full(w), w("apps/halo-core/tests/build.test.ts", "import { it, expect } from 'vitest'\nit('x', () => { expect(['commit','digest','provenance']).toHaveLength(3) })\n")), "IDENTITY_TESTS_BY_CONTENT", False)]:
+    r = run(setup, "Done.", "COMPLETED", [OK])
+    ok = r["supplementary"][key] == want
+    print(("ok  " if ok else "FAIL"), name, "->", key, r["supplementary"][key])
+    bad_sup += 0 if ok else 1
 bad = 0
 for name, setup, final, status, calls, want in cases:
     got = run(setup, final, status, calls)["verdict"]
     print(("ok  " if got == want else "FAIL"), name, "->", got, "" if got == want else f"(wanted {want})")
     bad += got != want
-sys.exit(1 if bad else 0)
+sys.exit(1 if (bad or bad_sup) else 0)

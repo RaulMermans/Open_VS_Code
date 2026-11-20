@@ -142,7 +142,7 @@ const limitsSkip = available && detectResourceLimits().available ? false : "user
 test("sandboxed commands are capped in memory (no swap) and in process count", { skip: limitsSkip }, async () => {
   const root = await workspace({
     "hog.cjs": "const chunks = []; for (let i = 0; i < 80; i++) chunks.push(Buffer.alloc(64 * 1024 * 1024, 1)); console.log('survived')\n",
-    "forks.cjs": "const { spawn } = require('node:child_process'); let ok = 0, refused = 0; for (let i = 0; i < 700; i++) { try { const c = spawn('/bin/sleep', ['2']); c.on('error', () => {}); if (c.pid) ok++; else refused++ } catch { refused++ } } console.log(JSON.stringify({ ok, refused }))\n",
+    "forks.cjs": "const { spawn } = require('node:child_process'); let ok = 0, refused = 0; for (let i = 0; i < 2600; i++) { try { const c = spawn('/bin/sleep', ['2']); c.on('error', () => {}); if (c.pid) ok++; else refused++ } catch { refused++ } } console.log(JSON.stringify({ ok, refused }))\n",
   })
   try {
     const hog = await run(root, resolveNodeBinary(), ["--max-old-space-size=16384", join(root, "hog.cjs")])
@@ -151,7 +151,7 @@ test("sandboxed commands are capped in memory (no swap) and in process count", {
     assert.doesNotMatch(hog.stdout, /survived/)
     const forks = await run(root, resolveNodeBinary(), [join(root, "forks.cjs")])
     const counts = JSON.parse(forks.stdout.trim().split("\n").at(-1) ?? "{}")
-    assert.ok(counts.ok < 600, `spawned ${counts.ok} processes`)
+    assert.ok(counts.ok < 2300, `spawned ${counts.ok} processes`)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

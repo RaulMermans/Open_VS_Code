@@ -48,3 +48,27 @@ export function exportedTypeShapeChanged(path: string, before: string, after: st
   const previous = shapes(before)
   return [...next].some(([name, text]) => previous.get(name) !== text)
 }
+
+const TEST_FILE = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$)|(?:(?:^|\/)(?:__tests__|tests?)\/[^/]+\.[cm]?[jt]sx?$)/i
+const TEST_FRAMEWORK_OR_BUILTIN = /^(?:vitest|jest|@jest\/.*|@vitest\/.*|chai|mocha|sinon|@testing-library\/.*|node:.*|fs|path|url|os|assert|crypto|child_process|util|events|stream|buffer)$/
+
+/**
+ * A JS/TS test file that asserts but imports nothing from the project (only a test framework and Node built-ins)
+ * checks values it defines itself, so it cannot fail when the project is wrong. Black-box tests that start a
+ * process or call over the network are left alone.
+ */
+export function testExercisesNoProjectCode(path: string, content: string): string | undefined {
+  if (!TEST_FILE.test(path)) return undefined
+  if (!/\b(?:expect|assert)\b/.test(content)) return undefined
+  if (/\b(?:spawn(?:Sync)?|exec(?:File)?(?:Sync)?|fork|fetch)\s*\(|supertest|playwright/i.test(content)) return undefined
+  const file = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, false)
+  const specifiers: string[] = []
+  const visit = (node: ts.Node): void => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) specifiers.push(node.moduleSpecifier.text)
+    if (ts.isCallExpression(node) && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]!) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) specifiers.push((node.arguments[0] as ts.StringLiteralLike).text)
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return specifiers.some((specifier) => !TEST_FRAMEWORK_OR_BUILTIN.test(specifier)) ? undefined
+    : "this test file imports nothing from the project, so its assertions only check values defined in the test and it cannot fail when the project is wrong"
+}
