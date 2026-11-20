@@ -907,6 +907,7 @@ export class AgentRunner {
         if (await this.#execute(pending.prepared, pending.signature)) return this.#result()
       }
     }
+    if (await this.#earlyChecks()) return this.#result()
     const afterApproval = this.#codingGoalVerdict()
     if (afterApproval?.accept && session.autoVerifyPending) {
       session.autoVerifyPending = false
@@ -1610,20 +1611,7 @@ export class AgentRunner {
           break
         }
       }
-      if (!stopped && session.typeShapePaths?.size && this.#additionalVerification().includes("TYPECHECK")) {
-        // One typecheck per turn, after the turn's edits, so a changed exported type shows the files it broke.
-        const changed = [...session.typeShapePaths]
-        session.typeShapePaths.clear()
-        const applied = session.evidenceCollector.getEvidence().mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && changed.some((path) => pathsReferToSameFile(mutation.path, path)))
-        const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification")?.name
-        if (applied && verifyName) {
-          await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TYPECHECK" } })
-          if (session.refusalStop) {
-            this.#finishRefusalStop()
-            stopped = true
-          }
-        }
-      }
+      if (!stopped && (await this.#earlyChecks())) stopped = true
       if (!stopped) {
         const afterTools = this.#codingGoalVerdict()
         if (afterTools?.accept && (session.autoVerifyPending || response.message.content.trim())) {
@@ -1639,6 +1627,39 @@ export class AgentRunner {
       }
     }
     return this.#result()
+  }
+
+  /**
+   * Checks that should not wait for the end of the task: the tests once a test file was written or changed, and a
+   * typecheck once an exported type changed. Each runs at most once per batch of edits. True when the run must stop.
+   */
+  async #earlyChecks(): Promise<boolean> {
+    const session = this.#requiredSession()
+    const verifyName = this.#registry.listDefinitions().find((definition) => definition.name === "run_verification")?.name
+    if (!verifyName) return false
+    if (this.#testFileEditedSinceVerification() && !session.environmentBlocked?.get("TEST")) {
+      if (await this.#handleCall({ id: `auto-verify-${session.turns}`, name: verifyName, arguments: { action: "TEST" } }) || session.refusalStop) { this.#finishRefusalStop(); return true }
+      if (session.state.status === "WAITING_FOR_CONFIRMATION") return true // the run is waiting for the user to approve the test run
+    }
+    if (session.typeShapePaths?.size && this.#additionalVerification().includes("TYPECHECK")) {
+      const changed = [...session.typeShapePaths]
+      session.typeShapePaths.clear()
+      const applied = session.evidenceCollector.getEvidence().mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && changed.some((path) => pathsReferToSameFile(mutation.path, path)))
+      if (applied) {
+        if (await this.#handleCall({ id: `auto-verify-${session.turns}-types`, name: verifyName, arguments: { action: "TYPECHECK" } }) || session.refusalStop) { this.#finishRefusalStop(); return true }
+        if (session.state.status === "WAITING_FOR_CONFIRMATION") return true
+      }
+    }
+    return false
+  }
+
+  /** True when a test file was written or changed after the last verification (ordered by the collector's sequence). */
+  #testFileEditedSinceVerification(): boolean {
+    const evidence = this.#requiredSession().evidenceCollector.getEvidence()
+    const last = evidence.verificationOutcomes.at(-1)
+    return evidence.mutationOutcomes.some((mutation) => mutation.status === "APPLIED" && isTestArtifactPath(mutation.path) && (
+      !last || (mutation.sequence !== undefined && last.sequence !== undefined ? mutation.sequence > last.sequence : mutation.timestamp > last.timestamp)
+    ))
   }
 
   /** Edits applied and outcomes met so far: what a work unit must increase to be worth continuing. */

@@ -120,3 +120,29 @@ test("declining one edit of a multi-outcome brief keeps the run going; a single-
     }
   }
 })
+
+test("writing a test file triggers a test run in the same turn, without the model asking for it", async () => {
+  const { MutationEngine } = await import("../../src/tools/mutation-engine.ts")
+  const { createMutationToolRegistrations } = await import("../../src/tools/mutation-registry.ts")
+  const { createVerificationToolRegistrations } = await import("../../src/tools/verification-registry.ts")
+  const { ToolRegistry } = await import("../../src/tools/registry.ts")
+  const root = await mkdtemp(join(tmpdir(), "ovsc-autotest-"))
+  try {
+    await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { test: "node check.js" } }))
+    await writeFile(join(root, "check.js"), "console.log('ran')\n")
+    await writeFile(join(root, "add.ts"), "export const add = (a: number, b: number) => a + b\n")
+    const registry = new ToolRegistry([...createMutationToolRegistrations({ engine: new MutationEngine(root) }), ...createVerificationToolRegistrations(root)])
+    const provider = new ScriptedModelProvider([
+      call("t1", "create_file", { path: "add.test.ts", content: "import { add } from './add.ts'\nimport { it } from 'node:test'\nimport assert from 'node:assert'\nit('adds', () => assert.equal(add(1, 2), 3))\n" }),
+      { model: "scripted", message: { role: "assistant", content: "Done." } },
+    ])
+    const agent = new AgentRunner({ provider, registry, eventFactory: { createId: () => "event", now: () => "2026-11-16T12:00:00.000Z" } })
+    let result = await agent.run({ task: { id: "task", mode: "BUILD", instruction: "# Brief\n\n## Phase 1 — Adder\nImplement add in add.ts and add a unit test for it.\n\n## Phase 2 — Multiplier\nImplement mul in mul.ts and test it.\n" }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: budget, projectInstructions: [] })
+    for (let guard = 0; result.status === "PAUSED" && guard < 10; guard += 1) result = await agent.resume("APPROVE")
+    assert.ok(result.toolCalls.some((record) => record.name === "run_verification"))
+    // a second outcome is still open, so the end-of-task check has not happened yet: the run came from the test file itself
+    assert.match(JSON.stringify(provider.requests[1]), /Verification Status/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
