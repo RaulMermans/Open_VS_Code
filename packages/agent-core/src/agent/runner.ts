@@ -30,6 +30,7 @@ import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
 import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
+import { unchangedFailures } from "./verification-stagnation.ts"
 import { actionAfterMutation, assessCodingCompletion, describeToolContractFault, excludedEditPaths, handRenamedBinding, implementationChangeRequired, isTestArtifactPath, mutationToolGuidance, pathsReferToSameFile, requestsExistingFileEdit, requestsNewTest, requiredEditPaths, type CodingCompletion } from "./tool-contract.ts"
 import { EvidenceLedger } from "./evidence.ts"
 import { RuntimeEvalEngine } from "../runtime-evals/runtime-eval-engine.ts"
@@ -1815,7 +1816,15 @@ export class AgentRunner {
       const diagnosisObservation = session.observations.toReversed().find((item) => item.toolName === "run_verification" && item.content.includes("### Diagnosis"))
       const diagnosis = diagnosisObservation ? `\n${diagnosisObservation.content.slice(diagnosisObservation.content.indexOf("### Diagnosis"), diagnosisObservation.content.indexOf("### Diagnosis") + 1_600)}` : ""
       const detail = diagnosis || (last?.failureSummary ? `\n${last.failureSummary}` : "")
-      this.#addErrorObservation(prepared, "VERIFICATION_FAILED", `The last test run already failed. Change the code before running the tests again.${detail}`, "DENIED")
+      const unchanged = unchangedFailures(session.observations)
+      this.#addErrorObservation(
+        prepared,
+        "VERIFICATION_FAILED",
+        unchanged.length > 0
+          ? `These tests failed before and after your edits, so more edits will not clear them (they predate this task or come from the environment): ${unchanged.slice(0, 5).join("; ")}. Do not keep re-running or trying to fix them. Continue with the remaining requested work and list them as failing in your final answer.`
+          : `The last test run already failed. Change the code before running the tests again.${detail}`,
+        "DENIED",
+      )
       return false
     }
     if ((prepared.name === "rename_symbol" || prepared.name === "find_symbol") && await this.#answerCompletedRename(prepared)) return false
@@ -3413,7 +3422,8 @@ export class AgentRunner {
       })))
       const lastEdit = evidence.mutationOutcomes.filter((m) => m.status === "APPLIED").map((m) => m.timestamp).sort().at(-1) ?? ""
       const lastVerification = evidence.verificationOutcomes.at(-1)
-      session.outcomes = evaluateOutcomes(derived, files, lastVerification ? { status: lastVerification.status, afterLastEdit: lastVerification.timestamp >= lastEdit } : undefined)
+      const unchangedFailure = lastVerification?.status === "FAIL" && unchangedFailures(session.observations).length > 0
+      session.outcomes = evaluateOutcomes(derived, files, lastVerification ? { status: unchangedFailure ? "UNCHANGED_FAILURE" : lastVerification.status, afterLastEdit: lastVerification.timestamp >= lastEdit } : undefined)
       gaps.push(...outcomeGaps(session.outcomes))
     }
     session.requirementGaps = gaps
@@ -3621,6 +3631,7 @@ export class AgentRunner {
       verifications: evidence.verificationOutcomes,
       pendingApproval: Boolean(session.pending),
       hasCheckpoint: Boolean(this.#checkpointCoordinator),
+      unchangedFailures: unchangedFailures(session.observations),
     })
   }
 

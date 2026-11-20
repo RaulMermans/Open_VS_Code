@@ -9,7 +9,7 @@ export interface RunDiagnostics {
   readonly lastTool?: { readonly name: string; readonly callId: string; readonly outcome: string }
   readonly appliedMutationIds: readonly string[]
   readonly pendingApproval: boolean
-  readonly verification: { readonly lastStatus?: string; readonly ranAfterLastMutation: boolean }
+  readonly verification: { readonly lastStatus?: string; readonly ranAfterLastMutation: boolean; /** Tests that failed identically before and after this run's edits (predate the task or the environment). */ readonly unchangedFailures?: readonly string[] }
   /** Safe to resume from the checkpoint without repeating applied writes. */
   readonly recoverable: boolean
   /** Contradictions the user would otherwise have to find by hand. */
@@ -40,6 +40,7 @@ export function buildRunDiagnostics(input: {
   readonly verifications: readonly { readonly status: string; readonly timestamp?: string }[]
   readonly pendingApproval: boolean
   readonly hasCheckpoint: boolean
+  readonly unchangedFailures?: readonly string[]
 }): RunDiagnostics {
   let turn = 0
   let lastToolEvent: string | undefined
@@ -86,7 +87,7 @@ export function buildRunDiagnostics(input: {
     ...(lastCall ? { lastTool: { name: lastCall.name, callId: lastCall.id, outcome: lastCall.outcome } } : {}),
     appliedMutationIds: applied.map((mutation) => mutation.mutationId),
     pendingApproval: input.pendingApproval,
-    verification: { ...(lastVerification ? { lastStatus: lastVerification.status } : {}), ranAfterLastMutation: ranAfter },
+    verification: { ...(lastVerification ? { lastStatus: lastVerification.status } : {}), ranAfterLastMutation: ranAfter, ...(input.unchangedFailures?.length ? { unchangedFailures: input.unchangedFailures.slice(0, 8) } : {}) },
     recoverable: input.hasCheckpoint && !input.pendingApproval && RECOVERABLE.has(input.failureReason ?? ""),
     inconsistencies,
   }
