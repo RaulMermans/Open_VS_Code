@@ -26,6 +26,6 @@ test("an unchanged failure does not mark an outcome FAILED, but a failure caused
   const outcomes = deriveOutcomes("## Phase 1 — Adder\nImplement the `sumTotals` helper in the billing module.\n\n## Phase 2 — Rounding\nFix the `roundTax` helper.\n")
   const edited = { path: "src/billing.ts", content: "export function sumTotals() {} export function roundTax() {}" }
   assert.equal(evaluateOutcomes(outcomes, [edited], { status: "FAIL", afterLastEdit: true })[0]!.status, "FAILED")
-  assert.equal(evaluateOutcomes(outcomes, [edited], { status: "UNCHANGED_FAILURE", afterLastEdit: true })[0]!.status, "IMPLEMENTED")
+  assert.equal(evaluateOutcomes(outcomes, [edited], { status: "UNCHANGED_FAILURE", afterLastEdit: true })[0]!.status, "UNVERIFIED")
   assert.equal(outcomeGaps(evaluateOutcomes(outcomes, [edited], { status: "UNCHANGED_FAILURE", afterLastEdit: true })).length, 0)
 })

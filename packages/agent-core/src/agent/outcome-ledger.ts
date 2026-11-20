@@ -121,9 +121,7 @@ export function evaluateOutcomes(outcomes: readonly Outcome[], applied: readonly
     else if (status === "IMPLEMENTED") {
       status = !verification || !verification.afterLastEdit ? "UNVERIFIED"
         : verification.status === "PASS" ? "VERIFIED"
-          : verification.status === "FAIL" ? "FAILED"
-            : verification.status === "UNCHANGED_FAILURE" ? "IMPLEMENTED"
-              : "UNVERIFIED"
+          : verification.status === "FAIL" ? "FAILED" : "UNVERIFIED"
     }
     return { ...outcome, status, files }
   })
