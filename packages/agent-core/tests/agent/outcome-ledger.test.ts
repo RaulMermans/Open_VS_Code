@@ -60,6 +60,8 @@ test("the current work unit is the first outstanding outcome, with its own brief
   const next = evaluateOutcomes(o, [edit], { status: "PASS", afterLastEdit: true })
   assert.equal(currentWorkUnit(next)?.id, "O2")
   assert.match(formatWorkUnit(next), /done: O1/)
+  const preexisting = evaluateOutcomes(o, [edit], { status: "UNCHANGED_FAILURE", afterLastEdit: true })
+  assert.equal(currentWorkUnit(preexisting)?.id, "O2")
 })
 
 test("a section that asks for tests is not met by its code alone", () => {
