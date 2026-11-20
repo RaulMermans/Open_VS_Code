@@ -13,7 +13,6 @@ import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.t
 
 const budget = calculateBudget({ contextWindow: 8_000, reservedOutput: 400, reservedToolHistory: 400 })
 const call = (id: string, name: string, args: Record<string, unknown>): ModelResponse => ({ model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id, name, arguments: args }] })
-const sleepBeforeNextTurn = () => new Promise((done) => setTimeout(done, 15))
 
 test("a work unit pauses with its state kept; a unit that changed nothing is not continued", async () => {
   const root = await mkdtemp(join(tmpdir(), "ovsc-unit-"))

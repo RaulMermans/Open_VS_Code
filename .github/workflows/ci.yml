@@ -45,6 +45,17 @@ jobs:
             test "$(cat /proc/sys/kernel/unprivileged_userns_clone)" = "1"
           fi
 
+      - name: Reject tracked node_modules
+        shell: bash
+        run: |
+          # A tracked packages/*/node_modules symlink makes npm ci fail with ENOTDIR.
+          tracked="$(git ls-files | grep -E '(^|/)node_modules(/|$)' | grep -v '^packages/agent-core/tests/fixtures/' || true)"
+          if [ -n "$tracked" ]; then
+            echo "Tracked node_modules would break npm ci:"
+            echo "$tracked"
+            exit 1
+          fi
+
       - name: Install dependencies
         shell: bash
         run: npm ci

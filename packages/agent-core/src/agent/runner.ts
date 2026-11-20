@@ -3453,7 +3453,7 @@ export class AgentRunner {
         path,
         content: (await readFile(isAbsolute(path) ? path : join(session.input.workspaceRoot, path), "utf8").catch(() => "")).slice(0, 40_000),
       })))
-      const lastEdit = evidence.mutationOutcomes.filter((m) => m.status === "APPLIED").map((m) => m.timestamp).sort().at(-1) ?? ""
+      const lastEdit = evidence.mutationOutcomes.filter((m) => m.status === "APPLIED").map((m) => m.timestamp).toSorted().at(-1) ?? ""
       const lastVerification = evidence.verificationOutcomes.at(-1)
       const unchangedFailure = lastVerification?.status === "FAIL" && unchangedFailures(session.observations).length > 0
       session.outcomes = evaluateOutcomes(derived, files, lastVerification ? { status: unchangedFailure ? "UNCHANGED_FAILURE" : lastVerification.status, afterLastEdit: lastVerification.timestamp >= lastEdit } : undefined)

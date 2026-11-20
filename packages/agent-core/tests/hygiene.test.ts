@@ -1,8 +1,12 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { promisify } from "node:util"
 import { fileURLToPath } from "node:url"
+
+const execFileAsync = promisify(execFile)
 
 const FORBIDDEN_IMPORT_PATTERNS = [
   /@kilocode\//,
@@ -119,5 +123,33 @@ test("repository does not contain model weight files", async () => {
 
   const weights = await findModelWeights(repoRoot)
   assert.equal(weights.length, 0, `Model weight files found in repository: ${weights.join(", ")}`)
+})
+
+async function findGitRoot(start: string): Promise<string> {
+  let dir = start
+  for (let i = 0; i < 10; i += 1) {
+    try {
+      await fs.access(path.join(dir, ".git"))
+      return dir
+    } catch {
+      dir = path.resolve(dir, "..")
+    }
+  }
+  throw new Error(`no git root above ${start}`)
+}
+
+test("git does not track workspace node_modules except allowlisted fixtures", async () => {
+  const repoRoot = await findGitRoot(process.cwd())
+  const { stdout } = await execFileAsync("git", ["ls-files", "-z"], { cwd: repoRoot })
+  const tracked = stdout.split("\0").filter(Boolean)
+  const forbidden = tracked.filter((file) => {
+    if (!/(^|\/)node_modules(\/|$)/.test(file)) return false
+    return !file.startsWith("packages/agent-core/tests/fixtures/")
+  })
+  assert.deepEqual(
+    forbidden,
+    [],
+    `Tracked node_modules entries break npm ci (ENOTDIR on a symlink): ${forbidden.join(", ")}`,
+  )
 })
 

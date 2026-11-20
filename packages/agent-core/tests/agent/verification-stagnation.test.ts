@@ -24,8 +24,8 @@ import { deriveOutcomes, evaluateOutcomes, outcomeGaps } from "../../src/agent/o
 
 test("an unchanged failure does not mark an outcome FAILED, but a failure caused by the edits does", () => {
   const outcomes = deriveOutcomes("## Phase 1 — Adder\nImplement the `sumTotals` helper in the billing module.\n\n## Phase 2 — Rounding\nFix the `roundTax` helper.\n")
-  const edit = { path: "src/billing.ts", content: "export function sumTotals() {} export function roundTax() {}" }
-  assert.equal(evaluateOutcomes(outcomes, [edit], { status: "FAIL", afterLastEdit: true })[0]!.status, "FAILED")
-  assert.equal(evaluateOutcomes(outcomes, [edit], { status: "UNCHANGED_FAILURE", afterLastEdit: true })[0]!.status, "UNVERIFIED")
-  assert.equal(outcomeGaps(evaluateOutcomes(outcomes, [edit], { status: "UNCHANGED_FAILURE", afterLastEdit: true })).length, 0)
+  const edited = { path: "src/billing.ts", content: "export function sumTotals() {} export function roundTax() {}" }
+  assert.equal(evaluateOutcomes(outcomes, [edited], { status: "FAIL", afterLastEdit: true })[0]!.status, "FAILED")
+  assert.equal(evaluateOutcomes(outcomes, [edited], { status: "UNCHANGED_FAILURE", afterLastEdit: true })[0]!.status, "UNVERIFIED")
+  assert.equal(outcomeGaps(evaluateOutcomes(outcomes, [edited], { status: "UNCHANGED_FAILURE", afterLastEdit: true })).length, 0)
 })

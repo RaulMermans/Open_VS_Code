@@ -100,19 +100,22 @@ function hits(outcome: Outcome, file: AppliedFile): number {
   return outcome.terms.filter((term) => haystack.includes(term)).length
 }
 
+function isTestPath(path: string): boolean {
+  return /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[a-z]+$/i.test(path)
+}
+
 export function evaluateOutcomes(outcomes: readonly Outcome[], applied: readonly AppliedFile[], verification: LedgerVerification | undefined): Outcome[] {
   return outcomes.map((outcome) => {
     if (outcome.kind === "EXTERNAL") return outcome
     const scored = applied.map((file) => ({ file, n: hits(outcome, file) })).filter((m) => m.n > 0)
-    const isTest = (p: string) => /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[a-z]+$/i.test(p)
-    const relevant = scored.filter((m) => outcome.kind === "TESTS" ? isTest(m.file.path)
-      : outcome.kind === "DOCUMENTATION" ? /\.md$/i.test(m.file.path) : !isTest(m.file.path) && !/\.md$/i.test(m.file.path))
+    const relevant = scored.filter((m) => outcome.kind === "TESTS" ? isTestPath(m.file.path)
+      : outcome.kind === "DOCUMENTATION" ? /\.md$/i.test(m.file.path) : !isTestPath(m.file.path) && !/\.md$/i.test(m.file.path))
     const files = relevant.map((m) => m.file.path)
     // A section that asks for tests is evidenced by its code and its tests together; tests alone never count.
-    const testEvidence = outcome.testsRequired === true && relevant.length > 0 ? scored.filter((m) => isTest(m.file.path)) : []
+    const testEvidence = outcome.testsRequired === true && relevant.length > 0 ? scored.filter((m) => isTestPath(m.file.path)) : []
     const strong = [...relevant, ...testEvidence].some((m) => m.n >= 2 || m.n / Math.max(outcome.terms.length, 1) >= 0.25)
     let status: OutcomeStatus = relevant.length === 0 ? "PENDING" : strong ? "IMPLEMENTED" : "IN_PROGRESS"
-    const testsMissing = outcome.testsRequired === true && !scored.some((m) => isTest(m.file.path))
+    const testsMissing = outcome.testsRequired === true && !scored.some((m) => isTestPath(m.file.path))
     if (testsMissing && status === "IMPLEMENTED") status = "IN_PROGRESS"
     if (status === "IMPLEMENTED" && outcome.kind === "DOCUMENTATION") status = "VERIFIED"
     else if (status === "IMPLEMENTED") {
