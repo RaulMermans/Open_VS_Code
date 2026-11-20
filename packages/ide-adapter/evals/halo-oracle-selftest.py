@@ -71,7 +71,9 @@ for name, setup, key, want in [
         ("stub test with only local constants is not project-exercising", stub_tests, "QUALIFY_TESTS_EXERCISE_PROJECT_CODE", False),
         ("test importing project code is project-exercising", real_tests, "QUALIFY_TESTS_EXERCISE_PROJECT_CODE", True),
         ("route to a model id missing from models.json is inconsistent", lambda w: (full(w), w("config/routes.json", json.dumps({"routes": {"general": {"modelId": "ghost"}}}))), "ROUTES_CONSISTENT", False),
-        ("route to a registered model is consistent", lambda w: full(w), "ROUTES_CONSISTENT", True)]:
+        ("route to a registered model is consistent", lambda w: full(w), "ROUTES_CONSISTENT", True),
+        ("identity tests under another file name count by content", lambda w: (full(w), w("apps/halo-core/tests/build.test.ts", "import { it, expect } from 'vitest'\nimport { getIdentity } from '../src/version'\nit('identity', () => { const i = getIdentity(); expect(i.commit).toBeDefined(); expect(i.digest).toBeDefined(); expect(i.provenance).toBe('build') })\n")), "IDENTITY_TESTS_BY_CONTENT", True),
+        ("a test that only mentions identity words and runs no project code does not", lambda w: (full(w), w("apps/halo-core/tests/build.test.ts", "import { it, expect } from 'vitest'\nit('x', () => { expect(['commit','digest','provenance']).toHaveLength(3) })\n")), "IDENTITY_TESTS_BY_CONTENT", False)]:
     r = run(setup, "Done.", "COMPLETED", [OK])
     ok = r["supplementary"][key] == want
     print(("ok  " if ok else "FAIL"), name, "->", key, r["supplementary"][key])

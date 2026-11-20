@@ -27,6 +27,7 @@ import type { SkillGuidance } from "../skills/contracts.ts"
 import type { ProjectInstruction } from "../context/compiler.ts"
 import { classifyTaskProfile, forbidsAllEdits, isSocialTurn, type TaskProfile } from "./task-profile.ts"
 import { CONVERSATIONAL_RESPONSE_GUIDANCE } from "./response-guidance.ts"
+import { danglingReferences } from "../tools/json-references.ts"
 import { exportedTypeShapeChanged, proposedContentProblems, testExercisesNoProjectCode } from "../tools/pre-write-check.ts"
 import { buildRunDiagnostics } from "./run-diagnostics.ts"
 import { currentWorkUnit, formatWorkUnit, deriveOutcomes, evaluateOutcomes, formatOutcomeReport, isSubstantial, outcomeGaps, type Outcome } from "./outcome-ledger.ts"
@@ -170,6 +171,8 @@ interface Session {
   autoVerifyPending?: boolean
   /** Files whose proposed edit changed an exported type; checked by an early typecheck after the turn's edits. */
   typeShapePaths?: Set<string>
+  /** `path|value` pairs already warned about as dangling references; a repeated edit goes through. */
+  danglingWarned?: Set<string>
   /** Applied-edit count when the completion gate last nudged; the nudge limit resets when it grows. */
   gateAppliedMark?: number
   /** Context items the latest model request actually contained (older observations are reduced to an index line). */
@@ -1968,6 +1971,15 @@ export class AgentRunner {
               return false
             }
             if (exportedTypeShapeChanged(proposedPath, before, proposedContent)) (session.typeShapePaths ??= new Set()).add(proposedPath)
+            const dangling = await danglingReferences(session.input.workspaceRoot, proposedPath, before, proposedContent).catch(() => [])
+            const firstTime = dangling.filter((ref) => !(session.danglingWarned ??= new Set()).has(`${proposedPath}|${ref.value}`))
+            if (firstTime.length > 0) {
+              for (const ref of firstTime) session.danglingWarned!.add(`${proposedPath}|${ref.value}`)
+              const message = `DANGLING_REFERENCE: ${proposedPath} refers to ${firstTime.map((ref) => `${ref.key} "${ref.value}"`).join(", ")}, but no JSON file in the workspace defines an id "${firstTime[0]!.value}" (ids that exist: ${firstTime[0]!.known.join(", ") || "none"}). Nothing was changed. Define it where the other ids are defined, or refer to one that exists; if it is defined outside the repository, send the same edit again.`
+              this.#addErrorObservation(prepared, "INVALID_PATCH", message, "FAILED")
+              this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
+              return false
+            }
             const emptyTest = testExercisesNoProjectCode(proposedPath, proposedContent)
             if (emptyTest) {
               const message = `INVALID_TEST: ${emptyTest}. Nothing was changed. Import the module under test (for example the file you implemented) and assert on what it returns or does.`
