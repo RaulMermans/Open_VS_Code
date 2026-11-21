@@ -48,14 +48,27 @@ export interface TaskProfile {
 }
 
 const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|mjs|cjs|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
+const EXAMPLE_PATH_REGEX = /(?:for example|e\.g\.|eg\.)[:\s]+[`'"]?((?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|mjs|cjs|ts|js|json|yml|yaml|txt|tsx|jsx))/gi
+
+/** Paths named only as illustrations ("for example foo.test.ts"), not edit targets. */
+export function exampleFilePaths(instruction: string): Set<string> {
+  const named = new Set<string>()
+  for (const match of instruction.matchAll(EXAMPLE_PATH_REGEX)) {
+    if (match[1]) named.add(match[1].replace(/^\.\//, ""))
+  }
+  return named
+}
 
 export function extractExplicitFilePaths(instruction: string): string[] {
   const userRequest = instruction.split("[Attached context]")[0] ?? instruction
   const matches = userRequest.match(FILE_PATH_REGEX) ?? []
+  const examples = exampleFilePaths(userRequest)
   const unique = new Set<string>()
   for (const match of matches) {
-    if (match.includes("/") || match.endsWith(".md") || match.endsWith(".ts") || match.endsWith(".js") || match.endsWith(".json")) {
-      unique.add(match.replace(/^\.\//, ""))
+    const path = match.replace(/^\.\//, "")
+    if (examples.has(path)) continue
+    if (path.includes("/") || path.endsWith(".md") || path.endsWith(".ts") || path.endsWith(".js") || path.endsWith(".json")) {
+      unique.add(path)
     }
   }
   return Array.from(unique)
@@ -84,6 +97,18 @@ function withoutNegatedEditClauses(instruction: string): string {
   return instruction.replace(new RegExp(NEGATED_EDIT, "gi"), " ")
 }
 
+/**
+ * The request is not "only add this test file": it also asks to implement or configure product behavior.
+ * Exclusive TEST_AUTHORING would then refuse the source edits the tests need.
+ */
+export function requestsProductWorkBeyondTests(instruction: string): boolean {
+  const head = instruction.split("[Attached context]")[0] ?? instruction
+  if (forbidsAllEdits(head)) return false
+  if (/\b(?:prepar(?:e|ed)|review(?:ed)?)\b[\s\S]{0,80}\bconfig(?:uration)?\b/i.test(head)) return true
+  if (/\benforc(?:e|ement)\b/i.test(head)) return true
+  return /\bimplement\b/i.test(head) && !/\bimplement(?:ing|ation)?\s+(?:the\s+)?tests?\b/i.test(head)
+}
+
 export function requestsCodeEdit(instruction: string): boolean {
   const head = withoutNegatedEditClauses(instruction.split("[Attached context]")[0] ?? instruction)
   if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch|change|edit|rename|replace)\b/i.test(head)) return true
@@ -92,12 +117,12 @@ export function requestsCodeEdit(instruction: string): boolean {
     && /\b(?:file|test|tests|function|implementation|code|method|body|title|export)\b/i.test(head)
 }
 
-/** Several headed sections, or a long request with many listed requirements. */
+/** Several headed sections, or a list of several requirements (isolation cases, acceptance items). */
 export function isMultiPartRequest(instruction: string): boolean {
   const head = instruction.split("[Attached context]")[0] ?? instruction
   const headings = head.match(/^#{1,6}\s+\S/gm)?.length ?? 0
   const items = head.match(/^\s*(?:\d+[.)]|[-*])\s+\S/gm)?.length ?? 0
-  return headings >= 3 || (head.length > 1_500 && items >= 5)
+  return headings >= 3 || items >= 5
 }
 
 export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"): TaskProfile {
@@ -164,7 +189,12 @@ export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"
 
   if (requiresCodeChange) {
     const editPaths = requiredEditPaths(instruction, explicitFiles)
-    if (editPaths.length > 0 && editPaths.every((path) => isTestArtifactPath(path)) && !forbidsTestEdits(instruction)) {
+    if (
+      editPaths.length > 0
+      && editPaths.every((path) => isTestArtifactPath(path))
+      && !forbidsTestEdits(instruction)
+      && !requestsProductWorkBeyondTests(instruction)
+    ) {
       const named = editPaths.join(", ")
       return {
         category: "TEST_AUTHORING",

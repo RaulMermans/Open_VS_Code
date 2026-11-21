@@ -898,10 +898,24 @@ test("MutationFailure has correct name and code", () => {
 
 test("default budgets are conservative", () => {
   assert.equal(DEFAULT_MUTATION_BUDGETS.maxFilesPerStep, 3)
-  assert.ok(DEFAULT_MUTATION_BUDGETS.maxTotalChangedBytes <= 10_000)
-  assert.ok(DEFAULT_MUTATION_BUDGETS.maxAddedLines <= 200)
+  assert.ok(DEFAULT_MUTATION_BUDGETS.maxTotalChangedBytes <= 32_768)
+  assert.ok(DEFAULT_MUTATION_BUDGETS.maxAddedLines <= 400)
   assert.ok(DEFAULT_MUTATION_BUDGETS.maxRemovedLines <= 100)
-  assert.ok(DEFAULT_MUTATION_BUDGETS.maxNewFileBytes <= 8_192)
+  assert.ok(DEFAULT_MUTATION_BUDGETS.maxNewFileBytes <= 32_768)
+})
+
+test("create accepts a qualification-sized test file under the default new-file budget", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const engine = deterministicEngine(ws)
+    const content = `import { describe, it, expect } from "vitest"\n${"it('case', () => { expect(true).toBe(true) })\n".repeat(180)}`
+    assert.ok(Buffer.byteLength(content) > 8_192)
+    assert.ok(Buffer.byteLength(content) <= DEFAULT_MUTATION_BUDGETS.maxNewFileBytes)
+    const prepared = await engine.prepareCreate({ operation: "create", path: "modelQualification.test.ts", content })
+    assert.equal(prepared.operation, "create")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
 })
 
 // --- No terminal or child_process ---

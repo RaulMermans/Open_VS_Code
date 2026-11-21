@@ -87,6 +87,8 @@ test("multi-part detection: headed sections or a long list of requirements", () 
   assert.equal(isMultiPartRequest("Fix the bug in src/a.ts."), false)
   const longList = `Please make the following changes to the reporting module. ${"Context sentence. ".repeat(80)}\n${Array.from({ length: 6 }, (_, index) => `${index + 1}. Requirement number ${index + 1}.`).join("\n")}`
   assert.equal(isMultiPartRequest(longList), true)
+  const compactList = ["Add qualification tests:", "- Expected alias advertised", "- Expected alias missing", "- Wrong alias", "- Provider authentication failure", "- Provider unavailable"].join("\n")
+  assert.equal(isMultiPartRequest(compactList), true)
   assert.equal(isMultiPartRequest("## One heading\nFix src/a.ts.\n## Two\nThanks."), false)
 })
 

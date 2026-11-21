@@ -80,7 +80,7 @@ const registrations: readonly ToolRegistration[] = [
   {
     definition: {
       name: "list_directory",
-      description: "List one directory (not recursive, up to 100 entries); says when the list is incomplete.",
+      description: "List a directory two levels deep (skips node_modules and similar, up to 100 entries); says when the list is incomplete.",
       action: "read_repository",
       inputSchema: { type: "object", properties: { path: { type: "string" } }, additionalProperties: false },
     },
@@ -89,7 +89,7 @@ const registrations: readonly ToolRegistration[] = [
       const path = optionalString(record, "path")
       return path ? { path } : {}
     },
-    execute: (input, context) => listDirectory(context.workspaceRoot, input.path as string | undefined, { maxEntries: 100 }),
+    execute: (input, context) => listDirectory(context.workspaceRoot, input.path as string | undefined, { maxEntries: 100, depth: 2 }),
   },
   {
     definition: {
