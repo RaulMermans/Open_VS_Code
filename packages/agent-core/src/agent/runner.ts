@@ -206,6 +206,15 @@ interface ObservedLookup {
  * commands, not by edits made outside the agent mid-task; add a directory mtime check if that shows up.
  */
 const REPLAYABLE_LOOKUPS = new Set(["list_directory", "find_files", "search_text", "find_symbol", "read_file"])
+/** Distinct directory listings on an edit task. Further listings delay the requested mutation without new structure. */
+const MAX_EDIT_TASK_DIRECTORY_LISTINGS = 6
+/** After this many turns with no applied edit, hide search/list so the model must read or mutate. */
+const MAX_EXPLORATION_TURNS_WITHOUT_EDIT = 6
+const MAX_READ_TURNS_WITHOUT_EDIT = 10
+const EXPLORATION_TOOLS = new Set(["list_directory", "find_files", "search_text", "find_symbol"])
+const READ_TOOLS = new Set(["read_file", "list_directory", "find_files", "search_text", "find_symbol"])
+const MISSING_SEARCH_HINT = "This string is not in the workspace. If the task requires this behavior, implement it with create_file or apply_patch; do not search for the same query again."
+const MISSING_FILES_HINT = "No file matched. If the task requires a new file, create it; do not keep searching for a path that is not there."
 interface CompletedRename {
   readonly path: string
   readonly symbol: string
@@ -1280,6 +1289,21 @@ export class AgentRunner {
       const isStandardToolsOnly = this.#registry
         .listDefinitions()
         .every((definition) => ["read_file", "list_directory", "find_files", "search_text"].includes(definition.name))
+      const directoryListings = session.toolCalls.filter((item) => item.name === "list_directory" && item.outcome === "COMPLETED" && item.alreadyObserved !== true).length
+      const mutationFacts = session.evidenceCollector.getEvidence().mutationOutcomes
+      const isProductSource = (path: string) => /\.(?:ts|tsx|js|mjs|cjs)$/.test(path) && !isTestArtifactPath(path)
+      const hasAppliedEdit = mutationFacts.some((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED")
+      const productSourceApplied = mutationFacts.some((mutation) => (mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED") && isProductSource(mutation.path))
+      const testFileApplied = mutationFacts.some((mutation) => (mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED") && isTestArtifactPath(mutation.path))
+      const testsStillOwed = session.taskProfile.requiresCodeChange && requestsNewTest(session.input.task.instruction) && !testFileApplied && productSourceApplied
+      const stopExploring = session.taskProfile.requiresCodeChange && (
+        (!hasAppliedEdit && session.turns >= MAX_EXPLORATION_TURNS_WITHOUT_EDIT)
+        || (testsStillOwed && hasAppliedEdit)
+      )
+      const forceMutation = session.taskProfile.requiresCodeChange && (
+        (!hasAppliedEdit && session.turns >= MAX_READ_TURNS_WITHOUT_EDIT)
+        || (testsStillOwed && hasAppliedEdit && session.turns >= MAX_READ_TURNS_WITHOUT_EDIT + 4)
+      )
       const tools = this.#registry
         .listDefinitions()
         .filter((definition) => !isStandardToolsOnly || allowedToolNames.has(definition.name))
@@ -1287,6 +1311,9 @@ export class AgentRunner {
         // Repair stage: after a failed run, the only useful next step is a code change. The test tool is not
         // offered again until something in the workspace changes (it would be refused anyway).
         .filter((definition) => definition.action !== "run_known_test" || !this.#verificationWaitingOnEdit(session))
+        .filter((definition) => definition.name !== "list_directory" || !session.taskProfile.requiresCodeChange || directoryListings < MAX_EDIT_TASK_DIRECTORY_LISTINGS)
+        .filter((definition) => !stopExploring || !EXPLORATION_TOOLS.has(definition.name))
+        .filter((definition) => !forceMutation || !READ_TOOLS.has(definition.name))
       const codingAssessment = session.taskProfile.requiresCodeChange ? this.#assessCoding("NOT_RUN") : undefined
       const editOutstanding = Boolean(codingAssessment && !codingAssessment.editsSatisfied)
       const verificationOutstanding = Boolean(codingAssessment?.editsSatisfied && !codingAssessment.verificationSatisfied)
@@ -1858,6 +1885,23 @@ export class AgentRunner {
       await this.#replayLookup(prepared, previousLookup, undefined)
       return false
     }
+    const appliedMutations = session.evidenceCollector.getEvidence().mutationOutcomes
+    const noAppliedYet = !appliedMutations.some((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED")
+    if (session.taskProfile.requiresCodeChange && noAppliedYet && EXPLORATION_TOOLS.has(prepared.name) && session.turns >= MAX_EXPLORATION_TURNS_WITHOUT_EDIT) {
+      this.#addErrorObservation(prepared, "DIRECTORY_BUDGET", "Exploration is done. Call create_file or apply_patch for the requested change. Do not search or list directories.", "DENIED")
+      return false
+    }
+    if (session.taskProfile.requiresCodeChange && noAppliedYet && READ_TOOLS.has(prepared.name) && session.turns >= MAX_READ_TURNS_WITHOUT_EDIT) {
+      this.#addErrorObservation(prepared, "DIRECTORY_BUDGET", "Enough of the repository has been read. Call create_file or apply_patch now.", "DENIED")
+      return false
+    }
+    if (prepared.name === "list_directory" && session.taskProfile.requiresCodeChange) {
+      const listings = session.toolCalls.filter((item) => item.name === "list_directory" && item.outcome === "COMPLETED" && item.alreadyObserved !== true).length
+      if (listings >= MAX_EDIT_TASK_DIRECTORY_LISTINGS) {
+        this.#addErrorObservation(prepared, "DIRECTORY_BUDGET", "You already listed directories. Read a specific file, search_text once, or apply the requested edit with create_file or apply_patch. Do not list another directory.", "DENIED")
+        return false
+      }
+    }
     if (prepared.name === "create_file") {
       const createdPath = String((prepared.arguments as { path?: unknown }).path ?? "")
       const createdContent = String((prepared.arguments as { content?: unknown }).content ?? "")
@@ -2202,6 +2246,13 @@ export class AgentRunner {
         maxContentBytes: this.#observationMaxBytes,
         ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}),
       })
+      if (session.taskProfile.requiresCodeChange && observation.ok) {
+        if (prepared.name === "search_text" && observation.content.startsWith("No matching text found")) {
+          observation = { ...observation, content: `${observation.content}\n${MISSING_SEARCH_HINT}` }
+        } else if (prepared.name === "find_files" && observation.content.startsWith("No matching files found.")) {
+          observation = { ...observation, content: `${observation.content}\n${MISSING_FILES_HINT}` }
+        }
+      }
       let rereadUnchanged = false
       rawContent = observation.content
       if (REPLAYABLE_LOOKUPS.has(prepared.name)) {
@@ -2577,6 +2628,8 @@ export class AgentRunner {
     const refusals = session.refusals ?? (session.refusals = new Map())
     const count = (refusals.get(key) ?? 0) + 1
     refusals.set(key, count)
+    // Listing budget denials are not a stuck refusal: the next useful action is an edit, not a stop.
+    if (category === "DIRECTORY_BUDGET") return
     if (count < REPEATED_REFUSAL_LIMIT) return
     session.refusalStop = true
     session.failureReason = "NON_PROGRESS"

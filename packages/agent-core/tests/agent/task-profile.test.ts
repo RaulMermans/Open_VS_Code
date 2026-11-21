@@ -44,6 +44,31 @@ test("adding a test file is test authoring, not a diagnosis", () => {
   assert.match(profile.toolGuidance, /test\/greeting\.test\.js/)
 })
 
+test("an example test filename is not an exclusive edit target", () => {
+  const instruction = "Add qualification tests. Name the test file so it is clearly about qualification (for example `modelQualification.test.ts`)."
+  assert.deepEqual(extractExplicitFilePaths(instruction), [])
+  const profile = classifyTaskProfile(instruction, "BUILD")
+  assert.notEqual(profile.category, "TEST_AUTHORING")
+  assert.doesNotMatch(profile.toolGuidance, /Do not modify any other file/)
+})
+
+test("tests plus configuration enforcement is implementation, not exclusive test authoring", () => {
+  const instruction = [
+    "Prepare a reviewed Core configuration with HALO_INFERENCE_QUALIFY_MODEL_ID.",
+    "Use existing ADR-032 model advertisement enforcement.",
+    "Add tests that import project modules.",
+    "Test in isolation:",
+    "- Expected alias advertised",
+    "- Expected alias missing",
+    "- Wrong alias",
+    "- Provider authentication failure",
+    "- Provider unavailable",
+  ].join("\n")
+  const profile = classifyTaskProfile(instruction, "BUILD")
+  assert.equal(profile.category, "IMPLEMENTATION")
+  assert.match(profile.toolGuidance, /locate the code each requirement concerns/)
+})
+
 test("implementing behavior while forbidding test edits is not test authoring", () => {
   const instruction = "Implement formatName, greet, and parseName so test/lib.test.ts passes. Use apply_patch. Do not change the test."
   const profile = classifyTaskProfile(instruction, "BUILD")

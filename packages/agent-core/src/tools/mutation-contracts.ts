@@ -126,11 +126,11 @@ export interface MutationBudgets {
 
 export const DEFAULT_MUTATION_BUDGETS: Readonly<MutationBudgets> = {
   maxFilesPerStep: 3,
-  maxTotalChangedBytes: 10_000,
-  maxAddedLines: 200,
+  maxTotalChangedBytes: 32_768,
+  maxAddedLines: 400,
   maxRemovedLines: 100,
-  maxNewFileBytes: 8_192,
-  maxDiffBytes: 16_384,
+  maxNewFileBytes: 32_768,
+  maxDiffBytes: 40_960,
 }
 
 // --- Sensitive Path Policy ---

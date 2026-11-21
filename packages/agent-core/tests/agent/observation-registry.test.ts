@@ -233,6 +233,110 @@ test("a failed lookup (missing path) is not cached, so it can succeed once the p
   }
 })
 
+test("an edit task is told to implement when search finds nothing", async () => {
+  const root = await fixture()
+  try {
+    const { result } = await run(root, [
+      call("s1", "search_text", { query: "HALO_INFERENCE_QUALIFY_MODEL_ID" }),
+      answer("The symbol is not in the repo; I will implement it."),
+    ], "Fix src/add.ts so add returns the sum.", countingRegistry(root))
+    assert.match(String(result.observations?.find((item) => item.callId === "s1")?.content), /implement it with create_file or apply_patch/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a read-only question does not tell the model to implement an empty search", async () => {
+  const root = await fixture()
+  try {
+    const { result } = await run(root, [
+      call("s1", "search_text", { query: "HALO_INFERENCE_QUALIFY_MODEL_ID" }),
+      answer("That string is not in the repository."),
+    ], "Where is HALO_INFERENCE_QUALIFY_MODEL_ID defined? Do not edit files.", countingRegistry(root))
+    assert.doesNotMatch(String(result.observations?.find((item) => item.callId === "s1")?.content), /implement it with create_file/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("after a source edit, search is dropped until the requested tests are written", async () => {
+  const root = await fixture()
+  try {
+    let laterTools: string[] = []
+    const { result } = await run(root, [
+      call("p1", "apply_patch", { path: "src/add.ts", search: "return a - b", replace: "return a + b" }),
+      (request) => {
+        laterTools = (request.tools ?? []).map((tool) => tool.name)
+        return answer("I will add tests next.")
+      },
+    ], "Fix src/add.ts so add returns the sum and add a test.", countingRegistry(root))
+    assert.equal(result.toolCalls.find((item) => item.name === "apply_patch")?.outcome, "COMPLETED")
+    assert.equal(laterTools.includes("search_text"), false)
+    assert.equal(laterTools.includes("create_file"), true)
+    assert.equal(laterTools.includes("apply_patch"), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("an edit task only offers mutation tools after ten turns without a mutation", async () => {
+  const root = await fixture()
+  try {
+    let laterTools: string[] = []
+    const { result } = await run(root, [
+      ...["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"].map((query, index) => call(`s${index}`, "search_text", { query })),
+      (request) => {
+        laterTools = (request.tools ?? []).map((tool) => tool.name)
+        return answer("I will edit now.")
+      },
+    ], "Fix src/add.ts so add returns the sum.", countingRegistry(root))
+    assert.ok(result.turns >= 10)
+    assert.equal(laterTools.includes("read_file"), false)
+    assert.equal(laterTools.includes("search_text"), false)
+    assert.equal(laterTools.includes("create_file"), true)
+    assert.equal(laterTools.includes("apply_patch"), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("an edit task drops search tools after six turns without a mutation", async () => {
+  const root = await fixture()
+  try {
+    let laterTools: string[] = []
+    const { result } = await run(root, [
+      ...["add", "sub", "mul", "div", "mod", "pow"].map((query, index) => call(`s${index}`, "search_text", { query })),
+      (request) => {
+        laterTools = (request.tools ?? []).map((tool) => tool.name)
+        return answer("I will edit src/add.ts now.")
+      },
+    ], "Fix src/add.ts so add returns the sum.", countingRegistry(root))
+    assert.ok(result.turns >= 6)
+    assert.equal(laterTools.includes("search_text"), false)
+    assert.equal(laterTools.includes("create_file"), true)
+    assert.equal(laterTools.includes("apply_patch"), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("an edit task cannot keep listing new directories instead of applying the change", async () => {
+  const root = await fixture()
+  try {
+    for (const name of ["a", "b", "c", "d", "e", "f", "g"]) await mkdir(join(root, name))
+    const { result } = await run(root, [
+      ...[".", "src", "a", "b", "c", "d", "e"].map((path, index) => call(`l${index}`, "list_directory", { path })),
+      answer("I will edit src/add.ts now."),
+    ], "Fix src/add.ts so add returns the sum.", countingRegistry(root))
+    const listed = result.toolCalls.filter((item) => item.name === "list_directory")
+    assert.ok(listed.filter((item) => item.outcome === "COMPLETED" && item.alreadyObserved !== true).length <= 6)
+    assert.equal(listed.at(-1)?.outcome, "DENIED")
+    assert.match(String(listed.at(-1) && result.observations?.find((item) => item.callId === listed.at(-1)?.id)?.content), /Do not list|Exploration is done/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("a lookup the permission policy denies is never answered from the registry", async () => {
   const root = await fixture()
   try {
