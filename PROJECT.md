@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. Branch `sprint/31-mvp-convergence` from `ff29fa4038`. Installed desktop stays `0.1.0-rc.25`. Native Agent Core is unchanged as the executor. An undefined test constructor is diagnosed as a missing package re-export. Live repair, external harnesses, and a new desktop package were not run. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
+Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. Branch `sprint/31-mvp-convergence` from `ff29fa4038`. Installed desktop stays `0.1.0-rc.25`. An undefined test constructor is diagnosed as a missing package re-export, including when tests load `dist`. A hand patch on a disposable copy of frozen i1 passes the qualification oracle and the existing inference tests. The model did not apply it. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
 
 Sprint 23 — Cross-file refactors and real-project dogfooding. Status: `CANDIDATE` `0.1.0-rc.23` (`794b2f9426`), **not installed**; daily driver stays `0.1.0-rc.21`. Five new tasks on a real repository through the GUI: rc.21 0/4 valid → rc.23 1 fully correct + 1 correct code missing requested tests; no false verification PASS, no unbounded loops. Remaining blocker: incomplete instruction-following (stale importer, missing tests, test-gaming). See `docs/sprints/SPRINT_23_DOGFOODING.md`.
 

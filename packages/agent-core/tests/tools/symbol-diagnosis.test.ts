@@ -87,6 +87,25 @@ test("an undefined constructor names the package entry that omits the existing c
   }
 })
 
+test("a built package entry tells the model that tests load dist", async () => {
+  const root = await fixture({
+    "packages/models/package.json": JSON.stringify({ name: "@acme/models", exports: { ".": { import: "./dist/index.js" } } }),
+    "packages/models/src/index.ts": "export { ConfigError } from './errors.js'\n",
+    "packages/models/src/errors.ts": "export class QualificationError extends Error {}\n",
+    "packages/models/dist/index.js": "export { ConfigError } from './errors.js'\n",
+    "packages/models/dist/errors.js": "export class ConfigError extends Error {}\n",
+    "packages/inference/test/qualify.test.ts": "import { QualificationError } from '@acme/models'\nexpect(error).toBeInstanceOf(QualificationError)\n",
+  })
+  try {
+    const output = "AssertionError: The instanceof assertion needs a constructor but undefined was given.\n ❯ packages/inference/test/qualify.test.ts:2:1\n"
+    const report = await diagnoseUnresolvedSymbols(root, output)
+    assert.match(report!, /tests load `packages\/models\/dist\/index\.js`/)
+    assert.match(report!, /Build this package/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("ordinary assertion failures produce no diagnosis", async () => {
   assert.deepEqual(unresolvedSymbols("AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n3 !== 4\n"), [])
   assert.equal(await diagnoseUnresolvedSymbols(tmpdir(), "expected 3 got 4"), undefined)

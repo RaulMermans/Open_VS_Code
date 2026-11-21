@@ -2,8 +2,9 @@ Sprint 31 — MVP convergence
 STATUS: IN_PROGRESS
   - Worktree `sprint/31-mvp-convergence` from `origin/main` `ff29fa4038`. Installed desktop stays `0.1.0-rc.25`. Not pushed, merged, or installed.
   - Native Agent Core stays. No second repair engine and no external agent. The gap after Sprint 30 was localization: Vitest's "undefined constructor" assertion is a missing package export, and the diagnosis did not say so.
-  - A failing constructor at a test line now names the import, the package entry's exports, and the existing definition, and tells the model to re-export that definition. Scripted repair control still passes. The frozen i1 tree's report names `packages/models/src/index.ts` omitting `ModelQualificationError` defined in `errors.ts`.
-  - Live Qwen replay, Aider, Qwen Code, the 10-task set, HALO 3/3, and a desktop package were not run. Supervised-testing and daily-driver remain NO-GO. This is not a technical MVP candidate.
+  - A failing constructor at a test line now names the import, the package entry's exports, and the existing definition, and tells the model to re-export that definition. When the loaded file is `dist`, the diagnosis says to build the package.
+  - A hand patch on a disposable copy of frozen i1 (re-export plus a bare-alias check that leaves `runtime/` refs alone) passes inference Vitest 27/27 and `qualify-oracle.py` (`SUCCESS`). The frozen tree and the installed app were not changed. The model did not apply the patch.
+  - Live Qwen replay, Aider, Qwen Code, the 10-task set, HALO 3/3 by the agent, and a desktop package were not run. Supervised-testing and daily-driver remain NO-GO.
   - See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
 
 Sprint 30 — Automated program repair

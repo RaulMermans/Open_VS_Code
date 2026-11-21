@@ -22,17 +22,27 @@ Path A. Native Agent Core stays the only executor. Aider and Qwen Code were not 
 - Scripted repair control (`repair-control.test.ts`): one `apply_patch`, second verification, `COMPLETED`. A "tests passed" reply after a failing run is not `COMPLETED`. 2/2.
 - New fixture: `@acme/models` entry exports `ConfigError` while `QualificationError` exists in `errors.ts`. The report names the entry, the definition, and the re-export instruction.
 - Frozen i1 workspace (read-only): the same report names `ModelQualificationError` from `@halo/models`, `packages/models/src/index.ts` omitting it, and the definition at `packages/models/src/errors.ts:8`.
-- `symbol-diagnosis`, `verification-summary`, and `repair-control` tests: 9/9. oxlint `--deny-warnings` on the touched files: clean.
+- A package whose tests load `dist` gets an extra line: build after the re-export, because a source-only edit stays invisible.
+- Symbol-diagnosis tests: 6/6. oxlint `--deny-warnings` on the touched diagnosis files: clean after the shadow rename.
+
+## Disposable qualification repair
+
+A copy of frozen i1 at `/tmp/ovsc-s31-q` (the frozen tree was not edited). Two source edits, then `tsc` for `@halo/models` because Vitest loads `dist`:
+
+- `packages/models/src/index.ts` re-exports `ModelQualificationError`.
+- `packages/inference/src/service.ts` throws `ModelQualificationError` (`ALIAS_RESOLUTION_MISMATCH`) before `provider.chat` when `modelRef` is a bare alias other than `qwen3-4b-q4km`. Refs that contain `/` stay on the old path, which is what `service.test.ts` and `media.test.ts` already call.
+
+`packages/inference` Vitest: 27/27 (qualification 8/8, plus service, media, and the OpenAI-compatible provider). `qualify-oracle.py` on that copy: `SUCCESS` true. This was applied by hand, not by `qwen3.6:35b`.
+
+The diagnosis now says when the package's loaded `dist` file omits the class, so a later model run is told to build. That sentence was not part of the hand patch.
 
 ## Not run
 
-- A live `qwen3.6:35b` repair from the frozen checkpoint. The new text has not been shown to the model.
-- Aider, Qwen Code, the 10 unseen tasks, three clean HALO qualifications, and a desktop package from this SHA.
+- A live `qwen3.6:35b` repair from the frozen checkpoint.
+- Aider, Qwen Code, the 10 unseen tasks, three clean HALO qualifications from the agent, and a desktop package from this SHA.
 
 ## Release
 
-- Technical MVP candidate: **NO**. The editor package was not rebuilt.
-- Supervised-testing: **NO-GO**. No new HALO qualification.
+- Technical MVP candidate: **NO**. The editor package was not rebuilt. The green qualification is a hand patch on a disposable copy.
+- Supervised-testing: **NO-GO**. The 3/3 agent gate was not run.
 - Daily-driver: **NO-GO**. Installed package remains `0.1.0-rc.25`.
-
-Next action: one live repair from a clean copy of frozen i1, on this SHA, with the same model and the same independent Vitest file. Do not edit that test. If the model re-exports the class and the five failures remain, the next defect is the alias check in `InferenceService`, not the export.

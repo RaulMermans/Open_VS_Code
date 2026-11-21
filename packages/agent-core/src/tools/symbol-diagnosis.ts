@@ -113,25 +113,30 @@ async function readableFile(file: string): Promise<boolean> {
   }
 }
 
-/** Workspace package entry for a bare specifier. `dist/index.js` prefers the sibling `src/index.ts` when it exists. */
-async function packageEntry(root: string, specifier: string): Promise<string | undefined> {
-  if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined
+/** Source entry the model should edit, and the built file the package actually loads. */
+async function packageFiles(root: string, specifier: string): Promise<{ source?: string; runtime?: string }> {
+  if (specifier.startsWith(".") || specifier.startsWith("/")) return {}
   const found = await findPackageDir(root, specifier)
-  if (!found) return undefined
+  if (!found) return {}
   let pkg: { main?: string; exports?: unknown }
   try {
     pkg = JSON.parse(await readFile(path.join(found, "package.json"), "utf8")) as { main?: string; exports?: unknown }
   } catch {
-    return undefined
+    return {}
   }
-  const target = packageTarget(pkg)
+  const target = packageTarget(pkg)?.replace(/^\.\//, "")
+  const runtime = target && await readableFile(path.join(found, target))
+    ? path.relative(root, path.join(found, target)).replace(/\\/g, "/")
+    : undefined
   const candidates = target
-    ? [target.replace(/^\.\//, "").replace(/^dist\//, "src/").replace(/\.js$/, ".ts"), target.replace(/^\.\//, "").replace(/\.js$/, ".ts"), target.replace(/^\.\//, "")]
+    ? [target.replace(/^dist\//, "src/").replace(/\.js$/, ".ts"), target.replace(/\.js$/, ".ts"), target]
     : ["src/index.ts", "src/index.js", "index.ts"]
   for (const candidate of candidates) {
-    if (await readableFile(path.join(found, candidate))) return path.relative(root, path.join(found, candidate)).replace(/\\/g, "/")
+    if (await readableFile(path.join(found, candidate))) {
+      return { source: path.relative(root, path.join(found, candidate)).replace(/\\/g, "/"), runtime }
+    }
   }
-  return undefined
+  return { runtime }
 }
 
 function packageTarget(pkg: { main?: string; exports?: unknown }): string | undefined {
@@ -283,8 +288,11 @@ export async function diagnoseUnresolvedSymbols(workspaceRoot: string, output: s
     const references: string[] = []
     const definitions: string[] = []
     let moduleExports: string | undefined
+    let runtimeFile: string | undefined
     if (symbol.module && !symbol.module.startsWith(".") && !symbol.module.startsWith("/")) {
-      const entry = await packageEntry(workspaceRoot, symbol.module)
+      const located = await packageFiles(workspaceRoot, symbol.module)
+      runtimeFile = located.runtime
+      const entry = located.source
       const entryText = entry ? contents.get(path.join(workspaceRoot, entry)) : undefined
       if (entry && entryText !== undefined) {
         const names = exportedNames(entryText, entry.endsWith(".py"))
@@ -311,6 +319,18 @@ export async function diagnoseUnresolvedSymbols(workspaceRoot: string, output: s
     parts.push(definitions.length > 0 ? `- defined at: ${definitions.slice(0, 4).join(" | ")}` : "- not defined or exported anywhere in the workspace")
     if (entryOmits(moduleExports, symbol.name) && definitions.length > 0) {
       parts.push("- the package entry does not export it. Re-export the existing definition from that entry. Do not add a second declaration and do not edit the test.")
+    }
+    if (runtimeFile && runtimeFile !== moduleExports?.split(" exports:")[0]) {
+      let runtimeText: string | undefined
+      try {
+        runtimeText = await readFile(path.join(workspaceRoot, runtimeFile), "utf8")
+      } catch {
+        runtimeText = undefined
+      }
+      const runtimeNames = runtimeText !== undefined ? exportedNames(runtimeText, runtimeFile.endsWith(".py")) : undefined
+      if (runtimeNames && !runtimeNames.includes(symbol.name)) {
+        parts.push(`- tests load \`${runtimeFile}\`, which does not export it. Build this package after the source re-export. A source-only edit stays invisible.`)
+      }
     }
     parts.push(references.length > 0 ? `- still referenced at:\n${references.map((entry) => `    ${entry}`).join("\n")}` : "- no other references")
     sections.push(parts.join("\n"))
