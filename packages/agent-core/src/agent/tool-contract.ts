@@ -104,7 +104,7 @@ export function excludedEditPaths(instruction: string): string[] {
 
 /** The user forbade editing tests, without naming a specific test path. */
 export function forbidsTestEdits(instruction: string): boolean {
-  return /\b(?:do not|don't|never)\s+(?:edit|change|modify|update|touch|alter)(?:ing)?\s+the\s+tests?\b/i.test(instruction)
+  return /\b(?:do not|don't|never)\b(?:(?!\.)[^\n]){0,80}\b(?:the|that|those)\s+tests?\b/i.test(instruction)
     || /\bwithout\s+(?:editing|changing|modifying|updating)\s+the\s+tests?\b/i.test(instruction)
 }
 
@@ -133,7 +133,8 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
   let kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
   if (forbidsTestEdits(instruction)) {
     kept = kept.filter((path) => !isTestArtifactPath(path))
-    if (kept.length === 0 && paths.every((path) => isTestArtifactPath(path))) return []
+    // Every named path was a forbidden test, or was excluded as well. Do not put the forbidden test back.
+    if (kept.length === 0) return []
   }
   return kept.length > 0 ? kept : paths
 }

@@ -273,9 +273,11 @@ export class RuntimeEvidenceCollector {
     totalTestCount?: number
     stdout?: string
     stderr?: string
+    /** Compact reporter summary. Preferred over the raw stream, which may start with toolchain noise. */
+    diagnosis?: string
   }): void {
     this.#verificationCount++
-    const combinedOutput = `${verification.stdout ?? ""}\n${verification.stderr ?? ""}`
+    const combinedOutput = `${verification.diagnosis ? `${verification.diagnosis}\n` : ""}${verification.stdout ?? ""}\n${verification.stderr ?? ""}`
     const failureSummary = verification.status !== "PASS" ? verificationFailureExcerpt(combinedOutput, 500) : undefined
     // An empty excerpt is still a failure: identical silent failures must hash identically so repeats are detected.
     const failureHash = failureSummary !== undefined ? deterministicHash(`${verification.action}:${verification.status}:${verification.failedTestCount ?? ""}:${failureSummary}`) : undefined

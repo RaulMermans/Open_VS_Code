@@ -5,8 +5,28 @@ import * as fs from "node:fs/promises"
 import * as os from "node:os"
 import * as crypto from "node:crypto"
 import { VerificationEngine } from "../../src/tools/verification-engine.ts"
-import { discoverVerificationCommand, resolveNodeBinary } from "../../src/tools/verification-discovery.ts"
+import { discoverVerificationCommand, resolveNodeBinary, verificationWorkspace } from "../../src/tools/verification-discovery.ts"
 import { createVerificationToolRegistry } from "../../src/tools/verification-registry.ts"
+
+test("a recursive root test is narrowed to the package that owns the named test", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  try {
+    await fs.mkdir(path.join(tmpDir, "packages/inference/test"), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, "packages/hardware"), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, "package.json"), JSON.stringify({ scripts: { test: "pnpm -r --if-present run test" } }))
+    await fs.writeFile(path.join(tmpDir, "packages/inference/package.json"), JSON.stringify({ scripts: { test: "vitest run" } }))
+    await fs.writeFile(path.join(tmpDir, "packages/hardware/package.json"), JSON.stringify({ scripts: { test: "vitest run" } }))
+    await fs.writeFile(path.join(tmpDir, "packages/inference/test/modelQualification.test.ts"), "test\n")
+    const instruction = "packages/inference/test/modelQualification.test.ts already exists and fails. Do not change that test."
+    const scoped = await verificationWorkspace(tmpDir, instruction)
+    assert.equal(scoped, path.join(tmpDir, "packages/inference"))
+    const command = await discoverVerificationCommand(scoped, "TEST")
+    assert.equal(command.scriptBody, "vitest run")
+    assert.equal(await verificationWorkspace(tmpDir, "Fix the bug."), tmpDir)
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
 
 test("Verification Discovery - valid action", async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
@@ -184,6 +204,96 @@ test("Verification Engine - Output bounding limit", async () => {
     assert.equal(result.status, "PASS")
     assert.ok(result.stdout.includes("[STDOUT TRUNCATED]"))
     assert.ok(result.stdout.length < 20000) // truncated
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Verification Engine - keeps the failure at the end of a long stdout", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const result = await engine.execute({
+      verificationId: "tail-id", action: "TEST",
+      executable: "node",
+      args: ["-e", "process.stdout.write('better-sqlite3 binding '.repeat(4000)); process.stdout.write('\\nAssertionError: expected 2\\nFAIL  test.js > returns two\\n'); process.exit(1)"],
+      cwd: tmpDir,
+      timeoutMs: 5000,
+      commandPreview: "node ...",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    })
+    assert.equal(result.status, "FAIL")
+    assert.match(result.stdout, /AssertionError: expected 2/)
+    assert.match(result.stdout, /FAIL  test.js > returns two/)
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Verification Engine - keeps a failure that is neither the head nor the tail", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const script = "process.stdout.write('noise '.repeat(6000)); process.stdout.write('\\nFAIL  pkg/a.test.ts > breaks\\nAssertionError: expected 2\\n'); process.stdout.write('tail '.repeat(6000)); process.exit(1)"
+    const result = await engine.execute({
+      verificationId: "mid-id", action: "TEST",
+      executable: "node",
+      args: ["-e", script],
+      cwd: tmpDir,
+      timeoutMs: 5000,
+      commandPreview: "node ...",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    })
+    assert.equal(result.status, "FAIL")
+    assert.match(result.stdout, /AssertionError: expected 2/)
+    assert.match(result.stdout, /FAIL  pkg\/a\.test\.ts > breaks/)
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Verification Engine - a later pnpm-prefixed failure replaces earlier ones", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const script = [
+      "process.stdout.write('packages/activity test: FAIL early\\nAssertionError: early binding\\n')",
+      "for (let i = 0; i < 120; i++) process.stdout.write('packages/activity test: FAIL filler ' + i + '\\nAssertionError: filler ' + i + '\\n' + 'pad line\\n'.repeat(6))",
+      "process.stdout.write('packages/inference test: FAIL modelQualification.test.ts > rejects\\npackages/inference test: AssertionError: expected qualification\\n')",
+      "process.stdout.write('tail '.repeat(4000)); process.exit(1)",
+    ].join("; ")
+    const result = await engine.execute({
+      verificationId: "prefixed-id", action: "TEST",
+      executable: "node",
+      args: ["-e", script],
+      cwd: tmpDir,
+      timeoutMs: 5000,
+      commandPreview: "node ...",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    })
+    assert.match(result.stdout, /AssertionError: expected qualification/)
+    assert.equal(result.stdout.includes("AssertionError: early binding"), false)
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true })
   }

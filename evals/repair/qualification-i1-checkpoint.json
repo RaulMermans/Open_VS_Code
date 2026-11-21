@@ -1,0 +1,43 @@
+{
+  "label": "reconstructed",
+  "reason": "The failed workspace still exists outside the repository. This file records the run. It is not a byte-for-byte replay of the model conversation, and the workspace (including node_modules) was not copied into the repository.",
+  "source": {
+    "branch": "repair/28-halo-qualify",
+    "committedSha": "cc346f01ae4e3ed2255d91ff311851c7852a5f2c",
+    "note": "The recorded run denied apply_patch with text that is not in this commit ('Source is already edited'). The run therefore used that worktree before or beside this commit. Do not treat this checkpoint as an exact trace of cc346f01ae."
+  },
+  "model": {
+    "tag": "qwen3.6:35b",
+    "ollamaId": "a7eb95c53bcf"
+  },
+  "oracle": {
+    "path": "packages/ide-adapter/evals/halo-oracle.py",
+    "sha256": "a8513253e1e6f7a272293252238750e9a8021c807d6d2ef3d074113e35af46fb"
+  },
+  "run": {
+    "id": "i1",
+    "status": "CANCELLED",
+    "timedOut": true,
+    "durationMs": 1440005,
+    "turns": 33,
+    "verification": {
+      "command": "project Vitest via run_verification TEST",
+      "result": "FAIL",
+      "passed": 3,
+      "failed": 5,
+      "testFile": "packages/inference/test/modelQualification.test.ts",
+      "testFileBytes": 8807,
+      "testFileSha256_16": "a720192c09dde28c",
+      "observedAssertions": [
+        "AssertionError: The instanceof assertion needs a constructor but undefined was given. (modelQualification.test.ts:179)",
+        "AssertionError: promise resolved instead of rejecting (modelQualification.test.ts:202)"
+      ]
+    },
+    "applied": [
+      "packages/models/src/errors.ts",
+      "packages/inference/test/modelQualification.test.ts"
+    ],
+    "modelFacingFailure": "The revision prompt quoted a truncated better-sqlite3 rebuild path and [STDOUT TRUNCATED]. It did not contain the assertion text. The raw reporter output was dropped because verification kept the first 16KB of stdout."
+  },
+  "conversationRestored": false
+}

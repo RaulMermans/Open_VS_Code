@@ -7,6 +7,8 @@ export interface ToolExecutionContext {
   readonly taskId?: string | undefined
   readonly callId?: string | undefined
   readonly origin?: "agent" | "user" | "system" | undefined
+  /** The task text, when a tool needs to choose a scope the model did not pass. */
+  readonly instruction?: string | undefined
 }
 
 export interface ReviewableExecution {
