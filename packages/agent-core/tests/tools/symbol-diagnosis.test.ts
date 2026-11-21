@@ -68,6 +68,25 @@ test("Python import and name errors are diagnosed against the dotted module", as
   }
 })
 
+test("an undefined constructor names the package entry that omits the existing class", async () => {
+  const root = await fixture({
+    "packages/models/package.json": JSON.stringify({ name: "@acme/models", exports: { ".": { import: "./dist/index.js" } } }),
+    "packages/models/src/index.ts": "export { ConfigError } from './errors.js'\n",
+    "packages/models/src/errors.ts": "export class ConfigError extends Error {}\nexport class QualificationError extends Error {}\n",
+    "packages/inference/test/qualify.test.ts": "import { QualificationError } from '@acme/models'\nexpect(error).toBeInstanceOf(QualificationError)\n",
+  })
+  try {
+    const output = "AssertionError: The instanceof assertion needs a constructor but undefined was given.\n ❯ packages/inference/test/qualify.test.ts:2:25\n"
+    const report = await diagnoseUnresolvedSymbols(root, output)
+    assert.match(report!, /packages\/models\/src\/index\.ts exports: ConfigError/)
+    assert.match(report!, /defined at: packages\/models\/src\/errors\.ts:2/)
+    assert.match(report!, /package entry does not export it/)
+    assert.match(report!, /qualify\.test\.ts:2/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("ordinary assertion failures produce no diagnosis", async () => {
   assert.deepEqual(unresolvedSymbols("AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n3 !== 4\n"), [])
   assert.equal(await diagnoseUnresolvedSymbols(tmpdir(), "expected 3 got 4"), undefined)

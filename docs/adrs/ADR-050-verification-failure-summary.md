@@ -17,6 +17,10 @@ A second, separate rule treated two identical failing runs with an edit between 
 
 Symbol diagnosis for unresolved imports is unchanged and is appended after the summary.
 
+## Amendment (sprint 31)
+
+A later valid replay saw the assertion text and still did not export `ModelQualificationError`. The reporter says the constructor was undefined and points at the test line. The name is on that line. Diagnosis reads it, resolves a bare import to the workspace package entry (`dist` prefers sibling `src` when that file exists), and when the entry omits a class that already exists, says to re-export that definition. It does not write the export and it does not special-case HALO. A stack that is only a test file is described as an assertion, with the instruction to change the implementation or the export.
+
 ## Consequences
 
 The scripted control (a known patch after a real failing `node` test) completes once. A claim of success after a failing test does not. Real-model repair of the HALO fixture was not re-run in this change. Candidate-patch search, Aider, and Qwen Code were not started: the measured defect was the missing failure text, and that comparison waits on one native replay that can see the summary.
