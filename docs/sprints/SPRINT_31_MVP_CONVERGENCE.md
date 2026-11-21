@@ -1,6 +1,6 @@
 # Sprint 31 — MVP convergence
 
-STATUS: `IN_PROGRESS`. Installed desktop remains `open-vs-code 0.1.0-rc.25`. This branch was not pushed, merged, or installed.
+STATUS: `IN_PROGRESS`. Installed desktop remains `open-vs-code 0.1.0-rc.25`. This branch is on origin. It was not merged or installed.
 
 ## Source
 
@@ -11,7 +11,7 @@ STATUS: `IN_PROGRESS`. Installed desktop remains `open-vs-code 0.1.0-rc.25`. Thi
 
 ## Architecture
 
-Path A. Native Agent Core stays the only executor. Aider and Qwen Code were not run. Sprint 30 already showed the scripted patch path works and that two live replays could edit `service.ts` without exporting the class the test imports. A second engine was not justified before that localization existed.
+Path A. Native Agent Core stays the executor. Aider 0.86.2 was run once as a comparison, not installed into the product. Qwen Code was not run. The comparison did not justify a second engine: Aider wrote the alias check and still failed the inference suite.
 
 ## Change
 
@@ -36,13 +36,31 @@ A copy of frozen i1 at `/tmp/ovsc-s31-q` (the frozen tree was not edited). Two s
 
 The diagnosis now says when the package's loaded `dist` file omits the class, so a later model run is told to build. That sentence was not part of the hand patch.
 
+## Live Qwen repairs (`qwen3.6:35b` `a7eb95c53bcf`)
+
+Same prompt as Sprint 30. 12-minute cap. Code intelligence on. Writes and tests inside the copy were auto-approved. The frozen tree, the test file (`a720192c09dde28c…`), and `0.1.0-rc.25` were not changed.
+
+Attempt 1, before the rebuild (`/tmp/ovsc-s31-live`, `CANCELLED`, 720s, 13 turns, 24 tools): the model re-exported `ModelQualificationError` from `src/index.ts` on the second patch and added an unused import in `service.ts`. It read `dist/index.js` and did not build it. Verification stayed 5 failed / 22 passed. The dist sentence was in the 16KB observation (it starts about 2KB into the diagnosis, so the 2.5KB trace clip hides it).
+
+Attempt 2, with a stale `tsc` rebuild before TEST (`/tmp/ovsc-s31-live2`, `CANCELLED`, 720s, 13 turns, 21 tools): the diagnosis began `Rebuilt @halo/models because dist/index.js was older than src.` The export landed in `dist`. Independent Vitest: **4 failed / 23 passed**. The missing constructor is gone. `chat` still returns for a bad alias, so generation is not blocked. The test file was not edited. Existing inference tests stayed passing.
+
+## Aider comparison
+
+Aider 0.86.2 (Apache-2.0, installed with `uv tool` outside this repo) on `/tmp/ovsc-s31-aider/ws`, a clean copy of frozen i1. Model `ollama_chat/qwen3.6:35b`, digest `a7eb95c53bcf96b4bdd008d0fab4a5dac88047d9c1a7a9ab88ed453423fbd87c`. Same prompt. The test file was read-only. Baseline before the run: **5 failed / 3 passed**. Wall clock 16:36:54–16:44:30 (about 7.5 minutes). Four Vitest runs, each under 0.5s. Aider stopped at its 3-reflection limit. The 20-minute cap was not hit.
+
+Edits: re-export `ModelQualificationError` from `packages/models/src/index.ts`, and in `service.ts` throw `ModelQualificationError` (`ALIAS_RESOLUTION_MISMATCH`) when `model.modelRef` differs from `HALO_INFERENCE_QUALIFY_MODEL_ID`, defaulting that variable to `qwen3-4b-q4km`. `errors.ts` matches the frozen file. The test hash stayed `a720192c09dde28c…`. Aider also appended `.aider*` to `.gitignore`. It did not run `tsc`.
+
+Aider's own last test result: **4 failed / 4 passed**. The throw runs, but the test import of `ModelQualificationError` is still undefined because `dist/index.js` was not rebuilt.
+
+Independent `tsc -p packages/models` after Aider stopped, then Vitest: the qualification file is **8 passed**. The inference package is **13 failed / 14 passed**. The new failures are `service.test.ts` (2) and `media.test.ts` (11): those tests use `runtime/…` refs, and the default qualify id rejects them before the old checks. The frozen tree and `0.1.0-rc.25` were not changed.
+
 ## Not run
 
-- A live `qwen3.6:35b` repair from the frozen checkpoint.
-- Aider, Qwen Code, the 10 unseen tasks, three clean HALO qualifications from the agent, and a desktop package from this SHA.
+- A third native live attempt and Qwen Code. Aider wrote a broader alias check than the native runs, and that check fails the existing inference tests.
+- The 10 unseen tasks, three clean HALO qualifications, and a desktop package from this SHA.
 
 ## Release
 
-- Technical MVP candidate: **NO**. The editor package was not rebuilt. The green qualification is a hand patch on a disposable copy.
+- Technical MVP candidate: **NO**. Native live repair is 4 failed / 23 passed. Aider's patch, after a separate `tsc`, passes the qualification file and fails the inference package 13 / 14.
 - Supervised-testing: **NO-GO**. The 3/3 agent gate was not run.
 - Daily-driver: **NO-GO**. Installed package remains `0.1.0-rc.25`.
