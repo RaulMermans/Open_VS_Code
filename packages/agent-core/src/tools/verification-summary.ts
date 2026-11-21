@@ -1,3 +1,5 @@
+import { isTestArtifactPath } from "../agent/tool-contract.ts"
+
 /**
  * Compact failure summary from the reporter text the project already prints.
  * The approved command is unchanged: no extra reporter and no test-config edit.
@@ -41,7 +43,7 @@ const MAX_TEXT = 1_600
 function kindOf(message: string): VerificationFailureKind {
   if (/timed out|Test timed out|ETIMEDOUT/i.test(message)) return "timeout"
   if (/No test files found|No tests found|Collected 0 items/i.test(message)) return "test_discovery"
-  if (/does not provide an export|has no exported member|is not exported|Cannot find module|cannot find module|Module not found/i.test(message)) return "missing_import_or_export"
+  if (/does not provide an export|has no exported member|is not exported|Cannot find module|cannot find module|Module not found|undefined was given|is not a constructor/i.test(message)) return "missing_import_or_export"
   if (/error TS\d+|SyntaxError|\bTS\d{4}:/.test(message)) return "compilation"
   if (/AssertionError|\bExpected\b|\bexpected\b/.test(message)) return "assertion"
   if (/TypeError|ReferenceError|\bError:/.test(message)) return "runtime"
@@ -128,7 +130,11 @@ export function summarizeVerification(output: string): VerificationSummary {
     countText ? `Tests: ${countText}.` : "",
     listed.length > 0 ? `Failure groups:\n${groupText}` : "",
     implicated.length > 0 ? `Implicated files: ${implicated.join(", ")}.` : "",
-    listed.length > 0 ? "Edit the implementation these failures exercise, then run verification again." : "",
+    listed.length > 0
+      ? (implicated.length > 0 && implicated.every((file) => isTestArtifactPath(file))
+        ? "These locations are assertions in tests. Change the implementation or the export they use. Do not edit the test unless the task says to, then run verification again."
+        : "Edit the implementation these failures exercise, then run verification again.")
+      : "",
   ].filter(Boolean).join("\n")
   return {
     ...tally,
