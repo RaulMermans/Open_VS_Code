@@ -39,13 +39,14 @@ export function truncateUtf8Buffer(buf: Buffer, maxBytes: number): { buffer: Buf
   return { buffer: buf.subarray(0, end), truncated: true }
 }
 
-const FAILURE_LINE = /^\s*(?:FAIL\b|not ok\b|--- FAIL\b|FAILED\b)|AssertionError|(?:#|ℹ)\s+fail\b|Tests\s+\d+\s+failed/
+const FAILURE_LINE = /(?:^|\s)(?:FAIL|FAILED)\b|^\s*not ok\b|AssertionError|(?:#|ℹ)\s+fail\b|Tests\s+\d+\s+failed/
 const FAILURE_KEEP_BYTES = 8 * 1024
 
 /** Lines that name a failure, plus a few lines after each one, even when they sit in the middle of a long log. */
 export class FailureLineCapture {
   #carry = ""
-  #kept = ""
+  #lines: string[] = []
+  #bytes = 0
   #follow = 0
 
   push(text: string): void {
@@ -60,7 +61,7 @@ export class FailureLineCapture {
   }
 
   text(): string {
-    return this.#kept
+    return this.#lines.length > 0 ? `${this.#lines.join("\n")}\n` : ""
   }
 
   #take(line: string): void {
@@ -68,8 +69,14 @@ export class FailureLineCapture {
     if (hit) this.#follow = 8
     else if (this.#follow === 0) return
     else this.#follow -= 1
-    if (this.#kept.length >= FAILURE_KEEP_BYTES) return
-    this.#kept += `${line.slice(0, 400)}\n`
+    const clipped = line.slice(0, 400)
+    this.#lines.push(clipped)
+    this.#bytes += clipped.length + 1
+    // A monorepo log fails in several packages. Keep the latest failure, which is the one the task just ran.
+    while (this.#bytes > FAILURE_KEEP_BYTES && this.#lines.length > 1) {
+      this.#bytes -= this.#lines[0]!.length + 1
+      this.#lines.shift()
+    }
   }
 }
 

@@ -104,7 +104,7 @@ export function excludedEditPaths(instruction: string): string[] {
 
 /** The user forbade editing tests, without naming a specific test path. */
 export function forbidsTestEdits(instruction: string): boolean {
-  return /\b(?:do not|don't|never)\s+(?:edit|change|modify|update|touch|alter)(?:ing)?\s+the\s+tests?\b/i.test(instruction)
+  return /\b(?:do not|don't|never)\b(?:(?!\.)[^\n]){0,80}\b(?:the|that|those)\s+tests?\b/i.test(instruction)
     || /\bwithout\s+(?:editing|changing|modifying|updating)\s+the\s+tests?\b/i.test(instruction)
 }
 

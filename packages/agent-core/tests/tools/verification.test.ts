@@ -246,6 +246,39 @@ test("Verification Engine - keeps a failure that is neither the head nor the tai
   }
 })
 
+test("Verification Engine - a later pnpm-prefixed failure replaces earlier ones", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const script = [
+      "process.stdout.write('packages/activity test: FAIL early\\nAssertionError: early binding\\n')",
+      "for (let i = 0; i < 120; i++) process.stdout.write('packages/activity test: FAIL filler ' + i + '\\nAssertionError: filler ' + i + '\\n' + 'pad line\\n'.repeat(6))",
+      "process.stdout.write('packages/inference test: FAIL modelQualification.test.ts > rejects\\npackages/inference test: AssertionError: expected qualification\\n')",
+      "process.stdout.write('tail '.repeat(4000)); process.exit(1)",
+    ].join("; ")
+    const result = await engine.execute({
+      verificationId: "prefixed-id", action: "TEST",
+      executable: "node",
+      args: ["-e", script],
+      cwd: tmpDir,
+      timeoutMs: 5000,
+      commandPreview: "node ...",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    })
+    assert.match(result.stdout, /AssertionError: expected qualification/)
+    assert.equal(result.stdout.includes("AssertionError: early binding"), false)
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
 test("Verification Engine - Stale verification", async () => {
   let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
   tmpDir = await fs.realpath(tmpDir)

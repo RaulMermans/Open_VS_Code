@@ -96,3 +96,9 @@ test("a requested new test is not excused by a passing run when the named test f
   assert.equal(requestsNewTest("Fix the bug and run the tests."), false)
   assert.equal(requestsNewTest("Add a feature but do not edit the tests."), false)
 })
+
+test("naming a test while forbidding changes to it does not make that test the required edit", async () => {
+  const { requiredEditPaths } = await import("../../src/agent/tool-contract.ts")
+  const instruction = "packages/inference/test/modelQualification.test.ts already exists and fails. Fix the implementation so those tests pass.\n\nDo not change, delete, or weaken that test."
+  assert.deepEqual(requiredEditPaths(instruction, ["packages/inference/test/modelQualification.test.ts"]), [])
+})
