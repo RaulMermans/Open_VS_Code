@@ -217,6 +217,35 @@ test("Verification Engine - keeps the failure at the end of a long stdout", asyn
   }
 })
 
+test("Verification Engine - keeps a failure that is neither the head nor the tail", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const script = "process.stdout.write('noise '.repeat(6000)); process.stdout.write('\\nFAIL  pkg/a.test.ts > breaks\\nAssertionError: expected 2\\n'); process.stdout.write('tail '.repeat(6000)); process.exit(1)"
+    const result = await engine.execute({
+      verificationId: "mid-id", action: "TEST",
+      executable: "node",
+      args: ["-e", script],
+      cwd: tmpDir,
+      timeoutMs: 5000,
+      commandPreview: "node ...",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    })
+    assert.equal(result.status, "FAIL")
+    assert.match(result.stdout, /AssertionError: expected 2/)
+    assert.match(result.stdout, /FAIL  pkg\/a\.test\.ts > breaks/)
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
 test("Verification Engine - Stale verification", async () => {
   let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
   tmpDir = await fs.realpath(tmpDir)

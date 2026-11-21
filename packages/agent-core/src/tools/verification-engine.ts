@@ -39,6 +39,40 @@ export function truncateUtf8Buffer(buf: Buffer, maxBytes: number): { buffer: Buf
   return { buffer: buf.subarray(0, end), truncated: true }
 }
 
+const FAILURE_LINE = /^\s*(?:FAIL\b|not ok\b|--- FAIL\b|FAILED\b)|AssertionError|(?:#|ℹ)\s+fail\b|Tests\s+\d+\s+failed/
+const FAILURE_KEEP_BYTES = 8 * 1024
+
+/** Lines that name a failure, plus a few lines after each one, even when they sit in the middle of a long log. */
+export class FailureLineCapture {
+  #carry = ""
+  #kept = ""
+  #follow = 0
+
+  push(text: string): void {
+    const lines = `${this.#carry}${text}`.split("\n")
+    this.#carry = lines.pop() ?? ""
+    for (const line of lines) this.#take(line)
+  }
+
+  end(): void {
+    if (this.#carry) this.#take(this.#carry)
+    this.#carry = ""
+  }
+
+  text(): string {
+    return this.#kept
+  }
+
+  #take(line: string): void {
+    const hit = FAILURE_LINE.test(line)
+    if (hit) this.#follow = 8
+    else if (this.#follow === 0) return
+    else this.#follow -= 1
+    if (this.#kept.length >= FAILURE_KEEP_BYTES) return
+    this.#kept += `${line.slice(0, 400)}\n`
+  }
+}
+
 /** Keep the end of a stream. Test reporters print the failures last; the head is often toolchain noise. */
 export function retainOutputTail(existing: Buffer, chunk: Buffer, maxBytes: number): { buffer: Buffer; truncated: boolean } {
   if (chunk.length === 0) return { buffer: existing, truncated: false }
@@ -240,9 +274,12 @@ export class VerificationEngine {
       let stderrBuf = Buffer.alloc(0)
       let stdoutTruncated = false
       let stderrTruncated = false
+      const stdoutFailures = new FailureLineCapture()
+      const stderrFailures = new FailureLineCapture()
 
       child.stdout.on("data", (chunk: Buffer) => {
         const text = stdoutDecoder.write(chunk)
+        if (text.length > 0) stdoutFailures.push(text)
         if (text.length > 0 && onOutput) {
           onOutput({ stream: "stdout", chunk: text })
         }
@@ -254,6 +291,7 @@ export class VerificationEngine {
 
       child.stderr.on("data", (chunk: Buffer) => {
         const text = stderrDecoder.write(chunk)
+        if (text.length > 0) stderrFailures.push(text)
         if (text.length > 0 && onOutput) {
           onOutput({ stream: "stderr", chunk: text })
         }
@@ -271,18 +309,32 @@ export class VerificationEngine {
         if (timeoutId) clearTimeout(timeoutId)
 
         const remOut = stdoutDecoder.end()
-        if (remOut.length > 0 && onOutput) {
-          onOutput({ stream: "stdout", chunk: remOut })
+        if (remOut.length > 0) {
+          stdoutFailures.push(remOut)
+          const retainedOut = retainOutputTail(stdoutBuf, Buffer.from(remOut), MAX_OUTPUT_BYTES)
+          stdoutBuf = Buffer.from(retainedOut.buffer)
+          if (retainedOut.truncated) stdoutTruncated = true
+          if (onOutput) onOutput({ stream: "stdout", chunk: remOut })
         }
+        stdoutFailures.end()
         const remErr = stderrDecoder.end()
-        if (remErr.length > 0 && onOutput) {
-          onOutput({ stream: "stderr", chunk: remErr })
+        if (remErr.length > 0 && overrideStderr === undefined) {
+          stderrFailures.push(remErr)
+          const retainedErr = retainOutputTail(stderrBuf, Buffer.from(remErr), MAX_OUTPUT_BYTES)
+          stderrBuf = Buffer.from(retainedErr.buffer)
+          if (retainedErr.truncated) stderrTruncated = true
+          if (onOutput) onOutput({ stream: "stderr", chunk: remErr })
         }
+        stderrFailures.end()
 
         let stdout = stdoutBuf.toString("utf-8")
+        const keptOut = stdoutFailures.text()
+        if (keptOut && !stdout.includes(keptOut.slice(0, 80))) stdout = `${keptOut}\n[EARLIER FAILURES KEPT]\n${stdout}`
         if (stdoutTruncated) stdout += "\n[STDOUT TRUNCATED]"
 
         let stderr = overrideStderr !== undefined ? overrideStderr : stderrBuf.toString("utf-8")
+        const keptErr = overrideStderr === undefined ? stderrFailures.text() : ""
+        if (keptErr && !stderr.includes(keptErr.slice(0, 80))) stderr = `${keptErr}\n[EARLIER FAILURES KEPT]\n${stderr}`
         if (stderrTruncated && overrideStderr === undefined) stderr += "\n[STDERR TRUNCATED]"
 
         let finalStatus = status
