@@ -47,6 +47,9 @@ export interface VerificationResult {
   readonly durationMs: number
   /** Whether and how the command was sandboxed (ADR-046). Absent when the command never started. */
   readonly sandbox?: import("./command-sandbox.ts").SandboxStatus
-  /** Unresolved-name diagnosis for a failed run (symbol-diagnosis.ts). Informational only. */
+  /** Parsed from reporter output when the summary line is present. Absent when the reporter did not name a count. */
+  readonly failedTests?: number
+  readonly totalTests?: number
+  /** Compact failure summary, then any symbol diagnosis. Informational only; it does not change the verdict. */
   readonly diagnosis?: string
 }

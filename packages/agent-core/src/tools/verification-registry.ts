@@ -3,6 +3,7 @@ import { discoverVerificationCommand } from "./verification-discovery.ts"
 import { VerificationEngine } from "./verification-engine.ts"
 import { type CommandSandboxMode, describeSandbox, predictSandbox } from "./command-sandbox.ts"
 import { diagnoseUnresolvedSymbols } from "./symbol-diagnosis.ts"
+import { summarizeVerification } from "./verification-summary.ts"
 import { VerificationAction, PreparedVerification, VerificationResult } from "./verification-contracts.ts"
 
 export const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
@@ -77,9 +78,18 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
             // The command could not run here; that says nothing about the code, so it is not a test failure.
             return { ...result, status: "EXECUTION_ERROR", diagnosis: `ENVIRONMENT_SETUP_REQUIRED: verification could not run in this workspace (${blocked}). This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.` }
           }
-          // Read-only workspace scan; never changes the verdict.
-          const diagnosis = await diagnoseUnresolvedSymbols(workspaceRoot, `${result.stdout}\n${result.stderr}`).catch(() => undefined)
-          return diagnosis ? { ...result, diagnosis } : result
+          // Read-only. The summary is the reporter's own failures; symbol diagnosis is added when a name is unresolved.
+          const output = `${result.stdout}\n${result.stderr}`
+          const summary = summarizeVerification(output)
+          const symbol = await diagnoseUnresolvedSymbols(workspaceRoot, output).catch(() => undefined)
+          const diagnosis = [summary.text, symbol].filter((part) => part && part.trim().length > 0).join("\n\n")
+          const total = summary.failed !== undefined ? summary.failed + (summary.passed ?? 0) + (summary.skipped ?? 0) : undefined
+          return {
+            ...result,
+            ...(summary.failed !== undefined ? { failedTests: summary.failed } : {}),
+            ...(total !== undefined ? { totalTests: total } : {}),
+            ...(diagnosis ? { diagnosis } : {}),
+          }
         },
       }
     },

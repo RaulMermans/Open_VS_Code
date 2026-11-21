@@ -18,18 +18,30 @@ export function failureFingerprint(output: string): string[] {
 
 const MUTATING = new Set(["apply_patch", "create_file", "rename_symbol"])
 
+/** Name plus the first assertion, so the same test title with a different error is not the same failure. */
+function failureSignatures(output: string): string[] {
+  const cause = (output.replace(ANSI, "").match(/^(?:AssertionError|TypeError|ReferenceError|SyntaxError):[^\n]*/m)?.[0] ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 140)
+  return failureFingerprint(output).map((name) => (cause ? `${name} :: ${cause}` : name))
+}
+
 /**
- * Tests that failed in each of the last two failing verification runs although the agent applied an edit in
- * between: the same failure before and after this task's work, so more edits will not clear it.
+ * Failures that already failed before this task's first edit and still fail the same way.
+ * Two identical failures after the task has started editing are an unsuccessful repair, not a pre-existing failure.
+ * No pre-edit failing run means the provenance is unknown, which is not recorded as pre-existing.
  */
 export function unchangedFailures(observations: readonly ToolObservation[]): string[] {
-  const runs: number[] = []
-  observations.forEach((observation, index) => { if (observation.toolName === "run_verification" && /Status: FAIL\b/.test(observation.content)) runs.push(index) })
-  if (runs.length < 2) return []
-  const [earlier, later] = [runs.at(-2)!, runs.at(-1)!]
-  const edited = observations.slice(earlier + 1, later).some((item) => MUTATING.has(item.toolName) && item.ok)
-  if (!edited) return []
-  const before = new Set(failureFingerprint(observations[earlier]!.content))
-  const after = failureFingerprint(observations[later]!.content)
-  return after.length > 0 && after.every((name) => before.has(name)) ? after : []
+  const firstEdit = observations.findIndex((item) => MUTATING.has(item.toolName) && item.ok)
+  if (firstEdit < 0) return []
+  const baseline = observations.slice(0, firstEdit).filter((item) => item.toolName === "run_verification" && /Status: FAIL\b/.test(item.content))
+  if (baseline.length === 0) return []
+  const later = observations.slice(firstEdit + 1).filter((item) => item.toolName === "run_verification" && /Status: FAIL\b/.test(item.content))
+  const latest = later.at(-1)
+  if (!latest) return []
+  const before = new Set(failureSignatures(baseline.at(-1)!.content))
+  const after = failureSignatures(latest.content)
+  const names = failureFingerprint(latest.content)
+  return after.length > 0 && after.every((signature) => before.has(signature)) ? names : []
 }

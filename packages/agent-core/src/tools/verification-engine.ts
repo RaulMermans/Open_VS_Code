@@ -39,6 +39,17 @@ export function truncateUtf8Buffer(buf: Buffer, maxBytes: number): { buffer: Buf
   return { buffer: buf.subarray(0, end), truncated: true }
 }
 
+/** Keep the end of a stream. Test reporters print the failures last; the head is often toolchain noise. */
+export function retainOutputTail(existing: Buffer, chunk: Buffer, maxBytes: number): { buffer: Buffer; truncated: boolean } {
+  if (chunk.length === 0) return { buffer: existing, truncated: false }
+  const combined = Buffer.concat([existing, chunk])
+  if (combined.length <= maxBytes) return { buffer: combined, truncated: false }
+  let start = combined.length - maxBytes
+  while (start < combined.length && (combined[start]! & 0xC0) === 0x80) start++
+  if (start >= combined.length) start = Math.max(0, combined.length - maxBytes)
+  return { buffer: combined.subarray(start), truncated: true }
+}
+
 export type VerificationOutputCallback = (output: { stream: "stdout" | "stderr"; chunk: string }) => void
 
 export interface VerificationEngineOptions {
@@ -236,18 +247,9 @@ export class VerificationEngine {
           onOutput({ stream: "stdout", chunk: text })
         }
 
-        if (stdoutBuf.length < MAX_OUTPUT_BYTES) {
-          const remaining = MAX_OUTPUT_BYTES - stdoutBuf.length
-          if (chunk.length <= remaining) {
-            stdoutBuf = Buffer.concat([stdoutBuf, chunk])
-          } else {
-            const { buffer: safeSlice } = truncateUtf8Buffer(chunk, remaining)
-            stdoutBuf = Buffer.concat([stdoutBuf, safeSlice])
-            stdoutTruncated = true
-          }
-        } else {
-          stdoutTruncated = true
-        }
+        const retainedOut = retainOutputTail(stdoutBuf, chunk, MAX_OUTPUT_BYTES)
+        stdoutBuf = Buffer.from(retainedOut.buffer)
+        if (retainedOut.truncated) stdoutTruncated = true
       })
 
       child.stderr.on("data", (chunk: Buffer) => {
@@ -256,18 +258,9 @@ export class VerificationEngine {
           onOutput({ stream: "stderr", chunk: text })
         }
 
-        if (stderrBuf.length < MAX_OUTPUT_BYTES) {
-          const remaining = MAX_OUTPUT_BYTES - stderrBuf.length
-          if (chunk.length <= remaining) {
-            stderrBuf = Buffer.concat([stderrBuf, chunk])
-          } else {
-            const { buffer: safeSlice } = truncateUtf8Buffer(chunk, remaining)
-            stderrBuf = Buffer.concat([stderrBuf, safeSlice])
-            stderrTruncated = true
-          }
-        } else {
-          stderrTruncated = true
-        }
+        const retainedErr = retainOutputTail(stderrBuf, chunk, MAX_OUTPUT_BYTES)
+        stderrBuf = Buffer.from(retainedErr.buffer)
+        if (retainedErr.truncated) stderrTruncated = true
       })
 
       let timeoutId: NodeJS.Timeout | undefined

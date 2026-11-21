@@ -189,6 +189,34 @@ test("Verification Engine - Output bounding limit", async () => {
   }
 })
 
+test("Verification Engine - keeps the failure at the end of a long stdout", async () => {
+  let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  tmpDir = await fs.realpath(tmpDir)
+  try {
+    const pkgPath = path.join(tmpDir, "package.json")
+    const pkgContent = "{}"
+    await fs.writeFile(pkgPath, pkgContent)
+    const engine = new VerificationEngine({ workspaceRoot: tmpDir })
+    const result = await engine.execute({
+      verificationId: "tail-id", action: "TEST",
+      executable: "node",
+      args: ["-e", "process.stdout.write('better-sqlite3 binding '.repeat(4000)); process.stdout.write('\\nAssertionError: expected 2\\nFAIL  test.js > returns two\\n'); process.exit(1)"],
+      cwd: tmpDir,
+      timeoutMs: 5000,
+      commandPreview: "node ...",
+      packageJsonPath: pkgPath,
+      packageJsonHash: crypto.createHash("sha256").update(pkgContent).digest("hex"),
+      scriptName: "test",
+      scriptBody: "node ...",
+    })
+    assert.equal(result.status, "FAIL")
+    assert.match(result.stdout, /AssertionError: expected 2/)
+    assert.match(result.stdout, /FAIL  test.js > returns two/)
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
 test("Verification Engine - Stale verification", async () => {
   let tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
   tmpDir = await fs.realpath(tmpDir)

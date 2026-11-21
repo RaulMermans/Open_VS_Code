@@ -263,6 +263,10 @@ export const MAX_CONSECUTIVE_CONTEXT_REQUESTS = 2
 
 export type AgentRunnerErrorCode = "ACTIVE_SESSION" | "NO_PENDING_CONFIRMATION" | "TERMINAL_STATE" | "INVALID_INPUT"
 
+function isProductSource(path: string): boolean {
+  return /\.(?:ts|tsx|js|mjs|cjs)$/.test(path) && !isTestArtifactPath(path)
+}
+
 export class AgentRunnerError extends Error {
   readonly code: AgentRunnerErrorCode
 
@@ -745,6 +749,7 @@ export class AgentRunner {
               totalTestCount: (result as any).totalTests,
               stdout: result.stdout,
               stderr: result.stderr,
+              diagnosis: result.diagnosis,
             })
           } else if (isBrowserReview) {
             reviewSucceeded = Boolean(result && typeof result === "object" && result.ok === true)
@@ -1291,7 +1296,6 @@ export class AgentRunner {
         .every((definition) => ["read_file", "list_directory", "find_files", "search_text"].includes(definition.name))
       const directoryListings = session.toolCalls.filter((item) => item.name === "list_directory" && item.outcome === "COMPLETED" && item.alreadyObserved !== true).length
       const mutationFacts = session.evidenceCollector.getEvidence().mutationOutcomes
-      const isProductSource = (path: string) => /\.(?:ts|tsx|js|mjs|cjs)$/.test(path) && !isTestArtifactPath(path)
       const hasAppliedEdit = mutationFacts.some((mutation) => mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED")
       const productSourceApplied = mutationFacts.some((mutation) => (mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED") && isProductSource(mutation.path))
       const testFileApplied = mutationFacts.some((mutation) => (mutation.status === "APPLIED" || mutation.status === "ALREADY_SATISFIED") && isTestArtifactPath(mutation.path))
@@ -2318,6 +2322,7 @@ export class AgentRunner {
           totalTestCount: res?.totalTests,
           stdout: res?.stdout,
           stderr: res?.stderr,
+          diagnosis: res?.diagnosis,
         })
         const { evalResult: verifEval, directive: verifDirective } = await this.#runEval("VERIFICATION_RESULT")
         if (this.#adaptiveInterventions && verifDirective.decision !== "CONTINUE") {
@@ -3198,6 +3203,7 @@ export class AgentRunner {
             totalTestCount: result.totalTests,
             stdout: result.stdout,
             stderr: result.stderr,
+            diagnosis: result.diagnosis,
           })
           const obs = createToolObservation({
             toolName: prepared.name,
@@ -3363,6 +3369,7 @@ export class AgentRunner {
           totalTestCount: (result as any).totalTests,
           stdout: result.stdout,
           stderr: result.stderr,
+          ...(typeof result.diagnosis === "string" ? { diagnosis: result.diagnosis } : {}),
         })
         const obs = createToolObservation({
           toolName: "run_verification",

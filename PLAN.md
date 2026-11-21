@@ -1,3 +1,10 @@
+Sprint 30 — Automated program repair
+STATUS: IN_PROGRESS
+  - Base `cc346f01ae`. Installed desktop stays `0.1.0-rc.25`.
+  - Recorded qualification run i1 failed 5 tests and was told to repair a truncated `better-sqlite3` path. Verification now keeps the output tail and a compact failure summary (ADR-050). A failure is pre-existing only with a pre-edit failing run.
+  - Scripted repair control passes. Real-model replay, Aider, Qwen Code, HALO, and GUI acceptance were not run. Repair mechanism, supervised testing, and daily-driver remain NO-GO.
+  - See `docs/sprints/SPRINT_30_AUTOMATED_PROGRAM_REPAIR.md`.
+
 Sprint 20 — Deterministic file editing
 STATUS: IMPLEMENTED
   - Existing-file `create_file` is rejected or converted only when a unique preserving patch can be validated. Identical content is `ALREADY_SATISFIED`.

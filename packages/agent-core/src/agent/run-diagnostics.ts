@@ -9,7 +9,7 @@ export interface RunDiagnostics {
   readonly lastTool?: { readonly name: string; readonly callId: string; readonly outcome: string }
   readonly appliedMutationIds: readonly string[]
   readonly pendingApproval: boolean
-  readonly verification: { readonly lastStatus?: string; readonly ranAfterLastMutation: boolean; /** Tests that failed identically before and after this run's edits (predate the task or the environment). */ readonly unchangedFailures?: readonly string[] }
+  readonly verification: { readonly lastStatus?: string; readonly ranAfterLastMutation: boolean; /** Same failures on a run from before the first edit. Absent when provenance is unknown. */ readonly unchangedFailures?: readonly string[] }
   /** Safe to resume from the checkpoint without repeating applied writes. */
   readonly recoverable: boolean
   /** Contradictions the user would otherwise have to find by hand. */
