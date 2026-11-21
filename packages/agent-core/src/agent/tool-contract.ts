@@ -133,7 +133,8 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
   let kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
   if (forbidsTestEdits(instruction)) {
     kept = kept.filter((path) => !isTestArtifactPath(path))
-    if (kept.length === 0 && paths.every((path) => isTestArtifactPath(path))) return []
+    // Every named path was a forbidden test, or was excluded as well. Do not put the forbidden test back.
+    if (kept.length === 0) return []
   }
   return kept.length > 0 ? kept : paths
 }

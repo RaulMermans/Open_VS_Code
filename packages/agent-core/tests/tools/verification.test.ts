@@ -5,8 +5,28 @@ import * as fs from "node:fs/promises"
 import * as os from "node:os"
 import * as crypto from "node:crypto"
 import { VerificationEngine } from "../../src/tools/verification-engine.ts"
-import { discoverVerificationCommand, resolveNodeBinary } from "../../src/tools/verification-discovery.ts"
+import { discoverVerificationCommand, resolveNodeBinary, verificationWorkspace } from "../../src/tools/verification-discovery.ts"
 import { createVerificationToolRegistry } from "../../src/tools/verification-registry.ts"
+
+test("a recursive root test is narrowed to the package that owns the named test", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))
+  try {
+    await fs.mkdir(path.join(tmpDir, "packages/inference/test"), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, "packages/hardware"), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, "package.json"), JSON.stringify({ scripts: { test: "pnpm -r --if-present run test" } }))
+    await fs.writeFile(path.join(tmpDir, "packages/inference/package.json"), JSON.stringify({ scripts: { test: "vitest run" } }))
+    await fs.writeFile(path.join(tmpDir, "packages/hardware/package.json"), JSON.stringify({ scripts: { test: "vitest run" } }))
+    await fs.writeFile(path.join(tmpDir, "packages/inference/test/modelQualification.test.ts"), "test\n")
+    const instruction = "packages/inference/test/modelQualification.test.ts already exists and fails. Do not change that test."
+    const scoped = await verificationWorkspace(tmpDir, instruction)
+    assert.equal(scoped, path.join(tmpDir, "packages/inference"))
+    const command = await discoverVerificationCommand(scoped, "TEST")
+    assert.equal(command.scriptBody, "vitest run")
+    assert.equal(await verificationWorkspace(tmpDir, "Fix the bug."), tmpDir)
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+})
 
 test("Verification Discovery - valid action", async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openvscode-test-"))

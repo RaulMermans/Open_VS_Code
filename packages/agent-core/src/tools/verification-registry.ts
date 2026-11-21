@@ -1,5 +1,5 @@
 import { ToolRegistry, ToolRegistration, ToolExecutionContext, ReviewableExecution } from "./registry.ts"
-import { discoverVerificationCommand } from "./verification-discovery.ts"
+import { discoverVerificationCommand, verificationWorkspace } from "./verification-discovery.ts"
 import { VerificationEngine } from "./verification-engine.ts"
 import { type CommandSandboxMode, describeSandbox, predictSandbox } from "./command-sandbox.ts"
 import { diagnoseUnresolvedSymbols } from "./symbol-diagnosis.ts"
@@ -44,7 +44,8 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
     },
     prepareForReview: async (input: Readonly<Record<string, unknown>>, context: ToolExecutionContext): Promise<ReviewableExecution> => {
       const action = input.action as VerificationAction
-      const command = await discoverVerificationCommand(context.workspaceRoot, action)
+      const root = action === "TEST" ? await verificationWorkspace(context.workspaceRoot, context.instruction) : context.workspaceRoot
+      const command = await discoverVerificationCommand(root, action)
       const verificationId = `verification-${Date.now()}-${Math.random().toString(36).slice(2)}`
       
       const prepared: PreparedVerification = {
@@ -52,7 +53,7 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
         action,
         executable: command.executable,
         args: command.args,
-        cwd: context.workspaceRoot,
+        cwd: root,
         timeoutMs: ACTION_TIMEOUTS[action],
         commandPreview: `${command.env ? Object.entries(command.env).map(([key, value]) => `${key}=${value} `).join("") : ""}${command.executable} ${command.args.join(" ")}`,
         ...(command.env ? { env: command.env } : {}),

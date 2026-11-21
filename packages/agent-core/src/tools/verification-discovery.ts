@@ -112,6 +112,42 @@ const ACTION_TO_SCRIPT: Record<VerificationAction, string> = {
   BUILD: "build",
 }
 
+/**
+ * A root `pnpm -r` test stops at the first package failure, so a later package's tests never run.
+ * When the request names a test file in one package that has its own test script, verify that package.
+ */
+export async function verificationWorkspace(workspaceRoot: string, instruction: string | undefined): Promise<string> {
+  if (!instruction) return workspaceRoot
+  const named = [...instruction.matchAll(/(?:^|[\s`'"])([\w./-]+\.(?:test|spec)\.[cm]?[jt]sx?)\b/g)].map((match) => match[1]!.replace(/^\.\//, ""))
+  if (named.length === 0) return workspaceRoot
+  let rootScript = ""
+  try {
+    const pkg = JSON.parse(await fs.readFile(path.join(workspaceRoot, "package.json"), "utf8")) as { scripts?: Record<string, string> }
+    rootScript = String(pkg.scripts?.test ?? "")
+  } catch {
+    return workspaceRoot
+  }
+  if (!/\bpnpm\b[^\n]*\s(?:-r|--recursive)\b/.test(rootScript)) return workspaceRoot
+  const packages = new Set<string>()
+  for (const file of named) {
+    let dir = path.resolve(workspaceRoot, path.dirname(file))
+    const rootReal = path.resolve(workspaceRoot)
+    while (dir !== rootReal && dir.startsWith(`${rootReal}${path.sep}`)) {
+      try {
+        const pkg = JSON.parse(await fs.readFile(path.join(dir, "package.json"), "utf8")) as { scripts?: Record<string, string> }
+        if (typeof pkg.scripts?.test === "string") {
+          packages.add(dir)
+          break
+        }
+      } catch {
+        // Not this directory.
+      }
+      dir = path.dirname(dir)
+    }
+  }
+  return packages.size === 1 ? [...packages][0]! : workspaceRoot
+}
+
 export async function discoverVerificationCommand(
   workspaceRoot: string,
   action: VerificationAction

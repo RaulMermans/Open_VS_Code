@@ -1986,6 +1986,7 @@ export class AgentRunner {
             taskId: session.input.task.id,
             callId: prepared.id,
             origin: "agent",
+            instruction: session.input.task.instruction,
           })
           const isVerification = prepared.definition.action === "run_known_test"
           this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", {
@@ -3046,6 +3047,7 @@ export class AgentRunner {
             reviewable = await prepared.prepareForReview({
               workspaceRoot: session.input.workspaceRoot,
               signal: session.input.signal ?? new AbortController().signal,
+              instruction: session.input.task.instruction,
             })
           } catch {
             session.evalLedger.recordInterventionOutcome(evalId, "UNCHANGED", "Verification capability unavailable in current environment")
@@ -3078,6 +3080,7 @@ export class AgentRunner {
             reviewable = await prepared.prepareForReview({
               workspaceRoot: session.input.workspaceRoot,
               signal: session.input.signal ?? new AbortController().signal,
+              instruction: session.input.task.instruction,
             })
           } catch {
             session.evalLedger.recordInterventionOutcome(evalId, "UNCHANGED", "Verification capability unavailable in current environment")

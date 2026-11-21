@@ -101,4 +101,5 @@ test("naming a test while forbidding changes to it does not make that test the r
   const { requiredEditPaths } = await import("../../src/agent/tool-contract.ts")
   const instruction = "packages/inference/test/modelQualification.test.ts already exists and fails. Fix the implementation so those tests pass.\n\nDo not change, delete, or weaken that test."
   assert.deepEqual(requiredEditPaths(instruction, ["packages/inference/test/modelQualification.test.ts"]), [])
+  assert.deepEqual(requiredEditPaths(`${instruction}\nDo not edit package.json.`, ["packages/inference/test/modelQualification.test.ts", "package.json"]), [])
 })
