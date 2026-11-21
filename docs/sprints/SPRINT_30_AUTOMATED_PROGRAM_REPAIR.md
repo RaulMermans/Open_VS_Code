@@ -33,20 +33,27 @@ See ADR-050. Deterministic checks:
 - Scripted control: failed test, one `apply_patch`, second verification, `COMPLETED`. A "tests passed" reply after a failing run is not `COMPLETED`.
 - Agent-core lint with `--deny-warnings` is clean, including the previous `isProductSource` warning.
 
+## Production loop (`qwen3.6:35b`)
+
+The worktree `node_modules` entry was a symlink into the repair28 tree, so `@open-vs-code/*` resolved there. Replays 1–3, including the add-bug runs, executed that older runtime. They are not evidence for this branch. Live runs after that use a local `node_modules` whose `@open-vs-code` links point at this worktree. That overlay is untracked.
+
+Prompt, unchanged: the existing `packages/inference/test/modelQualification.test.ts` fails; fix the implementation; do not change that test or `package.json`; run the tests after a fix. Workspace copy of frozen `ws/i1`. Budget 12 minutes. Oracle: vitest on that file only.
+
+Replay 4 (`/tmp/ovsc-r30-loop/out/halo-r4.json`, `be6abc47ae`): CANCELLED at 720s, 14 turns. The test command was `@halo/inference` `vitest run`, not the root `pnpm -r` script. The revision quoted `AssertionError: promise resolved … instead of rejecting` and the qualification test names. `service.ts` counted as the requested edit. The two patches added an unused import and an unused `HALO_INFERENCE_QUALIFY_MODEL_ID` constant. The identical-failure replan fired as the clock expired. Independent vitest: 5 failed, 3 passed.
+
+Replay 5 (`halo-r5.json`): CANCELLED at 720s, 15 turns, three applied patches on `service.ts`. The last patch throws `ModelQualificationError` only when that env var is set and `modelRef` differs. The frozen tests never set the env var, so chat still resolves. The diagnosis also says `The instanceof assertion needs a constructor but undefined was given` at the test's `ModelQualificationError` import. The model did not export that class. Independent vitest: 5 failed, 3 passed. The test file was not edited.
+
 ## Not run
 
-- Real `qwen3.6:35b` repair from the i1 workspace (E1 repeat and E2).
-- Aider and Qwen Code (E4).
-- A second candidate patch (E5).
-- The eight frozen generalization tasks (E6).
-- Isolated HALO end-to-end, full HALO VC-02, and packaged GUI acceptance.
-
-Those wait on one native replay that receives this summary. Three scripted successes are not three model successes.
+- Aider and Qwen Code.
+- A second candidate patch.
+- The eight frozen generalization tasks.
+- Three isolated HALO qualifications from a clean baseline, full HALO VC-02, and packaged GUI acceptance.
 
 ## Verdict
 
-- Repair mechanism: **NO-GO**. The control passes and the i1 feedback defect is fixed in code. An unrelated real-model repair is not measured yet.
-- Supervised testing: **NO-GO**.
-- Daily-driver: **NO-GO**.
+- Repair mechanism: **NO-GO**. The scripted control passes, and a live replay now sees the qualification assertions and can edit `service.ts`. Two valid replays left the same 5 failures. The model did not export `ModelQualificationError` or make the mismatch check run for these tests.
+- Supervised testing: **NO-GO**. No isolated HALO success.
+- Daily-driver: **NO-GO**. Installed package remains `0.1.0-rc.25`.
 
-Next action: one isolated replay of the failed qualification workspace on this SHA with `qwen3.6:35b`, and record whether the first edit after verification touches the implementation the summary names.
+Next action: do not repeat this 12-minute prompt on the same runtime. A further sample needs a mechanism the last two traces did not already exercise. Do not edit the frozen test to make the run pass.
