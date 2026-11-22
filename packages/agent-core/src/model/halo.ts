@@ -19,6 +19,7 @@ export type HaloProviderErrorCode =
   | "INFERENCE_TIMEOUT"
   | "INFERENCE_UPSTREAM_ERROR"
   | "INFERENCE_INVALID_RESPONSE"
+  | "UNSUPPORTED_INFERENCE_FEATURE"
   | "HALO_REQUEST_FAILED"
   | "HALO_ADMISSION_REJECTED"
   | "HALO_UNCERTAIN_COMPLETION"
@@ -40,6 +41,7 @@ const SAFE_MESSAGES: Record<HaloProviderErrorCode, string> = {
   INFERENCE_TIMEOUT: "HALO's inference provider timed out.",
   INFERENCE_UPSTREAM_ERROR: "HALO's inference provider returned an error.",
   INFERENCE_INVALID_RESPONSE: "HALO's inference provider returned an invalid response.",
+  UNSUPPORTED_INFERENCE_FEATURE: "HALO does not support the requested inference feature.",
   HALO_REQUEST_FAILED: "HALO request failed.",
   HALO_ADMISSION_REJECTED: "HALO admission rejected this request.",
   HALO_UNCERTAIN_COMPLETION: "HALO completion is uncertain; the request was not replayed.",
@@ -203,9 +205,15 @@ interface HaloFailureBody {
   readonly reason?: unknown
 }
 
+interface HaloToolCall {
+  readonly id?: unknown
+  readonly name?: unknown
+  readonly arguments?: unknown
+}
+
 interface HaloChatResponse {
   readonly modelId: unknown
-  readonly output: { readonly role?: unknown; readonly content?: unknown } | null
+  readonly output: { readonly role?: unknown; readonly content?: unknown; readonly toolCalls?: unknown } | null
   readonly finishReason?: unknown
   readonly usage?: { readonly inputTokens?: unknown; readonly outputTokens?: unknown }
   readonly provider?: { readonly id?: unknown; readonly type?: unknown }
@@ -221,6 +229,7 @@ const HALO_ERROR_CODES = new Set<HaloProviderErrorCode>([
   "INFERENCE_TIMEOUT",
   "INFERENCE_UPSTREAM_ERROR",
   "INFERENCE_INVALID_RESPONSE",
+  "UNSUPPORTED_INFERENCE_FEATURE",
 ])
 
 function parseCoreUrl(value: string | URL): URL {
@@ -231,8 +240,46 @@ function parseCoreUrl(value: string | URL): URL {
   return url
 }
 
-function isHaloMessage(message: ModelMessage): message is ModelMessage & { role: "system" | "user" | "assistant" } {
-  return message.role === "system" || message.role === "user" || message.role === "assistant"
+function isHaloMessage(message: ModelMessage): boolean {
+  return message.role === "system" || message.role === "user" || message.role === "assistant" || message.role === "tool"
+}
+
+function haloMessages(messages: readonly ModelMessage[]): unknown[] {
+  return messages.map((message) => {
+    if (message.role === "tool") {
+      return { role: "tool", toolCallId: message.toolCallId, content: message.content }
+    }
+    if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
+      return {
+        role: "assistant",
+        content: message.content,
+        toolCalls: message.toolCalls.map((call) => ({
+          id: call.id,
+          name: call.name,
+          arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {}),
+        })),
+      }
+    }
+    return { role: message.role, content: message.content }
+  })
+}
+
+function parseHaloToolCalls(raw: unknown): ModelResponse["toolCalls"] {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw) || raw.length === 0) throw new HaloProviderError("HALO_INVALID_RESPONSE")
+  return raw.map((item) => {
+    const call = item as HaloToolCall
+    if (typeof call.id !== "string" || !call.id.trim() || typeof call.name !== "string" || typeof call.arguments !== "string") {
+      throw new HaloProviderError("HALO_INVALID_RESPONSE")
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(call.arguments)
+    } catch {
+      throw new HaloProviderError("HALO_INVALID_RESPONSE")
+    }
+    return { id: call.id, name: call.name, arguments: parsed }
+  })
 }
 
 function asUsageNumber(value: unknown): number | undefined {
@@ -240,7 +287,7 @@ function asUsageNumber(value: unknown): number | undefined {
 }
 
 export class HaloProvider implements ModelProvider {
-  readonly capabilities: ReadonlySet<ModelCapability> = new Set(["chat", "reasoning", "usage_reporting"])
+  readonly capabilities: ReadonlySet<ModelCapability> = new Set(["chat", "reasoning", "tools", "usage_reporting"])
   readonly #base: URL
   readonly #endpoint: URL
   readonly #capability: HaloCapability
@@ -275,18 +322,29 @@ export class HaloProvider implements ModelProvider {
 
     const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
     const signal = request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal
+    const toolsOnWire = !this.#modelId && request.tools && request.tools.length > 0
+      ? {
+          tools: request.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.inputSchema,
+          })),
+          toolChoice: "auto" as const,
+        }
+      : {}
     const body = this.#modelId
       ? {
         modelId: this.#modelId,
-        messages: request.messages.map(({ role, content }) => ({ role, content })),
+        messages: haloMessages(request.messages),
         ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         ...(request.maxOutputTokens !== undefined ? { maxTokens: request.maxOutputTokens } : {}),
       }
       : {
         capability: this.#capability,
-        messages: request.messages.map(({ role, content }) => ({ role, content })),
+        messages: haloMessages(request.messages),
         ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         ...(request.maxOutputTokens !== undefined ? { maxTokens: request.maxOutputTokens } : {}),
+        ...toolsOnWire,
       }
 
     let response: Response
@@ -340,18 +398,20 @@ export class HaloProvider implements ModelProvider {
       throw new HaloProviderError("HALO_INVALID_RESPONSE")
     }
     if (this.#modelId && response.modelId !== this.#modelId) throw new HaloProviderError("HALO_INVALID_RESPONSE")
+    const toolCalls = parseHaloToolCalls(response.output.toolCalls)
     const inputTokens = asUsageNumber(response.usage?.inputTokens)
     const outputTokens = asUsageNumber(response.usage?.outputTokens)
     return {
       model: response.modelId,
-      message: { role: "assistant", content: response.output.content },
+      message: { role: "assistant", content: response.output.content, ...(toolCalls ? { toolCalls } : {}) },
       ...(typeof response.finishReason === "string" ? { finishReason: response.finishReason } : {}),
       ...((inputTokens !== undefined || outputTokens !== undefined) ? { usage: { ...(inputTokens !== undefined ? { inputTokens } : {}), ...(outputTokens !== undefined ? { outputTokens } : {}) } } : {}),
+      ...(toolCalls ? { toolCalls } : {}),
       metadata: {
         backend: "halo",
         capability: this.#capability,
         streaming: false,
-        tools: false,
+        tools: Boolean(toolCalls && toolCalls.length > 0),
         ...(this.#modelId ? { modelId: this.#modelId } : {}),
         ...(typeof response.provider?.id === "string" ? { providerId: response.provider.id } : {}),
       },
