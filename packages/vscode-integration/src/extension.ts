@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { createVsCodeCodeIntelligence } from './code-intelligence-provider.js';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, type RoutingConfiguration, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, inspectHaloConnection, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, type RoutingConfiguration, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
 import { buildStarterRoutingConfig, fetchLocalModelCatalog, localProviderBaseUrl } from './local-model-selection.js';
 import { shouldShowModelConfiguration } from './model-config-open.js';
 import { connectionFromSnapshot } from './model-routing.js';
@@ -318,16 +318,21 @@ class VSCodeIdeHost implements IdeHost {
       return;
     }
     try {
-      const reachable = await probeHalo(settings.coreUrl);
-      await this.showOutput(reachable ? 'HALO reachable.' : 'HALO Core is unavailable.');
+      const inspection = await inspectHaloConnection({
+        coreUrl: settings.coreUrl,
+        token: process.env.HALO_APP_TOKEN_OPEN_VSCODE,
+        capability: 'coding',
+        ...(settings.modelId ? { modelId: settings.modelId } : {}),
+      });
+      await this.showOutput(inspection.summary);
       this.revealOutput();
       if (chatController) {
         const snapshot = await this.getConnectionSnapshot();
         chatController.setConnectionInput({
           ...snapshot,
           haloHealthChecked: true,
-          haloReachable: reachable,
-          lastError: reachable ? undefined : 'unavailable',
+          haloReachable: inspection.coreReachable,
+          lastError: inspection.coreReachable ? undefined : 'unavailable',
         });
       }
     } catch {
@@ -604,6 +609,7 @@ function haloSettings() {
     backend: settings.get<'halo' | 'standalone-local'>('inferenceBackend', 'standalone-local'),
     coreUrl: settings.get<string>('halo.coreUrl', HALO_DEFAULT_URL),
     timeoutMs: settings.get<number>('halo.timeoutMs', 30_000),
+    modelId: settings.get<string>('halo.modelId', '')?.trim() || undefined,
   };
 }
 
@@ -715,6 +721,7 @@ export function activate(context: vscode.ExtensionContext) {
           timeoutMs: settings.timeoutMs,
           capability: capabilityForAgentMode(options.mode),
           token: haloToken(context),
+          ...(settings.modelId ? { modelId: settings.modelId } : {}),
         })
         : undefined;
       const browserManager = getGovernedBrowserSessionManager(options.workspaceRoot);
@@ -842,8 +849,13 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       try {
-        const reachable = await probeHalo(settings.coreUrl);
-        await host?.showOutput(reachable ? 'HALO reachable.' : 'HALO Core is unavailable.');
+        const inspection = await inspectHaloConnection({
+          coreUrl: settings.coreUrl,
+          token: await haloToken(context)(),
+          capability: 'coding',
+          ...(settings.modelId ? { modelId: settings.modelId } : {}),
+        });
+        await host?.showOutput(inspection.summary);
       } catch {
         await host?.showOutput('HALO Core is unreachable.');
       }

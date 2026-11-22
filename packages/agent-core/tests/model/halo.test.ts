@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import test from "node:test"
 
-import { HaloProvider, HaloProviderError, capabilityForAgentMode, probeHalo, selectInferenceBackend } from "../../src/model/halo.ts"
+import { HaloProvider, HaloProviderError, capabilityForAgentMode, inspectHaloConnection, probeHalo, selectInferenceBackend } from "../../src/model/halo.ts"
 import type { ModelProvider } from "../../src/contracts/model.ts"
 import { AgentRunner } from "../../src/agent/runner.ts"
 import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.ts"
@@ -46,7 +46,7 @@ test("uses HALO's capability endpoint, normalized base URL, bearer auth, and can
       message: { role: "assistant", content: "hi" },
       finishReason: "stop",
       usage: { inputTokens: 3, outputTokens: 1 },
-      metadata: { backend: "halo", capability: "coding" },
+      metadata: { backend: "halo", capability: "coding", streaming: false, tools: false },
     })
   })
 })
@@ -140,4 +140,92 @@ test("HALO selection never falls back to the standalone provider after a HALO fa
   const selected = selectInferenceBackend({ backend: "halo", halo, standalone })
   await assert.rejects(selected.complete({ messages: [{ role: "user", content: "hello" }] }), { code: "HALO_UNAVAILABLE" })
   assert.equal(standaloneCalls, 0)
+})
+
+test("explicit model ID uses /inference/chat and never sends tools on the wire", async () => {
+  await withServer(async (request, response) => {
+    assert.equal(request.url, "/inference/chat")
+    const body = await readJson(request) as Record<string, unknown>
+    assert.equal(body.modelId, "x3-qwen3-4b-vulkan")
+    assert.equal("tools" in body, false)
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({ modelId: "x3-qwen3-4b-vulkan", output: { role: "assistant", content: "function add() {}" }, finishReason: "stop", usage: { inputTokens: 8, outputTokens: 4 } }))
+  }, async (coreUrl) => {
+    const provider = new HaloProvider({ coreUrl, capability: "coding", token: "token", modelId: "x3-qwen3-4b-vulkan" })
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "write add" }],
+      tools: [{ name: "read_file", description: "read", inputSchema: { type: "object" }, action: "read_repository" }],
+    })
+    assert.equal(result.message.content, "function add() {}")
+    assert.equal(result.toolCalls, undefined)
+    assert.equal(result.metadata?.tools, false)
+    assert.equal(result.metadata?.streaming, false)
+  })
+})
+
+test("maps admission rejection and uncertain completion without replay", async () => {
+  await withServer((_request, response) => {
+    response.statusCode = 429
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({ error: "AdmissionError", reason: "REJECTED_QUEUE_FULL" }))
+  }, async (coreUrl) => {
+    await assert.rejects(new HaloProvider({ coreUrl, capability: "coding", token: "token" }).complete({ messages: [{ role: "user", content: "hello" }] }), { code: "HALO_ADMISSION_REJECTED" })
+  })
+  await withServer((_request, response) => {
+    response.statusCode = 504
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({ error: "InferenceError", code: "INFERENCE_TIMEOUT" }))
+  }, async (coreUrl) => {
+    await assert.rejects(new HaloProvider({ coreUrl, capability: "coding", token: "token" }).complete({ messages: [{ role: "user", content: "hello" }] }), { code: "HALO_UNCERTAIN_COMPLETION" })
+  })
+})
+
+test("refuses OpenAI tool_calls instead of converting them to assistant text", async () => {
+  await withServer((_request, response) => {
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({
+      modelId: "halo-model-id",
+      output: { role: "assistant", content: "" },
+      tool_calls: [{ id: "call_1", function: { name: "read_file" } }],
+    }))
+  }, async (coreUrl) => {
+    await assert.rejects(new HaloProvider({ coreUrl, capability: "coding", token: "token" }).complete({ messages: [{ role: "user", content: "hello" }] }), { code: "HALO_UNSUPPORTED_FEATURE" })
+  })
+})
+
+test("inspectHaloConnection does not dispatch inference and does not treat health as model readiness", async () => {
+  const seen: string[] = []
+  await withServer((request, response) => {
+    seen.push(request.url ?? "")
+    if (request.url === "/health") {
+      response.end("ok")
+      return
+    }
+    if (request.url === "/inference/status") {
+      response.setHeader("content-type", "application/json")
+      response.end(JSON.stringify({ status: "available", features: { streaming: false, tools: false } }))
+      return
+    }
+    if (request.url === "/applications/open-vscode/access") {
+      response.setHeader("content-type", "application/json")
+      response.end(JSON.stringify({ applicationId: "open-vscode", allowedCapabilities: ["coding", "reasoning"] }))
+      return
+    }
+    if (request.url === "/models/x3-qwen3-4b-vulkan") {
+      response.setHeader("content-type", "application/json")
+      response.end(JSON.stringify({ id: "x3-qwen3-4b-vulkan" }))
+      return
+    }
+    response.statusCode = 500
+    response.end("unexpected inference")
+  }, async (coreUrl) => {
+    const inspection = await inspectHaloConnection({ coreUrl, token: "token", capability: "coding", modelId: "x3-qwen3-4b-vulkan" })
+    assert.equal(inspection.coreReachable, true)
+    assert.equal(inspection.selectedModelRegistered, true)
+    assert.equal(inspection.capabilityAllowed, true)
+    assert.equal(inspection.streamingSupported, false)
+    assert.equal(inspection.toolsSupported, false)
+    assert.equal(seen.includes("/inference/capability/chat"), false)
+    assert.equal(seen.includes("/inference/chat"), false)
+  })
 })
