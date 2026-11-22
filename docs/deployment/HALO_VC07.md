@@ -13,4 +13,4 @@ Rollback: set the backend back to `standalone-local`. Do not change HALO service
 
 Streaming: unsupported. Tools: unsupported. BUILD/DEBUG through HALO is blocked until HALO grows a tool protocol.
 
-Physical coding evals: not authorized in this sprint.
+Physical Gate C (2026-11-22): three ASK completions through `HaloProvider` to resident `x3-qwen3-14b-vulkan` (pid 3841757, reuse). Capability `coding` to 4B is admission-rejected while that runtime is `model_advertised`. Package default remains Direct Ollama.
