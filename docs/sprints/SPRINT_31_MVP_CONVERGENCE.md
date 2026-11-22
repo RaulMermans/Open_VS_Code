@@ -1,6 +1,6 @@
 # Sprint 31 — MVP convergence
 
-STATUS: `IN_PROGRESS`. On `main` through pull request #109. Production package `0.1.0-rc.26`. Rollback package `0.1.0-rc.25`. Qualification gates stay NO-GO.
+STATUS: `IN_PROGRESS`. On `main` at `aec5d3aadb`. Installed production is `open-vs-code 0.1.0-rc.26` (package SHA-256 `323ccfe3351f7698710b6d9e63fa34615f1c7bd9df11fc1dc945e5032ff357f5`). Rollback is `~/open-vs-code-backups/pre-rc26-2026-11-22/open-vs-code_0.1.0-rc.25_amd64.deb`. Qualification gates stay NO-GO.
 
 ## Source
 
@@ -86,4 +86,4 @@ Every run was cancelled at 720s. Each Vitest was about 3.8s, inside bubblewrap, 
 
 - Technical MVP candidate: **NO**. Six fresh repairs stayed at 4 or 5 failures. The contract prompt did not beat the ordinary prompt.
 - Supervised-testing: **NO-GO**. The 3/3 agent gate was not run.
-- Daily-driver: **NO-GO**. Production still installs the milestone as `0.1.0-rc.26`, with `0.1.0-rc.25` kept for rollback. The qualification failure is unchanged.
+- Daily-driver: **NO-GO** for the qualification claim. The installed app is still updated to `0.1.0-rc.26` because this milestone is on `main`. `0.1.0-rc.25` is the rollback. Restart the app to load it.

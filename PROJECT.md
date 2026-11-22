@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. On `main` through pull request #109. Production package `0.1.0-rc.26`. Rollback `0.1.0-rc.25`. Stale dependency builds go through the verification sandbox. Six fresh Qwen repairs stayed at 4 or 5 inference failures. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
+Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. On `main` at `aec5d3aadb`. Installed production is `0.1.0-rc.26`. Rollback is `0.1.0-rc.25`. Stale dependency builds go through the verification sandbox. Six fresh Qwen repairs stayed at 4 or 5 inference failures. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
 
 Sprint 23 — Cross-file refactors and real-project dogfooding. Status: `CANDIDATE` `0.1.0-rc.23` (`794b2f9426`), **not installed**; daily driver stays `0.1.0-rc.21`. Five new tasks on a real repository through the GUI: rc.21 0/4 valid → rc.23 1 fully correct + 1 correct code missing requested tests; no false verification PASS, no unbounded loops. Remaining blocker: incomplete instruction-following (stale importer, missing tests, test-gaming). See `docs/sprints/SPRINT_23_DOGFOODING.md`.
 
