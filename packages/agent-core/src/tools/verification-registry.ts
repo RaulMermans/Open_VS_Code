@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { readdir, readFile, realpath, stat } from "node:fs/promises"
 import * as path from "node:path"
 import { ToolRegistry, ToolRegistration, ToolExecutionContext, ReviewableExecution } from "./registry.ts"
-import { discoverVerificationCommand, verificationWorkspace } from "./verification-discovery.ts"
+import { discoverVerificationCommand, resolveNodeBinary, verificationWorkspace } from "./verification-discovery.ts"
+import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
 import { VerificationEngine } from "./verification-engine.ts"
 import { type CommandSandboxMode, describeSandbox, predictSandbox } from "./command-sandbox.ts"
 import { diagnoseUnresolvedSymbols } from "./symbol-diagnosis.ts"
@@ -51,6 +52,9 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
       const command = await discoverVerificationCommand(root, action)
       const verificationId = `verification-${Date.now()}-${Math.random().toString(36).slice(2)}`
       
+      const plan = action === "TEST" ? await planStaleDependencyBuilds(context.workspaceRoot, root) : { builds: [] as PreparedVerification[] }
+      if (plan.error) throw new Error(plan.error)
+      const testPreview = `${command.env ? Object.entries(command.env).map(([key, value]) => `${key}=${value} `).join("") : ""}${command.executable} ${command.args.join(" ")}`
       const prepared: PreparedVerification = {
         verificationId,
         action,
@@ -58,7 +62,8 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
         args: command.args,
         cwd: root,
         timeoutMs: ACTION_TIMEOUTS[action],
-        commandPreview: `${command.env ? Object.entries(command.env).map(([key, value]) => `${key}=${value} `).join("") : ""}${command.executable} ${command.args.join(" ")}`,
+        commandPreview: plan.builds.length > 0 ? `${plan.builds.map((build) => build.commandPreview).join(" && ")} && ${testPreview}` : testPreview,
+        ...(plan.builds.length > 0 ? { dependencyBuilds: plan.builds } : {}),
         ...(command.env ? { env: command.env } : {}),
         packageJsonPath: command.packageJsonPath,
         packageJsonHash: command.packageJsonHash,
@@ -73,15 +78,18 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
         id: verificationId,
         reviewPayload: prepared as any,
         apply: async (applyContext: ToolExecutionContext): Promise<VerificationResult> => {
-          const rebuilt = action === "TEST" ? await rebuildStaleWorkspacePackages(applyContext.workspaceRoot, prepared.cwd, applyContext.signal) : undefined
-          if (rebuilt?.error) {
-            return { status: "EXECUTION_ERROR" as const, exitCode: rebuilt.exitCode, stdout: "", stderr: rebuilt.error, durationMs: rebuilt.durationMs, diagnosis: rebuilt.error }
+          const notes: string[] = []
+          for (const build of prepared.dependencyBuilds ?? []) {
+            const built = await engine.execute(build, applyContext.signal, applyContext.onOutput)
+            if (built.status !== "PASS") return { ...built, diagnosis: [build.reviewNote, built.stderr || built.stdout].filter((part) => part && part.trim().length > 0).join("\n") }
+            if (build.reviewNote) notes.push(build.reviewNote)
           }
+          const rebuiltNote = notes.length > 0 ? notes.join(" ") : undefined
           const result = await engine.execute(prepared, applyContext.signal, applyContext.onOutput)
-          const noted = (diagnosis?: string) => rebuilt?.note ? (diagnosis ? `${rebuilt.note}\n\n${diagnosis}` : rebuilt.note) : diagnosis
+          const noted = (diagnosis?: string) => rebuiltNote ? (diagnosis ? `${rebuiltNote}\n\n${diagnosis}` : rebuiltNote) : diagnosis
           const setup = result.status === "EXECUTION_ERROR" && result.stderr.startsWith("ENVIRONMENT_SETUP_REQUIRED:") ? result.stderr.slice("ENVIRONMENT_SETUP_REQUIRED: ".length).trim() : undefined
           if (setup) return { ...result, diagnosis: noted(`ENVIRONMENT_SETUP_REQUIRED: ${setup} This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.`) }
-          if (result.status !== "FAIL") return rebuilt?.note ? { ...result, diagnosis: noted() } : result
+          if (result.status !== "FAIL") return rebuiltNote ? { ...result, diagnosis: noted() } : result
           const blocked = environmentBlocker(`${result.stdout}\n${result.stderr}`)
           if (blocked) {
             // The command could not run here; that says nothing about the code, so it is not a test failure.
@@ -91,7 +99,7 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
           const output = `${result.stdout}\n${result.stderr}`
           const summary = summarizeVerification(output)
           const symbol = await diagnoseUnresolvedSymbols(workspaceRoot, output).catch(() => undefined)
-          const diagnosis = [rebuilt?.note, summary.text, symbol].filter((part) => part && part.trim().length > 0).join("\n\n")
+          const diagnosis = [rebuiltNote, summary.text, symbol].filter((part) => part && part.trim().length > 0).join("\n\n")
           const total = summary.failed !== undefined ? summary.failed + (summary.passed ?? 0) + (summary.skipped ?? 0) : undefined
           return {
             ...result,
@@ -120,27 +128,27 @@ export function createVerificationToolRegistry(workspaceRoot: string): ToolRegis
  */
 /**
  * A workspace dependency whose published `dist` is older than `src` is invisible to the test runner.
+ * The build is part of the reviewed test command and runs through VerificationEngine.
  * shortcut: only a `tsc` build script, when a dependency needs a different compiler.
  */
-export async function rebuildStaleWorkspacePackages(
-  workspaceRoot: string,
-  packageDir: string,
-  signal?: AbortSignal,
-): Promise<{ note?: string; error?: string; exitCode: number | null; durationMs: number } | undefined> {
-  const started = Date.now()
+export async function planStaleDependencyBuilds(workspaceRoot: string, packageDir: string): Promise<{ builds: PreparedVerification[]; error?: string }> {
   let rootReal: string
   try {
     rootReal = await realpath(workspaceRoot)
   } catch {
-    return undefined
+    return { builds: [] }
   }
   let pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
   try {
     pkg = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
   } catch {
-    return undefined
+    return { builds: [] }
   }
-  const notes: string[] = []
+  const node = resolveNodeBinary({ workspaceRoot: rootReal })
+  const nodeReal = await realpath(node).catch(() => node)
+  if (inside(rootReal, nodeReal)) return { builds: [], error: "Node resolves inside the workspace, so a dependency build cannot be sandboxed." }
+  const tscReal = await realpath(path.join(rootReal, "node_modules", "typescript", "lib", "tsc.js")).catch(() => undefined)
+  const builds: PreparedVerification[] = []
   for (const [name, spec] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) {
     if (typeof spec !== "string" || !spec.startsWith("workspace:")) continue
     let depDir: string
@@ -149,19 +157,21 @@ export async function rebuildStaleWorkspacePackages(
     } catch {
       continue
     }
-    if (depDir !== rootReal && !depDir.startsWith(`${rootReal}${path.sep}`)) continue
-    const outcome = await rebuildOne(rootReal, depDir, name, signal)
-    if (outcome === "fresh" || outcome === undefined) continue
-    if (outcome.startsWith("ERROR:")) return { error: outcome.slice("ERROR:".length), exitCode: 1, durationMs: Date.now() - started }
-    notes.push(outcome)
+    if (!inside(rootReal, depDir)) continue
+    const planned = await planOne(rootReal, depDir, name, node, tscReal)
+    if (planned === "fresh" || planned === undefined) continue
+    if (typeof planned === "string") return { builds: [], error: planned }
+    builds.push(planned)
   }
-  return notes.length > 0 ? { note: notes.join(" "), exitCode: 0, durationMs: Date.now() - started } : undefined
+  return { builds }
 }
 
-async function rebuildOne(workspaceRoot: string, depDir: string, name: string, signal?: AbortSignal): Promise<string | undefined> {
+async function planOne(rootReal: string, depDir: string, name: string, node: string, tscReal: string | undefined): Promise<PreparedVerification | "fresh" | string | undefined> {
+  let text: string
   let depPkg: { scripts?: Record<string, string>; exports?: unknown; main?: string }
   try {
-    depPkg = JSON.parse(await readFile(path.join(depDir, "package.json"), "utf8")) as { scripts?: Record<string, string>; exports?: unknown; main?: string }
+    text = await readFile(path.join(depDir, "package.json"), "utf8")
+    depPkg = JSON.parse(text) as { scripts?: Record<string, string>; exports?: unknown; main?: string }
   } catch {
     return undefined
   }
@@ -170,25 +180,56 @@ async function rebuildOne(workspaceRoot: string, depDir: string, name: string, s
   const target = publishedEntry(depPkg)
   if (!target?.startsWith("dist/")) return undefined
   const distFile = path.join(depDir, target)
-  const srcDir = path.join(depDir, "src")
   let distTime = 0
   try {
     distTime = (await stat(distFile)).mtimeMs
   } catch {
     distTime = 0
   }
-  const srcTime = await newestMtime(srcDir, 0)
-  if (srcTime <= distTime) return "fresh"
-  const tsc = path.join(workspaceRoot, "node_modules", ".bin", "tsc")
-  try {
-    await stat(tsc)
-  } catch {
-    return `ERROR:${name} needs a rebuild and tsc is not in the workspace.`
-  }
+  if (await newestMtime(path.join(depDir, "src"), 0) <= distTime) return "fresh"
+  if (!tscReal || !inside(rootReal, tscReal)) return `${name} needs a rebuild and typescript/lib/tsc.js does not resolve inside the workspace.`
   const args = script.split(/\s+/).slice(1)
-  const { code, stderr } = await runBuild(tsc, args, depDir, signal)
-  if (code !== 0) return `ERROR:${name} build failed: ${stderr.slice(0, 400)}`
-  return `Rebuilt ${name} because ${target} was older than src.`
+  for (const arg of args) {
+    if (!pathLike(arg)) continue
+    if (!await argStaysInside(rootReal, depDir, arg)) return `${name} build argument resolves outside the workspace: ${arg}`
+  }
+  const compilerArgs = [tscReal, ...args]
+  return {
+    verificationId: `dependency-build-${name.replace(/[^a-z0-9]+/gi, "-")}-${Math.random().toString(36).slice(2)}`,
+    action: "BUILD",
+    executable: node,
+    args: compilerArgs,
+    cwd: depDir,
+    timeoutMs: ACTION_TIMEOUTS.BUILD,
+    commandPreview: `${node} ${compilerArgs.join(" ")}`,
+    packageJsonPath: path.join(depDir, "package.json"),
+    packageJsonHash: createHash("sha256").update(text).digest("hex"),
+    scriptName: "build",
+    scriptBody: script,
+    reviewNote: `Rebuilt ${name} because ${target} was older than src.`,
+  }
+}
+
+function inside(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
+}
+
+function pathLike(arg: string): boolean {
+  if (arg.startsWith("-") && !arg.includes("..") && !arg.includes("/") && !arg.includes("\\")) return false
+  return arg.includes("/") || arg.includes("\\") || arg.startsWith(".") || path.isAbsolute(arg)
+}
+
+async function argStaysInside(root: string, cwd: string, arg: string): Promise<boolean> {
+  const abs = path.resolve(cwd, arg)
+  try {
+    await resolveRepositoryPath(root, abs)
+    return true
+  } catch (error) {
+    if (!(error instanceof RepositoryPathError) || error.code !== "NOT_FOUND") return false
+    const parent = path.dirname(abs)
+    return parent !== abs && argStaysInside(root, cwd, parent)
+  }
 }
 
 function publishedEntry(pkg: { exports?: unknown; main?: string }): string | undefined {
@@ -223,23 +264,6 @@ async function newestMtime(dir: string, depth: number): Promise<number> {
     else max = Math.max(max, (await stat(full)).mtimeMs)
   }
   return max
-}
-
-function runBuild(command: string, args: string[], cwd: string, signal?: AbortSignal): Promise<{ code: number | null; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, shell: false, env: { PATH: process.env.PATH ?? "", NODE_ENV: "test" } })
-    let stderr = ""
-    child.stderr?.setEncoding("utf8")
-    child.stderr?.on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-2000) })
-    const timer = setTimeout(() => child.kill(), 60_000)
-    const onAbort = () => child.kill()
-    signal?.addEventListener("abort", onAbort, { once: true })
-    child.on("close", (code) => {
-      clearTimeout(timer)
-      signal?.removeEventListener("abort", onAbort)
-      resolve({ code, stderr })
-    })
-  })
 }
 
 export function environmentBlocker(output: string): string | undefined {
