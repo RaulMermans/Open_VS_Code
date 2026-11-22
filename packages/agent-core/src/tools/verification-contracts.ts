@@ -37,6 +37,10 @@ export interface PreparedVerification {
   readonly requiresSandbox?: boolean
   /** Host directories exposed read-only in the sandbox (the cached package manager); re-validated at execution. */
   readonly readOnlyBinds?: readonly string[]
+  /** Stale workspace dependency builds reviewed and executed with this command. Each one goes through the same engine. */
+  readonly dependencyBuilds?: readonly PreparedVerification[]
+  /** Why this command was added to the reviewed operation. */
+  readonly reviewNote?: string
 }
 
 export interface VerificationResult {

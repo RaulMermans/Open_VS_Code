@@ -54,13 +54,36 @@ Aider's own last test result: **4 failed / 4 passed**. The throw runs, but the t
 
 Independent `tsc -p packages/models` after Aider stopped, then Vitest: the qualification file is **8 passed**. The inference package is **13 failed / 14 passed**. The new failures are `service.test.ts` (2) and `media.test.ts` (11): those tests use `runtime/…` refs, and the default qualify id rejects them before the old checks. The frozen tree and `0.1.0-rc.25` were not changed.
 
+## Dependency rebuild safety
+
+`planStaleDependencyBuilds` only describes a stale workspace `tsc` build. The reviewed test command includes that build, and `VerificationEngine` runs it with the same sandbox, timeout, and cancellation as the test. The executable is Node from outside the workspace. `typescript/lib/tsc.js` and the dependency must realpath inside the workspace. A path argument outside the workspace is refused before anything runs. A `package.json` change after review is `STALE_VERIFICATION`. `stale-build.test.ts`: 7/7.
+
+## Specification audit
+
+`docs/sprints/SPRINT_31_QUALIFICATION_SPEC_AUDIT.md`. The frozen oracle was not modified. The brief's env id `x3-qwen3-4b-vulkan` is not what the frozen tests execute, and the oracle does not run the existing `runtime/` tests. The `/` exception is not the specification.
+
+## Constraint-aware comparison
+
+Six clean copies of frozen i1. Same `qwen3.6:35b` digest `a7eb95c53bcf96b4bdd008d0fab4a5dac88047d9c1a7a9ab88ed453423fbd87c`, 12-minute cap, code intelligence, and the sandboxed rebuild. The test hash stayed `a720192c09dde28c…` on every copy. The contract prompt added the visible FAIL_TO_PASS and PASS_TO_PASS assertions. It did not include the hand patch or Aider's patch. The packet is not part of the product.
+
+| Run | Inference Vitest | Throw in `chat` |
+| --- | --- | --- |
+| native 1 | 5 failed / 22 passed | no |
+| native 2 | 4 failed / 23 passed | no |
+| native 3 | 4 failed / 23 passed | only when `HALO_INFERENCE_QUALIFY_MODEL_ID` is set |
+| contract 1 | 4 failed / 23 passed | only when that env var is set, and not for `runtime/` |
+| contract 2 | 4 failed / 23 passed | no |
+| contract 3 | 4 failed / 23 passed | no |
+
+Every run was cancelled at 720s. Each Vitest was about 3.8s, inside bubblewrap, and the diagnosis included the stale-`dist` rebuild. The four remaining failures are the mismatch cases: `chat` still returns. The existing `runtime/` tests stayed passing. The contract prompt did not improve independent correctness. It stays out of the runtime.
+
 ## Not run
 
-- A third native live attempt and Qwen Code. Aider wrote a broader alias check than the native runs, and that check fails the existing inference tests.
-- The 10 unseen tasks, three clean HALO qualifications, and a desktop package from this SHA.
+- Qwen Code. Its docs say an OpenAI-compatible endpoint can target Ollama. It was not run. Aider remains the external comparison: it wrote the check and failed the `runtime/` tests.
+- A second local model, the 10 unseen tasks, three clean HALO qualifications, and a desktop package. The contract prompt did not improve the score, so those stay gated.
 
 ## Release
 
-- Technical MVP candidate: **NO**. Native live repair is 4 failed / 23 passed. Aider's patch, after a separate `tsc`, passes the qualification file and fails the inference package 13 / 14.
+- Technical MVP candidate: **NO**. Six fresh repairs stayed at 4 or 5 failures. The contract prompt did not beat the ordinary prompt.
 - Supervised-testing: **NO-GO**. The 3/3 agent gate was not run.
 - Daily-driver: **NO-GO**. Installed package remains `0.1.0-rc.25`.
