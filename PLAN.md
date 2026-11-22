@@ -1,6 +1,6 @@
 Sprint 31 — MVP convergence
 STATUS: IN_PROGRESS
-  - Worktree `sprint/31-mvp-convergence` from `origin/main` `ff29fa4038`. Installed desktop stays `0.1.0-rc.25`. The branch is on origin. It is not merged or installed.
+  - Worktree `sprint/31-mvp-convergence`. `main` includes this milestone through pull request #109. Production package is `0.1.0-rc.26`. Rollback is `0.1.0-rc.25`. Qualification stays NO-GO.
   - Native Agent Core stays the executor. Aider was compared once and is not a second engine. The gap after Sprint 30 was localization: Vitest's "undefined constructor" assertion is a missing package export, and the diagnosis did not say so.
   - A failing constructor at a test line now names the import, the package entry's exports, and the existing definition, and tells the model to re-export that definition. When the loaded file is `dist`, the diagnosis says to build the package.
   - A hand patch on a disposable copy of frozen i1 (re-export plus a bare-alias check that leaves `runtime/` refs alone) passes inference Vitest 27/27 and `qualify-oracle.py` (`SUCCESS`). The frozen tree and the installed app were not changed. The model did not apply the patch.

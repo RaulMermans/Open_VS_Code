@@ -13,6 +13,7 @@ For every task:
 7. Test the change.
 8. Inspect the diff.
 9. Update project state when a meaningful decision or status changes.
+10. After a major milestone, update production: merge it to `main`, package the next `0.1.0-rc.N` from a clean tree, keep the previous `.deb` for rollback, and install it.
 
 ## Context discipline
 

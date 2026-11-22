@@ -1,6 +1,6 @@
 # Sprint 31 — MVP convergence
 
-STATUS: `IN_PROGRESS`. Installed desktop remains `open-vs-code 0.1.0-rc.25`. This branch is on origin. It was not merged or installed.
+STATUS: `IN_PROGRESS`. On `main` through pull request #109. Production package `0.1.0-rc.26`. Rollback package `0.1.0-rc.25`. Qualification gates stay NO-GO.
 
 ## Source
 
@@ -86,4 +86,4 @@ Every run was cancelled at 720s. Each Vitest was about 3.8s, inside bubblewrap, 
 
 - Technical MVP candidate: **NO**. Six fresh repairs stayed at 4 or 5 failures. The contract prompt did not beat the ordinary prompt.
 - Supervised-testing: **NO-GO**. The 3/3 agent gate was not run.
-- Daily-driver: **NO-GO**. Installed package remains `0.1.0-rc.25`.
+- Daily-driver: **NO-GO**. Production still installs the milestone as `0.1.0-rc.26`, with `0.1.0-rc.25` kept for rollback. The qualification failure is unchanged.
