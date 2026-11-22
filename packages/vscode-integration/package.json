@@ -170,6 +170,11 @@
           "minimum": 1,
           "description": "Maximum HALO request duration in milliseconds."
         },
+        "open-vs-code.halo.modelId": {
+          "type": "string",
+          "default": "",
+          "description": "Optional HALO Model Registry ID for POST /inference/chat. Empty uses capability routing (coding/reasoning). Direct Ollama remains the default backend."
+        },
         "open-vs-code.skills.enabled": {
           "type": "boolean",
           "default": false,
