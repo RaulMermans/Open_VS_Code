@@ -1,0 +1,32 @@
+diff --git a/lib/utils/format.ts b/lib/utils/format.ts
+index c90efa3..525fcac 100644
+--- a/lib/utils/format.ts
++++ b/lib/utils/format.ts
+@@ -1,18 +1,23 @@
+ import type { ProjectType, Scores } from "@/lib/scanner/types";
+ 
++export const SCORE_THRESHOLDS = {
++  healthy: 80,
++  warning: 60,
++};
++
+ export function formatScore(score: number) {
+   return `${Math.round(score)}/100`;
+ }
+ 
+ export function statusForScore(score: number) {
+-  if (score >= 80) return "Healthy";
+-  if (score >= 60) return "Warning";
++  if (score >= SCORE_THRESHOLDS.healthy) return "Healthy";
++  if (score >= SCORE_THRESHOLDS.warning) return "Warning";
+   return "Critical";
+ }
+ 
+ export function statusTone(score: number) {
+-  if (score >= 80) return "success";
+-  if (score >= 60) return "warning";
++  if (score >= SCORE_THRESHOLDS.healthy) return "success";
++  if (score >= SCORE_THRESHOLDS.warning) return "warning";
+   return "danger";
+ }
+ 

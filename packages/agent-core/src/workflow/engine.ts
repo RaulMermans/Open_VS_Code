@@ -431,6 +431,10 @@ export class EngineeringWorkflow {
     if (result.status !== "COMPLETED") {
       await this.#finishRecord("FAILED", { outcome: result.failureReason ?? result.status })
       if (newChanges === 0) {
+        if (result.failureReason === "REJECTED") {
+          await this.#block(repairing ? "REPAIR_PRODUCED_NO_CHANGES" : "NO_CHANGES", "IMPLEMENT applied no changes")
+          return
+        }
         await this.#retryOrBlock("IMPLEMENT", "implement", "STAGE_FAILED")
         return
       }

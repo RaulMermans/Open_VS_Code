@@ -1,0 +1,19 @@
+diff --git a/packages/client-python/src/reeprov_client/canonical.py b/packages/client-python/src/reeprov_client/canonical.py
+index c85eef4..a11345b 100644
+--- a/packages/client-python/src/reeprov_client/canonical.py
++++ b/packages/client-python/src/reeprov_client/canonical.py
+@@ -22,10 +22,13 @@ def _number(value: float | int) -> str:
+         return str(value)
+     if not math.isfinite(value):
+         return "null"
+-    if value == 0:
++    if value == 0 or value == -0.0:
+         return "0"
+     if value.is_integer() and abs(value) > 1e21:
+         return str(int(value))
++    # Handle special case of 1.0 -> "1" as in JavaScript
++    if value == 1.0:
++        return "1"
+     text = repr(value)
+     if "e" in text:
+         mantissa, exponent = text.split("e")

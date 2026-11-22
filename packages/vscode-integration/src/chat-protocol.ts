@@ -23,7 +23,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
-  status?: "pending" | "completed" | "failed" | "cancelled";
+  status?: "pending" | "completed" | "failed" | "cancelled" | "rejected";
   attachments?: ChatContextChip[];
   /** Copied from an earlier conversation as background context; never re-run. */
   inherited?: boolean;
@@ -33,9 +33,13 @@ export interface ChatActivity {
   id: string;
   kind: "task" | "context" | "model" | "tool" | "approval" | "mutation" | "verification" | string;
   label: string;
-  status: "pending" | "completed" | "failed" | "cancelled";
+  status: "pending" | "completed" | "failed" | "cancelled" | "interrupted";
   toolName?: string;
   summary?: string;
+  /** Agent run that produced this row. Presentation only. */
+  runId?: string;
+  /** True only when this turn's task mode is PLAN. */
+  planning?: boolean;
 }
 
 export interface ChatContextChip {
@@ -57,6 +61,39 @@ export interface ConnectionStatus {
   detail?: string;
   healthChecked: boolean;
   actionable: "none" | "open-config" | "create-config" | "check-connection";
+  /** Models the local endpoint actually returned. Absent until a probe succeeds. */
+  installedModels?: string[];
+  /** Served model name on the chat route, when configuration names one. */
+  selectedModel?: string;
+  /** Local inference base URL. Never a cloud endpoint. */
+  endpoint?: string;
+  routingSource?: "workspace-override" | "global" | "discovered" | "none";
+  workspaceOverrideActive?: boolean;
+  autocompleteModel?: string;
+  workspaceTrusted?: boolean;
+}
+
+export interface ModelManagerSnapshot {
+  source: "workspace-override" | "global" | "discovered" | "none";
+  endpoint: string;
+  endpointReachable: boolean;
+  endpointError?: string;
+  installedModels: readonly string[];
+  chatModel?: string;
+  autocompleteModel?: string;
+  globalChatModel?: string;
+  globalAutocompleteModel?: string;
+  globalEndpoint?: string;
+  workspaceOverridePresent: boolean;
+  workspaceOverrideActive: boolean;
+  workspaceOverrideIgnored: boolean;
+  workspaceConfigInvalid: boolean;
+  workspaceTrusted: boolean;
+  credentialConfigured: boolean;
+  advancedActive: boolean;
+  notice: string;
+  trustNotice?: string;
+  open?: boolean;
 }
 
 export interface FileSearchHit {
@@ -112,7 +149,10 @@ export interface ConfirmationRequestPayload {
 
 export type ReviewRecordStatus =
   | "pending"
+  | "approved"
   | "applied"
+  | "already-satisfied"
+  | "verified"
   | "rejected"
   | "cancelled"
   | "stale"
@@ -144,12 +184,16 @@ export interface ReviewRecordDto {
   verifiedBy?: { id: string; command: string; status: ReviewRecordStatus };
   /** False when no retained output exists in this window (e.g. a restored command row). */
   outputAvailable?: boolean;
+  /** Agent task id that created this row. Absent on records saved before run correlation. */
+  runId?: string;
+  /** package.json script name when this command came from a known script. */
+  scriptName?: string;
 }
 
 /** Stable conversation id; the only form accepted from the webview or used as a file name. */
 export const CONVERSATION_ID_PATTERN = /^c-[0-9a-f]{16}$/;
 
-export type ConversationExecutionStatus = "idle" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+export type ConversationExecutionStatus = "idle" | "running" | "completed" | "failed" | "cancelled" | "interrupted" | "rejected";
 
 /** Safe, local metadata for the conversation picker. No message bodies beyond a short redacted preview. */
 export interface ConversationSummaryDto {
@@ -192,6 +236,8 @@ export interface RecoveryStatusDto {
   checkpoint?: { reason: string; phase: string; status: string; createdAt: string; fromEarlierProcess: boolean; awaitingApproval: boolean };
   operations: Array<{ kind: string; journalStatus: string; observedStatus: string; blocked: boolean; path?: string }>;
   files: string[];
+  /** Present only after MAX_TURNS_EXCEEDED. Continues the same run; writes still need approval. */
+  turnBudgetContinue?: { additionalTurns: number; runId?: string };
 }
 
 export interface WebviewState {
@@ -201,6 +247,8 @@ export interface WebviewState {
   conversations?: ConversationSummaryDto[];
   history?: { enabled: boolean; notice?: string };
   recovery?: RecoveryStatusDto;
+  /** Same-run continuation after the turn budget stopped the agent. */
+  pendingTurnContinuation?: { conversationId: string; runId?: string; additionalTurns: number };
   mode: ChatMode;
   customModeId?: string;
   activeCustomProfile?: CustomModeSummaryDto;
@@ -209,12 +257,16 @@ export interface WebviewState {
   activities: ChatActivity[];
   context: ChatContextChip[];
   attachments: ChatContextChip[];
+  /** In-memory composer text shared by sidebar and wide chat. Never persisted. */
+  composerDraft?: string;
   activeTurn: boolean;
   pendingConfirmation?: ConfirmationRequestPayload;
   activeTerminal?: TerminalReviewDto;
   reviews?: ReviewRecordDto[];
   error?: string;
   connection?: ConnectionStatus;
+  modelManager?: ModelManagerSnapshot;
+  workspaceTrusted?: boolean;
   integrations?: IntegrationManagerState;
   integrationsOpen?: boolean;
 }
@@ -223,6 +275,7 @@ export interface WebviewState {
 export type WebviewToHostMessage =
   | { type: "chat.ready" }
   | { type: "chat.send"; text: string; mode: ChatMode; customModeId?: string }
+  | { type: "chat.draft"; text: string }
   | { type: "chat.cancel" }
   | { type: "chat.setMode"; mode: ChatMode; customModeId?: string }
   | { type: "chat.newConversation" }
@@ -232,6 +285,22 @@ export type WebviewToHostMessage =
   | { type: "ui.copyCode"; text: string }
   | { type: "ui.openFile"; path: string }
   | { type: "ui.openModelConfig" }
+  | { type: "modelManager.open" }
+  | { type: "modelManager.close" }
+  | { type: "modelManager.refresh" }
+  | { type: "modelManager.setChat"; name: string }
+  | { type: "modelManager.setAutocomplete"; name: string }
+  | { type: "modelManager.setEndpoint"; endpoint: string }
+  | { type: "modelManager.test" }
+  | { type: "modelManager.suspendOverride" }
+  | { type: "modelManager.useOverride" }
+  | { type: "modelManager.setAdvanced"; text: string }
+  | { type: "modelManager.clearAdvanced" }
+  | { type: "modelManager.setCredential"; token: string }
+  | { type: "ui.manageTrust" }
+  | { type: "ui.openWideChat" }
+  | { type: "ui.selectModel" }
+  | { type: "ui.applyModel"; name: string }
   | { type: "context.attach"; target: "current-file" | "selection" }
   | { type: "context.attachFile"; path: string }
   | { type: "context.remove"; id: string }
@@ -250,6 +319,7 @@ export type WebviewToHostMessage =
   | { type: "conversation.delete"; conversationId: string }
   | { type: "conversation.archive"; conversationId: string; archived: boolean }
   | { type: "conversation.continueFrom"; conversationId: string }
+  | { type: "task.continueBudget"; conversationId: string }
   | { type: "conversation.inspectRecovery"; conversationId: string }
   | { type: "conversation.closeRecovery" }
   | { type: "integration.openHub" }
@@ -300,9 +370,9 @@ export type WebviewToHostMessage =
 
 // Host -> Webview
 export type HostToWebviewMessage =
-  | { type: "chat.state"; state: WebviewState }
+  | { type: "chat.state"; state: WebviewState; wideOpen?: boolean }
   /** Sprint 7D: the transcript is unchanged since the last post, so it is omitted; the webview keeps its own. */
-  | { type: "chat.state"; state: Omit<WebviewState, "messages">; transcript: "unchanged" }
+  | { type: "chat.state"; state: Omit<WebviewState, "messages">; transcript: "unchanged"; wideOpen?: boolean }
   | { type: "integration.state"; state: IntegrationManagerState; open: boolean }
   | { type: "turn.started" }
   | { type: "turn.status"; activity: ChatActivity }
@@ -332,6 +402,11 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
   switch (raw.type) {
     case "chat.ready":
       return { type: "chat.ready" };
+
+    case "chat.draft": {
+      if (typeof raw.text !== "string" || raw.text.length > 50000) return null;
+      return { type: "chat.draft", text: raw.text };
+    }
       
     case "chat.send": {
       if (typeof raw.text !== 'string') return null;
@@ -401,6 +476,7 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
     case "conversation.open":
     case "conversation.delete":
     case "conversation.continueFrom":
+    case "task.continueBudget":
     case "conversation.inspectRecovery": {
       if (typeof raw.conversationId !== 'string' || !CONVERSATION_ID_PATTERN.test(raw.conversationId)) return null;
       return { type: raw.type, conversationId: raw.conversationId };
@@ -441,6 +517,70 @@ export function parseWebviewMessage(raw: any): WebviewToHostMessage | null {
 
     case "ui.openModelConfig":
       return { type: "ui.openModelConfig" };
+
+    case "modelManager.open":
+      return { type: "modelManager.open" };
+
+    case "modelManager.close":
+      return { type: "modelManager.close" };
+
+    case "modelManager.refresh":
+      return { type: "modelManager.refresh" };
+
+    case "modelManager.test":
+      return { type: "modelManager.test" };
+
+    case "modelManager.suspendOverride":
+      return { type: "modelManager.suspendOverride" };
+
+    case "modelManager.useOverride":
+      return { type: "modelManager.useOverride" };
+
+    case "modelManager.clearAdvanced":
+      return { type: "modelManager.clearAdvanced" };
+
+    case "modelManager.setChat":
+    case "modelManager.setAutocomplete": {
+      if (typeof raw.name !== "string") return null;
+      const name = raw.name.trim();
+      if (!/^[A-Za-z0-9_.:@+-]{1,128}$/.test(name)) return null;
+      return raw.type === "modelManager.setChat"
+        ? { type: "modelManager.setChat", name }
+        : { type: "modelManager.setAutocomplete", name };
+    }
+
+    case "modelManager.setEndpoint": {
+      if (typeof raw.endpoint !== "string") return null;
+      const endpoint = raw.endpoint.trim();
+      if (!endpoint || endpoint.length > 200) return null;
+      return { type: "modelManager.setEndpoint", endpoint };
+    }
+
+    case "modelManager.setAdvanced": {
+      if (typeof raw.text !== "string" || raw.text.length > 64000) return null;
+      return { type: "modelManager.setAdvanced", text: raw.text };
+    }
+
+    case "modelManager.setCredential": {
+      if (typeof raw.token !== "string" || raw.token.length > 4096) return null;
+      return { type: "modelManager.setCredential", token: raw.token };
+    }
+
+    case "ui.manageTrust":
+      return { type: "ui.manageTrust" };
+
+    case "ui.openWideChat":
+      return { type: "ui.openWideChat" };
+
+    case "ui.selectModel":
+      return { type: "ui.selectModel" };
+
+    case "ui.applyModel": {
+      if (typeof raw.name !== "string") return null;
+      const name = raw.name.trim();
+      if (!/^[A-Za-z0-9_.:@+-]{1,128}$/.test(name)) return null;
+      return { type: "ui.applyModel", name };
+    }
 
     case "context.attach": {
       if (raw.target !== "current-file" && raw.target !== "selection") return null;

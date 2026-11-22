@@ -1,0 +1,2 @@
+packages/client-python/.open-vs-code/recovery/runs/session-1794850379868/checkpoints/HEAD.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794850379868/checkpoints/cp_00000001_cp_6dfb1f34.json

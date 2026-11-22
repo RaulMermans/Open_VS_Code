@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, writeFile, readFile, mkdir, symlink, rm, stat } from "node:fs/promises"
+import { mkdtemp, writeFile, readFile, mkdir, symlink, rm, stat, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -198,13 +198,11 @@ test("resolveWritePath rejects new file with symlinked parent escape", async () 
   }
 })
 
-test("resolveWritePath rejects missing parent directory", async () => {
+test("resolveWritePath accepts a missing parent inside the workspace", async () => {
   const ws = await createTempWorkspace()
   try {
-    await assert.rejects(
-      resolveWritePath(ws, "nonexistent/subdir/file.txt", { mustExist: false }),
-      (err: MutationFailure) => err.code === "PARENT_NOT_FOUND",
-    )
+    const resolved = await resolveWritePath(ws, "nonexistent/subdir/file.txt", { mustExist: false })
+    assert.equal(resolved, join(await realpath(ws), "nonexistent", "subdir", "file.txt"))
   } finally {
     await rm(ws, { recursive: true })
   }
@@ -345,6 +343,78 @@ test("prepareCreate and apply creates new file", async () => {
   }
 })
 
+test("prepareCreate and apply creates a missing parent directory", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "test/greeting.test.js",
+      content: "import test from \"node:test\"\n",
+    })
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "APPLIED")
+    assert.equal(await readFile(join(ws, "test/greeting.test.js"), "utf8"), "import test from \"node:test\"\n")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("create on identical existing content prepares a no-write mutation", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    await createFile(ws, "src/done.ts", "export const x = 1\n")
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "src/done.ts",
+      content: "export const x = 1\n",
+    })
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "ALREADY_SATISFIED")
+    assert.equal(await readFile(join(ws, "src/done.ts"), "utf8"), "export const x = 1\n")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("create on an existing file converts only a unique preserving patch", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const original = "export function add(a, b) {\n  return a - b\n}\n"
+    await createFile(ws, "src/add.ts", original)
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "src/add.ts",
+      content: "export function add(a, b) {\n  return a + b\n}\n",
+    })
+    assert.equal(prepared.operation, "patch")
+    assert.notEqual(prepared.proposedContent, original)
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "APPLIED")
+    assert.equal(await readFile(join(ws, "src/add.ts"), "utf8"), "export function add(a, b) {\n  return a + b\n}\n")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("create on an existing file refuses a snippet overwrite", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const original = "export function add(a, b) {\n  return a - b\n}\nexport function extra() {\n  return 1\n}\n"
+    await createFile(ws, "src/add.ts", original)
+    const engine = deterministicEngine(ws)
+    await assert.rejects(
+      engine.prepareCreate({ operation: "create", path: "src/add.ts", content: "return a + b\n" }),
+      (err: MutationFailure) => err.code === "FILE_EXISTS" && err.message.includes("FILE_ALREADY_EXISTS"),
+    )
+    assert.equal(await readFile(join(ws, "src/add.ts"), "utf8"), original)
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
 test("create rejects when file already exists", async () => {
   const ws = await createTempWorkspace()
   try {
@@ -423,6 +493,48 @@ test("apply rejects stale base when file changed after preparation", async () =>
     // Verify file was NOT changed by the mutation
     const content = await readFile(join(ws, "volatile.txt"), "utf8")
     assert.equal(content, "external change")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("apply treats an already-matching target as ALREADY_SATISFIED without rewriting", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    await createFile(ws, "done.txt", "modified content")
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.preparePatch({
+      operation: "patch",
+      path: "done.txt",
+      patch: { search: "modified", replace: "modified" },
+    })
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "ALREADY_SATISFIED")
+    assert.match(result.observation, /Already satisfied/)
+    assert.equal(engine.isConsumed(prepared.id), true)
+    await assert.rejects(engine.rollback(prepared.id), (err: MutationFailure) => err.code === "NO_SNAPSHOT")
+    const content = await readFile(join(ws, "done.txt"), "utf8")
+    assert.equal(content, "modified content")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
+})
+
+test("create treats identical existing content as ALREADY_SATISFIED", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    await mkdir(join(ws, "src"), { recursive: true })
+    const engine = deterministicEngine(ws)
+    const prepared = await engine.prepareCreate({
+      operation: "create",
+      path: "src/new.ts",
+      content: "export const x = 1\n",
+    })
+    await writeFile(join(ws, "src/new.ts"), "export const x = 1\n", "utf8")
+    const result = await engine.applyPreparedMutation(prepared)
+    assert.equal(result.status, "ALREADY_SATISFIED")
+    assert.equal(await readFile(join(ws, "src/new.ts"), "utf8"), "export const x = 1\n")
+    await assert.rejects(engine.rollback(prepared.id), (err: MutationFailure) => err.code === "NO_SNAPSHOT")
   } finally {
     await rm(ws, { recursive: true })
   }
@@ -786,10 +898,24 @@ test("MutationFailure has correct name and code", () => {
 
 test("default budgets are conservative", () => {
   assert.equal(DEFAULT_MUTATION_BUDGETS.maxFilesPerStep, 3)
-  assert.ok(DEFAULT_MUTATION_BUDGETS.maxTotalChangedBytes <= 10_000)
-  assert.ok(DEFAULT_MUTATION_BUDGETS.maxAddedLines <= 200)
+  assert.ok(DEFAULT_MUTATION_BUDGETS.maxTotalChangedBytes <= 32_768)
+  assert.ok(DEFAULT_MUTATION_BUDGETS.maxAddedLines <= 400)
   assert.ok(DEFAULT_MUTATION_BUDGETS.maxRemovedLines <= 100)
-  assert.ok(DEFAULT_MUTATION_BUDGETS.maxNewFileBytes <= 8_192)
+  assert.ok(DEFAULT_MUTATION_BUDGETS.maxNewFileBytes <= 32_768)
+})
+
+test("create accepts a qualification-sized test file under the default new-file budget", async () => {
+  const ws = await createTempWorkspace()
+  try {
+    const engine = deterministicEngine(ws)
+    const content = `import { describe, it, expect } from "vitest"\n${"it('case', () => { expect(true).toBe(true) })\n".repeat(180)}`
+    assert.ok(Buffer.byteLength(content) > 8_192)
+    assert.ok(Buffer.byteLength(content) <= DEFAULT_MUTATION_BUDGETS.maxNewFileBytes)
+    const prepared = await engine.prepareCreate({ operation: "create", path: "modelQualification.test.ts", content })
+    assert.equal(prepared.operation, "create")
+  } finally {
+    await rm(ws, { recursive: true })
+  }
 })
 
 // --- No terminal or child_process ---
@@ -824,4 +950,16 @@ test("mutation engine does not import model/inference dependencies", async () =>
   assert.ok(!engineSource.includes("ollama"), "Must not reference ollama")
   assert.ok(!engineSource.includes("openai"), "Must not reference openai")
   assert.ok(!engineSource.includes("@anthropic"), "Must not reference anthropic")
+})
+
+test("generateUnifiedDiff counts only differing lines for a same-length edit spanning distant lines", () => {
+  const before = Array.from({ length: 400 }, (_, i) => `line ${i}`)
+  const after = [...before]
+  after[0] = "line 0 renamed"
+  after[399] = "line 399 renamed"
+  const diff = generateUnifiedDiff("a.ts", before.join("\n"), after.join("\n"), 1_000_000)
+  assert.equal(diff.linesAdded, 2)
+  assert.equal(diff.linesRemoved, 2)
+  assert.equal(diff.truncated, false)
+  assert.ok(diff.unified.length < 600, "the untouched span between the edits is not printed")
 })

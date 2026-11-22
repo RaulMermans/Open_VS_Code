@@ -30,6 +30,7 @@ export const AGENT_EVENT_TYPES = [
   "mutation.approved",
   "mutation.rejected",
   "mutation.applied",
+  "mutation.already_satisfied",
   "mutation.failed",
   "mutation.rollback_started",
   "mutation.rolled_back",

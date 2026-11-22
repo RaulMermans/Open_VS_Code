@@ -1,0 +1,1 @@
+ReeprovClient._post retries failed requests with a hard-coded 0.05 second exponential backoff. Make the base delay configurable: add a backoff_base constructor argument (default 0.05), read it from the REEPROV_BACKOFF_BASE environment variable when the argument is not given, and use it for the retry sleep. Add a unit test for it and run the tests.

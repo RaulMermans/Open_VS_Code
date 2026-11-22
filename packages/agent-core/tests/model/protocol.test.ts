@@ -92,6 +92,34 @@ test("protocol normalizer safely tags unparseable JSON tool arguments", () => {
   assert.deepEqual(normalized.toolCalls[0]!.arguments, { __malformedJson: "{ path: unquoted_invalid_json }" })
 })
 
+test("protocol normalizer decodes concatenated JSON tool calls from local models", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen2.5-coder:7b",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "{\"name\": \"read_file\", \"arguments\": {\"path\": \"src/format-note.ts\"}}\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"package.json\"}}",
+      },
+    }],
+  })
+  assert.equal(normalized.toolCalls?.length, 2)
+  assert.equal(normalized.toolCalls?.[0]?.name, "read_file")
+  assert.deepEqual(normalized.toolCalls?.[0]?.arguments, { path: "src/format-note.ts" })
+  assert.equal(normalized.toolCalls?.[1]?.name, "read_file")
+  assert.deepEqual(normalized.toolCalls?.[1]?.arguments, { path: "package.json" })
+  assert.equal(normalized.message.content, "")
+})
+
+test("protocol normalizer leaves prose that merely contains JSON as text", () => {
+  const content = "The file starts with { \"name\": \"notes\" } and then continues."
+  const normalized = normalizeWireResponse({
+    model: "qwen2.5-coder:7b",
+    choices: [{ message: { role: "assistant", content } }],
+  })
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.message.content, content)
+})
+
 test("protocol normalizer decodes content JSON tool call", () => {
   const normalized = normalizeWireResponse(PROTOCOL_FIXTURES.contentJsonToolCall)
   assert.ok(normalized.toolCalls)
@@ -99,6 +127,118 @@ test("protocol normalizer decodes content JSON tool call", () => {
   assert.equal(normalized.toolCalls[0]!.id, "call_1")
   assert.equal(normalized.toolCalls[0]!.name, "list_directory")
   assert.deepEqual(normalized.toolCalls[0]!.arguments, { path: "." })
+})
+
+test("protocol normalizer decodes Qwen function-parameter tool calls from content", () => {
+  const normalized = normalizeWireResponse(PROTOCOL_FIXTURES.contentQwenFunctionTags)
+  assert.ok(normalized.toolCalls)
+  assert.equal(normalized.toolCalls.length, 1)
+  assert.equal(normalized.toolCalls[0]!.name, "search_text")
+  assert.deepEqual(normalized.toolCalls[0]!.arguments, { query: "formatNote" })
+  assert.match(normalized.message.content, /I'll search first/)
+  assert.equal(normalized.message.content.includes("<function="), false)
+})
+
+test("protocol normalizer keeps prose and drops an unclosed tool envelope", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: { role: "assistant", content: "pong\n<tool_call>\n{\"name\": \"read_file\"" },
+      finish_reason: "stop",
+    }],
+  })
+  assert.equal(normalized.message.content, "pong")
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.metadata?.protocolEnvelopeDiscarded, true)
+  assert.equal(normalized.message.content.includes("<tool_call"), false)
+})
+
+test("protocol normalizer keeps an answer that quotes tool-tag syntax", () => {
+  const content = "Close the example with </function> after <parameter=path>."
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+  })
+  assert.equal(normalized.message.content, content)
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.metadata?.protocolEnvelopeDiscarded, undefined)
+})
+
+test("protocol normalizer drops an unclosed function envelope and keeps the answer", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "Answer first.\n<function=read_file>\n<parameter=path>\nREADME.md",
+      },
+      finish_reason: "stop",
+    }],
+  })
+  assert.equal(normalized.message.content, "Answer first.")
+  assert.equal(normalized.toolCalls, undefined)
+  assert.equal(normalized.metadata?.protocolEnvelopeDiscarded, true)
+})
+
+test("protocol normalizer removes hidden reasoning and keeps the answer", () => {
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "<think>do not show this plan</think>\n\npong",
+        reasoning_content: "also private",
+      },
+      finish_reason: "stop",
+    }],
+  })
+  assert.equal(normalized.message.content, "pong")
+  assert.equal(normalized.message.content.includes("do not show"), false)
+  assert.equal(JSON.stringify(normalized).includes("also private"), false)
+  assert.equal(normalized.metadata?.reasoningDiscarded, true)
+  assert.equal(normalized.metadata?.reasoningPresent, true)
+})
+
+test("protocol normalizer keeps a fenced example of a think tag", () => {
+  const content = "The model may emit this fence:\n```xml\n<think>keep</think>\n```\n<think>hide</think>\nDone."
+  const normalized = normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+  })
+  assert.match(normalized.message.content, /<think>keep<\/think>/)
+  assert.equal(normalized.message.content.includes("hide"), false)
+  assert.match(normalized.message.content, /Done\.$/)
+})
+
+test("protocol normalizer rejects hidden reasoning with no answer", () => {
+  assert.throws(() => normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: { role: "assistant", content: "<think>secret-plan</think>" },
+      finish_reason: "stop",
+    }],
+  }), (err) => {
+    return err instanceof ModelProviderError
+      && err.code === "MALFORMED_RESPONSE"
+      && err.message.includes("hidden reasoning")
+      && !err.message.includes("secret-plan")
+  })
+})
+
+test("protocol normalizer rejects an incomplete tool envelope with no answer", () => {
+  assert.throws(() => normalizeWireResponse({
+    model: "qwen3-coder:30b",
+    choices: [{
+      message: { role: "assistant", content: "<tool_call>not-json</tool_call>" },
+      finish_reason: "stop",
+    }],
+  }), (err) => {
+    return err instanceof ModelProviderError
+      && err.code === "MALFORMED_RESPONSE"
+      && err.message.includes("incomplete tool-call envelope")
+      && !err.message.includes("not-json")
+      && !err.message.includes("<tool_call>")
+  })
 })
 
 test("protocol normalizer decodes tool call from <tool_call> tags", () => {

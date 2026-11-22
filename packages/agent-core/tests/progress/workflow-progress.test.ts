@@ -142,9 +142,10 @@ test("NP-W-06: an implementation pass that leaves the workspace unchanged is not
   const root = await workspace()
   const model = happyModel({ IMPLEMENT: patchingImplementer([{ search: "// subtract: TODO\n", replace: "// subtract: TODO\n" }]) })
   const { result } = await drive(startWorkflow(harness({ root, model, overrides: ON })))
-  assert.equal(result.state.blocker, "BLOCKED_NON_PROGRESS")
-  assert.equal(result.state.progress?.recoveryPlan?.failureClass, "STATE_MISMATCH")
-  assert.equal(result.state.progress?.recoveryPlan?.retryAllowed, false)
+  // An identical replacement is ALREADY_SATISFIED (no write, no recorded mutation), so the workflow's
+  // direct no-change guard blocks before the progress monitor is needed. Either way: no retry, no test.
+  assert.equal(result.state.blocker, "NO_CHANGES")
+  assert.equal(result.state.stages.filter((record) => record.stage === "IMPLEMENT").length, 1, "an unchanged workspace is not retried")
   assert.equal(result.state.stages.filter((record) => record.stage === "TEST").length, 0, "no test run is wasted on an unchanged workspace")
 })
 

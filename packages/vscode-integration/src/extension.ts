@@ -1,6 +1,11 @@
 import * as vscode from 'vscode';
+import { createVsCodeCodeIntelligence } from './code-intelligence-provider.js';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, probeHalo, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, type AutocompleteGateway, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, inspectHaloConnection, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, type RoutingConfiguration, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
+import { buildStarterRoutingConfig, fetchLocalModelCatalog, localProviderBaseUrl } from './local-model-selection.js';
+import { shouldShowModelConfiguration } from './model-config-open.js';
+import { connectionFromSnapshot } from './model-routing.js';
+import { ModelRoutingHost } from './model-routing-host.js';
 import * as path from 'node:path';
 import { VsCodeSecretProvider, McpService, registerMcpCommands } from './mcp/index.js';
 import { DesktopAccountManager, registerAccountCommands } from './account/index.js';
@@ -110,11 +115,14 @@ class VSCodeIdeHost implements IdeHost {
   }
 
   async isWorkspaceTrusted(): Promise<boolean> {
-    return vscode.workspace.isTrusted;
+    return vscode.workspace.isTrusted === true;
   }
 
   async showOutput(message: string): Promise<void> {
     this.outputChannel.appendLine(message);
+  }
+
+  revealOutput(): void {
     this.outputChannel.show(true);
   }
 
@@ -206,20 +214,65 @@ class VSCodeIdeHost implements IdeHost {
     modelLabel?: string;
     providerLabel?: string;
     configStatus: 'present' | 'missing' | 'invalid';
+    installedModels?: string[];
+    selectedModel?: string;
+    endpoint?: string;
+    endpointVerified?: boolean;
+    lastError?: 'disconnected' | 'model-unavailable';
+    routingSource?: 'workspace-override' | 'global' | 'discovered' | 'none';
+    workspaceOverrideActive?: boolean;
+    autocompleteModel?: string;
+    workspaceTrusted?: boolean;
   }> {
     const settings = haloSettings();
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     let configStatus: 'present' | 'missing' | 'invalid' = 'missing';
     let modelLabel: string | undefined;
     let providerLabel: string | undefined;
-    if (root) {
+    let selectedModel: string | undefined;
+    let endpoint: string | undefined;
+    let installedModels: string[] | undefined;
+    let endpointVerified = false;
+    let lastError: 'disconnected' | 'model-unavailable' | undefined;
+    const routed = settings.backend !== 'halo' ? modelRouting?.snapshot() : undefined;
+    if (modelRouting && settings.backend !== 'halo') {
+      if (routed) {
+        const fields = connectionFromSnapshot(routed);
+        configStatus = fields.configStatus;
+        modelLabel = fields.modelLabel;
+        selectedModel = fields.selectedModel;
+        providerLabel = 'local-inference';
+        endpoint = fields.endpoint;
+        installedModels = [...fields.installedModels];
+        endpointVerified = fields.endpointVerified;
+        lastError = fields.lastError;
+      }
+    } else if (root && vscode.workspace.isTrusted === true) {
       try {
         const config = loadRoutingConfigSync(root);
         if (config) {
           configStatus = 'present';
-          const model = config.models?.[0];
-          modelLabel = model?.displayName || model?.id;
-          providerLabel = config.providers?.[0]?.id;
+          const mode = chatController?.getActiveExecutionMode()?.mode ?? 'ASK';
+          const identity = await describeConfiguredRoute(config, mode);
+          if (identity) {
+            modelLabel = identity.servedModelName || identity.modelLabel;
+            selectedModel = identity.servedModelName;
+            providerLabel = identity.providerId;
+          }
+          if (settings.backend !== 'halo') {
+            const baseUrl = localProviderBaseUrl(config);
+            if (baseUrl) {
+              endpoint = baseUrl;
+              const catalog = await fetchLocalModelCatalog(baseUrl);
+              if (catalog.error) {
+                lastError = 'disconnected';
+              } else {
+                installedModels = catalog.models.map((model) => model.name);
+                endpointVerified = true;
+                if (selectedModel && !installedModels.includes(selectedModel)) lastError = 'model-unavailable';
+              }
+            }
+          }
         }
       } catch {
         configStatus = 'invalid';
@@ -230,33 +283,61 @@ class VSCodeIdeHost implements IdeHost {
       modelLabel,
       providerLabel: settings.backend === 'halo' ? 'HALO' : (providerLabel || 'Standalone local'),
       configStatus,
+      ...(installedModels ? { installedModels } : {}),
+      ...(selectedModel ? { selectedModel } : {}),
+      ...(endpoint ? { endpoint } : {}),
+      endpointVerified,
+      lastError,
+      ...(routed ? {
+        routingSource: routed.source,
+        workspaceOverrideActive: routed.workspaceOverrideActive,
+        ...(routed.autocompleteModel ? { autocompleteModel: routed.autocompleteModel } : {}),
+        workspaceTrusted: routed.workspaceTrusted,
+      } : {}),
     };
   }
 
   async checkConnection(): Promise<void> {
     const settings = haloSettings();
     if (settings.backend !== 'halo') {
-      await this.showOutput('Standalone local inference is configured. Endpoint reachability is reported from actual chat turns; HALO is not claimed online.');
+      const refreshed = await modelRouting?.refresh();
+      if (refreshed) installAutocompleteGateway(refreshed.config);
+      const snapshot = await this.getConnectionSnapshot();
+      const probed = modelRouting?.snapshot();
+      const line = probed?.endpointError
+        ? `Ollama is offline at ${probed.endpoint}. ${probed.endpointError}`
+        : probed?.endpointReachable
+          ? `Connected to ${probed.endpoint}. ${probed.installedModels.length} local model${probed.installedModels.length === 1 ? '' : 's'} available.`
+          : (probed?.notice || 'Local inference has no model route.');
+      await this.showOutput(line);
+      this.revealOutput();
       if (chatController) {
-        const snapshot = await this.getConnectionSnapshot();
-        chatController.setConnectionInput({ ...snapshot, haloHealthChecked: false, haloReachable: false });
+        if (probed) chatController.publishModelManager(probed);
+        else chatController.setConnectionInput({ ...snapshot, haloHealthChecked: false, haloReachable: false });
       }
       return;
     }
     try {
-      const reachable = await probeHalo(settings.coreUrl);
-      await this.showOutput(reachable ? 'HALO reachable.' : 'HALO Core is unavailable.');
+      const inspection = await inspectHaloConnection({
+        coreUrl: settings.coreUrl,
+        token: process.env.HALO_APP_TOKEN_OPEN_VSCODE,
+        capability: 'coding',
+        ...(settings.modelId ? { modelId: settings.modelId } : {}),
+      });
+      await this.showOutput(inspection.summary);
+      this.revealOutput();
       if (chatController) {
         const snapshot = await this.getConnectionSnapshot();
         chatController.setConnectionInput({
           ...snapshot,
           haloHealthChecked: true,
-          haloReachable: reachable,
-          lastError: reachable ? undefined : 'unavailable',
+          haloReachable: inspection.coreReachable,
+          lastError: inspection.coreReachable ? undefined : 'unavailable',
         });
       }
     } catch {
       await this.showOutput('HALO Core is unreachable.');
+      this.revealOutput();
       if (chatController) {
         chatController.setConnectionInput({
           inferenceBackend: 'halo',
@@ -271,6 +352,63 @@ class VSCodeIdeHost implements IdeHost {
 
   async openModelConfig(): Promise<void> {
     await vscode.commands.executeCommand('open-vs-code.openModelConfig');
+  }
+
+  async ensureModelRoute(): Promise<void> {
+    if (haloSettings().backend === 'halo') return;
+    if (modelRouting?.config) return;
+    await this.refreshGlobalModels();
+  }
+
+  async refreshGlobalModels(): Promise<void> {
+    const refreshed = await modelRouting?.refresh();
+    if (refreshed && !_testSeam.autocompleteGatewayFactory) installAutocompleteGateway(refreshed.config);
+    chatController?.publishModelManager(refreshed?.snapshot);
+  }
+
+  async setGlobalChatModel(name: string): Promise<string | undefined> {
+    const error = await modelRouting?.setChatModel(name);
+    await this.refreshGlobalModels();
+    return error;
+  }
+
+  async setGlobalAutocompleteModel(name: string): Promise<string | undefined> {
+    const error = await modelRouting?.setAutocompleteModel(name);
+    await this.refreshGlobalModels();
+    return error;
+  }
+
+  async setGlobalEndpoint(endpoint: string): Promise<string | undefined> {
+    const error = await modelRouting?.setEndpoint(endpoint);
+    await this.refreshGlobalModels();
+    return error;
+  }
+
+  async setGlobalAdvancedRouting(text: string): Promise<string | undefined> {
+    const error = await modelRouting?.setAdvanced(text);
+    await this.refreshGlobalModels();
+    return error;
+  }
+
+  async clearGlobalAdvancedRouting(): Promise<void> {
+    await modelRouting?.clearAdvanced();
+    await this.refreshGlobalModels();
+  }
+
+  async suspendWorkspaceModelOverride(): Promise<void> {
+    await modelRouting?.suspendOverride();
+    await this.refreshGlobalModels();
+  }
+
+  async useWorkspaceModelOverride(): Promise<string | undefined> {
+    const error = await modelRouting?.useWorkspaceOverride();
+    await this.refreshGlobalModels();
+    return error;
+  }
+
+  async setGlobalModelCredential(token: string): Promise<void> {
+    await modelRouting?.setCredential(token);
+    await this.refreshGlobalModels();
   }
   
   dispose() {
@@ -307,6 +445,7 @@ let chatController: ChatController | null = null;
 let diffReviewController: DiffReviewController | null = null;
 let terminalReviewController: TerminalReviewController | null = null;
 let autocompleteController: AutocompleteController | null = null;
+let modelRouting: ModelRoutingHost | null = null;
 let browserPanelController: BrowserPanelController | null = null;
 interface ScopedBrowserSession {
   readonly manager: BrowserSessionManager;
@@ -470,6 +609,7 @@ function haloSettings() {
     backend: settings.get<'halo' | 'standalone-local'>('inferenceBackend', 'standalone-local'),
     coreUrl: settings.get<string>('halo.coreUrl', HALO_DEFAULT_URL),
     timeoutMs: settings.get<number>('halo.timeoutMs', 30_000),
+    modelId: settings.get<string>('halo.modelId', '')?.trim() || undefined,
   };
 }
 
@@ -548,6 +688,7 @@ function haloToken(context: vscode.ExtensionContext): () => Promise<string | und
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  modelRouting = new ModelRoutingHost(context);
   host = new VSCodeIdeHost();
   diffReviewController = new DiffReviewController();
   terminalReviewController = new TerminalReviewController();
@@ -563,7 +704,7 @@ export function activate(context: vscode.ExtensionContext) {
   if (!autocompleteController) {
     const gateway = _testSeam.autocompleteGatewayFactory
       ? _testSeam.autocompleteGatewayFactory(workspaceRoot)
-      : createProductionAutocompleteGateway(workspaceRoot);
+      : createProductionAutocompleteGateway(emptyRouting());
     autocompleteController = new AutocompleteController({ gateway });
   }
   autocompleteController.register(context);
@@ -580,6 +721,7 @@ export function activate(context: vscode.ExtensionContext) {
           timeoutMs: settings.timeoutMs,
           capability: capabilityForAgentMode(options.mode),
           token: haloToken(context),
+          ...(settings.modelId ? { modelId: settings.modelId } : {}),
         })
         : undefined;
       const browserManager = getGovernedBrowserSessionManager(options.workspaceRoot);
@@ -587,18 +729,25 @@ export function activate(context: vscode.ExtensionContext) {
       const isAuthenticated = Boolean(acctState?.user && acctState.status !== "UNAUTHENTICATED");
       const effectiveAccountScope = (options as any).accountScope || (isAuthenticated && acctState?.user?.id ? acctState.user.id : undefined);
 
+      const routed = providerOverride ? null : modelRouting?.config;
       activeBridge = new AgentSessionBridge({
         ...options,
         ...(effectiveAccountScope ? { accountScope: effectiveAccountScope } : {}),
         ...(providerOverride ? { providerOverride } : {}),
+        ...(!providerOverride ? { skipWorkspaceRoutingFile: true } : {}),
+        ...(routed ? { routingConfigOverride: routed } : {}),
         mcpCatalog: options.mcpCatalog,
         ...(browserManager ? { browserSessionManager: browserManager } : {}),
+        // Language-service symbol tools (ADR-047): find_symbol / rename_symbol via VS Code's providers.
+        codeIntelligence: createVsCodeCodeIntelligence(vscode),
         skills: skillsSettings(context),
         // Structured Engineering Loop (ADR-030); off by default.
         workflow: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('workflow.enabled', false) === true },
         progressMonitor: { enabled: vscode.workspace.getConfiguration('open-vs-code').get<boolean>('progressMonitor.enabled', false) === true },
         // Bounded memory-to-skill learning (ADR-032); off by default.
         learning: { enabled: learningEnabled() },
+        // Agent command sandbox (ADR-046); bubblewrap when available by default.
+        commandSandbox: commandSandboxSetting(),
       });
     }
     return activeBridge!;
@@ -611,7 +760,27 @@ export function activate(context: vscode.ExtensionContext) {
       webviewOptions: { retainContextWhenHidden: true },
     })
   );
-  void chatController.refreshConnection();
+  void modelRouting.refresh().then((refreshed) => {
+    if (!_testSeam.autocompleteGatewayFactory) installAutocompleteGateway(refreshed.config);
+    chatController?.publishModelManager(refreshed.snapshot);
+    return chatController?.refreshConnection();
+  });
+  // Layout restore runs after activation. Opening earlier is overwritten, so wait once.
+  const revealTimer = setTimeout(() => { void revealAgentPanelOnce(context); }, 1200);
+  context.subscriptions.push({ dispose: () => clearTimeout(revealTimer) });
+  const refreshRouting = () => {
+    void modelRouting?.refresh().then((refreshed) => {
+      if (!_testSeam.autocompleteGatewayFactory) installAutocompleteGateway(refreshed.config);
+      chatController?.publishModelManager(refreshed.snapshot);
+      return chatController?.refreshConnection();
+    });
+  };
+  if (vscode.workspace.onDidChangeWorkspaceFolders) {
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(refreshRouting));
+  }
+  if (vscode.workspace.onDidGrantWorkspaceTrust) {
+    context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(refreshRouting));
+  }
 
   // Sprint 7C: visible conversation history lives in VS Code's per-workspace storage
   // (outside the repository), never in .open-vs-code/sessions.jsonl.
@@ -654,6 +823,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('open-vs-code.showConversationHistory', async () => {
       await showConversationHistory();
     }),
+    vscode.commands.registerCommand('open-vs-code.showAgentOutput', async () => {
+      host?.revealOutput();
+    }),
     vscode.commands.registerCommand('open-vs-code.newConversation', async () => {
       await chatController?.handleWebviewMessage({ type: 'chat.newConversation' });
       await vscode.commands.executeCommand('open-vs-code.chat.focus');
@@ -667,19 +839,27 @@ export function activate(context: vscode.ExtensionContext) {
       if (!token?.trim()) return;
       await context.secrets.store(HALO_TOKEN_SECRET_KEY, token.trim());
       await host?.showOutput('HALO application token saved to VS Code SecretStorage.');
+      host?.revealOutput();
     }),
     vscode.commands.registerCommand('open-vs-code.checkHaloConnection', async () => {
       const settings = haloSettings();
       if (settings.backend !== 'halo') {
         await host?.showOutput('HALO is not selected. Select the HALO inference backend to use it.');
+        host?.revealOutput();
         return;
       }
       try {
-        const reachable = await probeHalo(settings.coreUrl);
-        await host?.showOutput(reachable ? 'HALO reachable.' : 'HALO Core is unavailable.');
+        const inspection = await inspectHaloConnection({
+          coreUrl: settings.coreUrl,
+          token: await haloToken(context)(),
+          capability: 'coding',
+          ...(settings.modelId ? { modelId: settings.modelId } : {}),
+        });
+        await host?.showOutput(inspection.summary);
       } catch {
         await host?.showOutput('HALO Core is unreachable.');
       }
+      host?.revealOutput();
     }),
     vscode.commands.registerCommand('open-vs-code.createStarterConfig', async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -687,15 +867,34 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('Open a workspace folder before creating model configuration.');
         return;
       }
+      if (vscode.workspace.isTrusted !== true) {
+        vscode.window.showErrorMessage('This folder is not trusted. The workspace model file was not written. Trust was not granted automatically.');
+        return;
+      }
       const dirPath = vscode.Uri.file(`${root}/.open-vs-code`);
       const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
       try {
+        try {
+          await vscode.workspace.fs.stat(filePath);
+          vscode.window.showInformationMessage('Model configuration already exists and was left unchanged.');
+          return;
+        } catch {
+          // The starter is only written when the workspace has no routing file.
+        }
         await vscode.workspace.fs.createDirectory(dirPath);
+        const catalog = await fetchLocalModelCatalog('http://127.0.0.1:11434', 2000);
+        const body = !catalog.error && catalog.models.length > 0
+          ? JSON.stringify(buildStarterRoutingConfig(catalog.models.map((model) => model.name)), null, 2) + '\n'
+          : STARTER_MODELS_JSON;
         const encoder = new TextEncoder();
-        await vscode.workspace.fs.writeFile(filePath, encoder.encode(STARTER_MODELS_JSON));
-        const doc = await vscode.workspace.openTextDocument(filePath);
-        await vscode.window.showTextDocument(doc);
-        vscode.window.showInformationMessage('Created starter model configuration at .open-vs-code/models.json');
+        await vscode.workspace.fs.writeFile(filePath, encoder.encode(body));
+        if (shouldShowModelConfiguration('starter-created')) {
+          const doc = await vscode.workspace.openTextDocument(filePath);
+          await vscode.window.showTextDocument(doc);
+        }
+        await modelRouting?.refresh();
+        await chatController?.refreshConnection();
+        vscode.window.showInformationMessage('Created .open-vs-code/models.json and left it closed. Models in the agent panel does not require this file.');
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to create starter config: ${err.message}`);
       }
@@ -743,6 +942,44 @@ export function activate(context: vscode.ExtensionContext) {
         `Skill: ${evidence.selectedSkill} v${evidence.skillVersion} (${evidence.skillSource}) · ${evidence.skillLoadStatus} · ${evidence.injectionStatus} · ${evidence.injectedSkillTokens} tokens injected`,
       );
     }),
+    vscode.commands.registerCommand('open-vs-code.selectLocalModel', async () => {
+      if (chatController?.getState().activeTurn) {
+        vscode.window.showWarningMessage('A task is running. Choose a model before the next request. The running task keeps its current model.');
+        return;
+      }
+      const refreshed = await modelRouting?.refresh();
+      const probed = refreshed?.snapshot;
+      const baseUrl = probed?.endpoint || 'http://127.0.0.1:11434';
+      if (!probed || probed.endpointError) {
+        vscode.window.showErrorMessage(`Cannot list local models at ${baseUrl}. ${probed?.endpointError || 'The local endpoint is unreachable.'}`);
+        return;
+      }
+      const models = probed.installedModels;
+      if (models.length === 0) {
+        vscode.window.showWarningMessage(`Connected to ${baseUrl}, but no models are installed.`);
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        [
+          { label: '$(plug) Test connection', description: baseUrl, id: '__test__' },
+          ...models.map((model) => ({ label: model, description: 'Use for chat and coding', id: model })),
+        ],
+        { title: 'Local model', placeHolder: 'Saved for every folder. Autocomplete keeps its own model. Project files are not edited.' },
+      );
+      if (!picked) return;
+      if (picked.id === '__test__') {
+        vscode.window.showInformationMessage(`Connected to ${baseUrl}. ${models.length} local model${models.length === 1 ? '' : 's'} available.`);
+        return;
+      }
+      await persistSelectedLocalModel(picked.id, false);
+    }),
+    vscode.commands.registerCommand('open-vs-code.openWideChat', async () => {
+      await openWideChat(provider);
+    }),
+    vscode.commands.registerCommand('open-vs-code.applyLocalModel', async (name?: string) => {
+      if (typeof name !== 'string' || !name.trim()) return;
+      await persistSelectedLocalModel(name.trim(), true);
+    }),
     vscode.commands.registerCommand('open-vs-code.openModelConfig', async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!root) {
@@ -751,6 +988,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       const filePath = vscode.Uri.file(`${root}/.open-vs-code/models.json`);
       try {
+        if (!shouldShowModelConfiguration('explicit-command')) return;
         const doc = await vscode.workspace.openTextDocument(filePath);
         await vscode.window.showTextDocument(doc);
       } catch {
@@ -1014,6 +1252,91 @@ export const STARTER_MODELS_JSON = JSON.stringify({
   }
 }, null, 2) + "\n";
 
+
+function commandSandboxSetting(): 'auto' | 'required' | 'off' {
+  const value = vscode.workspace.getConfiguration('open-vs-code').get<string>('agent.commandSandbox', 'auto');
+  return value === 'required' || value === 'off' ? value : 'auto';
+}
+
+/** Saves the chat model in extension storage. Workspace models.json is not written. */
+async function persistSelectedLocalModel(name: string, quiet: boolean): Promise<void> {
+  if (chatController?.getState().activeTurn) {
+    vscode.window.showWarningMessage('A task is running. Choose a model before the next request. The running task keeps its current model.');
+    return;
+  }
+  if (!modelRouting) return;
+  await modelRouting.refresh();
+  const error = await modelRouting.setChatModel(name);
+  const refreshed = await modelRouting.refresh();
+  if (!_testSeam.autocompleteGatewayFactory) installAutocompleteGateway(refreshed.config);
+  chatController?.publishModelManager(refreshed.snapshot);
+  await chatController?.refreshConnection();
+  if (error) {
+    vscode.window.showErrorMessage(error);
+    return;
+  }
+  if (!quiet) {
+    const used = refreshed.snapshot.chatModel || name;
+    vscode.window.showInformationMessage(refreshed.snapshot.workspaceOverrideActive
+      ? `Saved ${name} as the global chat model. The active route is still the workspace override. Choose Use global models to switch. The project file was not modified.`
+      : `Chat will use ${used}.`);
+  }
+}
+
+function emptyRouting(): RoutingConfiguration {
+  return { providers: [], models: [], deployments: [], routes: {} };
+}
+
+function installAutocompleteGateway(config: RoutingConfiguration | null): void {
+  const gateway = createProductionAutocompleteGateway(config ?? emptyRouting());
+  autocompleteController?.service.replaceGateway(gateway);
+}
+
+let wideChatPanel: vscode.WebviewPanel | undefined;
+
+function preferredWideColumn(): vscode.ViewColumn {
+  const editor = vscode.window.activeTextEditor;
+  const scheme = editor?.document?.uri?.scheme;
+  if (scheme === 'file' || scheme === 'untitled') return vscode.ViewColumn.Beside;
+  return vscode.ViewColumn.One;
+}
+
+async function openWideChat(provider: ChatViewProvider): Promise<void> {
+  const column = preferredWideColumn();
+  if (wideChatPanel) {
+    wideChatPanel.reveal(column);
+    return;
+  }
+  wideChatPanel = vscode.window.createWebviewPanel(
+    'open-vs-code.chat.wide',
+    'Open VS Code Agent',
+    column,
+    { enableScripts: true, retainContextWhenHidden: true },
+  );
+  wideChatPanel.webview.html = provider.htmlFor(wideChatPanel.webview, { wide: true });
+  const attached = chatController?.attachWebview(wideChatPanel.webview);
+  wideChatPanel.onDidDispose(() => {
+    attached?.dispose();
+    wideChatPanel = undefined;
+  });
+}
+
+/** Opens the right-hand agent once per workspace. Later launches keep the saved layout. */
+async function revealAgentPanelOnce(context: vscode.ExtensionContext): Promise<void> {
+  const key = 'open-vs-code.agentPanel.revealed.v2';
+  const workspaceState = context?.workspaceState;
+  if (!workspaceState || typeof workspaceState.get !== 'function') return;
+  if (workspaceState.get(key) === true) return;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await vscode.commands.executeCommand('workbench.view.extension.open-vs-code-agent');
+      if (typeof workspaceState.update === 'function') await workspaceState.update(key, true);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
+}
 
 /** Native, keyboard-first conversation picker over safe local metadata. */
 async function showConversationHistory(): Promise<void> {

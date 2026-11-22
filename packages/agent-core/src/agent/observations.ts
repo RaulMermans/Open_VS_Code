@@ -11,6 +11,9 @@ export interface ToolObservation {
   readonly truncated: boolean
   readonly provenance: ObservationProvenance
   readonly errorCategory?: string
+  readonly arguments?: Readonly<Record<string, unknown>>
+  /** ALREADY_OBSERVED: a repeated read-only lookup answered from its earlier result; not a failure. */
+  readonly alreadyObserved?: boolean
 }
 
 export interface ToolObservationInput {
@@ -19,6 +22,7 @@ export interface ToolObservationInput {
   readonly output?: unknown
   readonly error?: { readonly category: string; readonly message: string }
   readonly maxContentBytes?: number
+  readonly arguments?: Readonly<Record<string, unknown>> | undefined
 }
 
 function collectPaths(value: unknown, paths: Set<string>, depth = 0): void {
@@ -57,30 +61,49 @@ function formatObservationContent(output: unknown, toolName: string): string {
     const record = output as Record<string, unknown>
     if (toolName === "read_file" && typeof record.content === "string") {
       const path = typeof record.path === "string" ? record.path : "file"
-      return `File: ${path}\n\`\`\`\n${record.content}\n\`\`\``
+      const total = typeof record.totalLines === "number" ? record.totalLines : undefined
+      const start = typeof record.startLine === "number" ? record.startLine : 1
+      const end = typeof record.endLine === "number" ? Math.min(record.endLine, total ?? record.endLine) : undefined
+      const partial = total !== undefined && end !== undefined && (start > 1 || end < total)
+      const unknownTail = total === undefined && end !== undefined && end - start + 1 >= 250
+      const header = partial && start > total! ? `File: ${path} (past the end)` : partial ? `File: ${path} (lines ${start}-${end} of ${total})` : unknownTail ? `File: ${path} (lines ${start}-${end})` : `File: ${path}`
+      const footer = partial && end! < total!
+        ? `\n[More below: call read_file with path "${path}" and startLine ${end! + 1} to read lines ${end! + 1}-${Math.min(total!, end! + 250)}.]`
+        : partial && start > total!
+          ? `\n[The file has only ${total} lines.]`
+          : unknownTail ? `\n[More may follow: call read_file with path "${path}" and startLine ${end! + 1}.]` : ""
+      return `${header}\n\`\`\`\n${record.content}\n\`\`\`${footer}`
     }
+    // Truncation is stated, so a partial result is never read as the complete answer.
+    const more = (shown: number, what: string, narrow: string) => record.truncated === true
+      ? `\n[Incomplete: only the first ${shown} ${what}${typeof record.total === "number" ? ` of ${record.total}` : ""} are shown. ${narrow}]`
+      : ""
     if (toolName === "search_text" && Array.isArray(record.results)) {
       const results = record.results as Array<{ path: string; line: number; text: string }>
-      if (results.length === 0) return "No matching text found."
-      return `Found ${results.length} matches:\n${results.map((r) => `${r.path}:${r.line}: ${r.text}`).join("\n")}`
+      if (results.length === 0) return record.truncated === true ? "No matching text found in the part searched; the search stopped early. Narrow the path or query." : "No matching text found."
+      return `Found ${results.length} matches:\n${results.map((r) => `${r.path}:${r.line}: ${r.text}`).join("\n")}${more(results.length, "matches", "Narrow the query or search a subdirectory to see the rest.")}`
     }
     if (toolName === "find_files" && Array.isArray(record.paths)) {
       const paths = record.paths as string[]
       if (paths.length === 0) return "No matching files found."
-      return `Found ${paths.length} matching files:\n${paths.map((p) => `- ${p}`).join("\n")}`
+      return `Found ${paths.length} matching files:\n${paths.map((p) => `- ${p}`).join("\n")}${more(paths.length, "files", "Use a narrower glob to see the rest.")}`
     }
     if (toolName === "list_directory" && Array.isArray(record.entries)) {
       const entries = record.entries as Array<{ name: string; path: string; type: string }>
       if (entries.length === 0) return "Directory is empty."
-      return `Directory entries:\n${entries.map((e) => `- [${e.type}] ${e.path}`).join("\n")}`
+      return `Directory entries:\n${entries.map((e) => `- [${e.type}] ${e.path}`).join("\n")}${more(entries.length, "entries", "List a subdirectory, or use find_files with a glob, to see the rest.")}`
     }
     if (toolName === "run_verification" || toolName === "run_known_test") {
       const status = record.status as string
       let formatted = `Verification Status: ${status}`
       if (record.exitCode !== undefined && record.exitCode !== null) formatted += `\nExit Code: ${record.exitCode}`
       if (record.durationMs !== undefined) formatted += `\nDuration: ${record.durationMs}ms`
+      const sandbox = record.sandbox as { sandboxed?: boolean; reason?: string; limits?: string } | undefined
+      if (sandbox && typeof sandbox === "object") formatted += sandbox.sandboxed ? `\nSandbox: bubblewrap (no network, workspace-only writes; limits: ${sandbox.limits ?? "none"})` : `\nSandbox: none (${sandbox.reason ?? "not sandboxed"})`
       if (record.stdout && typeof record.stdout === "string") formatted += `\n\n### Output\n\`\`\`\n${record.stdout}\n\`\`\``
       if (record.stderr && typeof record.stderr === "string") formatted += `\n\n### Errors\n\`\`\`\n${record.stderr}\n\`\`\``
+      // The diagnosis goes first so truncation of long test output cannot hide it.
+      if (record.diagnosis && typeof record.diagnosis === "string") formatted = `${formatted.split("\n\n### Output")[0]}\n\n### Diagnosis\n${record.diagnosis}${formatted.includes("\n\n### Output") ? `\n\n### Output${formatted.split("\n\n### Output").slice(1).join("\n\n### Output")}` : ""}`
       return formatted
     }
   }
@@ -103,5 +126,6 @@ export function createToolObservation(input: ToolObservationInput): ToolObservat
     truncated: bounded.truncated,
     provenance: { kind: "tool", paths: [...paths].toSorted() },
     ...(input.error ? { errorCategory: input.error.category } : {}),
+    ...(input.arguments ? { arguments: input.arguments } : {}),
   }
 }

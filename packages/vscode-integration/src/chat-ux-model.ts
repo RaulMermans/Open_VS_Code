@@ -7,7 +7,282 @@
  * over what enters the model prompt.
  */
 
-import type { ChatActivity, ChatContextChip, ConnectionStatus, InferenceBackend } from "./chat-protocol.js";
+import type { ChatActivity, ChatContextChip, ConnectionStatus, ConversationExecutionStatus, InferenceBackend } from "./chat-protocol.js";
+
+/** Shown when the user rejects a proposed edit. This is a decision, not a malfunction. */
+export const USER_REJECTION_MESSAGE = "Change rejected — no files modified."
+
+export interface TerminalTaskReview {
+  readonly kind: string
+  readonly status: string
+  readonly path?: string | undefined
+  readonly command?: string | undefined
+  readonly scriptName?: string | undefined
+  readonly runId?: string | undefined
+}
+
+export interface TerminalTaskInput {
+  readonly status: string
+  readonly failureReason?: string | undefined
+  readonly finalAnswer?: string | undefined
+  readonly appliedMutations?: readonly { readonly path: string; readonly status?: string | undefined }[] | undefined
+  readonly reviews?: readonly TerminalTaskReview[] | undefined
+  /** When set, only reviews stamped with this run may support the outcome. */
+  readonly runId?: string | undefined
+}
+
+/** Reviews that belong to one agent run. A missing run id matches nothing. */
+export function reviewsForRun<T extends { readonly runId?: string | undefined }>(
+  reviews: readonly T[] | undefined,
+  runId: string | undefined,
+): T[] {
+  if (!runId) return []
+  return (reviews || []).filter((review) => review.runId === runId)
+}
+
+export function formatTerminalTaskMessage(result: TerminalTaskInput): { content: string; lastStatus: ConversationExecutionStatus } {
+  if (result.status === "CANCELLED") {
+    return { content: appendVerified("Task cancelled.", result), lastStatus: "cancelled" }
+  }
+  if (result.status === "FAILED" && result.failureReason === "REJECTED") {
+    return { content: rejectedMessage(result), lastStatus: "rejected" }
+  }
+  if (result.status === "FAILED" && result.failureReason === "MAX_TURNS_EXCEEDED") {
+    return { content: exhaustedMessage(result), lastStatus: "failed" }
+  }
+  if (result.status === "FAILED") {
+    const content = result.finalAnswer?.trim()
+      ? `Task failed (${result.failureReason}): ${result.finalAnswer}`
+      : `Task failed: ${result.failureReason}`
+    return { content: appendVerified(content, result), lastStatus: "failed" }
+  }
+  const answer = result.finalAnswer?.trim()
+    || (result.status === "COMPLETED" ? "Task completed successfully." : `Task finished with status: ${result.status}`)
+  return {
+    content: appendVerified(answer, result),
+    lastStatus: "completed",
+  }
+}
+
+function exhaustedMessage(result: TerminalTaskInput): string {
+  const lines = [
+    "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).",
+    "Completed work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.",
+  ]
+  const answer = stripBudgetPhrase(result.finalAnswer)
+  if (answer) lines.push("", answer)
+  const note = claimNote(result, outcomeFacts(result))
+  if (note) lines.push("", note)
+  const finished = outcomeFacts(result)
+  if (finished.length > 0) lines.push("", "What finished", ...finished)
+  const pending = pendingWork(result)
+  if (pending.length > 0) lines.push("", "Not finished", ...pending)
+  lines.push("", "Continue this run keeps the same task. Starting a new message does not continue it.")
+  return lines.join("\n")
+}
+
+function stripBudgetPhrase(finalAnswer: string | undefined): string {
+  const answer = finalAnswer?.trim() || ""
+  if (!answer) return ""
+  return answer.replace(/\s*Stopped because the turn budget was exhausted\.?/gi, "").trim()
+}
+
+function pendingWork(result: TerminalTaskInput): string[] {
+  const reviews = taskReviews(result)
+  const unfinishedMutations = uniqueFactPaths(
+    reviews
+      .filter((review) => review.kind === "mutation" && (review.status === "pending" || review.status === "approved" || review.status === "cancelled" || review.status === "rejected"))
+      .map((review) => review.path),
+  ).filter((path) => !appliedFactPaths(result, reviews).includes(path))
+  const unfinishedChecks = reviews.filter((review) =>
+    review.kind === "command" && (review.status === "pending" || review.status === "cancelled" || review.status === "interrupted" || review.status === "rejected"),
+  )
+  const lines: string[] = []
+  for (const path of unfinishedMutations) lines.push("- change not applied: " + path)
+  if (unfinishedChecks.length > 0) lines.push("- verification did not complete")
+  return lines
+}
+
+function rejectedMessage(result: TerminalTaskInput): string {
+  const reviews = taskReviews(result)
+  const proposed = uniqueFactPaths(
+    reviews
+      .filter((review) => review.kind === "mutation" && review.status === "rejected")
+      .map((review) => review.path),
+  )
+  const applied = appliedFactPaths(result, reviews)
+  if (proposed.length === 0 && applied.length === 0) return USER_REJECTION_MESSAGE
+  const lines = [
+    applied.length === 0
+      ? USER_REJECTION_MESSAGE
+      : "Change rejected — the proposed edit was not applied.",
+  ]
+  if (proposed.length > 0) lines.push("", "Not applied: " + proposed.join(", "))
+  if (applied.length > 0) {
+    lines.push("", "Already applied earlier in this task:")
+    for (const path of applied) lines.push("- " + path)
+  }
+  return lines.join("\n")
+}
+
+function taskReviews(result: TerminalTaskInput): readonly TerminalTaskReview[] {
+  return reviewsForRun(result.reviews, result.runId)
+}
+
+function appendVerified(content: string, result: TerminalTaskInput): string {
+  const facts = outcomeFacts(result)
+  if (result.status === "CANCELLED") {
+    return facts.length > 0 ? content + "\n\n" + facts.join("\n") : content
+  }
+  const note = claimNote(result, facts)
+  const blocks = [content]
+  if (note) blocks.push("", note)
+  // The card title follows the run status; a failed or incomplete run must never read "Task completed."
+  if (facts.length > 0) blocks.push("", result.status === "COMPLETED" ? "Verified outcome" : "Verified outcome: not completed", ...facts)
+  return blocks.join("\n")
+}
+
+function outcomeFacts(result: TerminalTaskInput): string[] {
+  if (result.status === "FAILED" && result.failureReason === "REJECTED") return []
+  const reviews = taskReviews(result)
+  const paths = appliedFactPaths(result, reviews)
+  if (result.status === "CANCELLED") {
+    if (paths.length === 0) return []
+    return ["Already applied before cancellation:", ...paths.map((path) => "- " + path)]
+  }
+  const checks = checkFacts(reviews)
+  const alreadyPresent = alreadySatisfiedFactPaths(result, reviews)
+  if (paths.length === 0 && checks.length === 0 && alreadyPresent.length === 0) return []
+  const lines = [
+    paths.length > 0 ? "Changed:" : "No files were changed.",
+    ...paths.map((path) => "- " + path),
+  ]
+  if (alreadyPresent.length > 0) {
+    lines.push("Already present — no write:", ...alreadyPresent.map((path) => "- " + path))
+  }
+  if (checks.length > 0) lines.push(...checks)
+  else if (paths.length > 0) lines.push("Verification was not executed.")
+  return lines.filter((line) => line.length > 0)
+}
+
+type CheckClass = "test" | "lint" | "typecheck" | "other"
+
+function checkFacts(reviews: readonly TerminalTaskReview[]): string[] {
+  const commands = reviews.filter((review) => review.kind === "command")
+  const latest = new Map<CheckClass, TerminalTaskReview>()
+  for (const review of commands) latest.set(checkClass(review), review)
+  const lines: string[] = []
+  for (const kind of ["test", "lint", "typecheck", "other"] as const) {
+    const review = latest.get(kind)
+    const line = review ? checkLine(kind, review.status) : undefined
+    if (line && !lines.includes(line)) lines.push(line)
+  }
+  return lines
+}
+
+function checkClass(review: TerminalTaskReview): CheckClass {
+  const script = (review.scriptName || "").trim().toLowerCase()
+  if (script) return classFromHint(script)
+  const command = review.command || review.path || ""
+  return classFromHint(command)
+}
+
+function classFromHint(value: string): CheckClass {
+  const text = value.toLowerCase()
+  if (/(^|[^a-z])(typecheck|type-check|tsc)([^a-z]|$)/.test(text)) return "typecheck"
+  if (/(^|[^a-z])(lint|eslint|oxlint|ruff)([^a-z]|$)/.test(text)) return "lint"
+  if (
+    text === "test" ||
+    text.startsWith("test:") ||
+    /(^|[^a-z])(test|jest|vitest|pytest)([^a-z]|$)/.test(text)
+  ) return "test"
+  return "other"
+}
+
+function checkLine(kind: CheckClass, status: string): string | undefined {
+  if (status === "rejected") return "Verification was rejected."
+  if (status === "cancelled") return "Verification was cancelled."
+  if (status === "interrupted") return "Verification was interrupted."
+  if (status === "timed-out") {
+    if (kind === "test") return "Tests timed out."
+    if (kind === "lint") return "Lint timed out."
+    if (kind === "typecheck") return "Typecheck timed out."
+    return "Other checks timed out."
+  }
+  if (status === "succeeded") {
+    if (kind === "test") return "Tests passed."
+    if (kind === "lint") return "Lint passed."
+    if (kind === "typecheck") return "Typecheck passed."
+    return "Other checks completed."
+  }
+  if (status === "failed") {
+    if (kind === "test") return "Tests failed."
+    if (kind === "lint") return "Lint failed."
+    if (kind === "typecheck") return "Typecheck failed."
+    return "Other checks failed."
+  }
+  return undefined
+}
+
+const UNSUPPORTED_CLAIM = "Unsupported claim: the reply describes an outcome this run did not record."
+
+function claimNote(result: TerminalTaskInput, facts: readonly string[]): string {
+  if (result.status === "CANCELLED") return ""
+  if (result.status === "FAILED" && result.failureReason === "REJECTED") return ""
+  const answer = result.finalAnswer || ""
+  if (!answer.trim()) return ""
+  const recorded = facts.join("\n")
+  // Past reports only. "tests pass" and "tests will pass" describe work that has not been recorded.
+  const claims: Array<{ pattern: RegExp; satisfied: RegExp }> = [
+    { pattern: /\btests?\s+(have\s+)?(passed|succeeded)\b/i, satisfied: /^Tests passed\.$/m },
+    { pattern: /\blint\s+(passed|succeeded|is clean)\b/i, satisfied: /^Lint passed\.$/m },
+    { pattern: /\btype-?\s?check\s+(passed|succeeded)\b/i, satisfied: /^Typecheck passed\.$/m },
+    { pattern: /\b(checks|verification)\s+(passed|succeeded)\b/i, satisfied: /(Tests|Lint|Typecheck) passed\.|^Other checks completed\.$/m },
+    { pattern: /\b(the edit (is|was) applied|files were changed|i applied the (edit|change|patch)|i (updated|edited|changed|modified|wrote|created) the)\b/i, satisfied: /^Changed:$/m },
+  ]
+  const contradicted = claims.some((claim) => claim.pattern.test(answer) && !claim.satisfied.test(recorded))
+  return contradicted ? UNSUPPORTED_CLAIM : ""
+}
+
+function appliedFactPaths(result: TerminalTaskInput, reviews: readonly TerminalTaskReview[]): string[] {
+  const fromResult = (result.appliedMutations || [])
+    .filter((mutation) => !mutation.status || mutation.status === "APPLIED")
+    .map((mutation) => mutation.path)
+  const fromReviews = reviews
+    .filter((review) => review.kind === "mutation" && review.status === "applied")
+    .map((review) => review.path)
+  return uniqueFactPaths([...fromResult, ...fromReviews])
+}
+
+function alreadySatisfiedFactPaths(result: TerminalTaskInput, reviews: readonly TerminalTaskReview[]): string[] {
+  const fromResult = (result.appliedMutations || [])
+    .filter((mutation) => mutation.status === "ALREADY_SATISFIED")
+    .map((mutation) => mutation.path)
+  const fromReviews = reviews
+    .filter((review) => review.kind === "mutation" && review.status === "already-satisfied")
+    .map((review) => review.path)
+  return uniqueFactPaths([...fromResult, ...fromReviews])
+}
+
+function uniqueFactPaths(values: readonly (string | undefined)[]): string[] {
+  const seen = new Set<string>()
+  const paths: string[] = []
+  for (const value of values) {
+    const path = cleanFactPath(value)
+    if (!path || seen.has(path)) continue
+    seen.add(path)
+    paths.push(path)
+    if (paths.length >= 12) break
+  }
+  return paths
+}
+
+function cleanFactPath(value: string | undefined): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.replace(/[\u0000-\u001F\u007F]/g, "").trim()
+  if (!trimmed || trimmed.length > 240) return null
+  return trimmed
+}
 
 export const MAX_ATTACHMENTS = 8;
 export const MAX_FILE_SEARCH_RESULTS = 20;
@@ -44,6 +319,13 @@ export interface ConnectionSnapshotInput {
   readonly activeTurn?: boolean;
   readonly trusted?: boolean;
   readonly endpointVerified?: boolean;
+  readonly installedModels?: readonly string[];
+  readonly selectedModel?: string;
+  readonly endpoint?: string;
+  readonly routingSource?: "workspace-override" | "global" | "discovered" | "none";
+  readonly workspaceOverrideActive?: boolean;
+  readonly autocompleteModel?: string;
+  readonly workspaceTrusted?: boolean;
 }
 
 export interface AttachmentRequest {
@@ -73,6 +355,7 @@ const ACTIVITY_LABELS: Record<string, { kind: ChatActivity["kind"]; label: strin
   "mutation.approved": { kind: "mutation", label: "Change approved" },
   "mutation.rejected": { kind: "mutation", label: "Change rejected" },
   "mutation.applied": { kind: "mutation", label: "Change applied" },
+  "mutation.already_satisfied": { kind: "mutation", label: "Already present — no write" },
   "mutation.failed": { kind: "mutation", label: "Change failed" },
   "verification.requested": { kind: "verification", label: "Running verification" },
   "verification.prepared": { kind: "verification", label: "Preparing verification" },
@@ -117,6 +400,28 @@ export function sanitizeSearchQuery(raw: string): string {
 }
 
 export function deriveConnectionStatus(input: ConnectionSnapshotInput): ConnectionStatus {
+  const status = deriveConnectionStatusBody(input);
+  const installed = (input.installedModels || [])
+    .filter((name) => typeof name === "string" && name.trim().length > 0)
+    .map((name) => name.trim())
+    .slice(0, 64);
+  const detail = input.workspaceOverrideActive
+    ? [status.detail, "Workspace models.json override is active."].filter(Boolean).join(" ")
+    : status.detail;
+  return {
+    ...status,
+    ...(detail ? { detail } : {}),
+    ...(installed.length ? { installedModels: installed } : {}),
+    ...(input.selectedModel ? { selectedModel: input.selectedModel } : {}),
+    ...(input.endpoint ? { endpoint: input.endpoint } : {}),
+    ...(input.routingSource ? { routingSource: input.routingSource } : {}),
+    ...(input.workspaceOverrideActive ? { workspaceOverrideActive: true } : {}),
+    ...(input.autocompleteModel ? { autocompleteModel: input.autocompleteModel } : {}),
+    ...(input.workspaceTrusted === false ? { workspaceTrusted: false } : {}),
+  };
+}
+
+function deriveConnectionStatusBody(input: ConnectionSnapshotInput): ConnectionStatus {
   const backend: InferenceBackend =
     input.inferenceBackend === "halo" ? "halo" : input.inferenceBackend === "standalone-local" ? "standalone-local" : "unknown";
 
@@ -132,11 +437,11 @@ export function deriveConnectionStatus(input: ConnectionSnapshotInput): Connecti
     };
   }
 
-  if (input.lastError === "missing-config" || input.configStatus === "missing") {
+  if ((input.lastError === "missing-config" || input.configStatus === "missing") && input.lastError !== "disconnected" && input.lastError !== "model-unavailable") {
     return {
       state: "missing-config",
       backend,
-      detail: "No model configuration found (.open-vs-code/models.json)",
+      detail: "No model selected. Choose one in Models. A workspace models.json file is optional.",
       healthChecked: false,
       actionable: "create-config",
     };
@@ -182,7 +487,9 @@ export function deriveConnectionStatus(input: ConnectionSnapshotInput): Connecti
       backend,
       modelLabel: input.modelLabel,
       providerLabel: input.providerLabel,
-      detail: "Inference endpoint unreachable",
+      detail: input.endpoint
+        ? `Ollama is offline or unreachable at ${input.endpoint}`
+        : "Inference endpoint unreachable",
       healthChecked: Boolean(input.haloHealthChecked),
       actionable: "check-connection",
     };
@@ -194,7 +501,9 @@ export function deriveConnectionStatus(input: ConnectionSnapshotInput): Connecti
       backend,
       modelLabel: input.modelLabel,
       providerLabel: input.providerLabel,
-      detail: "Configured model is not available on the endpoint",
+      detail: input.selectedModel
+        ? `${input.selectedModel} is not installed on the local endpoint`
+        : "Configured model is not available on the endpoint",
       healthChecked: Boolean(input.haloHealthChecked),
       actionable: "open-config",
     };
@@ -283,6 +592,13 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
   if (!mapped) return null;
 
   const toolName = typeof ev.payload?.name === "string" ? ev.payload.name.slice(0, 80) : undefined;
+  const summary = activitySummary(ev);
+  const runSource = typeof (ev as { taskId?: unknown }).taskId === "string"
+    ? (ev as { taskId: string }).taskId
+    : typeof ev.payload?.task?.id === "string"
+      ? ev.payload.task.id
+      : "";
+  const runId = runSource.trim().slice(0, 80);
   let label = mapped.label;
   if (toolName && mapped.kind === "tool") {
     if (ev.type === "tool.requested") label = "Running " + toolName;
@@ -306,6 +622,8 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
     status = "failed";
   } else if (ev.type.endsWith(".cancelled") || ev.type.endsWith(".rejected")) {
     status = "cancelled";
+  } else if (ev.type.endsWith(".interrupted")) {
+    status = "interrupted";
   }
 
   return {
@@ -314,7 +632,25 @@ export function activityFromAgentEvent(ev: { type?: string; payload?: any }, id:
     label,
     status,
     toolName,
+    ...(summary ? { summary } : {}),
+    ...(runId ? { runId } : {}),
+    ...(ev.payload?.task?.mode === "PLAN" ? { planning: true } : {}),
   };
+}
+
+function activitySummary(ev: { type?: string; payload?: any }): string | undefined {
+  const payload = ev.payload;
+  if (!payload || typeof payload !== "object") return undefined;
+  if (ev.type === "task.started") {
+    const taskId = typeof payload.task?.id === "string" ? payload.task.id : typeof payload.taskId === "string" ? payload.taskId : "";
+    const trimmed = taskId.trim();
+    return trimmed ? trimmed.slice(0, 80) : undefined;
+  }
+  const path = typeof payload.path === "string" ? payload.path : typeof payload.targetFile === "string" ? payload.targetFile : "";
+  if (path.trim()) return path.replace(/[\u0000-\u001F\u007F]/g, "").trim().slice(0, 240);
+  const verification = payload.result && typeof payload.result === "object" ? payload.result.status : undefined;
+  if (typeof verification === "string" && verification.trim()) return verification.trim().slice(0, 20);
+  return undefined;
 }
 
 export function implicitContextChips(snapshot: {

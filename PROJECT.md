@@ -30,6 +30,50 @@
 
 ## Current sprint
 
+Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. On `main` at `aec5d3aadb`. Installed production is `0.1.0-rc.26`. Rollback is `0.1.0-rc.25`. Stale dependency builds go through the verification sandbox. Six fresh Qwen repairs stayed at 4 or 5 inference failures. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
+
+Sprint 23 — Cross-file refactors and real-project dogfooding. Status: `CANDIDATE` `0.1.0-rc.23` (`794b2f9426`), **not installed**; daily driver stays `0.1.0-rc.21`. Five new tasks on a real repository through the GUI: rc.21 0/4 valid → rc.23 1 fully correct + 1 correct code missing requested tests; no false verification PASS, no unbounded loops. Remaining blocker: incomplete instruction-following (stale importer, missing tests, test-gaming). See `docs/sprints/SPRINT_23_DOGFOODING.md`.
+
+Sprint 24 — Native code intelligence (ADR-047). Status: `CANDIDATE` `0.1.0-rc.24` (`b5736d4507`), **not installed**; daily driver stays `0.1.0-rc.21`. `find_symbol` / grouped `rename_symbol` on VS Code language providers through the MutationEngine. Held-out cross-file renames with live Qwen: 2/6 baseline → 5/6 with symbol tools, no completed-but-wrong runs, median 270 s → 32 s. Reeprov R1 passes its oracle headless and in the packaged GUI (1 of 2 GUI runs). Next: recognize a completed rename as completed. See `docs/sprints/SPRINT_24_CODE_INTELLIGENCE.md`.
+
+Previous: Sprint 22 — Agent command sandbox. Status: `INSTALLED` as `0.1.0-rc.21`. Approved test/lint/build commands run in bubblewrap by default: no network, private HOME, workspace-only writes (ADR-046). Installed-production lab 15/15. See `docs/sprints/SPRINT_22_COMMAND_SANDBOX.md`.
+
+Previous: Sprint 21 — Reliable coding engineering and production acceptance. Status: `IMPLEMENTED`, candidate `0.1.0-rc.20` (`fa532f0197`). The chat runtime's own defects were the dominant cause of failed coding runs: a 3-write cap per task, unbounded refusal loops, unactionable import refusals, no Python verifier, a completion gate that demanded edits to every named file. Fixed deterministically (ADR-045). Live `qwen3-coder:30b` on the desktop path, 30 tasks: baseline 22/30 (held-out 17/22, 4 runaway loops) → rc.20 27/30 (held-out 21/22), 0 false completions, 0 timeouts. See `docs/sprints/SPRINT_21_RELIABLE_CODING.md`.
+
+Previous: Sprint 20 — Deterministic file editing and wrong-tool recovery. Status: `IMPLEMENTED`. `create_file` on an existing file cannot overwrite; recovery is a typed `FILE_ALREADY_EXISTS` observation with bounded file contents; unique preserving hunks may convert to an unapproved patch; repeated invalid creates stop. See `docs/sprints/SPRINT_20_DETERMINISTIC_FILE_EDITING.md`. Packaged rc.19 remains the last installed-payload coding baseline (`CODE-CONTINUE-COMPLETE` FAIL on `create_file`). Daily driver remains `0.1.0-rc.16`.
+
+Milestone 3 — Real coding intelligence. Status: `VERIFIED`. Continuation safety held on a real `MAX_TURNS_EXCEEDED` pause with explicit Continue and stale-file protection. Overlay `CODE-CONTINUE-COMPLETE` passed 3/3. Packaged rc.19 live CDP: small coding and critical safety PASS; production Continue completion FAIL this payload (model tool-contract). Personal V1 `CONDITIONAL GO`, not installed. Daily driver remains `0.1.0-rc.16`. See `PLAN.md` and `docs/releases/V1_CONVERGENCE_STATUS.md`.
+
+Milestone 2 — Agent workspace presentation. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.18` from `ff96af72e1` is built and not installed. Installed desktop remains `0.1.0-rc.16`. M2 presentation is in the M4 source line. UX-ACTIVITY and UX-DIFF appearance still need a person. See `PLAN.md` and `docs/adrs/ADR-018-chat-ux-layer.md`.
+
+Sprint 15 — Product acceptance lab. Status: `IN_VERIFICATION`. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+
+Sprint 14C.1A — Global model hardening and desktop acceptance. Status: `PARTIALLY_VERIFIED`. `0.1.0-rc.12` from `6417724105` is installed. Playwright opened that binary with the sandbox enabled. An untrusted folder kept the global route, and `qwen3-coder:30b` answered `pong`. Wider chat, a second repository, and a live-profile restart were not walked. See `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
+
+Sprint 14C.1 — Global model management and product experience. Status: `IMPLEMENTED_NOT_INSTALLED`. Model choice is stored in extension storage. A trusted `.open-vs-code/models.json` is an explicit override and is not rewritten. An untrusted folder cannot redirect inference. The installed desktop at the start of 14C.1A was `0.1.0-rc.11`. See `docs/adrs/ADR-043-global-model-preferences.md`.
+
+Sprint 14B.2 — Clean release and real GUI acceptance. Status: `PARTIALLY_VERIFIED`. Clean Debian `0.1.0-rc.11` from `9d8ab96c06` is built and not installed. The installed desktop remains `0.1.0-rc.9`. The installed GUI walkthrough is still open. See `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md` and `PLAN.md`.
+
+Sprint 14B.1 — Conversational truth and installed GUI acceptance. Status: `PARTIALLY_VERIFIED`. Run-scoped evidence, check classification, and activity labels are covered by deterministic tests and a live `qwen3-coder:30b` provider pass. Debian `0.1.0-rc.10` was built from a dirty tree and is not installed. The installed desktop remains `0.1.0-rc.9`.
+
+Sprint 14B — Conversational agent experience. Presentation changes on the existing chat path. Status: `PARTIALLY_VERIFIED`. Installed GUI acceptance is still open.
+
+Sprint 14 — Final daily-driver stabilization. Desktop version target `0.1.0-rc.9`. That package is installed. Status: `IN_VERIFICATION`. See `PLAN.md`.
+
+Sprint 13.1 — Daily driver acceptance. Desktop version target `0.1.0-rc.8`. `0.1.0-rc.7` was installed for the first acceptance pass and remains available beside the `0.1.0-rc.6` rollback package.
+
+Sprint 13 — Daily driver MVP (`docs/sprints/SPRINT_13_DAILY_DRIVER.md`).
+The agent lives in the right-hand sidebar. Ask, Plan, and Agent sit on the composer, and the model dropdown lists models returned by the local endpoint.
+
+Personal V1 installed acceptance (`docs/releases/PERSONAL_V1_ACCEPTANCE.md`).
+Status: `PERSONAL_V1_BLOCKED`. Release branch `release/personal-v1-installed-acceptance`. Clean Debian `0.1.0-rc.4` from `02d21325ef` is installed on this machine with the Electron sandbox enabled. The installed GUI completed a real debug repair and a rejected edit against `qwen3-coder:30b`. The three-run local benchmark met the agreed thresholds. GitHub CI is not green: this branch cannot be pushed while `.github/workflows/ci.yml` is included, and `main` at `6db9ec3467` still fails the Ubuntu and macOS jobs.
+
+Sprint 11A.1 — Real-Model Coding Reliability (`docs/sprints/SPRINT_11A1_REAL_CODING_RELIABILITY.md`).
+Status: `SPRINT_11A1_PARTIALLY_VERIFIED`. Editing tasks can no longer be marked complete when no relevant mutation was applied. Invalid tool calls get one corrective observation and then stop. Local `qwen2.5-coder:7b` completed two unseen edits through `apply_patch` and still failed the two original Sprint 11A edit tasks. The new Debian package is not installed, so the GUI journey is not verified.
+
+Sprint 11A — Linux Daily Driver & Real Local Inference (`docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md`).
+Status: `SPRINT_11A_PARTIALLY_VERIFIED`. The Linux desktop package launches with the Electron sandbox, fails closed when `chrome-sandbox` is not root setuid, and the production model gateway talks to a local Ollama `qwen2.5-coder:7b`. Chat shows the routed deployment rather than the first `models.json` entry. A grounded repository-explanation task succeeded. Two code-editing tasks with the same 7B model did not apply a correct patch. Installing the new package still requires root. HALO is not required.
+
 Sprint 10A.1D — Final Pre-HALO Readiness, Security Closure & Release Freeze (`docs/sprints/SPRINT_10A1D_FINAL_PRE_HALO_READINESS.md`).
 Final planned corrective sprint before physical HALO hardware integration:
 - Architectural Invariants Preserved: Single authoritative `AgentRuntime`, `PermissionGate`, and `MutationEngine`. Zero new agents, frameworks, or databases. Core architecture is **FROZEN**.

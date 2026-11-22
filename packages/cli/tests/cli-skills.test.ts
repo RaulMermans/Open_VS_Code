@@ -10,6 +10,7 @@ import { cp } from "node:fs/promises"
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url))
 const REAL_ROOT = path.resolve(__dirname, "../../..")
 const FIXTURES_DIR = path.resolve(__dirname, "../tests/fixtures")
+const done = () => ({ model: "scripted", message: { role: "assistant", content: "Done" } })
 
 async function setupWorkspace(name: string) {
   const ws = path.join(FIXTURES_DIR, name)
@@ -21,9 +22,7 @@ async function setupWorkspace(name: string) {
 
 test("T-734: DIRECT CLI SKILL E2E: DEBUG", async () => {
   const ws = await setupWorkspace("e2e-skill-debug")
-  const provider = new ScriptedModelProvider([
-    { model: "scripted", message: { role: "assistant", content: "Done" } }
-  ])
+  const provider = new ScriptedModelProvider([done(), done(), done()])
 
   const result = await runCLI({
     mode: "DEBUG",
@@ -34,16 +33,14 @@ test("T-734: DIRECT CLI SKILL E2E: DEBUG", async () => {
     mockApproval: "APPROVE"
   }) as any;
 
-  assert.equal(result.exitCode, 0)
+  assert.equal(result.exitCode, 1)
   assert.equal(result.skillDiagnostics.primarySkill, "BUG_TRIAGE_LOOP")
   assert.ok(result.skillDiagnostics.loadedSections.length > 0)
 })
 
 test("T-735: DIRECT CLI SKILL E2E: BUILD", async () => {
   const ws = await setupWorkspace("e2e-skill-build")
-  const provider = new ScriptedModelProvider([
-    { model: "scripted", message: { role: "assistant", content: "Done" } }
-  ])
+  const provider = new ScriptedModelProvider([done(), done(), done()])
 
   const result = await runCLI({
     mode: "BUILD",
@@ -54,16 +51,14 @@ test("T-735: DIRECT CLI SKILL E2E: BUILD", async () => {
     mockApproval: "APPROVE"
   }) as any;
 
-  assert.equal(result.exitCode, 0)
+  assert.equal(result.exitCode, 1)
   assert.equal(result.skillDiagnostics.primarySkill, "ADD_FEATURE_WITH_TESTS")
   assert.ok(result.skillDiagnostics.loadedSections.length > 0)
 })
 
 test("T-736: DIRECT CLI SKILL E2E: REVIEW", async () => {
   const ws = await setupWorkspace("e2e-skill-review")
-  const provider = new ScriptedModelProvider([
-    { model: "scripted", message: { role: "assistant", content: "Done" } }
-  ])
+  const provider = new ScriptedModelProvider([done(), done(), done()])
 
   const result = await runCLI({
     mode: "REVIEW",
@@ -81,9 +76,7 @@ test("T-736: DIRECT CLI SKILL E2E: REVIEW", async () => {
 
 test("T-737: DIRECT CLI NO-SKILL E2E", async () => {
   const ws = await setupWorkspace("e2e-skill-none")
-  const provider = new ScriptedModelProvider([
-    { model: "scripted", message: { role: "assistant", content: "Done" } }
-  ])
+  const provider = new ScriptedModelProvider([done(), done(), done()])
 
   const result = await runCLI({
     mode: "BUILD",
@@ -94,7 +87,7 @@ test("T-737: DIRECT CLI NO-SKILL E2E", async () => {
     mockApproval: "APPROVE"
   }) as any;
 
-  assert.equal(result.exitCode, 0)
+  assert.equal(result.exitCode, 1)
   assert.equal(result.skillDiagnostics.primarySkill, undefined)
   assert.equal(result.skillDiagnostics.actualCompiledSkillTokens, 0)
   assert.equal(result.skillDiagnostics.skillsSelected, 0)
@@ -108,12 +101,12 @@ test("T-5A-CLI: --skills enables the Portable Skills Runtime and reports bounded
     workspaceRoot: ws,
     json: true,
     skills,
-    provider: new ScriptedModelProvider([{ model: "scripted", message: { role: "assistant", content: "Done" } }]),
+    provider: new ScriptedModelProvider([done(), done(), done()]),
     mockApproval: "APPROVE"
   }) as any;
 
   const enabled = await run(true)
-  assert.equal(enabled.exitCode, 0)
+  assert.equal(enabled.exitCode, 1)
   assert.equal(enabled.skillEvidence.enabled, true)
   assert.equal(enabled.skillEvidence.selectedSkill, "bug-triage")
   assert.equal(enabled.skillEvidence.skillSource, "builtin")
@@ -121,6 +114,6 @@ test("T-5A-CLI: --skills enables the Portable Skills Runtime and reports bounded
   assert.ok(!JSON.stringify(enabled.skillEvidence).includes("parser crash"), "no task text in evidence")
 
   const disabled = await run(false)
-  assert.equal(disabled.exitCode, 0)
+  assert.equal(disabled.exitCode, 1)
   assert.equal(disabled.skillEvidence.skillLoadStatus, "DISABLED")
 })

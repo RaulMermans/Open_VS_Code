@@ -8,7 +8,9 @@ import type {
   ModelDeployment,
   ModelDescriptor,
 } from "../contracts/routing.ts"
+import type { AgentMode } from "../contracts/agent.ts"
 import type { ModelPerformanceLedger } from "./performance-ledger.ts"
+import { buildModelRouteRequirements } from "./route-requirements.ts"
 
 export interface HealthChecker {
   checkHealth(deploymentId: string, signal?: AbortSignal): Promise<ProviderHealthState>
@@ -245,5 +247,63 @@ export class ModelRouter {
       healthState: selected.health,
       ...(selected.performanceAdjustment !== undefined ? { performanceAdjustment: selected.performanceAdjustment } : {}),
     }
+  }
+}
+
+export interface ConfiguredRouteIdentity {
+  readonly deploymentId: string
+  readonly providerId: string
+  readonly modelId: string
+  readonly modelLabel: string
+  readonly servedModelName?: string
+}
+
+/**
+ * Identity of the deployment ModelRouter would select for a chat turn.
+ * Uses the same requirements and candidate order as a live turn.
+ * Does not report the first entry in models.json.
+ */
+export async function describeConfiguredRoute(
+  config: RoutingConfiguration,
+  mode: AgentMode,
+): Promise<ConfiguredRouteIdentity | null> {
+  const router = new ModelRouter(config)
+  const health: HealthChecker = {
+    async checkHealth(): Promise<ProviderHealthState> {
+      return "unknown"
+    },
+  }
+  try {
+    const decision = await router.route(
+      buildModelRouteRequirements({
+        mode,
+        estimatedInputTokens: 256,
+        hasTools: true,
+        hasStructuredOutput: false,
+      }),
+      health,
+    )
+    return formatRouteIdentity(config, decision.deploymentId, decision.providerId, decision.modelId)
+  } catch {
+    return null
+  }
+}
+
+export function formatRouteIdentity(
+  config: RoutingConfiguration,
+  deploymentId: string,
+  providerId: string,
+  modelId: string,
+): ConfiguredRouteIdentity {
+  const model = config.models.find((entry) => entry.id === modelId)
+  const deployment = config.deployments.find((entry) => entry.id === deploymentId)
+  const servedModelName = deployment?.modelName
+  const display = model?.displayName || modelId
+  return {
+    deploymentId,
+    providerId,
+    modelId,
+    modelLabel: servedModelName ? `${display} · ${servedModelName}` : display,
+    ...(servedModelName ? { servedModelName } : {}),
   }
 }

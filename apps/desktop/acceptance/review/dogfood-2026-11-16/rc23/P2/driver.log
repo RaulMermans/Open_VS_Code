@@ -1,0 +1,4 @@
+dogfood-rc23-P2: approvals=6 blocked=false timedOut=false 178s
+Changed: src/reeprov_client/canonical.py, src/reeprov_client/canonical.py. Approval was granted for the applied edit. Tests passed. The requested edit was applied.
+
+Unsupported claim: the reply describes an outcome this run did not record.Task completed.Changed:src/reeprov_client/canonical.pyAlready present — no write:src/reeprov_client/canonical.pyOther checks completed.

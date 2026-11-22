@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import {
   renderTerminalOutput,
@@ -795,7 +796,7 @@ describe("Sprint 7B accessibility, performance and authority", () => {
   test("16. bundled webview runtime renders the 7B surfaces without module scope", async () => {
     const esbuild = createRequire(import.meta.url)("esbuild");
     const bundled = esbuild.buildSync({
-      entryPoints: [new URL("../src/webview-render-helpers.ts", import.meta.url).pathname],
+      entryPoints: [fileURLToPath(new URL("../src/webview-render-helpers.ts", import.meta.url))],
       bundle: true, write: false, format: "cjs", platform: "node",
     });
     const mod: any = { exports: {} };

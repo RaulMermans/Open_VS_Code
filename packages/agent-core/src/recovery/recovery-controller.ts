@@ -136,8 +136,10 @@ export class RecoveryController {
       }
     }
 
-    // If run failed due to security denial, do not auto-retry
-    if (latestCheckpoint && (latestCheckpoint.runtimeState.pauseReason?.includes("SECURITY") || latestCheckpoint.runtimeState.status === "FAILED")) {
+    const turnBudgetPause = latestCheckpoint?.runtimeState.pauseReason === "MAX_TURNS_EXCEEDED"
+    // If run failed due to security denial, do not auto-retry.
+    // MAX_TURNS_EXCEEDED is a user-continuable pause, not an automatic retry.
+    if (latestCheckpoint && !turnBudgetPause && (latestCheckpoint.runtimeState.pauseReason?.includes("SECURITY") || latestCheckpoint.runtimeState.status === "FAILED")) {
       return {
         recoveryId,
         runId,

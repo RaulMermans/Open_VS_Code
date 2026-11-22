@@ -29,6 +29,12 @@ test("bounds and sorts directory listings", async () => {
   assert.equal(result.truncated, true)
 })
 
+test("depth 2 includes nested files without listing node_modules", async () => {
+  const result = await listDirectory(fixtureRoot, ".", { depth: 2, maxEntries: 100 })
+  assert.ok(result.entries.some((entry) => entry.path === "src/index.ts" || entry.path === "src/nested"))
+  assert.equal(result.entries.some((entry) => entry.path.includes("node_modules")), false)
+})
+
 test("finds files deterministically while ignoring generated directories", async () => {
   const result = await findFiles(fixtureRoot, "**/*.ts")
   assert.deepEqual(result.paths, ["src/index.ts", "src/nested/value.ts"])

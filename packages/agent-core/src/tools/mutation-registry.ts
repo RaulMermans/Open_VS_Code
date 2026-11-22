@@ -1,3 +1,4 @@
+import { danglingRenamedBinding } from "../agent/tool-contract.ts"
 import { MutationEngine, type MutationEngineOptions } from "./mutation-engine.ts"
 import { type MutationRequest, MutationFailure } from "./mutation-contracts.ts"
 import { ToolRegistry, type ToolRegistration } from "./registry.ts"
@@ -27,7 +28,7 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
     {
       definition: {
         name: "apply_patch",
-        description: "Modify an existing text file by replacing a specific text occurrence. Provide the exact text to find (search) and its replacement (replace). The search text must appear exactly once in the file.",
+        description: "Modify an existing text file using an exact unique search and replacement. path is workspace-relative. This is the tool for files that already exist. It cannot create a new file.",
         action: "write_file",
         inputSchema: {
           type: "object",
@@ -62,6 +63,10 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
         }
 
         const prepared = await engine.preparePatch(request)
+        const dangling = danglingRenamedBinding(prepared.beforeContent ?? "", prepared.proposedContent)
+        if (dangling) {
+          throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${prepared.path} still calls it. Update that call in the same patch.`)
+        }
         let consumed = false
 
         return {
@@ -91,7 +96,7 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
     {
       definition: {
         name: "create_file",
-        description: "Create a new text file. The file must not already exist. Provide the workspace-relative path and the complete file content.",
+        description: "Create a new text file that does not already exist. path is workspace-relative. If the file already exists, this tool is rejected; use apply_patch instead.",
         action: "write_file",
         inputSchema: {
           type: "object",
@@ -136,7 +141,8 @@ export function createMutationToolRegistrations(deps: MutationToolDependencies):
             bytesChanged: prepared.diff.bytesChanged,
             diff: prepared.diff.unified,
             truncated: prepared.diff.truncated,
-            beforeContent: "",
+            // A create over an existing file is prepared as a patch: keep its real before-text (review diff, preimage).
+            beforeContent: prepared.beforeContent ?? "",
             proposedContent: prepared.proposedContent,
           },
           apply: async () => {

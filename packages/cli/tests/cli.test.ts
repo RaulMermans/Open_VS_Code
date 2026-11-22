@@ -159,7 +159,8 @@ test("BUILD mode with rejected mutation fails", async () => {
     provider,
     mockApproval: "REJECT"
   })
-  assert.equal(result.exitCode, 0) // runner still completes because it handled the rejection
+  assert.equal(result.exitCode, 1)
+  assert.equal(result.status, "FAILED")
   const content = await fs.readFile(path.join(ws, "file.txt"), "utf8")
   assert.equal(content, "hello\n")
 })
@@ -266,7 +267,11 @@ test("CLI E2E: FAILED DEBUG -> DEBUG continuity (T-558)", async () => {
     sessionId: "old", task: "Fix the bug", mode: "DEBUG", outcome: "FAILED", changedFiles: [], decisions: [], unresolvedIssues: []
   }) + "\n")
   
-  const provider2 = new ScriptedModelProvider([ { model: "scripted", message: { role: "assistant", content: "Ok" } } ])
+  const provider2 = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "Ok" } },
+    { model: "scripted", message: { role: "assistant", content: "Ok" } },
+    { model: "scripted", message: { role: "assistant", content: "Ok" } },
+  ])
   const res2 = await runCLI({ mode: "DEBUG", instruction: "Fix the bug again", workspaceRoot: ws, json: true, provider: provider2 }) as any
   
   assert.equal(res2.memorySelection.sessionSummaries.length, 2)
@@ -297,7 +302,11 @@ test("CLI E2E: Irrelevant history excluded (T-560)", async () => {
     sessionId: "irrelevant", task: "completely unrelated UI work", mode: "ASK", outcome: "COMPLETED", changedFiles: [], decisions: [], unresolvedIssues: []
   }) + "\n")
   
-  const provider = new ScriptedModelProvider([ { model: "scripted", message: { role: "assistant", content: "Ok" } } ])
+  const provider = new ScriptedModelProvider([
+    { model: "scripted", message: { role: "assistant", content: "Ok" } },
+    { model: "scripted", message: { role: "assistant", content: "Ok" } },
+    { model: "scripted", message: { role: "assistant", content: "Ok" } },
+  ])
   const res = await runCLI({ mode: "BUILD", instruction: "Fix backend database", workspaceRoot: ws, json: true, provider }) as any
   
   assert.equal(res.memorySelection.sessionSummaries.length, 1)

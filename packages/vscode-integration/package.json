@@ -6,6 +6,13 @@
   "engines": {
     "vscode": "^1.90.0"
   },
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "The agent can read and explain a restricted workspace. File changes and commands still wait for workspace trust and your approval."
+    }
+  },
   "type": "commonjs",
   "main": "dist/extension.js",
   "activationEvents": [
@@ -18,12 +25,22 @@
     "onCommand:open-vs-code.openBrowserPanel"
   ],
   "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "open-vs-code-agent",
+          "title": "Open VS Code",
+          "icon": "media/agent.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "open-vs-code-agent": [
         {
           "type": "webview",
           "id": "open-vs-code.chat",
-          "name": "Open VS Code Chat"
+          "name": "Agent",
+          "visibility": "visible"
         }
       ]
     },
@@ -73,6 +90,14 @@
         "title": "Open VS Code: Open Model Configuration"
       },
       {
+        "command": "open-vs-code.selectLocalModel",
+        "title": "Open VS Code: Select Local Model"
+      },
+      {
+        "command": "open-vs-code.openWideChat",
+        "title": "Open VS Code: Open Wider Chat"
+      },
+      {
         "command": "open-vs-code.enableWorkflow",
         "title": "Open VS Code: Enable Structured Workflow"
       },
@@ -91,6 +116,10 @@
       {
         "command": "open-vs-code.showConversationHistory",
         "title": "Open VS Code: Show Conversation History"
+      },
+      {
+        "command": "open-vs-code.showAgentOutput",
+        "title": "Open VS Code: Show Agent Output"
       },
       {
         "command": "open-vs-code.newConversation",
@@ -170,6 +199,11 @@
           "minimum": 1,
           "description": "Maximum HALO request duration in milliseconds."
         },
+        "open-vs-code.halo.modelId": {
+          "type": "string",
+          "default": "",
+          "description": "Optional HALO Model Registry ID for POST /inference/chat. Empty uses capability routing (coding/reasoning). Direct Ollama remains the default backend."
+        },
         "open-vs-code.skills.enabled": {
           "type": "boolean",
           "default": false,
@@ -179,6 +213,17 @@
           "type": "boolean",
           "default": false,
           "description": "Run eligible Build/Debug tasks through the Structured Engineering Loop (PLAN → IMPLEMENT → TEST → fresh-context REVIEW → VERIFY). Every change and check still needs your approval. Off until the HALO A/B benchmark is recorded."
+        },
+        "open-vs-code.agent.commandSandbox": {
+          "type": "string",
+          "enum": ["auto", "required", "off"],
+          "enumDescriptions": [
+            "Run agent commands (tests, lint, build) inside bubblewrap when it is available: no network, only the workspace is writable, HOME and other projects are hidden. Without bubblewrap the command runs on the host and is labeled unsandboxed.",
+            "Never run agent commands outside the bubblewrap sandbox. If bubblewrap is unavailable, verification is reported as unavailable.",
+            "Run agent commands directly on the host (previous behavior)."
+          ],
+          "default": "auto",
+          "description": "Sandbox for commands the agent runs after your approval. The editor's own sandbox does not cover these processes."
         },
         "open-vs-code.progressMonitor.enabled": {
           "type": "boolean",
@@ -216,12 +261,17 @@
           "description": "Launch governed Chromium browser in headless mode."
         }
       }
+    },
+    "configurationDefaults": {
+      "js/ts.preferences.useAliasesForRenames": false,
+      "typescript.preferences.useAliasesForRenames": false,
+      "javascript.preferences.useAliasesForRenames": false
     }
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:playwright-core --format=cjs --platform=node && node -e \"require('fs').cpSync('../agent-core/skills/builtins','dist/skills/builtins',{recursive:true})\"",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test --test-timeout=120000 tests/*.test.ts",
     "eval:performance": "node --expose-gc --import tsx tests/perf/ide-performance.bench.ts"
   },
   "dependencies": {

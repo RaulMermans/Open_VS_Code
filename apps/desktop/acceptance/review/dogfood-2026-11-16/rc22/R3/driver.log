@@ -1,0 +1,2 @@
+dogfood-rc22-R3: approvals=4 blocked=false timedOut=false 136s
+Changed: lib/utils/format.ts, components/runs/RunSummaryView.tsx. Approval was granted for the applied edit. Tests passed. The requested edit was applied.Task completed.Changed:lib/utils/format.tscomponents/runs/RunSummaryView.tsxTests passed.Typecheck passed.

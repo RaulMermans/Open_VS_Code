@@ -1,4 +1,5 @@
 import type { AgentMode } from "../contracts/agent.ts"
+import { forbidsTestEdits, isTestArtifactPath, requiredEditPaths } from "./tool-contract.ts"
 
 export type TaskCategory =
   | "ORIENTATION"
@@ -7,10 +8,12 @@ export type TaskCategory =
   | "CONFIG_DISCOVERY"
   | "DEPENDENCY_QUERY"
   | "TEST_DIAGNOSIS"
+  | "TEST_AUTHORING"
   | "CONTROL_FLOW"
   | "ARCHITECTURE"
   | "CROSS_FILE_REASONING"
   | "RULES_QUERY"
+  | "IMPLEMENTATION"
 
 export type EvidenceRequirementKind =
   | "FILE_READ"
@@ -35,27 +38,115 @@ export interface TaskProfile {
   readonly evidenceRequirements: readonly EvidenceRequirement[]
   readonly toolGuidance: string
   readonly explicitFilePaths: readonly string[]
+  /** BUILD/DEBUG requests that ask for a code change. Ask, Plan, and Review stay false. */
+  readonly requiresCodeChange: boolean
+  /**
+   * A greeting or other message that can be answered with no repository inspection.
+   * Agent mode must not turn this into a tool loop.
+   */
+  readonly directReply?: boolean
 }
 
-const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
+const FILE_PATH_REGEX = /\b(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|mjs|cjs|ts|js|json|yml|yaml|txt|tsx|jsx)\b/gi
+const EXAMPLE_PATH_REGEX = /(?:for example|e\.g\.|eg\.)[:\s]+[`'"]?((?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+\.(?:md|mjs|cjs|ts|js|json|yml|yaml|txt|tsx|jsx))/gi
+
+/** Paths named only as illustrations ("for example foo.test.ts"), not edit targets. */
+export function exampleFilePaths(instruction: string): Set<string> {
+  const named = new Set<string>()
+  for (const match of instruction.matchAll(EXAMPLE_PATH_REGEX)) {
+    if (match[1]) named.add(match[1].replace(/^\.\//, ""))
+  }
+  return named
+}
 
 export function extractExplicitFilePaths(instruction: string): string[] {
-  const matches = instruction.match(FILE_PATH_REGEX) ?? []
+  const userRequest = instruction.split("[Attached context]")[0] ?? instruction
+  const matches = userRequest.match(FILE_PATH_REGEX) ?? []
+  const examples = exampleFilePaths(userRequest)
   const unique = new Set<string>()
   for (const match of matches) {
-    if (match.includes("/") || match.endsWith(".md") || match.endsWith(".ts") || match.endsWith(".js") || match.endsWith(".json")) {
-      unique.add(match.replace(/^\.\//, ""))
+    const path = match.replace(/^\.\//, "")
+    if (examples.has(path)) continue
+    if (path.includes("/") || path.endsWith(".md") || path.endsWith(".ts") || path.endsWith(".js") || path.endsWith(".json")) {
+      unique.add(path)
     }
   }
   return Array.from(unique)
 }
 
-export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK"): TaskProfile {
+/**
+ * Greetings and other short messages that do not ask about the repository.
+ * "hola" in Agent mode is one of these. A question that names a file is not.
+ */
+export function isSocialTurn(instruction: string): boolean {
+  const head = (instruction.split("[Attached context]")[0] ?? instruction).trim()
+  if (!head || head.length > 80) return false
+  if (requestsCodeEdit(head) || extractExplicitFilePaths(head).length > 0) return false
+  return /^(?:hi|hey|hello|hola|hey there|good morning|good afternoon|good evening|thanks|thank you|ok|okay|yo|sup|buenas|buenos dias|buenos días)[.!?\s]*$/i.test(head)
+}
+
+const NEGATED_EDIT = String.raw`\b(?:do not|don't|never|without)\s+(?:editing|edit|modifying|modify|changing|change|updating|update|touching|touch|altering|alter|writing|write)\b[^.!\n]*`
+
+/** The user forbade every file edit, as in "Do not edit files." A named exception still counts as an edit request. */
+export function forbidsAllEdits(instruction: string): boolean {
+  const head = instruction.split("[Attached context]")[0] ?? instruction
+  return /\b(?:do not|don't|never|without)\s+(?:editing|edit|modifying|modify|changing|change|updating|update|writing|write)\s+(?:any\s+)?(?:files?|anything|code)\b/i.test(head)
+}
+
+function withoutNegatedEditClauses(instruction: string): string {
+  return instruction.replace(new RegExp(NEGATED_EDIT, "gi"), " ")
+}
+
+/**
+ * The request is not "only add this test file": it also asks to implement or configure product behavior.
+ * Exclusive TEST_AUTHORING would then refuse the source edits the tests need.
+ */
+export function requestsProductWorkBeyondTests(instruction: string): boolean {
+  const head = instruction.split("[Attached context]")[0] ?? instruction
+  if (forbidsAllEdits(head)) return false
+  if (/\b(?:prepar(?:e|ed)|review(?:ed)?)\b[\s\S]{0,80}\bconfig(?:uration)?\b/i.test(head)) return true
+  if (/\benforc(?:e|ement)\b/i.test(head)) return true
+  return /\bimplement\b/i.test(head) && !/\bimplement(?:ing|ation)?\s+(?:the\s+)?tests?\b/i.test(head)
+}
+
+export function requestsCodeEdit(instruction: string): boolean {
+  const head = withoutNegatedEditClauses(instruction.split("[Attached context]")[0] ?? instruction)
+  if (/\b(?:fix|modify|update|implement|refactor|repair|rewrite|patch|change|edit|rename|replace)\b/i.test(head)) return true
+  if (/\b(?:make|ensure)\b/i.test(head) && /\b(?:test|tests|function|file|return|keep|export)\b/i.test(head)) return true
+  return /\b(?:add|reject|remove|delete|create|write)\b/i.test(head)
+    && /\b(?:file|test|tests|function|implementation|code|method|body|title|export)\b/i.test(head)
+}
+
+/** Several headed sections, or a list of several requirements (isolation cases, acceptance items). */
+export function isMultiPartRequest(instruction: string): boolean {
+  const head = instruction.split("[Attached context]")[0] ?? instruction
+  const headings = head.match(/^#{1,6}\s+\S/gm)?.length ?? 0
+  const items = head.match(/^\s*(?:\d+[.)]|[-*])\s+\S/gm)?.length ?? 0
+  return headings >= 3 || items >= 5
+}
+
+export function classifyTaskProfile(instruction: string, mode: AgentMode = "ASK"): TaskProfile {
   const text = instruction.toLowerCase()
   const explicitFiles = extractExplicitFilePaths(instruction)
+  const requiresCodeChange = (mode === "BUILD" || mode === "DEBUG") && requestsCodeEdit(instruction)
 
-  // 1. Rules Query (AGENTS.md, guidelines, rules)
-  if (/\b(?:agents\.md|guidelines?|rules?|policy|conventions?)\b/i.test(text)) {
+  if (isSocialTurn(instruction)) {
+    return {
+      category: "ORIENTATION",
+      allowedTools: [],
+      recommendedInitialTools: [],
+      defaultTurnBudget: 2,
+      evidenceRequirements: [],
+      toolGuidance: "Answer the user directly. Do not call tools and do not edit files.",
+      requiresCodeChange: false,
+      directReply: true,
+      explicitFilePaths: [],
+    }
+  }
+
+  // 1. Rules Query (AGENTS.md, guidelines, rules). A request to change code that only mentions the rules
+  // ("follow AGENTS.md", "read AGENTS.md, then implement ...") is not a question about them.
+  if (!requiresCodeChange && /\b(?:agents\.md|guidelines?|rules?|policy|conventions?)\b/i.test(text)) {
     return {
       category: "RULES_QUERY",
       allowedTools: ["read_file", "search_text", "find_files"],
@@ -70,6 +161,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read the project rules or AGENTS.md directly using read_file.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -90,12 +182,50 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use find_files with a glob pattern (e.g. **/*.ts or *.ts) to find matching files across the repository.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
 
-  // 3. Test Diagnosis
-  if (/\b(?:failing|diagnose|assertion|error message|why.*failing)\b/i.test(text) || (/\b(?:test|tests)\b/i.test(text) && !/\b(?:find|list)\b/i.test(text))) {
+  if (requiresCodeChange) {
+    const editPaths = requiredEditPaths(instruction, explicitFiles)
+    if (
+      editPaths.length > 0
+      && editPaths.every((path) => isTestArtifactPath(path))
+      && !forbidsTestEdits(instruction)
+      && !requestsProductWorkBeyondTests(instruction)
+    ) {
+      const named = editPaths.join(", ")
+      return {
+        category: "TEST_AUTHORING",
+        allowedTools: ["read_file", "list_directory", "create_file", "apply_patch", "run_verification"],
+        recommendedInitialTools: ["read_file", "apply_patch", "create_file"],
+        defaultTurnBudget: 6,
+        evidenceRequirements: [],
+        toolGuidance: `Create or update only ${named}. Read the target first. Use apply_patch when that file already exists. Use create_file only when it is genuinely missing. create_file creates a missing parent directory. Do not try to create the directory first. Do not modify any other file.`,
+        requiresCodeChange,
+        explicitFilePaths: explicitFiles,
+      }
+    }
+  }
+
+  // 2b. A multi-part engineering brief (several headed sections or a long list of requirements): the work is
+  // found by exploring the repository, not by reading the files the brief happens to name.
+  if (requiresCodeChange && isMultiPartRequest(instruction)) {
+    return {
+      category: "IMPLEMENTATION",
+      allowedTools: ["list_directory", "find_files", "search_text", "read_file", "create_file", "apply_patch", "run_verification"],
+      recommendedInitialTools: ["list_directory", "find_files", "search_text"],
+      defaultTurnBudget: 12,
+      evidenceRequirements: [],
+      toolGuidance: "This is a multi-part engineering task. First locate the code each requirement concerns: list the source directories, then use find_files and search_text for the components it names, and read the files you will change. Read each project rule file once. Then make the local changes the request allows, run the tests, and report what is done, what is blocked (for example actions that need the operator's approval) and why.",
+      requiresCodeChange,
+      explicitFilePaths: explicitFiles,
+    }
+  }
+
+  // 3. Test Diagnosis. A request that asks for a code change is not a read-only diagnosis.
+  if (!requiresCodeChange && (/\b(?:failing|diagnose|assertion|error message|why.*failing)\b/i.test(text) || (/\b(?:test|tests)\b/i.test(text) && !/\b(?:find|list)\b/i.test(text)))) {
     return {
       category: "TEST_DIAGNOSIS",
       allowedTools: ["search_text", "read_file", "find_files"],
@@ -110,6 +240,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Search for the test or error string with search_text, then read both the test file and the code being tested.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -130,6 +261,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read package.json directly using read_file to inspect exact dependencies.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles.length > 0 ? explicitFiles : ["package.json"],
     }
   }
@@ -153,6 +285,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use search_text with the symbol name to find its definition immediately.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -173,6 +306,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use search_text or read_file (e.g. config.ts, README.md) to inspect configuration settings.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -196,6 +330,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read each of the mentioned files using read_file to observe how they interact.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -216,6 +351,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read entry points and middleware/handlers using read_file to trace execution flow.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -236,6 +372,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Use find_files with a glob pattern (e.g. **/*.ts) to find matching files across the repository.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -256,6 +393,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
         },
       ],
       toolGuidance: "Read ARCHITECTURE.md/README.md or list directory structure, then read key entry files.",
+      requiresCodeChange,
       explicitFilePaths: explicitFiles,
     }
   }
@@ -279,6 +417,7 @@ export function classifyTaskProfile(instruction: string, _mode: AgentMode = "ASK
     toolGuidance: explicitFiles.length > 0
       ? `Read ${explicitFiles.join(", ")} directly using read_file.`
       : "Read README.md or use list_directory to inspect repository files.",
+    requiresCodeChange,
     explicitFilePaths: explicitFiles,
   }
 }

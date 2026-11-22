@@ -83,32 +83,55 @@ const freshFixtures = () => {
   return { host, bridgeFactory, controller, view, setRunTask: (fn: any) => { currentRunTask = fn; }, getCalls: () => calls, tmpRoot };
 };
 
+/** Webview posts omit `messages` when the transcript did not change. The live transcript is still on the controller. */
+const postedMessages = (view: MockWebview, controller: any): any[] => {
+  const msg = view.lastMessage;
+  if (Array.isArray(msg?.state?.messages)) return msg.state.messages;
+  if (msg?.type === "chat.state" && msg.transcript === "unchanged") return controller["state"].messages;
+  return [];
+};
+
+const waitTurnIdle = async (controller: any) => {
+  const started = Date.now();
+  while (controller["state"].activeTurn || controller["_sendInFlight"]) {
+    if (Date.now() - started > 2000) throw new Error("chat turn did not settle");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
+
 const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => {
   const { host, bridgeFactory, controller, view, setRunTask, getCalls } = fixtures;
   const results: any = {};
+  const messages = () => postedMessages(view.webview, controller);
   
   // Basic Tests
   await view.webview.send({ type: "chat.send", text: "hello", mode: "ASK" });
-  results.ask = view.webview.lastMessage.state.messages.length === 2 && view.webview.lastMessage.state.messages[1].content === "done";
+  await waitTurnIdle(controller);
+  results.ask = messages().length === 2 && messages()[1].content === "done";
   
   await view.webview.send({ type: "chat.setMode", mode: "PLAN" });
   await view.webview.send({ type: "chat.send", text: "plan", mode: "PLAN" });
-  results.plan = view.webview.lastMessage.state.messages[3].content === "done";
+  await waitTurnIdle(controller);
+  results.plan = messages()[3].content === "done";
   
   await view.webview.send({ type: "chat.setMode", mode: "BUILD" });
   await view.webview.send({ type: "chat.send", text: "build", mode: "BUILD" });
-  results.build = view.webview.lastMessage.state.messages[5].content === "done";
+  await waitTurnIdle(controller);
+  results.build = messages()[5].content === "done";
 
   await view.webview.send({ type: "chat.setMode", mode: "DEBUG" });
   await view.webview.send({ type: "chat.send", text: "debug", mode: "DEBUG" });
-  results.debug = view.webview.lastMessage.state.messages[7].content === "done";
+  await waitTurnIdle(controller);
+  results.debug = messages()[7].content === "done";
 
   await view.webview.send({ type: "chat.setMode", mode: "REVIEW" });
   await view.webview.send({ type: "chat.send", text: "review", mode: "REVIEW" });
-  results.review = view.webview.lastMessage.state.messages[9].content === "done";
+  await waitTurnIdle(controller);
+  results.review = messages()[9].content === "done";
 
   await view.webview.send({ type: "chat.send", text: "line1\\nline2", mode: "ASK" });
-  results.multiline = view.webview.lastMessage.state.messages[10].content === "line1\\nline2";
+  await waitTurnIdle(controller);
+  results.multiline = messages()[10].content === "line1\\nline2";
 
   results.modeSwitch = controller["state"].mode === "REVIEW";
 
@@ -165,8 +188,8 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   if (!pendingId) throw new Error("No pending confirmation found!");
   await view.webview.send({ type: "confirmation.respond", confirmationId: pendingId, action: "APPROVE" });
   resolveApprove();
-  await new Promise(r => setTimeout(r, 20));
-  results.realApprove = view.webview.lastMessage.state.messages.slice(-1)[0].content === "approved";
+  await waitTurnIdle(controller);
+  results.realApprove = messages().slice(-1)[0].content === "approved";
 
   // Real reject
   let resolveReject: any;
@@ -182,8 +205,8 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   const rejectPendingId = controller["state"].pendingConfirmation?.id;
   await view.webview.send({ type: "confirmation.respond", confirmationId: rejectPendingId, action: "REJECT" });
   resolveReject();
-  await new Promise(r => setTimeout(r, 20));
-  results.realReject = view.webview.lastMessage.state.messages.slice(-1)[0].content === "rejected";
+  await waitTurnIdle(controller);
+  results.realReject = messages().slice(-1)[0].content === "rejected";
 
   // Forged ID
   let resolveForged: any;
@@ -201,8 +224,8 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   results.forgedIdIgnored = controller["state"].pendingConfirmation?.id === realId;
   await view.webview.send({ type: "confirmation.respond", confirmationId: realId, action: "APPROVE" });
   resolveForged();
-  await new Promise(r => setTimeout(r, 20));
-  results.forgedIdRecovered = view.webview.lastMessage.state.messages.slice(-1)[0].content === "forged";
+  await waitTurnIdle(controller);
+  results.forgedIdRecovered = messages().slice(-1)[0].content === "forged";
 
   // Validation Cases
   let stateSentOnReady = false;
@@ -253,8 +276,8 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   await new Promise(r => setTimeout(r, 20));
   await view.webview.send({ type: "chat.cancel" });
   if (resolveCancel) resolveCancel();
-  await new Promise(r => setTimeout(r, 20));
-  results.cancelWhilePending = view.webview.lastMessage.state.messages.slice(-1)[0].status === "cancelled";
+  await waitTurnIdle(controller);
+  results.cancelWhilePending = messages().slice(-1)[0].status === "cancelled";
 
   // delayed cancellation
   setRunTask(async (inst: any, mode: any, sig: AbortSignal) => {
@@ -265,8 +288,8 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   view.webview.send({ type: "chat.send", text: "delayed cancel", mode: "ASK" });
   await new Promise(r => setTimeout(r, 10));
   view.webview.send({ type: "chat.cancel" });
-  await new Promise(r => setTimeout(r, 10));
-  results.delayedCancellation = view.webview.lastMessage.state.messages.slice(-1)[0].status === "cancelled";
+  await waitTurnIdle(controller);
+  results.delayedCancellation = messages().slice(-1)[0].status === "cancelled";
 
   // BUSY policy
   let resolveBusy: any;
@@ -279,23 +302,23 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   view.webview.send({ type: "chat.send", text: "busy 2", mode: "ASK" });
   results.busyPolicy = getCalls() === busyCalls; // no new calls
   resolveBusy({ status: "COMPLETED", finalAnswer: "done busy" });
-  await new Promise(r => setTimeout(r, 10));
+  await waitTurnIdle(controller);
 
   // Provider failure
   setRunTask(async () => {
     throw new Error("Provider broken");
   });
   view.webview.send({ type: "chat.send", text: "fail me", mode: "ASK" });
-  await new Promise(r => setTimeout(r, 10));
-  results.providerFailure = view.webview.lastMessage.state.messages.slice(-1)[0].status === "failed";
+  await waitTurnIdle(controller);
+  results.providerFailure = messages().slice(-1)[0].status === "failed";
   
   // Recovery next turn
   setRunTask(async () => {
     return { status: "COMPLETED", finalAnswer: "recovered" };
   });
   view.webview.send({ type: "chat.send", text: "recover me", mode: "ASK" });
-  await new Promise(r => setTimeout(r, 10));
-  results.recoveryNextTurn = view.webview.lastMessage.state.messages.slice(-1)[0].content === "recovered";
+  await waitTurnIdle(controller);
+  results.recoveryNextTurn = messages().slice(-1)[0].content === "recovered";
   
   // Unknown message
   view.webview.send({ type: "evil.execute" });
@@ -354,7 +377,7 @@ const runChatEvaluation = async (fixtures: ReturnType<typeof freshFixtures>) => 
   setRunTask(async () => { return { status: "COMPLETED", finalAnswer: "A".repeat(10000) }; });
   for (let i = 0; i < 25; i++) {
     view.webview.send({ type: "chat.send", text: "x", mode: "ASK" });
-    await new Promise(r => setTimeout(r, 5));
+    await waitTurnIdle(controller);
   }
   results.transcriptPruning = controller["state"].messages.length <= 100;
 

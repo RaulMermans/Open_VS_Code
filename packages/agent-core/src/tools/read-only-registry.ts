@@ -25,24 +25,62 @@ function optionalString(record: Record<string, unknown>, name: string): string |
   return value
 }
 
+/** Lines returned by one read_file call when no range is given. */
+export const READ_WINDOW_LINES = 250
+
 const registrations: readonly ToolRegistration[] = [
   {
     definition: {
       name: "read_file",
-      description: "Read one known repository text file.",
+      description: `Read a repository text file, ${READ_WINDOW_LINES} lines at a time. Use startLine to read further.`,
       action: "read_repository",
-      inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          startLine: { type: "integer", minimum: 1, description: "First line to read (1-based), e.g. a line a search result points to." },
+          endLine: { type: "integer", minimum: 1, description: "Last line to read. Defaults to startLine + 249." },
+        },
+        required: ["path"],
+        additionalProperties: false,
+      },
     },
     validate: (input) => {
-      const record = objectArguments(input, ["path"])
-      return { path: requiredString(record, "path") }
+      const record = objectArguments(input, ["path", "startLine", "endLine"])
+      const line = (name: string): number | undefined => {
+        const value = record[name]
+        if (value === undefined || value === null) return undefined
+        const number = typeof value === "string" ? Number(value) : value
+        if (typeof number !== "number" || !Number.isInteger(number) || number < 1) throw new TypeError(`${name} must be a positive integer`)
+        return number
+      }
+      const startLine = line("startLine")
+      const endLine = line("endLine")
+      return { path: requiredString(record, "path"), ...(startLine !== undefined ? { startLine } : {}), ...(endLine !== undefined ? { endLine } : {}) }
     },
-    execute: (input, context) => readRepositoryFile(context.workspaceRoot, input.path as string, { maxBytes: 64 * 1024 }),
+    // Bounded windows (SWE-agent style): a long file is never silently cut off mid-way by the observation limit.
+    execute: async (input, context) => {
+      const startLine = (input.startLine as number | undefined) ?? 1
+      const endLine = Math.max(startLine, (input.endLine as number | undefined) ?? startLine + READ_WINDOW_LINES - 1)
+      try {
+        // Files within the read limit are read whole so the window can report the total line count.
+        const whole = await readRepositoryFile(context.workspaceRoot, input.path as string, { maxBytes: 64 * 1024 })
+        const lines = whole.content.split("\n")
+        const totalLines = whole.content.endsWith("\n") ? lines.length - 1 : lines.length
+        if (startLine === 1 && endLine >= totalLines) return { ...whole, totalLines }
+        const last = Math.min(endLine, totalLines)
+        const content = startLine > totalLines ? "" : lines.slice(startLine - 1, last).join("\n")
+        return { ...whole, content, returnedBytes: Buffer.byteLength(content, "utf8"), startLine, endLine: Math.max(startLine - 1, last), totalLines }
+      } catch (error) {
+        if (!(error instanceof Error) || !/exceeds/.test(error.message)) throw error
+        return readRepositoryFile(context.workspaceRoot, input.path as string, { maxBytes: 64 * 1024, startLine, endLine })
+      }
+    },
   },
   {
     definition: {
       name: "list_directory",
-      description: "List entries in one repository directory.",
+      description: "List a directory two levels deep (skips node_modules and similar, up to 100 entries); says when the list is incomplete.",
       action: "read_repository",
       inputSchema: { type: "object", properties: { path: { type: "string" } }, additionalProperties: false },
     },
@@ -51,12 +89,12 @@ const registrations: readonly ToolRegistration[] = [
       const path = optionalString(record, "path")
       return path ? { path } : {}
     },
-    execute: (input, context) => listDirectory(context.workspaceRoot, input.path as string | undefined, { maxEntries: 100 }),
+    execute: (input, context) => listDirectory(context.workspaceRoot, input.path as string | undefined, { maxEntries: 100, depth: 2 }),
   },
   {
     definition: {
       name: "search_text",
-      description: "Search text across repository files.",
+      description: "Search file contents for literal text (up to 50 path:line matches); says if incomplete.",
       action: "search_repository",
       inputSchema: {
         type: "object",
@@ -82,7 +120,7 @@ const registrations: readonly ToolRegistration[] = [
   {
     definition: {
       name: "find_files",
-      description: "Find repository files by glob pattern.",
+      description: "Find files by glob, e.g. src/**/*.ts (up to 200 paths); says if the list is incomplete.",
       action: "search_repository",
       inputSchema: {
         type: "object",

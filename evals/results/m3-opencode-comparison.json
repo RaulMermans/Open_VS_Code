@@ -1,0 +1,1149 @@
+{
+  "schema": "m3-opencode-comparison/v2",
+  "model": "qwen3-coder:30b",
+  "digest": "sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a",
+  "encoding": "compiled-user",
+  "provenance": {
+    "gitSha": "eb286d23d63a48b4844d017a89b1675a5cbfedd2",
+    "worktreeClean": false,
+    "dirtyFiles": [
+      "M packages/agent-core/package.json",
+      "M packages/agent-core/src/agent/events.ts",
+      "M packages/agent-core/src/agent/runner.ts",
+      "M packages/agent-core/src/agent/state.ts",
+      "M packages/agent-core/src/agent/tool-contract.ts",
+      "M packages/agent-core/src/recovery/contracts.ts",
+      "M packages/agent-core/src/recovery/recovery-controller.ts",
+      "M packages/agent-core/src/runtime-evals/contracts.ts",
+      "M packages/agent-core/src/runtime-evals/evidence.ts",
+      "M packages/agent-core/src/tools/mutation-contracts.ts",
+      "M packages/agent-core/src/tools/mutation-engine.ts",
+      "M packages/agent-core/tests/agent/coding-reliability-11a1.test.ts",
+      "M packages/agent-core/tests/agent/runner.test.ts",
+      "M packages/agent-core/tests/evals/m3-opencode-comparison.ts",
+      "M packages/agent-core/tests/recovery/recovery-inspection.test.ts",
+      "M packages/agent-core/tests/tools/mutation.test.ts",
+      "M packages/ide-adapter/src/bridge.ts",
+      "M packages/vscode-integration/src/chat-controller.ts",
+      "M packages/vscode-integration/src/chat-protocol.ts",
+      "M packages/vscode-integration/src/chat-ux-model.ts",
+      "M packages/vscode-integration/src/chat-view-provider.ts",
+      "M packages/vscode-integration/src/conversation-store.ts",
+      "M packages/vscode-integration/src/diff-review-controller.ts",
+      "M packages/vscode-integration/src/review-model.ts",
+      "M packages/vscode-integration/src/webview-render-helpers.ts",
+      "M packages/vscode-integration/tests/sprint-14b-conversation-ux.test.ts",
+      "M packages/vscode-integration/tests/sprint-7c-sessions.test.ts",
+      "M packages/vscode-integration/tests/sprint-m2-agent-workspace.test.ts",
+      "?? packages/agent-core/README.md",
+      "?? packages/agent-core/examples/",
+      "?? packages/agent-core/src/__pycache__/",
+      "?? packages/agent-core/src/add.js",
+      "?? packages/agent-core/src/add.py",
+      "?? packages/agent-core/src/app.js",
+      "?? packages/agent-core/src/area.js",
+      "?? packages/agent-core/src/clamp.js",
+      "?? packages/agent-core/src/counter.js",
+      "?? packages/agent-core/src/div.js",
+      "?? packages/agent-core/src/double.js",
+      "?? packages/agent-core/src/greet.js",
+      "?? packages/agent-core/src/label.js",
+      "?? packages/agent-core/src/math.js",
+      "?? packages/agent-core/src/parse.js",
+      "?? packages/agent-core/test-area.js",
+      "?? packages/agent-core/test/",
+      "?? packages/agent-core/tests/counter.test.js"
+    ]
+  },
+  "endpoint": "http://127.0.0.1:11434/v1",
+  "createdAt": "2026-11-13T10:09:40.237Z",
+  "isolationPolicy": "OpenCode --standalone + isolated HOME/XDG + git fixture; INVALID if tool paths escape the disposable workspace",
+  "totals": {
+    "tasks": 13,
+    "ovscPass": 11,
+    "opencodePass": 0,
+    "opencodeInvalid": 10
+  },
+  "rows": [
+    {
+      "id": "T01-off-by-one",
+      "title": "Fix off-by-one add",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 2,
+        "durationMs": 7718,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T01-off-by-one-mnap0f",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 206131,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool read missed a fixture file that was written into the disposable workspace"
+        },
+        "workingDirectory": "/tmp/oc-m3-T01-off-by-one-mVMP4Q",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T01-off-by-one-mVMP4Q/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool read missed a fixture file that was written into the disposable workspace",
+          "unauthorized": false
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794563883919,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"id\":\"prt_1d457c38f001SqR6pqW02N8WoQ\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457a08b001JeGUv9lxtQjhg7\",\"type\":\"step-start\",\"snapshot\":\"704cd03c776e9023dbd8d864e5e7cdd5e0d9c633\"}}\n{\"type\":\"text\",\"timestamp\":1794563885371,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"id\":\"prt_1d457c395001GLlsMmQU55VOtI\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457a08b001JeGUv9lxtQjhg7\",\"type\":\"text\",\"text\":\"I'll help you fix the `src/add.js` file so that `add(1, 2)` returns 3. First, I need to examine the current implementation to understand what needs to be fixed.\\n\\nLet me read the contents of the add.js file:\",\"time\":{\"start\":1794563883925,\"end\":1794563885371}}}\n{\"type\":\"tool_use\",\"timestamp\":1794563885377,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"partID\":\"prt_1d457c923001Uhc0iQCIWC6EkH\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457a08b001JeGUv9lxtQjhg7\",\"type\":\"tool\",\"id\":\"call_l45o7f6a\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/add.js\"},\"output\":\"Read file src/add.js, lines 1-3\\n1: export function add(a, b) {\\n2:   return a + b\\n3: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/add.js, lines 1-3\\n1: export function add(a, b) {\\n2:   return a + b\\n3: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/add.js\\\"}\"},\"time\":{\"start\":1794563885347,\"end\":1794563885377}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794563885384,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"id\":\"prt_1d457c948001NyJpcw56l8FJ1b\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457a08b001JeGUv9lxtQjhg7\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"704cd03c776e9023dbd8d864e5e7cdd5e0d9c633\",\"cost\":0,\"tokens\":{\"input\":10131,\"output\":76,\"reasoning\":0,\"cache\":{\"read\":5,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794563885592,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"id\":\"prt_1d457ca18001hIK73roDJcByQw\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457c94e0018hbYac1xumGvtJ\",\"type\":\"step-start\",\"snapshot\":\"704cd03c776e9023dbd8d864e5e7cdd5e0d9c633\"}}\n{\"type\":\"text\",\"timestamp\":1794563887561,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"id\":\"prt_1d457ca1c001WOZx02JU9XPvwl\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457c94e0018hbYac1xumGvtJ\",\"type\":\"text\",\"text\":\"I can see that the `add.js` file already has the correct implementation - it returns `a + b` which should correctly compute `add(1, 2)` as 3. Let me check if there's an issue with how this function is being tested or used.\\n\\nLet me look at the test file to understand what might be going wrong:\",\"time\":{\"start\":1794563885596,\"end\":1794563887561}}}\n{\"type\":\"tool_use\",\"timestamp\":1794563887581,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"partID\":\"prt_1d457d1b5001lwQQA8fMBSpbN2\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457c94e0018hbYac1xumGvtJ\",\"type\":\"tool\",\"id\":\"call_65yc9prd\",\"tool\":\"grep\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"add\",\"include\":\"*.test.js\"},\"output\":\"No matches found\",\"title\":\"grep\",\"metadata\":{\"metadata\":{\"matches\":0,\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"No matches found\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"pattern\\\":\\\"add\\\",\\\"include\\\":\\\"*.test.js\\\"}\"},\"time\":{\"start\":1794563887541,\"end\":1794563887581}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794563887588,\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"part\":{\"id\":\"prt_1d457d1e4001BUg4PxvQPoyN5x\",\"sessionID\":\"ses_e2ba860c1ffeKk8O8C7FC4Mypf\",\"messageID\":\"msg_1d457c94e0018hbYac1xumGvtJ\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"704cd03c776e9023dbd8d864e5e7cdd5e0d9c633\",\"cost\":0,\"tokens\":{\"input\":68,\"output\":106,\"reasoning\":0,\"cache\":{",
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool read missed a fixture file that was written into the disposable workspace"
+      }
+    },
+    {
+      "id": "T02-missing-export",
+      "title": "Export greet",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 5,
+        "durationMs": 7720,
+        "substring": {
+          "pass": false,
+          "detail": "src/greet.js missing one of: export function greet"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "ng:\n\nimport pkg from './src/greet.js';\nconst { greet } = pkg;\n\n    at ModuleJob._instantiate (node:internal/modules/esm/module_job:226:21)\n    at async ModuleJob.run (node:internal/modules/esm/module_job:335:5)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.23.4\n"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T02-missing-export-42UW9X",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "FAIL",
+        "pass": false,
+        "detail": "src/greet.js missing one of: export function greet; ng:\n\nimport pkg from './src/greet.js';\nconst { greet } = pkg;\n\n    at ModuleJob._instantiate (node:internal/modules/esm/module_job:226:21)\n    at async ModuleJob.run (node:internal/modules/esm/module_job:335:5)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.23.4\n"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 23609,
+        "substring": {
+          "pass": false,
+          "detail": "src/greet.js missing one of: export function greet"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "ng:\n\nimport pkg from './src/greet.js';\nconst { greet } = pkg;\n\n    at ModuleJob._instantiate (node:internal/modules/esm/module_job:226:21)\n    at async ModuleJob.run (node:internal/modules/esm/module_job:335:5)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.23.4\n"
+        },
+        "workingDirectory": "/tmp/oc-m3-T02-missing-export-xbbDCd",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T02-missing-export-xbbDCd/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": true,
+          "isolationReason": "no extra-workspace tool paths observed",
+          "unauthorized": false
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564097495,\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"part\":{\"id\":\"prt_1d45b05d6001BqF2bGK6cns3m9\",\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"messageID\":\"msg_1d45ae3c4001tbijyjz39h6nOC\",\"type\":\"step-start\",\"snapshot\":\"44875fe8e547ba38be8ae4dd322a6e2ca6706377\"}}\n{\"type\":\"text\",\"timestamp\":1794564098553,\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"part\":{\"id\":\"prt_1d45b05da0011zR00BZOabP6cH\",\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"messageID\":\"msg_1d45ae3c4001tbijyjz39h6nOC\",\"type\":\"text\",\"text\":\"I'll help you create a greet.js file that exports a greet function. Let me first check if this file already exists and then create it with the appropriate content.\",\"time\":{\"start\":1794564097499,\"end\":1794564098553}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564098559,\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"part\":{\"partID\":\"prt_1d45b09e1001TW8USF2uTMsJEx\",\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"messageID\":\"msg_1d45ae3c4001tbijyjz39h6nOC\",\"type\":\"tool\",\"id\":\"call_2zqv170b\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/greet.js\"},\"output\":\"Read file src/greet.js, lines 1-3\\n1: export function greet(name) {\\n2:   return `Hello, ${name}`;\\n3: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/greet.js, lines 1-3\\n1: export function greet(name) {\\n2:   return `Hello, ${name}`;\\n3: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/greet.js\\\"}\"},\"time\":{\"start\":1794564098529,\"end\":1794564098559}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564098567,\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"part\":{\"id\":\"prt_1d45b0a07001GEIG30nUhesIb3\",\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"messageID\":\"msg_1d45ae3c4001tbijyjz39h6nOC\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"44875fe8e547ba38be8ae4dd322a6e2ca6706377\",\"cost\":0,\"tokens\":{\"input\":10129,\"output\":56,\"reasoning\":0,\"cache\":{\"read\":5,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564098768,\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"part\":{\"id\":\"prt_1d45b0ad00013b0miENXNkLuMs\",\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"messageID\":\"msg_1d45b0a0d0010G4xM2lMHrLBod\",\"type\":\"step-start\",\"snapshot\":\"44875fe8e547ba38be8ae4dd322a6e2ca6706377\"}}\n{\"type\":\"text\",\"timestamp\":1794564103570,\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"part\":{\"id\":\"prt_1d45b0ad3001OzQ09Zs6gH2oAx\",\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"messageID\":\"msg_1d45b0a0d0010G4xM2lMHrLBod\",\"type\":\"text\",\"text\":\"I can see that the file `src/greet.js` already exists and contains the correct implementation of the greet function. The function exports a greet function that takes a name parameter and returns \\\"Hello, {name}\\\".\\n\\nSince the file already exists with the correct content, no changes are needed. The implementation matches exactly what was requested:\\n\\n```javascript\\nexport function greet(name) {\\n  return `Hello, ${name}`;\\n}\\n```\\n\\nThis function:\\n1. Exports a greet function named \\\"greet\\\"\\n2. Takes a parameter called \\\"name\\\"\\n3. Returns a string \\\"Hello, {name}\\\" where {name} is replaced with the actual name passed in\\n\\nThe file is ready to use as requested.\",\"time\":{\"start\":1794564098771,\"end\":1794564103570}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564103579,\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"part\":{\"partID\":\"prt_1d45b1d79001mOz15vJOLNj6dT\",\"sessionID\":\"ses_e2ba51d81ffeWmy6MJUujNx2mV\",\"messageID\":\"msg_1d45b0a0d0010G4xM2lMHrLBod\",\"type\":\"tool\",\"id\":\"call_c9ywh2je\",\"tool\":\"question\",\"state\":{\"status\":\"error\",\"input\":{\"questions\":[{\"header\":\"Next steps\",\"options\":[{\"description\":\"The file is already correct as requested\",\"label\":\"No changes needed\"},{\"description\":\"Add JSDoc comments to the function\",\"label\":\"Add documentation\"},{\"description\":\"Create a test for this function\",\"label\":\"Test the function\"}],\"question\":\"Would you like me to do anything else with this greet function or the src/greet.js file?\"}]},\"e",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "FAIL",
+        "pass": false,
+        "detail": "src/greet.js missing one of: export function greet; ng:\n\nimport pkg from './src/greet.js';\nconst { greet } = pkg;\n\n    at ModuleJob._instantiate (node:internal/modules/esm/module_job:226:21)\n    at async ModuleJob.run (node:internal/modules/esm/module_job:335:5)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.23.4\n"
+      }
+    },
+    {
+      "id": "T03-cross-file",
+      "title": "Fix format import usage",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 6065,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T03-cross-file-8bQ8lL",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 30286,
+        "substring": {
+          "pass": false,
+          "detail": "src/format.js missing one of: ${last}, ${first}"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool read missed a fixture file that was written into the disposable workspace"
+        },
+        "workingDirectory": "/tmp/oc-m3-T03-cross-file-kCyAzy",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T03-cross-file-kCyAzy/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool read missed a fixture file that was written into the disposable workspace",
+          "unauthorized": false
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564118729,\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"part\":{\"id\":\"prt_1d45b58c9001qbawxVmUEVZu3c\",\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"messageID\":\"msg_1d45b57eb001WbR1LhMKFhFtro\",\"type\":\"step-start\",\"snapshot\":\"b2145977cf2548d650b1fc27516c2d8c4f0fffd5\"}}\n{\"type\":\"text\",\"timestamp\":1794564119817,\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"part\":{\"id\":\"prt_1d45b58cc001gYXYFjMHuUS0gB\",\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"messageID\":\"msg_1d45b57eb001WbR1LhMKFhFtro\",\"type\":\"text\",\"text\":\"I'll help you fix the `formatName` function in `src/format.js` to return \\\"Last, First\\\" format. Let me first check the current implementation of this function.\",\"time\":{\"start\":1794564118732,\"end\":1794564119817}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564119822,\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"part\":{\"partID\":\"prt_1d45b5cf3001ZzDnFtn1tIjFzW\",\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"messageID\":\"msg_1d45b57eb001WbR1LhMKFhFtro\",\"type\":\"tool\",\"id\":\"call_eyjrmvlk\",\"tool\":\"read\",\"state\":{\"status\":\"error\",\"input\":{\"path\":\"src/format.js\"},\"error\":\"File not found: src/format.js\",\"metadata\":{\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/format.js\\\"}\"},\"time\":{\"start\":1794564119795,\"end\":1794564119822}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564119829,\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"part\":{\"id\":\"prt_1d45b5d15001Tk9cJ1JDnYhpg0\",\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"messageID\":\"msg_1d45b57eb001WbR1LhMKFhFtro\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"b2145977cf2548d650b1fc27516c2d8c4f0fffd5\",\"cost\":0,\"tokens\":{\"input\":27,\"output\":59,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564119989,\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"part\":{\"id\":\"prt_1d45b5db5001lLKXVHiGi0rIYV\",\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"messageID\":\"msg_1d45b5d1b0010Lkbua27ua7Dw6\",\"type\":\"step-start\",\"snapshot\":\"b2145977cf2548d650b1fc27516c2d8c4f0fffd5\"}}\n{\"type\":\"text\",\"timestamp\":1794564121305,\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"part\":{\"id\":\"prt_1d45b5db8001tESzjG9X2EJ92G\",\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"messageID\":\"msg_1d45b5d1b0010Lkbua27ua7Dw6\",\"type\":\"text\",\"text\":\"It seems the `src/format.js` file doesn't exist in the current directory. Let me check what files are available in the packages/agent-core directory to understand the project structure better.\",\"time\":{\"start\":1794564119992,\"end\":1794564121305}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564121317,\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"part\":{\"partID\":\"prt_1d45b62c4001NkyvpWMR7aRvQ2\",\"sessionID\":\"ses_e2ba4a96bffeMsB3hcwzDna3PB\",\"messageID\":\"msg_1d45b5d1b0010Lkbua27ua7Dw6\",\"type\":\"tool\",\"id\":\"call_wfbchf61\",\"tool\":\"glob\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"**/*.js\",\"path\":\".\"},\"output\":\"/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test-add.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/area.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/greet.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/parse.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/clamp.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/counter.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/add.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/app.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/double.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/math.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/div.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/label.js\\n/home/rau",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool read missed a fixture file that was written into the disposable workspace"
+      }
+    },
+    {
+      "id": "T04-rename",
+      "title": "Rename total to sumAll",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 4616,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T04-rename-URMgqj",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 42513,
+        "substring": {
+          "pass": false,
+          "detail": "src/math.js missing one of: export function sumAll; src/math.js still contains export function total"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+        },
+        "workingDirectory": "/tmp/oc-m3-T04-rename-AVKFYV",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T04-rename-AVKFYV/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)",
+          "unauthorized": true
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564153710,\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"part\":{\"id\":\"prt_1d45be16e0019BVnqejgGD8fsr\",\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"messageID\":\"msg_1d45be06a0015KDo7vSG1ro7om\",\"type\":\"step-start\",\"snapshot\":\"5fc09a676aead8a4570c89c8a48911301204feb2\"}}\n{\"type\":\"text\",\"timestamp\":1794564154960,\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"part\":{\"id\":\"prt_1d45be171001OeZ9844cNtVcv4\",\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"messageID\":\"msg_1d45be06a0015KDo7vSG1ro7om\",\"type\":\"text\",\"text\":\"I'll help you rename the exported function `total` to `sumAll` in `src/math.js` while keeping the same behavior. Let me first check the current content of this file to understand what we're working with.\",\"time\":{\"start\":1794564153713,\"end\":1794564154960}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564154965,\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"part\":{\"partID\":\"prt_1d45be6390013cIUel5vvgikMQ\",\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"messageID\":\"msg_1d45be06a0015KDo7vSG1ro7om\",\"type\":\"tool\",\"id\":\"call_twi4x947\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/math.js\"},\"output\":\"Read file src/math.js, lines 1-7\\n1: export function sumAll(values) {\\n2:   return values.reduce((a, b) => a + b, 0)\\n3: }\\n4: \\n5: export function square(x) {\\n6:   return x * x;\\n7: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/math.js, lines 1-7\\n1: export function sumAll(values) {\\n2:   return values.reduce((a, b) => a + b, 0)\\n3: }\\n4: \\n5: export function square(x) {\\n6:   return x * x;\\n7: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/math.js\\\"}\"},\"time\":{\"start\":1794564154937,\"end\":1794564154965}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564154973,\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"part\":{\"id\":\"prt_1d45be65d001Xz1oUxO1Q9Huly\",\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"messageID\":\"msg_1d45be06a0015KDo7vSG1ro7om\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"5fc09a676aead8a4570c89c8a48911301204feb2\",\"cost\":0,\"tokens\":{\"input\":20,\"output\":68,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564155222,\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"part\":{\"id\":\"prt_1d45be756001wEVGpxgBWtpIqf\",\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"messageID\":\"msg_1d45be662001pENoOI12B1HLp3\",\"type\":\"step-start\",\"snapshot\":\"5fc09a676aead8a4570c89c8a48911301204feb2\"}}\n{\"type\":\"text\",\"timestamp\":1794564156830,\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"part\":{\"id\":\"prt_1d45be7590019dwFaiCfS5GlAj\",\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"messageID\":\"msg_1d45be662001pENoOI12B1HLp3\",\"type\":\"text\",\"text\":\"I can see that the file already has a function named `sumAll` (line 1), not `total`. Let me check if there's another file or if perhaps the function name is different than what was mentioned in the request.\\n\\nLet me search for any files that might contain a function named `total`:\",\"time\":{\"start\":1794564155225,\"end\":1794564156830}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564156843,\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"part\":{\"partID\":\"prt_1d45bed89001JOREIW6QcincrI\",\"sessionID\":\"ses_e2ba42113ffeEWrQWV0VYtV8VD\",\"messageID\":\"msg_1d45be662001pENoOI12B1HLp3\",\"type\":\"tool\",\"id\":\"call_no4b3jbv\",\"tool\":\"grep\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"export function total\"},\"output\":\"Found 2 matches\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/tests/evals/m3-opencode-comparison.ts:\\n  Line 79:       \\\"src/math.js\\\": \\\"export function total(values) {\\\\n  return values.reduce((a, b) => a + b, 0)\\\\n}\\\\n\\\",\\n\\n  Line 82:       { path: \\\"src/math.js\\\", contains: [\\\"export function sumAll\\\"], notContains: [\\\"export function total\\\"] },\\n\",\"title\":\"grep\",\"metadata\":{\"metadata\":{\"matches\":2,\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Found 2 matches\\n/home/raul-mermans/Desktop/Project",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": true,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    },
+    {
+      "id": "T05-counter",
+      "title": "Fix counter increment",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 7911,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T05-counter-fqzgMO",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 77806,
+        "substring": {
+          "pass": false,
+          "detail": "src/counter.js missing one of: n = n + 1 | n + 1; src/counter.js still contains n - 1"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+        },
+        "workingDirectory": "/tmp/oc-m3-T05-counter-hbHidL",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T05-counter-hbHidL/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)",
+          "unauthorized": true
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564204415,\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"part\":{\"id\":\"prt_1d45ca77f001SbqNSRIgnPquvD\",\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"messageID\":\"msg_1d45ca55e001m8DtOSfqXAQlSe\",\"type\":\"step-start\",\"snapshot\":\"1db55989bce69e25096be7f4ef6c101c6f10fcf7\"}}\n{\"type\":\"text\",\"timestamp\":1794564205354,\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"part\":{\"id\":\"prt_1d45ca789001skb66K6evAVaOS\",\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"messageID\":\"msg_1d45ca55e001m8DtOSfqXAQlSe\",\"type\":\"text\",\"text\":\"I'll help you fix the `src/counter.js` file so that the `increment()` method increases the counter by 1 from 0. First, let me examine the current implementation to understand what needs to be fixed.\",\"time\":{\"start\":1794564204425,\"end\":1794564205354}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564205359,\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"part\":{\"partID\":\"prt_1d45cab15001LpiuE9osZxMUHi\",\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"messageID\":\"msg_1d45ca55e001m8DtOSfqXAQlSe\",\"type\":\"tool\",\"id\":\"call_ei55krkk\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/counter.js\"},\"output\":\"Read file src/counter.js, lines 1-10\\n1: export class Counter {\\n2:   constructor() {\\n3:     this.value = 0;\\n4:   }\\n5: \\n6:   increment() {\\n7:     this.value += 1;\\n8:     return this.value;\\n9:   }\\n10: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/counter.js, lines 1-10\\n1: export class Counter {\\n2:   constructor() {\\n3:     this.value = 0;\\n4:   }\\n5: \\n6:   increment() {\\n7:     this.value += 1;\\n8:     return this.value;\\n9:   }\\n10: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/counter.js\\\"}\"},\"time\":{\"start\":1794564205333,\"end\":1794564205359}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564205365,\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"part\":{\"id\":\"prt_1d45cab35001VRxr89QybnNnMd\",\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"messageID\":\"msg_1d45ca55e001m8DtOSfqXAQlSe\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"1db55989bce69e25096be7f4ef6c101c6f10fcf7\",\"cost\":0,\"tokens\":{\"input\":21,\"output\":69,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564205611,\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"part\":{\"id\":\"prt_1d45cac2b001RgoC3iUcpQl14V\",\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"messageID\":\"msg_1d45cab3b0015mAHDESqesQYv0\",\"type\":\"step-start\",\"snapshot\":\"1db55989bce69e25096be7f4ef6c101c6f10fcf7\"}}\n{\"type\":\"text\",\"timestamp\":1794564208326,\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"part\":{\"id\":\"prt_1d45cac2e001FqJwjoQMvlDjH7\",\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"messageID\":\"msg_1d45cab3b0015mAHDESqesQYv0\",\"type\":\"text\",\"text\":\"Looking at the code, I can see that the `increment()` method in `src/counter.js` is already correctly implemented to increase the counter by 1 from 0. The constructor initializes `this.value` to 0, and the `increment()` method adds 1 to it.\\n\\nHowever, since you specifically asked me to fix this file, let me double-check if there might be an issue with how I'm interpreting the problem or if there are other files that might be related to this counter functionality.\\n\\nLet me check if there are any tests for this counter to better understand what behavior is expected:\",\"time\":{\"start\":1794564205614,\"end\":1794564208326}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564208337,\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"part\":{\"partID\":\"prt_1d45cb6af001S3CGJQkl7yCCJ8\",\"sessionID\":\"ses_e2ba35c0cffeeYvpdo2fK5f3m9\",\"messageID\":\"msg_1d45cab3b0015mAHDESqesQYv0\",\"type\":\"tool\",\"id\":\"call_7r5bkl4f\",\"tool\":\"glob\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"**/*.test.js\"},\"output\":\"/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test/double.test.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/tests/counter.test.js\",\"title\":\"glob\",",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": true,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    },
+    {
+      "id": "T06-python-add",
+      "title": "Python add",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 5279,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent python ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T06-python-add-ka8Hvc",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent python ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 3170,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "Traceback (most recent call last):\n  File \"/tmp/oc-m3-T06-python-add-ZkTjae/_verify.py\", line 5, in <module>\n    assert ns['add'](1, 2) == 3\n           ^^^^^^^^^^^^^^^^^^^^\nAssertionError\n"
+        },
+        "workingDirectory": "/tmp/oc-m3-T06-python-add-ZkTjae",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T06-python-add-ZkTjae/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": true,
+          "isolationReason": "no extra-workspace tool paths observed",
+          "unauthorized": false
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564287702,\"sessionID\":\"ses_e2ba21775ffe56Ef03WJpeHqYF\",\"part\":{\"id\":\"prt_1d45decd6001pUf0ZDjKoLw6Ky\",\"sessionID\":\"ses_e2ba21775ffe56Ef03WJpeHqYF\",\"messageID\":\"msg_1d45de9f3001MH2ErKN5FI77qM\",\"type\":\"step-start\",\"snapshot\":\"1db55989bce69e25096be7f4ef6c101c6f10fcf7\"}}\n{\"type\":\"text\",\"timestamp\":1794564288429,\"sessionID\":\"ses_e2ba21775ffe56Ef03WJpeHqYF\",\"part\":{\"id\":\"prt_1d45dece1001NWEKewERgvGAM2\",\"sessionID\":\"ses_e2ba21775ffe56Ef03WJpeHqYF\",\"messageID\":\"msg_1d45de9f3001MH2ErKN5FI77qM\",\"type\":\"text\",\"text\":\"I'll help you fix the `src/add.py` file so that `add(1, 2)` returns 3. First, let's examine the current implementation of this file to understand what needs to be fixed.\\n\\n<function=read>\\n<parameter=path>\\nsrc/add.py\\n</parameter>\\n</function>\\n</tool_call>\",\"time\":{\"start\":1794564287713,\"end\":1794564288429}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564288438,\"sessionID\":\"ses_e2ba21775ffe56Ef03WJpeHqYF\",\"part\":{\"id\":\"prt_1d45defb6001Rcorql7bFyiVyT\",\"sessionID\":\"ses_e2ba21775ffe56Ef03WJpeHqYF\",\"messageID\":\"msg_1d45de9f3001MH2ErKN5FI77qM\",\"type\":\"step-finish\",\"reason\":\"stop\",\"snapshot\":\"1db55989bce69e25096be7f4ef6c101c6f10fcf7\",\"cost\":0,\"tokens\":{\"input\":19,\"output\":65,\"reasoning\":0,\"cache\":{\"read\":10107,\"write\":0}}}}\n",
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "FAIL",
+        "pass": false,
+        "detail": "ok; Traceback (most recent call last):\n  File \"/tmp/oc-m3-T06-python-add-ZkTjae/_verify.py\", line 5, in <module>\n    assert ns['add'](1, 2) == 3\n           ^^^^^^^^^^^^^^^^^^^^\nAssertionError\n"
+      }
+    },
+    {
+      "id": "T07-create-util",
+      "title": "Create clamp util",
+      "repeat": false,
+      "ovsc": {
+        "status": "FAILED",
+        "failureReason": "INCOMPLETE",
+        "turns": 4,
+        "durationMs": 7839,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T07-create-util-tCXdFr",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": false,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "FAIL",
+        "pass": false,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 7541,
+        "substring": {
+          "pass": false,
+          "detail": "missing src/clamp.js"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "hedDefaultResolve (node:internal/modules/esm/loader:747:20)\n    at ModuleLoader.resolve (node:internal/modules/esm/loader:724:38)\n    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:320:38)\n    at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {\n  code: 'ERR_MODULE_NOT_FOUND',\n  url: 'file:///tmp/oc-m3-T07-create-util-MuGG75/src/clamp.js'\n}\n\nNode.js v22.23.4\n"
+        },
+        "workingDirectory": "/tmp/oc-m3-T07-create-util-MuGG75",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T07-create-util-MuGG75/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": true,
+          "isolationReason": "no extra-workspace tool paths observed",
+          "unauthorized": false
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564298672,\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"part\":{\"id\":\"prt_1d45e17b0001Sx6bKHjynykGR4\",\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"messageID\":\"msg_1d45e1516001N3j5HYlZ50JMm3\",\"type\":\"step-start\",\"snapshot\":\"1db55989bce69e25096be7f4ef6c101c6f10fcf7\"}}\n{\"type\":\"text\",\"timestamp\":1794564300937,\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"part\":{\"id\":\"prt_1d45e17b3001YAz3hNxX2Ku9RH\",\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"messageID\":\"msg_1d45e1516001N3j5HYlZ50JMm3\",\"type\":\"text\",\"text\":\"I'll create a clamp function that bounds a number between a minimum and maximum value. Let me implement this in the src/clamp.js file.\",\"time\":{\"start\":1794564298675,\"end\":1794564300937}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564300942,\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"part\":{\"partID\":\"prt_1d45e2073001yISoWUvJZRu0fF\",\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"messageID\":\"msg_1d45e1516001N3j5HYlZ50JMm3\",\"type\":\"tool\",\"id\":\"call_v7oy3h47\",\"tool\":\"write\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/clamp.js\",\"content\":\"/**\\n * Bounds a number between a minimum and maximum value.\\n * @param {number} n - The number to clamp\\n * @param {number} min - The minimum value\\n * @param {number} max - The maximum value\\n * @returns {number} The clamped number\\n */\\nexport function clamp(n, min, max) {\\n  return Math.min(Math.max(n, min), max);\\n}\"},\"output\":\"Wrote file successfully: src/clamp.js\",\"title\":\"write\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Wrote file successfully: src/clamp.js\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/clamp.js\\\",\\\"content\\\":\\\"/**\\\\n * Bounds a number between a minimum and maximum value.\\\\n * @param {number} n - The number to clamp\\\\n * @param {number} min - The minimum value\\\\n * @param {number} max - The maximum value\\\\n * @returns {number} The clamped number\\\\n */\\\\nexport function clamp(n, min, max) {\\\\n  return Math.min(Math.max(n, min), max);\\\\n}\\\"}\"},\"time\":{\"start\":1794564300916,\"end\":1794564300942}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564300958,\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"part\":{\"id\":\"prt_1d45e209e0015y9XtjnVjpHnS3\",\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"messageID\":\"msg_1d45e1516001N3j5HYlZ50JMm3\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\",\"cost\":0,\"tokens\":{\"input\":27,\"output\":145,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564301256,\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"part\":{\"id\":\"prt_1d45e21c7001V2gsPU9Vp63myA\",\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"messageID\":\"msg_1d45e20a4001l26nEcBVQo5BF5\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564303860,\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"part\":{\"id\":\"prt_1d45e21ca001TvynmDngdWL7Rq\",\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"messageID\":\"msg_1d45e20a4001l26nEcBVQo5BF5\",\"type\":\"text\",\"text\":\"I've created the `src/clamp.js` file with the clamp function that bounds a number between a minimum and maximum value.\\n\\nThe implementation:\\n- Takes three parameters: `n` (the number to clamp), `min` (minimum value), and `max` (maximum value)\\n- Uses `Math.max(n, min)` to ensure n is not less than min\\n- Then uses `Math.min()` to ensure the result is not greater than max\\n- Returns the clamped number\\n\\nThis function will work with any numeric values and properly handles edge cases where n might be below min or above max.\\n\\nWould you like me to add any tests for this function or make any changes to the implementation?\",\"time\":{\"start\":1794564301258,\"end\":1794564303860}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564303870,\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"part\":{\"id\":\"prt_1d45e2bfe0012LvdgynAUHq624\",\"sessionID\":\"ses_e2ba1ec53ffeeSO4Xp2LlxNR64\",\"messageID\":\"msg_1d45e20a4001l26nEcBVQo5BF5\",\"type\":\"st",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "FAIL",
+        "pass": false,
+        "detail": "missing src/clamp.js; hedDefaultResolve (node:internal/modules/esm/loader:747:20)\n    at ModuleLoader.resolve (node:internal/modules/esm/loader:724:38)\n    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:320:38)\n    at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {\n  code: 'ERR_MODULE_NOT_FOUND',\n  url: 'file:///tmp/oc-m3-T07-create-util-MuGG75/src/clamp.js'\n}\n\nNode.js v22.23.4\n"
+      }
+    },
+    {
+      "id": "T08-early-return",
+      "title": "Guard divide by zero",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 5436,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T08-early-return-YG4Nym",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 12141,
+        "substring": {
+          "pass": false,
+          "detail": "src/div.js missing one of: b === 0 | null"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+        },
+        "workingDirectory": "/tmp/oc-m3-T08-early-return-tba6R3",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T08-early-return-tba6R3/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)",
+          "unauthorized": true
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564311262,\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"part\":{\"id\":\"prt_1d45e48de001Pc3P9GB29n8R2i\",\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"messageID\":\"msg_1d45e47e7001xCwrI36dWpk1Xj\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564312750,\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"part\":{\"id\":\"prt_1d45e48e2001zWb4PTt9NE8LlL\",\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"messageID\":\"msg_1d45e47e7001xCwrI36dWpk1Xj\",\"type\":\"text\",\"text\":\"I'll update the `src/div.js` file to make the `divide(a, b)` function return `null` when `b` is 0, otherwise return `a / b`.\\n\\nFirst, let me check the current content of the file to understand what I'm working with.\",\"time\":{\"start\":1794564311266,\"end\":1794564312750}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564312755,\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"part\":{\"partID\":\"prt_1d45e4e9c001prdgyOlC7aXHpN\",\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"messageID\":\"msg_1d45e47e7001xCwrI36dWpk1Xj\",\"type\":\"tool\",\"id\":\"call_nxv1qbqx\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/div.js\"},\"output\":\"Read file src/div.js, lines 1-6\\n1: export function divide(a, b) {\\n2:   if (b === 0) {\\n3:     return null;\\n4:   }\\n5:   return a / b;\\n6: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/div.js, lines 1-6\\n1: export function divide(a, b) {\\n2:   if (b === 0) {\\n3:     return null;\\n4:   }\\n5:   return a / b;\\n6: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/div.js\\\"}\"},\"time\":{\"start\":1794564312732,\"end\":1794564312755}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564312762,\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"part\":{\"id\":\"prt_1d45e4eba001CqS8PHqpxVi9jN\",\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"messageID\":\"msg_1d45e47e7001xCwrI36dWpk1Xj\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\",\"cost\":0,\"tokens\":{\"input\":28,\"output\":80,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564312998,\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"part\":{\"id\":\"prt_1d45e4fa6001n6foFk0IYIRwwa\",\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"messageID\":\"msg_1d45e4ec2001fbDGH8O7ufFdoW\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564314827,\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"part\":{\"id\":\"prt_1d45e4fa9001riQnJuquHhRocQ\",\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"messageID\":\"msg_1d45e4ec2001fbDGH8O7ufFdoW\",\"type\":\"text\",\"text\":\"I can see that the `src/div.js` file already has the correct implementation. The `divide` function already returns `null` when `b` is 0, and returns `a / b` otherwise.\\n\\nLet me double-check if there are any other files that might contain a different implementation of this function:\",\"time\":{\"start\":1794564313001,\"end\":1794564314827}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564314840,\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"part\":{\"partID\":\"prt_1d45e56b4001BXsD1fbsZpTd9K\",\"sessionID\":\"ses_e2ba1b98dffeLJ4z4ofzzdbSxT\",\"messageID\":\"msg_1d45e4ec2001fbDGH8O7ufFdoW\",\"type\":\"tool\",\"id\":\"call_ehvxwdkj\",\"tool\":\"grep\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"export function divide\",\"include\":\"*.js\"},\"output\":\"Found 1 matches\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/div.js:\\n  Line 1: export function divide(a, b) {\\n\",\"title\":\"grep\",\"metadata\":{\"metadata\":{\"matches\":1,\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Found 1 matches\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/div.js:\\n  Line 1: export function divide(a, b) {\\n\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"pattern\\\":\\\"export function divide\\\",\\\"include\\\":\\\"*.js\\\"}\"},\"time\":{\"start\":1794564314804,\"end\":179456431",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": true,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    },
+    {
+      "id": "T09-string",
+      "title": "Template string",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 5912,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T09-string-PiKLEY",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 18246,
+        "substring": {
+          "pass": false,
+          "detail": "src/label.js missing one of: `Name: ${name}`"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+        },
+        "workingDirectory": "/tmp/oc-m3-T09-string-hA8dY3",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T09-string-hA8dY3/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)",
+          "unauthorized": true
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564329689,\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"part\":{\"id\":\"prt_1d45e90d9001IQnz0wjC0zXi1E\",\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"messageID\":\"msg_1d45e8e87001R7JngB2vxXnkUo\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564330728,\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"part\":{\"id\":\"prt_1d45e90dc001cze29fFIpEmAT7\",\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"messageID\":\"msg_1d45e8e87001R7JngB2vxXnkUo\",\"type\":\"text\",\"text\":\"I'll help you modify the `src/label.js` file so that the `label(name)` function returns \\\"Name: {name}\\\" using a template string.\\n\\nFirst, let me check the current content of the file to understand what we're working with.\",\"time\":{\"start\":1794564329692,\"end\":1794564330728}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564330733,\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"part\":{\"partID\":\"prt_1d45e94d30017ei0B70RcXNo0t\",\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"messageID\":\"msg_1d45e8e87001R7JngB2vxXnkUo\",\"type\":\"tool\",\"id\":\"call_jtmnzm43\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/label.js\"},\"output\":\"Read file src/label.js, lines 1-3\\n1: export function label(name) {\\n2:   return `Name: ${name}`;\\n3: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/label.js, lines 1-3\\n1: export function label(name) {\\n2:   return `Name: ${name}`;\\n3: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/label.js\\\"}\"},\"time\":{\"start\":1794564330707,\"end\":1794564330733}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564330738,\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"part\":{\"id\":\"prt_1d45e94f2001IWhRis8xljUBx1\",\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"messageID\":\"msg_1d45e8e87001R7JngB2vxXnkUo\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\",\"cost\":0,\"tokens\":{\"input\":25,\"output\":75,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564330940,\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"part\":{\"id\":\"prt_1d45e95bc0014xJcowVJNG6Nfc\",\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"messageID\":\"msg_1d45e94f8001WsjOcKBQKjPAkv\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564332434,\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"part\":{\"id\":\"prt_1d45e95bf001swDGf40rBS5nHq\",\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"messageID\":\"msg_1d45e94f8001WsjOcKBQKjPAkv\",\"type\":\"text\",\"text\":\"I can see that the `src/label.js` file already implements exactly what was requested. The `label(name)` function is already using a template string to return \\\"Name: {name}\\\".\\n\\nLet me verify this is the complete file and confirm there are no other related files:\",\"time\":{\"start\":1794564330943,\"end\":1794564332434}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564332445,\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"part\":{\"partID\":\"prt_1d45e9b7c001ofVd0EXMsHhQe6\",\"sessionID\":\"ses_e2ba1725affeu1zMis9mn1NQP8\",\"messageID\":\"msg_1d45e94f8001WsjOcKBQKjPAkv\",\"type\":\"tool\",\"id\":\"call_60ntnywf\",\"tool\":\"glob\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"src/*.js\"},\"output\":\"/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/area.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/greet.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/double.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/parse.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/clamp.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/counter.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/add.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-c",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": true,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    },
+    {
+      "id": "T10-two-files",
+      "title": "Update caller after rename",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 6,
+        "durationMs": 15721,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T10-two-files-G3yndf",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 65770,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool read missed a fixture file that was written into the disposable workspace"
+        },
+        "workingDirectory": "/tmp/oc-m3-T10-two-files-6B0PlV",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T10-two-files-6B0PlV/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool read missed a fixture file that was written into the disposable workspace",
+          "unauthorized": false
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564363681,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"id\":\"prt_1d45f15a1001xWCYZUPgot7ZOU\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f133d001vrMhWoy4wnE8Ob\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564364327,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"id\":\"prt_1d45f15a40018PUMCKyMr6BnL8\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f133d001vrMhWoy4wnE8Ob\",\"type\":\"text\",\"text\":\"I'll help you modify the app.js file to call `area` instead of `square`. First, let me examine the current files to understand the structure.\",\"time\":{\"start\":1794564363684,\"end\":1794564364327}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564364332,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"partID\":\"prt_1d45f18110019MHHZXp4Yf0Rkx\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f133d001vrMhWoy4wnE8Ob\",\"type\":\"tool\",\"id\":\"call_gtdygybc\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/area.js\"},\"output\":\"Read file src/area.js, lines 1-3\\n1: export function area(length, width) {\\n2:   return length * width;\\n3: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/area.js, lines 1-3\\n1: export function area(length, width) {\\n2:   return length * width;\\n3: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/area.js\\\"}\"},\"time\":{\"start\":1794564364305,\"end\":1794564364332}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564364338,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"id\":\"prt_1d45f1832001RhM8zYssEOoGBy\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f133d001vrMhWoy4wnE8Ob\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\",\"cost\":0,\"tokens\":{\"input\":25,\"output\":55,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564364883,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"id\":\"prt_1d45f1a53001WYJN6SJfp0YOP6\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f1838001zRIytWX2YnAFSx\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"tool_use\",\"timestamp\":1794564364905,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"partID\":\"prt_1d45f1a56001E7WZj46dZXGBeq\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f1838001zRIytWX2YnAFSx\",\"type\":\"tool\",\"id\":\"call_sp87afas\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/app.js\"},\"output\":\"Read file src/app.js, lines 1-5\\n1: import { area } from './area.js';\\n2: \\n3: // Example usage of the area function\\n4: const result = area(5, 3);\\n5: console.log(`The area is: ${result}`);\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/app.js, lines 1-5\\n1: import { area } from './area.js';\\n2: \\n3: // Example usage of the area function\\n4: const result = area(5, 3);\\n5: console.log(`The area is: ${result}`);\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/app.js\\\"}\"},\"time\":{\"start\":1794564364886,\"end\":1794564364905}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564364912,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"id\":\"prt_1d45f1a70001btFJpYk5zrwR4B\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f1838001zRIytWX2YnAFSx\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\",\"cost\":0,\"tokens\":{\"input\":47,\"output\":22,\"reasoning\":0,\"cache\":{\"read\":10184,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564365163,\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"part\":{\"id\":\"prt_1d45f1b6b001CJ8FOeGaauVaI5\",\"sessionID\":\"ses_e2ba0eda2ffe6fkVKAQ5iXtvO6\",\"messageID\":\"msg_1d45f1a7700110lYurCOkfvQ8A\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666",
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": false,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool read missed a fixture file that was written into the disposable workspace"
+      }
+    },
+    {
+      "id": "T11-json",
+      "title": "Safe JSON parse",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 3,
+        "durationMs": 6410,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T11-json-BuytmP",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 7937,
+        "substring": {
+          "pass": false,
+          "detail": "src/parse.js missing one of: try | catch | null"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+        },
+        "workingDirectory": "/tmp/oc-m3-T11-json-AXHKv7",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T11-json-AXHKv7/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)",
+          "unauthorized": true
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564435882,\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"part\":{\"id\":\"prt_1d4602faa0018LNKAbmUtURyQH\",\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"messageID\":\"msg_1d4602d0f001A5LgpPG8elyIGL\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564436766,\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"part\":{\"id\":\"prt_1d4602fad001oQtf1drM4AQ6JJ\",\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"messageID\":\"msg_1d4602d0f001A5LgpPG8elyIGL\",\"type\":\"text\",\"text\":\"I'll help you fix the `src/parse.js` file so that `parseJson` returns `null` on invalid JSON instead of throwing an error. Let me first examine the current implementation to understand what needs to be changed.\",\"time\":{\"start\":1794564435885,\"end\":1794564436766}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564436772,\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"part\":{\"partID\":\"prt_1d4603308001y6dTzvmW62MMMb\",\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"messageID\":\"msg_1d4602d0f001A5LgpPG8elyIGL\",\"type\":\"tool\",\"id\":\"call_6vdkj1yn\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/parse.js\"},\"output\":\"Read file src/parse.js, lines 1-7\\n1: export function parseJson(text) {\\n2:   try {\\n3:     return JSON.parse(text)\\n4:   } catch {\\n5:     return null\\n6:   }\\n7: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/parse.js, lines 1-7\\n1: export function parseJson(text) {\\n2:   try {\\n3:     return JSON.parse(text)\\n4:   } catch {\\n5:     return null\\n6:   }\\n7: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/parse.js\\\"}\"},\"time\":{\"start\":1794564436744,\"end\":1794564436772}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564436780,\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"part\":{\"id\":\"prt_1d460332c001pejj1AJBw8dJ95\",\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"messageID\":\"msg_1d4602d0f001A5LgpPG8elyIGL\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\",\"cost\":0,\"tokens\":{\"input\":22,\"output\":70,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564437008,\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"part\":{\"id\":\"prt_1d4603410001i1F7yDACnrHKdW\",\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"messageID\":\"msg_1d4603331001rViKiWdVCOgsP5\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564439095,\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"part\":{\"id\":\"prt_1d4603413001OwYdNTjDjWwKvP\",\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"messageID\":\"msg_1d4603331001rViKiWdVCOgsP5\",\"type\":\"text\",\"text\":\"I can see that the `src/parse.js` file already has the desired implementation - it's already returning `null` on invalid JSON instead of throwing an error. The function uses a try-catch block to catch any JSON parsing errors and return `null` in those cases.\\n\\nLet me double-check if there are any other files that might contain a different implementation or if there's something I'm missing:\",\"time\":{\"start\":1794564437011,\"end\":1794564439095}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564439108,\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"part\":{\"partID\":\"prt_1d4603c23001kBFChDiNRXb5CI\",\"sessionID\":\"ses_e2b9fd423ffeXLESUzguwvT24i\",\"messageID\":\"msg_1d4603331001rViKiWdVCOgsP5\",\"type\":\"tool\",\"id\":\"call_p3gtf97m\",\"tool\":\"grep\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"parseJson\",\"path\":\"src\"},\"output\":\"Found 1 matches\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/parse.js:\\n  Line 1: export function parseJson(text) {\\n\",\"title\":\"grep\",\"metadata\":{\"metadata\":{\"matches\":1,\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Found 1 matches\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/src/parse.js:\\n  Line 1: export function parseJson(text) {\\n\"}],\"providerCall\":{\"executed\":false},\"providerR",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": true,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    },
+    {
+      "id": "T12-expected",
+      "title": "Match test expected value",
+      "repeat": false,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 2,
+        "durationMs": 3952,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T12-expected-mt8wyQ",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 88258,
+        "substring": {
+          "pass": false,
+          "detail": "src/double.js missing one of: n * 2; src/double.js still contains n * 3"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+        },
+        "workingDirectory": "/tmp/oc-m3-T12-expected-4S8tBs",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T12-expected-4S8tBs/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)",
+          "unauthorized": true
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564447727,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"part\":{\"id\":\"prt_1d4605def001VHpWnmtVSsFxKC\",\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"messageID\":\"msg_1d4605bba001YE27b55X261rTH\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564448547,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"part\":{\"id\":\"prt_1d4605df2001LVj2x5AlJYsluU\",\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"messageID\":\"msg_1d4605bba001YE27b55X261rTH\",\"type\":\"text\",\"text\":\"I'll fix the `src/double.js` file so that `double(4)` returns 8 as expected by the test.\\n\\nFirst, let me check what the current implementation looks like:\",\"time\":{\"start\":1794564447730,\"end\":1794564448547}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564448553,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"part\":{\"partID\":\"prt_1d460610d001tqFMPOTBH6KqsB\",\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"messageID\":\"msg_1d4605bba001YE27b55X261rTH\",\"type\":\"tool\",\"id\":\"call_7umotbwy\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/double.js\"},\"output\":\"Read file src/double.js, lines 1-3\\n1: export function double(n) {\\n2:   return n * 2\\n3: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/double.js, lines 1-3\\n1: export function double(n) {\\n2:   return n * 2\\n3: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/double.js\\\"}\"},\"time\":{\"start\":1794564448525,\"end\":1794564448553}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564448559,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"part\":{\"id\":\"prt_1d460612f0011kIWt3L7NYLbxd\",\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"messageID\":\"msg_1d4605bba001YE27b55X261rTH\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\",\"cost\":0,\"tokens\":{\"input\":28,\"output\":62,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564448767,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"part\":{\"id\":\"prt_1d46061ff001AsQoiUz59t5FVW\",\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"messageID\":\"msg_1d4606135001qIGHjyobLPyEvA\",\"type\":\"step-start\",\"snapshot\":\"0c7c8b13b9df1be09c2ac098c547d45666a3869d\"}}\n{\"type\":\"text\",\"timestamp\":1794564450645,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"part\":{\"id\":\"prt_1d4606202001I6pmw4Y1z6wsEq\",\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"messageID\":\"msg_1d4606135001qIGHjyobLPyEvA\",\"type\":\"text\",\"text\":\"The current implementation looks correct - it should return `n * 2` which would make `double(4)` equal to 8. Let me check if there might be an issue with how the test is calling this function or if there's something else I'm missing.\\n\\nLet me look at the test file to understand what exactly is expected:\",\"time\":{\"start\":1794564448770,\"end\":1794564450645}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564450655,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"part\":{\"partID\":\"prt_1d4606940001AAzI5E14c3m5XD\",\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"messageID\":\"msg_1d4606135001qIGHjyobLPyEvA\",\"type\":\"tool\",\"id\":\"call_8iljvrt7\",\"tool\":\"grep\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"double\\\\(4\\\\)\",\"path\":\"test\"},\"output\":\"Found 1 matches\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test/double.test.js:\\n  Line 5: test('double', () => assert.equal(double(4), 8))\",\"title\":\"grep\",\"metadata\":{\"metadata\":{\"matches\":1,\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Found 1 matches\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test/double.test.js:\\n  Line 5: test('double', () => assert.equal(double(4), 8))\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"pattern\\\":\\\"double\\\\\\\\(4\\\\\\\\)\\\",\\\"path\\\":\\\"test\\\"}\"},\"time\":{\"start\":1794564450624,\"end\":1794564450655}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564450663,\"sessionID\":\"ses_e2b9fa5a3ffe8ZAcflVHeaerd6\",\"pa",
+        "correctCode": false,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": true,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    },
+    {
+      "id": "T01-off-by-one",
+      "title": "Fix off-by-one add",
+      "repeat": true,
+      "ovsc": {
+        "status": "COMPLETED",
+        "turns": 2,
+        "durationMs": 3751,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": true,
+          "detail": "independent node ok"
+        },
+        "workingDirectory": "/tmp/ovsc-m3-T01-off-by-one-PFsST6",
+        "model": "qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "timeoutMs": 300000
+        },
+        "tools": [
+          "apply_patch",
+          "create_file",
+          "find_files",
+          "list_directory",
+          "read_file",
+          "run_verification",
+          "search_text"
+        ],
+        "executionBudget": {
+          "maxTurns": 12
+        },
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": true,
+        "unauthorizedActions": false,
+        "endToEnd": true,
+        "comparisonStatus": "PASS",
+        "pass": true,
+        "detail": "independent node ok"
+      },
+      "opencode": {
+        "status": "COMPLETED",
+        "turns": 0,
+        "durationMs": 42635,
+        "substring": {
+          "pass": true,
+          "detail": "ok"
+        },
+        "independent": {
+          "pass": false,
+          "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+        },
+        "workingDirectory": "/tmp/oc-m3-T01-off-by-one-grJhiW",
+        "model": "ollama/qwen3-coder:30b",
+        "provider": {
+          "baseUrl": "http://127.0.0.1:11434/v1",
+          "isolatedHome": "/tmp/oc-m3-T01-off-by-one-grJhiW/.eval-home",
+          "standalone": true,
+          "agent": "build"
+        },
+        "tools": "opencode-default",
+        "executionBudget": {
+          "timeoutMs": 480000
+        },
+        "isolation": {
+          "isolationValid": false,
+          "isolationReason": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)",
+          "unauthorized": true
+        },
+        "stdout": "{\"type\":\"step_start\",\"timestamp\":1794564539643,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"id\":\"prt_1d461c4fb001Z63MogIplX2NzE\",\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"messageID\":\"msg_1d461c30e001mqJWminBCbSgj0\",\"type\":\"step-start\",\"snapshot\":\"17480d837c3f228babd1638436a5f32195fec9f5\"}}\n{\"type\":\"text\",\"timestamp\":1794564540880,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"id\":\"prt_1d461c4fe0016lgFkRsyL7XHKT\",\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"messageID\":\"msg_1d461c30e001mqJWminBCbSgj0\",\"type\":\"text\",\"text\":\"I'll help you fix the `src/add.js` file so that `add(1, 2)` returns 3. First, I need to examine the current implementation to understand what needs to be fixed.\\n\\nLet me read the current `src/add.js` file:\",\"time\":{\"start\":1794564539646,\"end\":1794564540880}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564540885,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"partID\":\"prt_1d461c9ba001Yt6UuVDmQj6Vin\",\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"messageID\":\"msg_1d461c30e001mqJWminBCbSgj0\",\"type\":\"tool\",\"id\":\"call_jl7z39z7\",\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"src/add.js\"},\"output\":\"Read file src/add.js, lines 1-3\\n1: export function add(a, b) {\\n2:   return a + b\\n3: }\",\"title\":\"read\",\"metadata\":{\"metadata\":{\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"Read file src/add.js, lines 1-3\\n1: export function add(a, b) {\\n2:   return a + b\\n3: }\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"path\\\":\\\"src/add.js\\\"}\"},\"time\":{\"start\":1794564540858,\"end\":1794564540885}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564540891,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"id\":\"prt_1d461c9db001FdZRABfGolom9A\",\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"messageID\":\"msg_1d461c30e001mqJWminBCbSgj0\",\"type\":\"step-finish\",\"reason\":\"tool-calls\",\"snapshot\":\"17480d837c3f228babd1638436a5f32195fec9f5\",\"cost\":0,\"tokens\":{\"input\":31,\"output\":77,\"reasoning\":0,\"cache\":{\"read\":10105,\"write\":0}}}}\n{\"type\":\"step_start\",\"timestamp\":1794564541092,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"id\":\"prt_1d461caa40012GsaYVcDS38ut8\",\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"messageID\":\"msg_1d461c9e0001j9MHPt9Hv0hs0b\",\"type\":\"step-start\",\"snapshot\":\"17480d837c3f228babd1638436a5f32195fec9f5\"}}\n{\"type\":\"text\",\"timestamp\":1794564542846,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"id\":\"prt_1d461caa70017zmF4H9yfeQlDT\",\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"messageID\":\"msg_1d461c9e0001j9MHPt9Hv0hs0b\",\"type\":\"text\",\"text\":\"I can see that the current implementation of `add` function in `src/add.js` actually looks correct - it should return `a + b` which would give 3 when called with `add(1, 2)`. \\n\\nLet me check if there's a test file to understand what's expected and what might be wrong:\",\"time\":{\"start\":1794564541095,\"end\":1794564542846}}}\n{\"type\":\"tool_use\",\"timestamp\":1794564542857,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"partID\":\"prt_1d461d169001Sl4l64opWDg57x\",\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"messageID\":\"msg_1d461c9e0001j9MHPt9Hv0hs0b\",\"type\":\"tool\",\"id\":\"call_0d1it0rd\",\"tool\":\"glob\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"**/test*.js\"},\"output\":\"/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test-add.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test-area.js\",\"title\":\"glob\",\"metadata\":{\"metadata\":{\"count\":2,\"truncated\":false},\"content\":[{\"type\":\"text\",\"text\":\"/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test-add.js\\n/home/raul-mermans/Desktop/Projects - Github/Open_VS_Code/packages/agent-core/test-area.js\"}],\"providerCall\":{\"executed\":false},\"providerResult\":{\"executed\":false},\"rawInput\":\"{\\\"pattern\\\":\\\"**/test*.js\\\"}\"},\"time\":{\"start\":1794564542825,\"end\":1794564542857}}}}\n{\"type\":\"step_finish\",\"timestamp\":1794564542863,\"sessionID\":\"ses_e2b9e3db9ffe2YfG2CR1128kL0\",\"part\":{\"id\":\"prt_1d461d18f001",
+        "correctCode": true,
+        "runtimeCompleted": true,
+        "independentTests": false,
+        "unauthorizedActions": true,
+        "endToEnd": false,
+        "comparisonStatus": "INVALID",
+        "pass": false,
+        "detail": "tool output referenced paths outside the fixture (packages/agent-core, /Desktop/Projects)"
+      }
+    }
+  ]
+}

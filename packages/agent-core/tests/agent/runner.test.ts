@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { join } from "node:path"
 import test from "node:test"
 
+import { UNLIMITED_MAX_TURNS } from "../../src/agent/acceptance-budget.ts"
 import { AgentRunner, AgentRunnerError } from "../../src/agent/runner.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
@@ -100,7 +101,7 @@ test("turns unknown and invalid calls into observations without executing a tool
 test("pauses for confirmation, executes only after approval, and resumes", async () => {
   let executions = 0
   const registration: ToolRegistration = {
-    definition: { name: "inspect_sensitive", description: "Inspect synthetic data.", action: "run_known_test", inputSchema: {} },
+    definition: { name: "inspect_sensitive", description: "Inspect synthetic data.", action: "git_commit", inputSchema: {} },
     validate: (value) => {
       if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length) throw new TypeError("no arguments expected")
       return {}
@@ -175,11 +176,25 @@ test("terminates model failure, maximum turns, and repeated non-progress distinc
   assert.equal(modelFailure.status, "FAILED")
   assert.equal(modelFailure.failureReason, "MODEL_ERROR")
 
-  const maxTurns = await createRunner(new ScriptedModelProvider([
+  const limited = createRunner(new ScriptedModelProvider([
     response("read", [{ id: "one", name: "read_file", arguments: { path: "README.md" } }]),
-  ])).run(input({ maxTurns: 1 }))
+    (request) => {
+      const blob = request.messages.map((message) => message.content).join("\n")
+      assert.match(blob, /README|read_file|observation|continuation/s)
+      assert.match(blob, /original task is unchanged/i)
+      return response("Finished from the preserved observations.")
+    },
+    response("Finished from the preserved observations."),
+  ]))
+  const maxTurns = await limited.run(input({ maxTurns: 1 }))
   assert.equal(maxTurns.failureReason, "MAX_TURNS_EXCEEDED")
   assert.equal(maxTurns.events.at(-1)!.type, "task.max_turns")
+  assert.equal(maxTurns.toolCalls[0]?.name, "read_file")
+  const continued = await limited.continueFromLimit(2)
+  assert.equal(continued.status, "COMPLETED")
+  assert.equal(continued.toolCalls[0]?.name, "read_file")
+  assert.match(continued.finalAnswer ?? "", /Finished from the preserved observations/)
+  await assert.rejects(limited.continueFromLimit(40), /turn-budget pause/)
 
   const repeated = Array.from({ length: 3 }, (_, index) => response("again", [
     { id: `repeat-${index}`, name: "read_file", arguments: { path: "README.md" } },
@@ -188,6 +203,24 @@ test("terminates model failure, maximum turns, and repeated non-progress distinc
   assert.equal(nonProgress.failureReason, "NON_PROGRESS")
   assert.equal(nonProgress.turns, 3)
   assert.equal(nonProgress.events.at(-1)!.type, "task.non_progress")
+})
+
+test("unlimited production budget does not pause after 15 tool turns", async () => {
+  const replies = [
+    ...Array.from({ length: 16 }, (_, index) => response("search", [{
+      id: `search-${index}`,
+      name: "search_text",
+      arguments: { query: `greet-${index}` },
+    }])),
+    response("Done after sixteen searches."),
+  ]
+  const result = await createRunner(new ScriptedModelProvider(replies), createReadOnlyToolRegistry(), 40).run(
+    input({ maxTurns: UNLIMITED_MAX_TURNS }),
+  )
+  assert.equal(result.status, "COMPLETED")
+  assert.equal(result.failureReason, undefined)
+  assert.equal(result.turns, 17)
+  assert.equal(result.events.some((event) => event.type === "task.max_turns"), false)
 })
 
 test("propagates cancellation through the model path as CANCELLED", async () => {

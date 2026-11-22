@@ -1,0 +1,54 @@
+{
+  "found": true,
+  "kind": "sidebar",
+  "composerVisible": true,
+  "composerValue": "",
+  "wideButtonVisible": true,
+  "historyOpen": false,
+  "historyItems": [],
+  "messages": [
+    {
+      "role": "user",
+      "text": "Implement formatName, greet, and parseName so test/lib.test.ts passes. formatName must return Last, First. greet must return Hello, plus formatName. parseName must split Last, First. Use apply_patch. Do not change the test. Run node --experimental-strip-types --test after the last edit.",
+      "status": ""
+    },
+    {
+      "role": "other",
+      "text": "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nNo files were changed. No edit was approved. Tests did not run. Incomplete: The requested edit was not applied.\n\nUnsupported claim: the reply describes an outcome this run did not record.\n\nContinue this run keeps the same task. Starting a new message does not continue it.",
+      "status": "failed"
+    }
+  ],
+  "activities": [
+    "Understanding the request",
+    "Model replied",
+    "Read files",
+    "Exploring repository cancelled"
+  ],
+  "activityStatuses": [
+    "failed",
+    "completed",
+    "completed",
+    "cancelled"
+  ],
+  "trace": [
+    "Starting task — session-1794582090537",
+    "Preparing context — session-1794582090537",
+    "Model responded — session-1794582090537",
+    "read_file completed — session-1794582090537",
+    "Preparing context — session-1794582090537",
+    "Model responded — session-1794582090537",
+    "create_file rejected — session-1794582090537"
+  ],
+  "technicalOpen": false,
+  "confirmationId": "",
+  "confirmationPath": "",
+  "diffVisible": false,
+  "approveVisible": false,
+  "rejectVisible": false,
+  "modelsVisible": true,
+  "outcomeVisible": false,
+  "outcomeText": "",
+  "bodyText": "Implement formatName, greet, and parseName so test/lib.test…\nFailed\nRecovery\nModels\nWider chat\nNew\nHistory\nMore\nRecovery status\nRead-only\nConversation\nImplement formatName, greet, and parseName so test/lib.test…\nLast task\nFailed\nCheckpoint\nPAUSED · PLANNING · FAILED\nSaved at\n2026-11-13T15:01:37.768Z\nThe last run was interrupted between steps. No unfinished change or command is recorded.\nAgent Core: All preconditions satisfied for safe continuation\nConversation display: restored. Restoring shows history only; it runs nothing and grants no approval.\nNew task with this context: starts a fresh conversation with the last turns as background. Every change and command needs a new approval.\nContinue this run: authorizes more turns on the same task. Writes and tests still need a new approval. Interrupted crash recovery is still not auto-replayed.\nContinue this run\nStart new task with this context\nClose\nTurn budget used\n\nThis run stopped because it reached its turn limit. Continue keeps the same task and completed work. Writes still need approval.\n\nContinue this run\nYOU\nImplement formatName, greet, and parseName so test/lib.test.ts passes. formatName must return Last, First. greet must return Hello, plus formatName. parseName must split Last, First. Use apply_patch. Do not change the test. Run node --experimental-strip-types --test after the last edit.\nSYSTEM · FAILED\nStopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nNo files were changed. No edit was approved. Tests did not run. Incomplete: The requested edit was not applied.\n\nUnsupported claim: the reply describes an outcome this run did not record.\n\nContinue this run keeps the same task. Starting a new message does not continue it.\nUnderstanding the request\nModel replied\nRead files\nExploring repository cancelled\nTechnical details\n1 workspace roots\nMessage\nAgent mode\nAsk\nPlan\nAgent\nDebug\nReview\nArchitecture Review (REVIEW)\nReverse Engineering — Analysis (PLAN)\nDesign Exploration (PLAN)\nBrowser QA — Local Development (PLAN)\nBrowser QA — Interactive Local Development (BUILD)\nAdvanced Design & Motion (BUILD) ⚠️\nREA Investigation (REVIEW) ⚠️\nREA Reconstruction (BUILD) ⚠️\nArchitecture Review (Pack) (REVIEW) ⚠️\nMCP Research Demo (Pack) (PLAN) ⚠️\nREA Investigation (REVIEW) ⚠️\nREA Reconstruction (BUILD) ⚠️\nLocal model\nqwen3-coder:30b\nqwen2.5-coder:7b\ndeepseek-r1:14b\nqwen2.5:7b\nqwen3.5:4b\nReady · qwen3-coder:30b\nContext\nSend",
+  "reviews": [],
+  "continueVisible": true
+}

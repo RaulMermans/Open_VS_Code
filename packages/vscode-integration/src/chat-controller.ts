@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { AgentSessionBridge, IdeContextSnapshot, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
 import { AgentEvent, ConversationTurn, inspectRunRecovery, type RunRecoveryInspection, type ResolvedExecutionProfile } from '@open-vs-code/agent-core';
-import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto } from './chat-protocol.js';
+import { WebviewState, ChatMode, ChatMessage, ChatActivity, WebviewToHostMessage, HostToWebviewMessage, parseWebviewMessage, TerminalReviewDto, FileSearchHit, ReviewRecordDto, MutationSummaryDto, ConversationExecutionStatus, ConversationSummaryDto, RecoveryStatusDto, ModelManagerSnapshot } from './chat-protocol.js';
+import { connectionFromSnapshot, executionModeAvailable } from './model-routing.js';
 import { IntegrationManagerController } from './integrations/integration-manager-controller.js';
 import { ModeService } from './modes/mode-service.js';
 import {
@@ -14,11 +15,13 @@ import {
   type PersistedConversation,
   type StoreIssue,
 } from './conversation-store.js';
-import { DiffReviewController, ReviewStatus } from './diff-review-controller.js';
+import { DiffReviewController, ReviewStatus, isDiffPreviewStatus } from './diff-review-controller.js';
 import { TerminalReviewController, TerminalReviewEntry, formatTerminalTranscript } from './terminal-review-controller.js';
 import {
   activityFromAgentEvent,
   classifyTurnError,
+  formatTerminalTaskMessage,
+  USER_REJECTION_MESSAGE,
   deriveConnectionStatus,
   describeAttachment,
   formatAttachmentInstruction,
@@ -76,16 +79,27 @@ export class ChatController {
   private diffReviewController: DiffReviewController;
   private terminalReviewController: TerminalReviewController;
   private _webviewView?: vscode.WebviewView;
+  private _extraWebviews = new Set<vscode.Webview>();
+  private _modelManagerOpen = false;
   private _webviewMessageDisposable?: { dispose: () => void };
   private _webviewDisposeDisposable?: { dispose: () => void };
   private _activeAbortController?: AbortController;
   private _activeSessionBridge?: AgentSessionBridge;
+  /** Kept after MAX_TURNS_EXCEEDED so Continue uses the same runner. */
+  private _heldSessionBridge?: AgentSessionBridge;
   private _confirmationResolver?: (value: "APPROVE" | "REJECT") => void;
   private _confirmationInFlight = false;
+  private _sendInFlight = false;
   private _connectionInput: ConnectionSnapshotInput = {};
   /** Mutations applied since the last approved verification, for the review ledger. */
   private _appliedSinceVerification: string[] = [];
   private _approvedMutations = new Set<string>();
+  /** Run id of the turn in progress. Reviews created before task.started use the turn stamp. */
+  private _activeRunId?: string;
+  /** Isolates reviews when a turn ends before task.started reports an id. */
+  private _turnStamp?: string;
+  /** PLAN mode was reported by task.started for this turn. */
+  private _planEvidence = false;
   private _lastTerminalSignature = '';
   private _outputChannel?: { appendLine: (s: string) => void; show: (preserveFocus?: boolean) => void; dispose: () => void };
   /** Sprint 7C: visible history for this workspace. Undefined means history is not saved. */
@@ -107,7 +121,7 @@ export class ChatController {
     this.host = host;
     if (typeof arg2 === 'function') {
       this.bridgeFactory = arg2;
-      this.diffReviewController = { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => undefined } as any;
+      this.diffReviewController = { openDiff: async () => {}, registerReview: () => {}, clearReview: () => {}, clearAll: () => {}, setStatus: () => {}, getStatus: () => undefined, closeDiffEditors: () => {} } as any;
       this.terminalReviewController = new TerminalReviewController();
     } else {
       this.diffReviewController = arg2;
@@ -405,7 +419,8 @@ export class ChatController {
       const commandPreview = pc.commandPreview || `${cmdExecutable} ${cmdArgs.join(' ')}`.trim();
       const timeoutMs = typeof pc.timeoutMs === 'number' && pc.timeoutMs > 0 ? pc.timeoutMs : 60000;
       const cwd = pc.cwd.trim();
-      const provenance = pc.scriptName ? `package.json [${pc.scriptName}]` : (pc.provenance || 'Verification Runner');
+      const baseProvenance = pc.scriptName ? `package.json [${pc.scriptName}]` : (pc.provenance || 'Verification Runner');
+      const provenance = typeof pc.sandboxPreview === 'string' && pc.sandboxPreview ? `${baseProvenance} · ${pc.sandboxPreview}` : baseProvenance;
 
       const entry = this.terminalReviewController.registerPreparedCommand({
         confirmationId,
@@ -431,6 +446,7 @@ export class ChatController {
         kind: 'command',
         status: 'pending',
         command: entry.command,
+        scriptName: typeof pc.scriptName === 'string' ? pc.scriptName : undefined,
         verifies: this._appliedSinceVerification.length ? this._appliedSinceVerification.slice() : undefined,
       });
     }
@@ -546,12 +562,23 @@ export class ChatController {
         this.sendState();
         break;
       case 'chat.send':
-        if (this.state.activeTurn) return;
-        if (message.customModeId !== undefined) {
-          this.state.customModeId = message.customModeId;
-          this.syncActiveModeFromManager();
+        if (this.state.activeTurn || this._sendInFlight) return;
+        this._sendInFlight = true;
+        try {
+          if (message.customModeId !== undefined) {
+            this.state.customModeId = message.customModeId;
+            this.syncActiveModeFromManager();
+          }
+          this.state.composerDraft = '';
+          await this.startTurn(message.text, message.mode || this.state.mode);
+        } finally {
+          this._sendInFlight = false;
         }
-        await this.startTurn(message.text, message.mode || this.state.mode);
+        break;
+      case 'chat.draft':
+        if (this.state.composerDraft === message.text) return;
+        this.state.composerDraft = message.text;
+        if (this._extraWebviews.size > 0) this.sendState();
         break;
       case 'chat.cancel':
         this.cancelTurn();
@@ -559,6 +586,12 @@ export class ChatController {
       case 'chat.setMode':
         if (this.state.activeTurn) {
           vscode.window?.showWarningMessage?.("Cannot change execution mode while a task is running.");
+          break;
+        }
+        if (!executionModeAvailable(message.mode, this.state.workspaceTrusted !== false)) {
+          this.state.workspaceTrusted = false;
+          this.host.showError?.("Agent and Debug need a trusted folder. Ask remains available. Trust was not granted automatically.");
+          this.sendState();
           break;
         }
         this.state.mode = message.mode;
@@ -605,6 +638,9 @@ export class ChatController {
       case 'conversation.continueFrom':
         await this.continueFromConversation(message.conversationId);
         break;
+      case 'task.continueBudget':
+        await this.continueTurnBudget(message.conversationId);
+        break;
       case 'conversation.inspectRecovery':
         await this.inspectRecovery(message.conversationId);
         break;
@@ -617,8 +653,8 @@ export class ChatController {
           await this.host.checkConnection();
         } else if (vscode.commands?.executeCommand) {
           await vscode.commands.executeCommand('open-vs-code.checkHaloConnection');
+          await this.refreshConnection();
         }
-        await this.refreshConnection();
         break;
       case 'context.attach':
         await this.attachFromEditor(message.target);
@@ -658,7 +694,10 @@ export class ChatController {
             }
 
             this._confirmationInFlight = true;
-            if (message.action === 'APPROVE' && mutId) this._approvedMutations.add(mutId);
+            if (message.action === 'APPROVE' && mutId) {
+              this._approvedMutations.add(mutId);
+              this.setMutationStatus(mutId, 'APPROVED');
+            }
             this.state.pendingConfirmation.responding = true;
             this.sendState();
             this.state.pendingConfirmation = undefined;
@@ -673,13 +712,13 @@ export class ChatController {
               const tEntry = this.terminalReviewController.getByExecutionId(termId);
               if (tEntry) this.syncTerminalState(tEntry);
             }
+            if (message.action === 'REJECT' && mutId) {
+              await this.setMutationStatus(mutId, 'REJECTED', USER_REJECTION_MESSAGE);
+              this.diffReviewController.clearReview(mutId);
+            }
             this.sendState();
             const resolver = this._confirmationResolver;
             this._confirmationResolver = undefined;
-            if (message.action === 'REJECT' && mutId) {
-              this.setMutationStatus(mutId, 'REJECTED');
-              this.diffReviewController.clearReview(mutId);
-            }
             this._confirmationInFlight = false;
             resolver(message.action);
           }
@@ -726,8 +765,8 @@ export class ChatController {
         }
         break;
       case 'ui.openDiff':
-        if (this.state.pendingConfirmation?.mutationId === message.mutationId) {
-          this.diffReviewController.openDiff(message.mutationId, message.path, message.isCreate);
+        if (isDiffPreviewStatus(this.diffReviewController.getStatus(message.mutationId))) {
+          await this.diffReviewController.openDiff(message.mutationId, message.path, message.isCreate);
         }
         break;
       case 'ui.copyCode':
@@ -736,12 +775,68 @@ export class ChatController {
       case 'ui.openFile':
         await this.openWorkspaceFile(message.path);
         break;
+      case 'ui.selectModel':
+        await vscode.commands.executeCommand('open-vs-code.selectLocalModel');
+        break;
+      case 'ui.applyModel':
+        await vscode.commands.executeCommand('open-vs-code.applyLocalModel', message.name);
+        break;
       case 'ui.openModelConfig':
         if (typeof this.host.openModelConfig === 'function') {
           await this.host.openModelConfig();
         } else if (vscode.commands?.executeCommand) {
           await vscode.commands.executeCommand('open-vs-code.openModelConfig');
         }
+        break;
+      case 'modelManager.open':
+        this._modelManagerOpen = true;
+        if (typeof this.host.refreshGlobalModels === 'function') await this.host.refreshGlobalModels();
+        if (this.state.modelManager) this.state.modelManager = { ...this.state.modelManager, open: true };
+        this.sendState();
+        break;
+      case 'modelManager.close':
+        this._modelManagerOpen = false;
+        if (this.state.modelManager) this.state.modelManager = { ...this.state.modelManager, open: false };
+        this.sendState();
+        break;
+      case 'modelManager.refresh':
+      case 'modelManager.test':
+        if (typeof this.host.checkConnection === 'function') await this.host.checkConnection();
+        else if (typeof this.host.refreshGlobalModels === 'function') await this.host.refreshGlobalModels();
+        else await this.refreshConnection();
+        break;
+      case 'modelManager.setChat':
+        await this.reportModelAction(await this.host.setGlobalChatModel?.(message.name));
+        break;
+      case 'modelManager.setAutocomplete':
+        await this.reportModelAction(await this.host.setGlobalAutocompleteModel?.(message.name));
+        break;
+      case 'modelManager.setEndpoint':
+        await this.reportModelAction(await this.host.setGlobalEndpoint?.(message.endpoint));
+        break;
+      case 'modelManager.setAdvanced':
+        await this.reportModelAction(await this.host.setGlobalAdvancedRouting?.(message.text));
+        break;
+      case 'modelManager.clearAdvanced':
+        if (typeof this.host.clearGlobalAdvancedRouting === 'function') await this.host.clearGlobalAdvancedRouting();
+        else await this.refreshConnection();
+        break;
+      case 'modelManager.suspendOverride':
+        if (typeof this.host.suspendWorkspaceModelOverride === 'function') await this.host.suspendWorkspaceModelOverride();
+        else await this.refreshConnection();
+        break;
+      case 'modelManager.useOverride':
+        await this.reportModelAction(await this.host.useWorkspaceModelOverride?.());
+        break;
+      case 'modelManager.setCredential':
+        if (typeof this.host.setGlobalModelCredential === 'function') await this.host.setGlobalModelCredential(message.token);
+        else await this.refreshConnection();
+        break;
+      case 'ui.manageTrust':
+        if (vscode.commands?.executeCommand) await vscode.commands.executeCommand('workbench.trust.manage');
+        break;
+      case 'ui.openWideChat':
+        if (vscode.commands?.executeCommand) await vscode.commands.executeCommand('open-vs-code.openWideChat');
         break;
       case 'integration.openHub':
         await this.openIntegrationsHub();
@@ -968,9 +1063,14 @@ export class ChatController {
 
   private upsertReview(record: ReviewRecordDto): void {
     const reviews = this.state.reviews || (this.state.reviews = []);
-    const index = reviews.findIndex((r) => r.id === record.id && r.kind === record.kind);
-    if (index >= 0) reviews[index] = { ...reviews[index], ...record };
-    else reviews.push(record);
+    const stamped: ReviewRecordDto = !record.runId && (this._activeRunId || this._turnStamp)
+      ? { ...record, runId: this._activeRunId || this._turnStamp }
+      : record;
+    const index = reviews.findIndex((r) => r.id === stamped.id && r.kind === stamped.kind);
+    if (index >= 0) {
+      const previous = reviews[index]!;
+      reviews[index] = { ...previous, ...stamped, runId: stamped.runId || previous.runId };
+    } else reviews.push(stamped);
     while (reviews.length > MAX_REVIEW_RECORDS) {
       const evictable = reviews.findIndex((r) => r.status !== 'pending' && r.status !== 'running');
       reviews.splice(evictable >= 0 ? evictable : 0, 1);
@@ -982,8 +1082,14 @@ export class ChatController {
   }
 
   /** The one place a mutation's review status changes, so the diff registry and ledger agree. */
-  private setMutationStatus(mutationId: string, status: ReviewStatus, detail?: string): void {
+  private async setMutationStatus(mutationId: string, status: ReviewStatus, detail?: string): Promise<void> {
     this.diffReviewController?.setStatus?.(mutationId, status);
+    if (status === 'REJECTED' || status === 'CANCELLED') {
+      const closer = this.diffReviewController?.closeDiffEditors;
+      if (typeof closer === 'function') {
+        await Promise.resolve(closer.call(this.diffReviewController, mutationId));
+      }
+    }
     const record = this.findReview(mutationId, 'mutation');
     if (!record) return;
     record.status = reviewStatusFromMutation(status);
@@ -1005,13 +1111,17 @@ export class ChatController {
       const entry = this.terminalReviewController.getByExecutionId(record.id);
       // Restored rows have no live entry, so there is no retained output to open.
       record.outputAvailable = Boolean(entry);
-      if (!entry) continue;
-      record.status = reviewStatusFromTerminal(entry.status);
-      record.exitCode = entry.exitCode;
-      record.durationMs = entry.durationMs;
+      if (entry) {
+        record.status = reviewStatusFromTerminal(entry.status);
+        record.exitCode = entry.exitCode;
+        record.durationMs = entry.durationMs;
+      }
       for (const mutationId of record.verifies || []) {
         const change = this.findReview(mutationId, 'mutation');
-        if (change) change.verifiedBy = { id: record.id, command: record.command || '', status: record.status };
+        if (!change) continue;
+        change.verifiedBy = { id: record.id, command: record.command || '', status: record.status };
+        if (change.status === 'applied' && record.status === 'succeeded') change.status = 'verified';
+        else if (change.status === 'verified' && record.status !== 'succeeded') change.status = 'applied';
       }
     }
   }
@@ -1031,11 +1141,11 @@ export class ChatController {
   private async openReviewedChange(mutationId: string): Promise<void> {
     const record = this.findReview(mutationId, 'mutation');
     if (!record?.path) return;
-    if (record.status === 'pending' && this.state.pendingConfirmation?.mutationId === mutationId) {
+    if (isDiffPreviewStatus(this.diffReviewController.getStatus(mutationId))) {
       await this.diffReviewController.openDiff(mutationId, record.path, record.mutation?.operation === 'create');
       return;
     }
-    if (record.status === 'applied') {
+    if (record.status === 'applied' || record.status === 'verified') {
       const uri = this.containedWorkspaceUri(record.path);
       if (uri && vscode.commands?.executeCommand) {
         try {
@@ -1059,6 +1169,8 @@ export class ChatController {
   }
   
   private async startTurn(text: string, mode: ChatMode) {
+    this._heldSessionBridge = undefined;
+    this.state.pendingTurnContinuation = undefined;
     const attached = this.state.attachments.slice();
     const userMsg: ChatMessage = {
       id: this.generateId(),
@@ -1084,6 +1196,9 @@ export class ChatController {
     this.state.activeTurn = true;
     this._turnStartedAt = performance.now();
     this._cancelRequestedAt = 0;
+    this._activeRunId = undefined;
+    this._turnStamp = "turn-" + this.generateId();
+    this._planEvidence = false;
     this.state.activities = [];
     this.state.pendingConfirmation = undefined;
     this.state.activeTerminal = undefined;
@@ -1095,6 +1210,24 @@ export class ChatController {
     this.sendState();
     
     const snapshot = await this.host.getSnapshot();
+    const trusted = this.trustedSnapshot(snapshot);
+    this.state.workspaceTrusted = trusted;
+    if (!executionModeAvailable(mode, trusted)) {
+      this.state.activeTurn = false;
+      this.state.activities = [];
+      this.state.connection = deriveConnectionStatus(this._connectionInput);
+      this.state.messages.push({
+        id: this.generateId(),
+        role: 'system',
+        content: 'Agent and Debug are unavailable until you trust this folder. Ask still works. Use Manage Workspace Trust in the agent panel. This folder was not trusted automatically.',
+        timestamp: Date.now(),
+        status: 'failed',
+      });
+      this.state.lastStatus = 'failed';
+      this.persistConversation();
+      this.sendState();
+      return;
+    }
     const resolvedRoot = resolveWorkspaceRoot(snapshot);
     if (!resolvedRoot) {
       this.state.activeTurn = false;
@@ -1248,6 +1381,9 @@ export class ChatController {
     const isAuthenticated = Boolean(acctState?.user && acctState.status !== "UNAUTHENTICATED");
     const accountScope = isAuthenticated && acctState?.user?.id ? acctState.user.id : undefined;
 
+    if (typeof this.host.ensureModelRoute === 'function') {
+      await this.host.ensureModelRoute();
+    }
     this._activeAbortController = new AbortController();
     this._activeSessionBridge = this.bridgeFactory({
       host: this.host,
@@ -1273,46 +1409,59 @@ export class ChatController {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
       
       this.state.activeTurn = false;
-      this.completePendingActivities(result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
+      const rejected = result.status === 'FAILED' && result.failureReason === 'REJECTED';
+      this.completePendingActivities(rejected ? 'cancelled' : result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
+      if (rejected) this.presentUserRejection();
       this.closeUndecided();
       this.state.pendingConfirmation = undefined;
+      const identity = currentBridge.routeIdentity;
+      if (identity) {
+        this._connectionInput = {
+          ...this._connectionInput,
+          modelLabel: identity.modelLabel,
+          providerLabel: identity.providerId,
+        };
+      }
       if (result.status === 'COMPLETED' && this._connectionInput.inferenceBackend !== 'halo') {
         const { lastError: _ignored, ...rest } = this._connectionInput;
         this._connectionInput = { ...rest, endpointVerified: true };
       }
       this.state.connection = deriveConnectionStatus(this._connectionInput);
       
-      if (result.status === 'CANCELLED') {
-        const cancelMsg: ChatMessage = {
-          id: this.generateId(),
-          role: 'system',
-          content: 'Task cancelled.',
-          timestamp: Date.now(),
-          status: 'cancelled'
+      const runId = this._activeRunId || this._turnStamp;
+      const terminal = formatTerminalTaskMessage({
+        status: result.status,
+        failureReason: result.failureReason,
+        finalAnswer: result.finalAnswer,
+        appliedMutations: result.appliedMutations,
+        reviews: this.state.reviews,
+        runId,
+      });
+      const terminalMsg: ChatMessage = {
+        id: this.generateId(),
+        role: terminal.lastStatus === 'completed' ? 'assistant' : 'system',
+        content: terminal.content,
+        timestamp: Date.now(),
+        status: terminal.lastStatus === 'rejected' ? 'rejected' : terminal.lastStatus === 'failed' ? 'failed' : terminal.lastStatus === 'cancelled' ? 'cancelled' : 'completed',
+      };
+      this.state.messages.push(terminalMsg);
+      this.state.lastStatus = terminal.lastStatus;
+      if (result.failureReason === 'MAX_TURNS_EXCEEDED') {
+        this._heldSessionBridge = currentBridge;
+        this.state.pendingTurnContinuation = {
+          conversationId: currentConversationId,
+          additionalTurns: 8,
+          ...(this._activeRunId || this._turnStamp ? { runId: this._activeRunId || this._turnStamp } : {}),
         };
-        this.state.messages.push(cancelMsg);
-      } else if (result.status === 'FAILED') {
-        const failMsg: ChatMessage = {
-          id: this.generateId(),
-          role: 'system',
-          content: `Task failed: ${result.failureReason}`,
-          timestamp: Date.now(),
-          status: 'failed'
-        };
-        this.state.messages.push(failMsg);
+        this.persistConversation();
+        this.sendState();
+        await this.inspectRecovery(currentConversationId);
       } else {
-        const assistantMsg: ChatMessage = {
-          id: this.generateId(),
-          role: 'assistant',
-          content: result.finalAnswer || (result.status === 'COMPLETED' ? 'Task completed successfully.' : `Task finished with status: ${result.status}`),
-          timestamp: Date.now(),
-          status: 'completed'
-        };
-        this.state.messages.push(assistantMsg);
+        this._heldSessionBridge = undefined;
+        this.state.pendingTurnContinuation = undefined;
+        this.persistConversation();
+        this.sendState();
       }
-      this.state.lastStatus = result.status === 'CANCELLED' ? 'cancelled' : result.status === 'FAILED' ? 'failed' : 'completed';
-      this.persistConversation();
-      this.sendState();
     } catch (e: any) {
       if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
       
@@ -1334,7 +1483,7 @@ export class ChatController {
       
       let errorMessage = `Agent Error: ${e.message}`;
       if (classified === 'missing-config' || (typeof e.message === 'string' && e.message.includes('No model routing configuration found'))) {
-        errorMessage = 'No model configuration found (`.open-vs-code/models.json`). Open VS Code requires a local or self-hosted OpenAI-compatible inference endpoint (e.g. Ollama, vLLM, or HALO). Run the command "Open VS Code: Create Starter Model Configuration" to initialize.';
+        errorMessage = 'No model selected. Open Models in the agent panel and choose a local model. A workspace models.json file is optional and is ignored while this folder is untrusted.';
       } else if (classified === 'disconnected' || (typeof e.message === 'string' && (e.message.includes('ECONNREFUSED') || e.message.includes('fetch failed')))) {
         errorMessage = 'Inference endpoint unreachable. Ensure your local or self-hosted model server (e.g. Ollama or HALO) is running at the configured endpoint.';
       } else if (classified === 'invalid-credentials') {
@@ -1399,8 +1548,13 @@ export class ChatController {
   }
   
   private handleAgentEvent(ev: AgentEvent) {
+    if (ev.type === 'task.started') {
+      const task = (ev.payload as { task?: { id?: unknown; mode?: unknown } } | undefined)?.task;
+      const taskId = typeof task?.id === 'string' ? task.id : ev.taskId;
+      this.recordRunId(taskId);
+      if (task?.mode === 'PLAN') this._planEvidence = true;
+    }
     this.pushActivity(ev);
-    if (ev.type === 'task.started') this.recordRunId((ev.payload as any)?.task?.id);
     if (ev.type === 'tool.requested') {
       this.sendState();
     } else if (ev.type === 'tool.completed' || ev.type === 'tool.failed' || ev.type === 'tool.rejected') {
@@ -1417,6 +1571,13 @@ export class ChatController {
         }
         this.sendState();
       }
+    } else if (ev.type === 'mutation.already_satisfied') {
+      const payload = ev.payload as any;
+      if (payload?.mutationId) {
+        this.setMutationStatus(payload.mutationId, 'ALREADY_SATISFIED', 'Already present — no write.');
+        this.diffReviewController.clearReview(payload.mutationId);
+        this.sendState();
+      }
     } else if (ev.type === 'mutation.failed') {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
@@ -1429,7 +1590,7 @@ export class ChatController {
       const payload = ev.payload as any;
       if (payload?.mutationId) {
         if (this.diffReviewController.getStatus(payload.mutationId) !== 'CANCELLED') {
-          this.setMutationStatus(payload.mutationId, 'REJECTED');
+          this.setMutationStatus(payload.mutationId, 'REJECTED', USER_REJECTION_MESSAGE);
         }
         this.diffReviewController.clearReview(payload.mutationId);
       }
@@ -1570,17 +1731,23 @@ export class ChatController {
     m.statePosts++;
     m.peakMessages = Math.max(m.peakMessages, this.state.messages.length);
     m.peakActivities = Math.max(m.peakActivities, this.state.activities.length);
-    if (!this._webviewView) return;
-    // The transcript is most of each post (up to 200k characters). Agent events and
-    // context changes rarely touch it, so an unchanged transcript is not re-sent.
-    if (this.transcriptUnchanged()) {
-      const { messages: _omitted, ...rest } = this.state;
-      this.sendMessage({ type: 'chat.state', state: rest, transcript: 'unchanged' });
-      return;
+    if (!this._webviewView && this._extraWebviews.size === 0) return;
+    const companion = this._extraWebviews.size > 0;
+    const omitted = this.transcriptUnchanged();
+    if (!omitted) {
+      this._sentTranscript = this.state.messages.map((msg) => ({ ...msg }));
+      m.transcriptPosts++;
     }
-    this._sentTranscript = this.state.messages.map((msg) => ({ ...msg }));
-    m.transcriptPosts++;
-    this.sendMessage({ type: 'chat.state', state: this.state });
+    const post = (webview: vscode.Webview, wideOpen: boolean) => {
+      if (omitted) {
+        const { messages: _omitted, ...rest } = this.state;
+        void webview.postMessage({ type: 'chat.state', state: rest, transcript: 'unchanged', wideOpen });
+        return;
+      }
+      void webview.postMessage({ type: 'chat.state', state: this.state, wideOpen });
+    };
+    if (this._webviewView) post(this._webviewView.webview, companion);
+    for (const webview of this._extraWebviews) post(webview, false);
   }
 
   private transcriptUnchanged(): boolean {
@@ -1606,9 +1773,54 @@ export class ChatController {
     return { ...this._metrics };
   }
   
+  public publishModelManager(snapshot?: ModelManagerSnapshot): void {
+    if (!snapshot) return;
+    this.state.modelManager = { ...snapshot, installedModels: [...snapshot.installedModels], open: this._modelManagerOpen };
+    this.state.workspaceTrusted = snapshot.workspaceTrusted;
+    const fields = connectionFromSnapshot(snapshot);
+    this._connectionInput = {
+      ...this._connectionInput,
+      ...fields,
+      inferenceBackend: this._connectionInput.inferenceBackend || "standalone-local",
+    };
+    this.state.connection = deriveConnectionStatus({
+      ...this._connectionInput,
+      activeTurn: this.state.activeTurn,
+    });
+    this.sendState();
+  }
+
+  public attachWebview(webview: vscode.Webview): { dispose: () => void } {
+    this._extraWebviews.add(webview);
+    const listener = typeof webview.onDidReceiveMessage === 'function'
+      ? webview.onDidReceiveMessage((message: WebviewToHostMessage) => { void this.handleWebviewMessage(message); })
+      : { dispose: () => {} };
+    this.forgetSentTranscript();
+    this.sendState();
+    return {
+      dispose: () => {
+        this._extraWebviews.delete(webview);
+        listener.dispose();
+        this.sendState();
+      },
+    };
+  }
+
+  private async reportModelAction(error: string | undefined): Promise<void> {
+    if (error) this.host.showError?.(error);
+    this._modelManagerOpen = true;
+    if (this.state.modelManager && !this.state.modelManager.open) {
+      this.state.modelManager = { ...this.state.modelManager, open: true };
+      this.sendState();
+    }
+  }
+
   private sendMessage(msg: HostToWebviewMessage) {
     if (this._webviewView) {
       this._webviewView.webview.postMessage(msg);
+    }
+    for (const webview of this._extraWebviews) {
+      void webview.postMessage(msg);
     }
   }
 
@@ -1629,6 +1841,19 @@ export class ChatController {
   private pushActivity(ev: { type?: string; payload?: any }): void {
     const activity = activityFromAgentEvent(ev, this.generateId());
     if (!activity) return;
+    if (activity.kind === 'model' && this._planEvidence) activity.planning = true;
+    if (activity.kind === 'verification') {
+      for (let i = this.state.activities.length - 1; i >= 0; i--) {
+        const prior = this.state.activities[i];
+        if (prior?.kind !== 'verification') continue;
+        if (prior.status !== 'pending') break;
+        if (activity.status !== 'pending') prior.status = activity.status;
+        prior.label = activity.label;
+        if (activity.summary) prior.summary = activity.summary;
+        if (activity.runId) prior.runId = activity.runId;
+        return;
+      }
+    }
     if (activity.status !== 'pending' && (activity.kind === 'tool' || activity.kind === 'model')) {
       for (let i = this.state.activities.length - 1; i >= 0; i--) {
         const prior = this.state.activities[i];
@@ -1636,6 +1861,9 @@ export class ChatController {
         prior.status = activity.status;
         prior.label = activity.label;
         prior.toolName = activity.toolName || prior.toolName;
+        if (activity.summary) prior.summary = activity.summary;
+        if (activity.runId) prior.runId = activity.runId;
+        if (activity.planning) prior.planning = true;
         return;
       }
     }
@@ -1659,8 +1887,8 @@ export class ChatController {
       resolver('REJECT');
     }
     for (const record of this.state.reviews || []) {
-      if (record.kind !== 'mutation' || record.status !== 'pending') continue;
-      if (this._approvedMutations.has(record.id)) {
+      if (record.kind !== 'mutation' || (record.status !== 'pending' && record.status !== 'approved')) continue;
+      if (this._approvedMutations.has(record.id) || record.status === 'approved') {
         this.setMutationStatus(record.id, 'FAILED', 'Approved, but the engine reported no applied result. Check the file before retrying.');
       } else {
         this.setMutationStatus(record.id, 'CANCELLED', 'Turn ended before a decision — nothing was written.');
@@ -1671,6 +1899,32 @@ export class ChatController {
   private completePendingActivities(status: ChatActivity['status']): void {
     for (const activity of this.state.activities) {
       if (activity.status === 'pending') activity.status = status;
+    }
+  }
+
+  /** User rejection is a decision. Keep permission ids; only relabel the timeline. */
+  private presentUserRejection(): void {
+    for (const activity of this.state.activities) {
+      if (activity.kind === 'task' && (activity.status === 'failed' || activity.label === 'Failed')) {
+        activity.status = 'cancelled';
+        activity.label = 'Change rejected';
+      }
+      if (activity.kind === 'approval' && (activity.status === 'failed' || activity.label === 'Permission denied')) {
+        activity.status = 'cancelled';
+        activity.label = 'Change rejected';
+      }
+      if (activity.kind === 'mutation' && activity.status === 'failed') {
+        activity.status = 'cancelled';
+        activity.label = 'Change rejected';
+      }
+    }
+    if (!this.state.activities.some((activity) => activity.label === 'Change rejected')) {
+      this.state.activities.push({
+        id: this.generateId(),
+        kind: 'task',
+        label: 'Change rejected',
+        status: 'cancelled',
+      });
     }
   }
 
@@ -1810,6 +2064,13 @@ export class ChatController {
 
   private recordRunId(raw: unknown): void {
     if (typeof raw !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(raw)) return;
+    this._activeRunId = raw;
+    const stamp = this._turnStamp;
+    for (const record of this.state.reviews || []) {
+      if ((record.status === 'pending' || record.status === 'running') && (!record.runId || record.runId === stamp)) {
+        record.runId = raw;
+      }
+    }
     if (this._meta.runIds.includes(raw)) return;
     this._meta.runIds = [...this._meta.runIds, raw].slice(-MAX_RUN_IDS);
     this.persistConversation();
@@ -1832,6 +2093,9 @@ export class ChatController {
       reviews: (this.state.reviews || []).map((r) => ({ ...r })),
       lastStatus: this.state.lastStatus || 'idle',
       runIds: this._meta.runIds.slice(),
+      ...(this.state.pendingTurnContinuation
+        ? { pendingTurnContinuation: { additionalTurns: this.state.pendingTurnContinuation.additionalTurns, ...(this.state.pendingTurnContinuation.runId ? { runId: this.state.pendingTurnContinuation.runId } : {}) } }
+        : {}),
     };
     let started = 0;
     this._persistChain = this._persistChain
@@ -1862,10 +2126,14 @@ export class ChatController {
   /** Drops everything that belongs to a live turn: decisions and links to applied changes. Pending diff content is cleared per mutation where it is decided. */
   private resetTransientState(): void {
     this._confirmationInFlight = false;
+    this._sendInFlight = false;
     this._confirmationResolver = undefined;
     this._appliedSinceVerification = [];
     this._approvedMutations.clear();
     this._lastTerminalSignature = '';
+    this._activeRunId = undefined;
+    this._turnStamp = undefined;
+    this._planEvidence = false;
   }
 
   private startFreshConversation(seed: ChatMessage[] = []): void {
@@ -1883,6 +2151,7 @@ export class ChatController {
       activities: [],
       context: this.state.context,
       attachments: [],
+      composerDraft: '',
       activeTurn: false,
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: [],
@@ -1914,9 +2183,19 @@ export class ChatController {
       activities: [],
       context: this.state.context,
       attachments: record.attachments,
+      composerDraft: '',
       activeTurn: false,
       connection: deriveConnectionStatus(this._connectionInput),
       reviews: record.reviews,
+      ...(record.pendingTurnContinuation
+        ? {
+            pendingTurnContinuation: {
+              conversationId: record.id,
+              additionalTurns: record.pendingTurnContinuation.additionalTurns,
+              ...(record.pendingTurnContinuation.runId ? { runId: record.pendingTurnContinuation.runId } : {}),
+            },
+          }
+        : {}),
     };
     this.syncActiveModeFromManager();
     this.forgetSentTranscript();
@@ -2068,9 +2347,111 @@ export class ChatController {
         }
       }
     }
+    const pending = this.state.pendingTurnContinuation;
+    if (pending && pending.conversationId === id) {
+      view.turnBudgetContinue = {
+        additionalTurns: pending.additionalTurns,
+        ...(pending.runId ? { runId: pending.runId } : {}),
+      };
+    }
     if (this.state.conversationId === id || !this.state.activeTurn) {
       this.state.recovery = view;
       this.sendState();
+    }
+  }
+
+  /**
+   * Continues the same coding run after MAX_TURNS_EXCEEDED.
+   * Writes still require a new approval. Does not replay the original prompt as a new task.
+   */
+  public async continueTurnBudget(id: string): Promise<void> {
+    if (id !== this.state.conversationId) return;
+    if (this.state.activeTurn) {
+      this.refuseWhileBusy('continue this run');
+      return;
+    }
+    const pending = this.state.pendingTurnContinuation;
+    if (!pending || pending.conversationId !== id) return;
+    const snapshot = await this.host.getSnapshot();
+    const resolvedRoot = resolveWorkspaceRoot(snapshot);
+    if (!resolvedRoot) return;
+    const bridge = this._heldSessionBridge || this.bridgeFactory({
+      host: this.host,
+      workspaceRoot: resolvedRoot,
+      mode: this.state.mode,
+    } as any);
+    this._activeAbortController = new AbortController();
+    this._activeSessionBridge = bridge;
+    this.state.activeTurn = true;
+    this.state.lastStatus = 'running';
+    this.state.pendingTurnContinuation = undefined;
+    this.state.recovery = undefined;
+    this.state.connection = deriveConnectionStatus({ ...this._connectionInput, activeTurn: true });
+    this.persistConversation();
+    this.sendState();
+    const currentConversationId = this.state.conversationId;
+    const currentAbortController = this._activeAbortController;
+    const currentBridge = bridge;
+    try {
+      const result = await currentBridge.continueTurnBudget(pending.runId, currentAbortController.signal, (ev) => {
+        if (this.state.conversationId === currentConversationId && this.state.activeTurn) {
+          this.handleAgentEvent(ev);
+        }
+      });
+      if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
+      this.state.activeTurn = false;
+      const rejected = result.status === 'FAILED' && result.failureReason === 'REJECTED';
+      this.completePendingActivities(rejected ? 'cancelled' : result.status === 'FAILED' ? 'failed' : result.status === 'CANCELLED' ? 'cancelled' : 'completed');
+      this.closeUndecided();
+      this.state.pendingConfirmation = undefined;
+      const runId = this._activeRunId || this._turnStamp;
+      const terminal = formatTerminalTaskMessage({
+        status: result.status,
+        failureReason: result.failureReason,
+        finalAnswer: result.finalAnswer,
+        appliedMutations: result.appliedMutations,
+        reviews: this.state.reviews,
+        runId,
+      });
+      this.state.messages.push({
+        id: this.generateId(),
+        role: terminal.lastStatus === 'completed' ? 'assistant' : 'system',
+        content: terminal.content,
+        timestamp: Date.now(),
+        status: terminal.lastStatus === 'rejected' ? 'rejected' : terminal.lastStatus === 'failed' ? 'failed' : terminal.lastStatus === 'cancelled' ? 'cancelled' : 'completed',
+      });
+      this.state.lastStatus = terminal.lastStatus;
+      if (result.failureReason === 'MAX_TURNS_EXCEEDED') {
+        this._heldSessionBridge = currentBridge;
+        this.state.pendingTurnContinuation = {
+          conversationId: currentConversationId,
+          additionalTurns: 8,
+          ...(pending.runId ? { runId: pending.runId } : {}),
+        };
+        await this.inspectRecovery(currentConversationId);
+      } else {
+        this._heldSessionBridge = undefined;
+        this.state.pendingTurnContinuation = undefined;
+      }
+      this.persistConversation();
+      this.sendState();
+    } catch (e: any) {
+      if (this.state.conversationId !== currentConversationId || !this.state.activeTurn) return;
+      this.state.activeTurn = false;
+      this.completePendingActivities('failed');
+      this.state.messages.push({
+        id: this.generateId(),
+        role: 'system',
+        content: `Could not continue this run: ${e?.message || 'unknown error'}`,
+        timestamp: Date.now(),
+        status: 'failed',
+      });
+      this.state.lastStatus = 'failed';
+      this.persistConversation();
+      this.sendState();
+    } finally {
+      if (this._activeAbortController === currentAbortController) this._activeAbortController = undefined;
+      if (this._activeSessionBridge === currentBridge) this._activeSessionBridge = undefined;
     }
   }
 }

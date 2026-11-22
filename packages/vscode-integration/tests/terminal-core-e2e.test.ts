@@ -1361,7 +1361,7 @@ export const runTerminalUxEvaluation = async (fixtures: ReturnType<typeof freshT
       terminalExitCode: failReviewEntry.exitCode,
     },
     expected: {
-      runnerStatus: "COMPLETED",
+      runnerStatus: "FAILED",
       hasStderrEvent: true,
       stderrChunk: "failed in test",
       terminalStatus: "FAILED",

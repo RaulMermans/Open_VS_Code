@@ -34,8 +34,12 @@ test("CLI-WF-1: --workflow drives an eligible BUILD task PLAN → IMPLEMENT → 
 
 test("CLI-WF-2: without --workflow the same task takes the direct path", async () => {
   const root = await workspace()
-  const provider = new ScriptedModelProvider([{ model: "s", message: { role: "assistant", content: "Done" } }])
+  const provider = new ScriptedModelProvider([
+    { model: "s", message: { role: "assistant", content: "Done" } },
+    { model: "s", message: { role: "assistant", content: "Done" } },
+    { model: "s", message: { role: "assistant", content: "Done" } },
+  ])
   const result = await runCLI({ mode: "BUILD", instruction: "Add a subtract function to src/math.ts", workspaceRoot: root, json: true, provider, mockApproval: "APPROVE" }) as any
   assert.equal(result.workflow, undefined)
-  assert.equal(result.status, "COMPLETED")
+  assert.notEqual(result.status, "COMPLETED")
 })

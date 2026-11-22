@@ -95,6 +95,14 @@ export function evaluateL0(
           metadata: { appliedMutationsCount: appliedMutations.length },
         })
         recommendedAction = "Run verification suite before completing"
+      } else if (lastVerification.status === "EXECUTION_ERROR") {
+        // Verification could not run: completion is not blocked by a code revision; the coding gate reports it
+        // truthfully as unverified.
+        decision = "CONTINUE"
+        completionConfidence = 0.3
+        verificationCoverage = 0.0
+        signals.push({ code: "VERIFICATION_UNAVAILABLE", message: "Verification could not run; the change is unverified", severity: "WARNING" })
+        recommendedAction = "Report verification as blocked"
       } else if (lastVerification.status !== "PASS") {
         // T-4406: Verification failed
         decision = "REVISE"
@@ -147,7 +155,14 @@ export function evaluateL0(
       recommendedAction = "Allow completion"
     }
   } else if (checkpoint === "VERIFICATION_RESULT" && lastVerification) {
-    if (lastVerification.status === "PASS") {
+    if (lastVerification.status === "EXECUTION_ERROR") {
+      // The command could not run (environment, sandbox, tooling): not a code defect, so no code revision is asked.
+      verificationCoverage = 0.0
+      progress = 0.5
+      decision = "CONTINUE"
+      signals.push({ code: "VERIFICATION_UNAVAILABLE", message: "Verification could not run in this environment", severity: "WARNING" })
+      recommendedAction = "Continue; report verification as blocked"
+    } else if (lastVerification.status === "PASS") {
       verificationCoverage = 1.0
       progress = 1.0
       decision = "CONTINUE"

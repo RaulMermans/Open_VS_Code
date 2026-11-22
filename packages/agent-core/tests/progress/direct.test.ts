@@ -47,12 +47,15 @@ function runner(steps: ConstructorParameters<typeof ScriptedModelProvider>[0], e
 
 const input = (maxTurns = 15) => ({ task, workspaceRoot, maxTurns, contextBudget, projectInstructions: [] })
 
-test("NP-D-01: a non-consecutive A/B/A/B loop runs to the turn limit without the guard and is stopped early with it", async () => {
+test("NP-D-01: a non-consecutive A/B/A/B loop is bounded by ALREADY_OBSERVED without the guard and stopped with recovery by it", async () => {
   const step = cycling(["README.md", "src/index.ts"])
   const baseline = runner(Array.from({ length: 15 }, () => step), false)
   const off = await baseline.runner.run(input())
-  assert.equal(off.failureReason, "MAX_TURNS_EXCEEDED", "the consecutive-repeat guard cannot see the cycle")
-  assert.equal(off.turns, 15)
+  // Without the direct guard, unchanged re-reads are answered ALREADY_OBSERVED and bounded (Sprint 25).
+  assert.equal(off.failureReason, "NON_PROGRESS")
+  assert.ok(off.turns < 15, `stopped after ${off.turns} turns`)
+  assert.ok(off.toolCalls.slice(2).every((call) => call.alreadyObserved === true))
+  assert.match(off.finalAnswer ?? "", /returned no new information/)
   assert.equal(off.nonProgress, undefined)
 
   const step2 = cycling(["README.md", "src/index.ts"])

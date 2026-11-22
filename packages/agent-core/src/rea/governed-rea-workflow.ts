@@ -780,10 +780,11 @@ export class GovernedReaWorkflow {
 
           if (this.#autoApprove) {
             const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);
-            if (mutResult.status !== "APPLIED") {
+            // ALREADY_SATISFIED: the file already holds exactly the intended bytes; no write was needed.
+            if (mutResult.status !== "APPLIED" && mutResult.status !== "ALREADY_SATISFIED") {
               this.#status = "BLOCKED";
               this.#blocker = "STAGE_FAILED";
-              this.#blockerDetail = `Failed to apply mutation on ${prep.path}: ${mutResult.error}`;
+              this.#blockerDetail = `Failed to apply mutation on ${prep.path}: ${mutResult.error ?? mutResult.status}`;
               this.#recordStageRecord("implementation", "BLOCKED", this.#blockerDetail);
               return this.#result();
             }
@@ -820,8 +821,8 @@ export class GovernedReaWorkflow {
                 }
               }
               const mutResult = await this.#mutationEngine.applyPreparedMutation(prep);
-              if (mutResult.status !== "APPLIED") {
-                throw new Error(`Failed to apply mutation on ${prep.path}: ${mutResult.error}`);
+              if (mutResult.status !== "APPLIED" && mutResult.status !== "ALREADY_SATISFIED") {
+                throw new Error(`Failed to apply mutation on ${prep.path}: ${mutResult.error ?? mutResult.status}`);
               }
               this.#recordStageTool("implementation", prep.operation === "create" ? "create_file" : "apply_patch");
               this.#appliedFiles.push({ ...file, operation: prep.operation });
