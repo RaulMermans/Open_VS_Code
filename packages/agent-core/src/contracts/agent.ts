@@ -35,6 +35,12 @@ export type AgentFailureReason =
   | "NON_PROGRESS"
   | "CANCELLED"
   | "INTERNAL_ERROR"
+  | "INCOMPLETE"
+  | "REJECTED"
+  | "VERIFICATION_FAILED"
+  | "VERIFICATION_UNAVAILABLE"
+  /** Verification cannot run until the workspace is set up (tools or dependencies missing). Not a code defect. */
+  | "ENVIRONMENT_SETUP_REQUIRED"
 
 export interface AgentContextDiagnostic {
   readonly turn: number
@@ -49,6 +55,9 @@ export interface AgentToolCallRecord {
   readonly name: string
   readonly outcome: AgentToolCallOutcome
   readonly truncated?: boolean
+  readonly arguments?: Readonly<Record<string, unknown>>
+  /** ALREADY_OBSERVED: answered from an earlier identical lookup; nothing was run again. */
+  readonly alreadyObserved?: boolean
 }
 
 export interface MutationReviewPayload {
@@ -150,4 +159,8 @@ export interface AgentResult {
   readonly recoveryPlan?: import("../recovery/contracts.ts").RecoveryPlan
   /** Sprint 5C: bounded non-progress evidence, present only when the progress monitor is enabled. */
   readonly nonProgress?: import("../progress/direct-guard.ts").DirectNonProgressEvidence
+  /** Applied file mutations recorded by the runner or repair integration. Not parsed from the final answer. */
+  /** Why the run ended: earliest failure, applied edits, verification and recovery state (failed or incomplete runs). */
+  readonly diagnostics?: import("../agent/run-diagnostics.ts").RunDiagnostics
+  readonly appliedMutations?: readonly { readonly path: string; readonly status: "APPLIED" }[]
 }

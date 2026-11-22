@@ -1,0 +1,6 @@
+packages/client-python/.open-vs-code/model-performance-ledger.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794849074816/checkpoints/HEAD.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794849074816/checkpoints/cp_00000001_cp_4b17f4b7.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794849074816/checkpoints/cp_00000002_cp_79169cfb.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794849074816/checkpoints/cp_00000003_cp_74152f59.json
+packages/client-python/.open-vs-code/recovery/runs/session-1794849074816/operations.jsonl

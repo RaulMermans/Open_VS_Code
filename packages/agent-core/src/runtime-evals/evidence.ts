@@ -62,6 +62,19 @@ function truncateBounded(text: string, maxLength = MAX_SUMMARY_SNIPPET_LENGTH): 
   return sanitized.slice(0, maxLength) + " [TRUNCATED]"
 }
 
+/** Keep the assertion, not the reporter header. Node's TAP header can fill a short excerpt before the expected value appears. */
+export function verificationFailureExcerpt(output: string, maxLength = MAX_SUMMARY_SNIPPET_LENGTH): string {
+  const sanitized = redactRuntimeEvalSecrets(output).trim()
+  if (!sanitized) return ""
+  const errorMarker = sanitized.search(/AssertionError|Expected values|ERR_ASSERTION|not strictly equal|is not defined|ReferenceError|TypeError|SyntaxError|\berror:/i)
+  const summaryMarker = sanitized.search(/# fail [1-9]/i)
+  const marker = errorMarker >= 0 ? errorMarker : summaryMarker
+  const start = marker >= 0 ? Math.max(0, marker - 80) : Math.max(0, sanitized.length - maxLength)
+  const end = Math.min(sanitized.length, start + maxLength)
+  const slice = sanitized.slice(start, end).trim()
+  return start > 0 || end < sanitized.length ? `${slice} [TRUNCATED]` : slice
+}
+
 export interface RuntimeEvidenceCollectorOptions {
   readonly runId: string
   readonly taskGoal: string
@@ -82,6 +95,7 @@ export class RuntimeEvidenceCollector {
   readonly #toolOutcomes: BoundedActionRecord[] = []
   readonly #mutationOutcomes: BoundedMutationOutcome[] = []
   readonly #verificationOutcomes: BoundedVerificationOutcome[] = []
+  #sequence = 0
   readonly #securitySignals: BoundedSecuritySignal[] = []
   readonly #unresolvedFailures = new Map<string, BoundedFailureRecord>()
   readonly #routeSignals: BoundedRouteSignal[] = []
@@ -219,8 +233,9 @@ export class RuntimeEvidenceCollector {
   recordMutationOutcome(mutation: {
     mutationId: string
     path: string
-    status: "PREPARED" | "APPLIED" | "FAILED" | "STALE"
+    status: "PREPARED" | "APPLIED" | "ALREADY_SATISFIED" | "FAILED" | "STALE"
     diffSummary?: string
+    operation?: "create" | "patch" | "delete"
   }): void {
     this.#mutationCount++
     if (mutation.status === "APPLIED") {
@@ -233,10 +248,21 @@ export class RuntimeEvidenceCollector {
       status: mutation.status,
       diffSummary: truncateBounded(mutation.diffSummary ?? "", 300),
       timestamp: new Date().toISOString(),
+      sequence: ++this.#sequence,
+      ...(mutation.operation ? { operation: mutation.operation } : {}),
     }
 
     this.#appendBounded(this.#mutationOutcomes, record, MAX_MUTATION_OUTCOMES)
     this.#markUpdated()
+  }
+
+  /** A later successful edit recovers an earlier tool-contract mistake. Test failures stay unresolved. */
+  resolveRecoveredToolContractFailures(): void {
+    for (const [key, failure] of this.#unresolvedFailures) {
+      if (/UNKNOWN_TOOL|FILE_ALREADY_EXISTS|INVALID_PATH|FILE_NOT_FOUND|already exists|Unknown tool:|outside workspace|path traversal/i.test(failure.summary)) {
+        this.#unresolvedFailures.delete(key)
+      }
+    }
   }
 
   recordVerificationOutcome(verification: {
@@ -247,11 +273,14 @@ export class RuntimeEvidenceCollector {
     totalTestCount?: number
     stdout?: string
     stderr?: string
+    /** Compact reporter summary. Preferred over the raw stream, which may start with toolchain noise. */
+    diagnosis?: string
   }): void {
     this.#verificationCount++
-    const combinedOutput = `${verification.stdout ?? ""}\n${verification.stderr ?? ""}`
-    const failureSummary = verification.status !== "PASS" ? truncateBounded(combinedOutput, 300) : undefined
-    const failureHash = failureSummary ? deterministicHash(`${verification.action}:${verification.status}:${failureSummary}`) : undefined
+    const combinedOutput = `${verification.diagnosis ? `${verification.diagnosis}\n` : ""}${verification.stdout ?? ""}\n${verification.stderr ?? ""}`
+    const failureSummary = verification.status !== "PASS" ? verificationFailureExcerpt(combinedOutput, 500) : undefined
+    // An empty excerpt is still a failure: identical silent failures must hash identically so repeats are detected.
+    const failureHash = failureSummary !== undefined ? deterministicHash(`${verification.action}:${verification.status}:${verification.failedTestCount ?? ""}:${failureSummary}`) : undefined
 
     const record: BoundedVerificationOutcome = {
       executionId: verification.executionId,
@@ -262,6 +291,7 @@ export class RuntimeEvidenceCollector {
       failureSummary,
       failureHash,
       timestamp: new Date().toISOString(),
+      sequence: ++this.#sequence,
     }
 
     // Progress signal comparison with previous verification

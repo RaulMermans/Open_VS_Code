@@ -19,6 +19,7 @@ import { RecoveryController } from "./recovery-controller.ts"
 import { getProcessEpochId } from "./process-epoch.ts"
 import { observeFilePath } from "./reconciliation.ts"
 import { MutationEngine } from "../tools/mutation-engine.ts"
+import { excludeRuntimeArtifactsFromSourceControl } from "./source-control-exclude.ts"
 
 import type { FileHandle } from "node:fs/promises"
 
@@ -46,6 +47,7 @@ export class CheckpointCoordinator {
     this.#workspaceRoot = options.workspaceRoot
     this.#storageRoot = options.storageRoot ?? `${options.workspaceRoot}/.open-vs-code/recovery`
     this.#mutationEngine = options.mutationEngine
+    excludeRuntimeArtifactsFromSourceControl(options.workspaceRoot)
 
     this.#checkpointStore = new CheckpointStore({
       storageRoot: this.#storageRoot,

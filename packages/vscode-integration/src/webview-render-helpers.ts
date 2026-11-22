@@ -80,7 +80,9 @@ function docOf(doc?: any): any {
 
 function roleLabel(role: string, status?: string, inherited?: boolean): string {
   var label = role === "assistant" ? "Assistant" : role === "system" ? "System" : "You";
-  if (status && status !== "completed" && status !== "pending") label += " · " + status;
+  if (status && status !== "completed" && status !== "pending") {
+    label += " · " + (status === "rejected" ? "Change rejected" : status);
+  }
   if (inherited) label += " · from an earlier conversation";
   return label;
 }
@@ -144,6 +146,7 @@ export function renderChatMessage(
 }
 
 function fillMessageBody(body: any, content: string, d: any, postMessage?: (msg: any) => void): void {
+  if (renderOutcomeBody(body, content, d, postMessage)) return;
   var segments = parseMessageSegments(content);
   var first = segments[0];
   if (segments.length === 1 && first.kind === "text") {
@@ -313,36 +316,356 @@ export function syncTranscript(
   return { created: created, updated: updated, removed: removed };
 }
 
+function activityCategory(act: any): string {
+  var kind = String((act && act.kind) || "");
+  var tool = String((act && act.toolName) || "");
+  var label = String((act && act.label) || "");
+  if (kind === "approval" || label.indexOf("Waiting for approval") === 0 || label.indexOf("Approval") === 0) return "approval";
+  if (kind === "verification") return "checks";
+  if (kind === "mutation") return "edit";
+  if (kind === "tool") {
+    if (tool === "read_file" || tool === "read_file_range") return "read";
+    return "explore";
+  }
+  if (kind === "context") return "understand";
+  if (kind === "model") return act && act.planning ? "plan" : "consult";
+  if (kind === "task") {
+    if (label === "Starting task") return "understand";
+    return "outcome";
+  }
+  return "understand";
+}
+
+function activityGroupStatus(items: any[]): string {
+  var pending = false;
+  var failed = false;
+  var cancelled = false;
+  var interrupted = false;
+  for (var i = 0; i < items.length; i++) {
+    var status = items[i] && items[i].status;
+    if (status === "pending" || status === "running") pending = true;
+    else if (status === "failed") failed = true;
+    else if (status === "cancelled") cancelled = true;
+    else if (status === "interrupted") interrupted = true;
+  }
+  if (failed) return "failed";
+  if (pending) return "pending";
+  if (cancelled) return "cancelled";
+  if (interrupted) return "interrupted";
+  return "completed";
+}
+
+function outcomeTitle(items: any[]): string {
+  var last = items[items.length - 1] || {};
+  var label = String(last.label || "");
+  if (label === "Change rejected" || last.status === "rejected") return "Change rejected";
+  if (last.status === "failed" || label === "Failed") return "Failed";
+  if (last.status === "cancelled" || label === "Cancelled") return "Cancelled";
+  if (last.status === "interrupted" || label === "Interrupted") return "Interrupted";
+  if (label.toLowerCase().indexOf("blocked") !== -1) return "Blocked";
+  if (label === "Completed" || last.status === "completed") return "Completed";
+  return label || "Completed";
+}
+
+function groupRetryNote(items: any[]): string {
+  var failed = false;
+  var completed = false;
+  for (var i = 0; i < items.length; i++) {
+    var status = items[i] && items[i].status;
+    if (status === "failed") failed = true;
+    if (status === "completed") completed = true;
+  }
+  return failed && completed ? " · retry recorded" : "";
+}
+
+function activityFiles(items: any[]): string[] {
+  var seen: Record<string, boolean> = {};
+  var paths: string[] = [];
+  for (var i = 0; i < items.length; i++) {
+    var act = items[i];
+    var kind = act && act.kind;
+    if (kind !== "tool" && kind !== "mutation") continue;
+    var summary = act && act.summary;
+    if (typeof summary !== "string") continue;
+    var path = summary.trim();
+    if (!path || path.length > 80 || path.indexOf("\n") !== -1) continue;
+    if (!seen[path]) {
+      seen[path] = true;
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+function fileCountPhrase(count: number, inspected: boolean): string {
+  if (count <= 0) return "";
+  return " — " + String(count) + " " + (count === 1 ? "file" : "files") + (inspected ? " inspected" : "");
+}
+
+function groupTitle(category: string, items: any[]): string {
+  var status = activityGroupStatus(items);
+  var files = activityFiles(items);
+  var retry = groupRetryNote(items);
+  if (category === "approval") {
+    if (status === "pending") return "Waiting for approval";
+    if (status === "failed") return "Permission denied";
+    if (status === "cancelled") return "Approval rejected";
+    if (status === "interrupted") return "Approval interrupted";
+    return "Approval granted";
+  }
+  if (category === "outcome") return outcomeTitle(items);
+  if (category === "checks") {
+    if (status === "pending") return "Verifying";
+    if (status === "failed") return "Verification failed" + retry;
+    if (status === "cancelled") return "Verification cancelled";
+    if (status === "interrupted") return "Verification interrupted";
+    return "Verification finished";
+  }
+  if (category === "edit") {
+    var rejectedEdit = false;
+    for (var e = 0; e < items.length; e++) {
+      if (items[e] && items[e].label === "Change rejected") rejectedEdit = true;
+    }
+    var editBase = status === "pending" ? "Implementing changes" : status === "failed" ? "Edit failed" : rejectedEdit ? "Change rejected" : status === "cancelled" ? "Edit cancelled" : status === "interrupted" ? "Edit interrupted" : "Implemented changes";
+    return editBase + fileCountPhrase(files.length, false) + (status === "failed" ? retry : "");
+  }
+  if (category === "explore") {
+    var exploreBase = status === "failed" ? "Exploring repository failed" : status === "cancelled" ? "Exploring repository cancelled" : status === "interrupted" ? "Exploring repository interrupted" : status === "pending" ? "Exploring repository" : "Explored repository";
+    return exploreBase + fileCountPhrase(files.length, true) + (status === "failed" ? retry : "");
+  }
+  if (category === "read") {
+    var readBase = status === "failed" ? "Reading files failed" : status === "cancelled" ? "Reading files cancelled" : status === "interrupted" ? "Reading files interrupted" : status === "pending" ? "Reading files" : "Read files";
+    return readBase + fileCountPhrase(files.length, false) + (status === "failed" ? retry : "");
+  }
+  if (category === "consult") {
+    if (status === "failed") return "Model request failed" + retry;
+    if (status === "cancelled") return "Thinking cancelled";
+    if (status === "interrupted") return "Thinking interrupted";
+    if (status === "pending") return "Thinking";
+    return "Model replied";
+  }
+  if (category === "plan") {
+    if (status === "failed") return "Planning failed";
+    if (status === "cancelled") return "Planning cancelled";
+    if (status === "interrupted") return "Planning interrupted";
+    return "Planning changes";
+  }
+  if (category === "understand") return "Understanding the request";
+  if (category === "review") return "Reviewing results";
+  return "Working";
+}
+
+function groupDetail(items: any[]): string {
+  var names: string[] = [];
+  for (var i = 0; i < items.length; i++) {
+    var summary = items[i] && items[i].summary;
+    if (typeof summary !== "string" || !summary || summary.length > 80) continue;
+    if (names.indexOf(summary) === -1) names.push(summary);
+  }
+  if (!names.length) return "";
+  var shown = names.slice(0, 3).join(", ");
+  if (names.length > 3) shown += " +" + String(names.length - 3);
+  return shown;
+}
+
+function pushActivityGroup(summarized: Array<{ category: string; title: string; status: string; count: number; detail: string }>, category: string, items: any[]): void {
+  var showPaths = category === "edit" || category === "read" || category === "explore";
+  summarized.push({
+    category: category,
+    title: groupTitle(category, items),
+    status: activityGroupStatus(items),
+    count: items.length,
+    detail: showPaths ? groupDetail(items) : "",
+  });
+}
+
+export function summarizeActivities(activities: any[]): Array<{ category: string; title: string; status: string; count: number; detail: string }> {
+  var summarized: Array<{ category: string; title: string; status: string; count: number; detail: string }> = [];
+  var list = activities || [];
+  var segments: Array<{ items: any[]; outcome: any }> = [];
+  var segment: any[] = [];
+  for (var n = 0; n < list.length; n++) {
+    var item = list[n];
+    if (activityCategory(item) === "outcome") {
+      segments.push({ items: segment, outcome: item });
+      segment = [];
+    } else {
+      segment.push(item);
+    }
+  }
+  if (segment.length) segments.push({ items: segment, outcome: null });
+  for (var s = 0; s < segments.length; s++) {
+    var part = segments[s];
+    if (!part) continue;
+    var buckets: Array<{ category: string; items: any[] }> = [];
+    for (var i = 0; i < part.items.length; i++) {
+      var act = part.items[i];
+      var category = activityCategory(act);
+      var bucket = null;
+      for (var b = 0; b < buckets.length; b++) {
+        if (buckets[b] && buckets[b].category === category) bucket = buckets[b];
+      }
+      if (bucket) bucket.items.push(act);
+      else buckets.push({ category: category, items: [act] });
+    }
+    for (var g = 0; g < buckets.length; g++) {
+      var group = buckets[g];
+      if (group) pushActivityGroup(summarized, group.category, group.items);
+    }
+    if (part.outcome) pushActivityGroup(summarized, "outcome", [part.outcome]);
+  }
+  return compressTrivialTimeline(summarized);
+}
+
+function compressTrivialTimeline(groups: Array<{ category: string; title: string; status: string; count: number; detail: string }>): Array<{ category: string; title: string; status: string; count: number; detail: string }> {
+  var substantial = false;
+  for (var i = 0; i < groups.length; i++) {
+    var category = groups[i] && groups[i].category;
+    if (category === "read" || category === "explore" || category === "edit" || category === "checks" || category === "approval" || category === "plan" || category === "review") {
+      substantial = true;
+    }
+  }
+  if (substantial) return groups;
+  var kept: Array<{ category: string; title: string; status: string; count: number; detail: string }> = [];
+  for (var j = 0; j < groups.length; j++) {
+    var group = groups[j];
+    if (!group) continue;
+    if (group.category === "outcome" || group.status === "failed" || group.status === "cancelled" || group.status === "interrupted") kept.push(group);
+  }
+  return kept.length ? kept : groups;
+}
+
+function renderOutcomeBody(body: any, content: string, d: any, postMessage?: (msg: any) => void): boolean {
+  var rejected = content.indexOf("Change rejected —") === 0;
+  var marker = "\n\nVerified outcome\n";
+  var incompleteMarker = "\n\nVerified outcome: not completed\n";
+  var incomplete = content.indexOf(incompleteMarker) >= 0;
+  var idx = incomplete ? content.indexOf(incompleteMarker) : content.indexOf(marker);
+  if (!rejected && idx < 0) return false;
+  var prose = rejected ? "" : content.slice(0, idx);
+  var facts = rejected ? content : content.slice(idx + (incomplete ? incompleteMarker : marker).length);
+  if (prose) {
+    var lead = d.createElement("div");
+    lead.className = "md-text";
+    setText(lead, prose);
+    body.appendChild(lead);
+  }
+  var card = d.createElement("div");
+  card.className = "outcome-card" + (rejected ? " is-rejected" : incomplete ? " is-incomplete" : " is-verified");
+  setAttr(card, "role", "status");
+  setAttr(card, "data-outcome", rejected ? "rejected" : incomplete ? "incomplete" : "verified");
+  if (!rejected) {
+    var heading = d.createElement("div");
+    heading.className = "outcome-title";
+    setText(heading, incomplete ? "Task not completed." : "Task completed.");
+    card.appendChild(heading);
+  }
+  var lines = facts.split("\n");
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line) continue;
+    if (line.indexOf("- ") === 0) {
+      var path = line.slice(2);
+      var row = d.createElement("div");
+      row.className = "outcome-file";
+      var btn = d.createElement("button");
+      btn.className = "file-ref";
+      btn.type = "button";
+      setText(btn, path);
+      setAttr(btn, "aria-label", "Open applied change " + path);
+      if (postMessage) {
+        onClick(btn, function (p: string) {
+          return function () {
+            postMessage({ type: "ui.openFile", path: p });
+          };
+        }(path));
+      }
+      row.appendChild(btn);
+      card.appendChild(row);
+    } else {
+      var p = d.createElement("div");
+      p.className = line === "Change rejected — no files modified." || line.indexOf("Change rejected") === 0 ? "outcome-title" : "outcome-line";
+      setText(p, line);
+      card.appendChild(p);
+    }
+  }
+  body.appendChild(card);
+  return true;
+}
+
 export function renderActivityTimeline(container: any, activities: any[], doc?: any): any {
   var all = activities || [];
   var start = Math.max(0, all.length - 20);
+  var visible = all.slice(start);
+  var groups = summarizeActivities(visible);
   var sig = "";
-  for (var s = start; s < all.length; s++) sig += (all[s].id || "") + "\u0000" + (all[s].status || "") + "\u0000" + (all[s].label || all[s].kind || "") + "\u0001";
+  for (var s = 0; s < groups.length; s++) {
+    var group = groups[s];
+    if (!group) continue;
+    sig += group.category + "\u0000" + group.status + "\u0000" + group.title + "\u0000" + group.detail + "\u0001";
+  }
+  for (var r = 0; r < visible.length; r++) {
+    var raw = visible[r];
+    sig += (raw.id || "") + "\u0000" + (raw.status || "") + "\u0000" + (raw.label || "") + "\u0000" + (raw.summary || "") + "\u0002";
+  }
   if (container.__activitySig === sig) return container.firstChild || null;
   container.__activitySig = sig;
   container.innerHTML = "";
   if (!all.length) return null;
   var d = docOf(doc);
-  var list = d.createElement("ol");
-  list.className = "activity-list";
-  setAttr(list, "aria-label", "Agent activity");
-  for (var i = start; i < activities.length; i++) {
-    var act = activities[i];
+  var panel = d.createElement("div");
+  panel.className = "activity-panel";
+  var working = false;
+  var summaryList = d.createElement("ol");
+  summaryList.className = "activity-summary";
+  setAttr(summaryList, "aria-label", "Task activity");
+  for (var i = 0; i < groups.length; i++) {
+    var item = groups[i];
+    if (!item) continue;
+    if (item.status === "pending") working = true;
     var li = d.createElement("li");
-    li.className = "activity-item is-" + (act.status || "pending");
-    setAttr(li, "aria-current", act.status === "pending" ? "step" : "false");
+    li.className = "activity-item is-" + item.status;
+    setAttr(li, "aria-current", item.status === "pending" ? "step" : "false");
     var mark = d.createElement("span");
     mark.className = "activity-mark";
     setAttr(mark, "aria-hidden", "true");
     var label = d.createElement("span");
     label.className = "activity-label";
-    setText(label, act.label || act.kind || "activity");
+    var text = item.title;
+    if (item.detail) text += ": " + item.detail;
+    setText(label, text);
     li.appendChild(mark);
     li.appendChild(label);
-    list.appendChild(li);
+    summaryList.appendChild(li);
   }
-  container.appendChild(list);
-  return list;
+  panel.appendChild(summaryList);
+  var details = d.createElement("details");
+  details.className = "activity-trace";
+  details.open = false;
+  var summary = d.createElement("summary");
+  setText(summary, "Technical details");
+  var rawList = d.createElement("ol");
+  rawList.className = "activity-list";
+  setAttr(rawList, "aria-label", "Technical activity trace");
+  for (var t = 0; t < visible.length; t++) {
+    var act = visible[t];
+    var row = d.createElement("li");
+    row.className = "activity-item is-" + (act.status || "pending");
+    var rawLabel = d.createElement("span");
+    rawLabel.className = "activity-label";
+    var line = act.label || act.kind || "activity";
+    if (act.summary) line += " — " + act.summary;
+    if (act.runId && line.indexOf(act.runId) === -1) line += " — " + act.runId;
+    setText(rawLabel, line);
+    row.appendChild(rawLabel);
+    rawList.appendChild(row);
+  }
+  details.appendChild(summary);
+  details.appendChild(rawList);
+  panel.appendChild(details);
+  if (working) setAttr(panel, "aria-busy", "true");
+  container.appendChild(panel);
+  return panel;
 }
 
 export function renderContextChips(
@@ -407,8 +730,12 @@ export function renderConnectionStatus(container: any, connection: any, doc?: an
   setAttr(wrap, "aria-live", "polite");
   var backendLabel =
     status.backend === "halo" ? "HALO" :
-    status.backend === "standalone-local" ? "Standalone local" : "Backend";
-  var model = status.modelLabel ? " · " + status.modelLabel : "";
+    status.backend === "standalone-local" ? "Local" : "Backend";
+  // Auto shows the model that actually served the last turn, never the one it might pick next.
+  var modelName = status.selectedModel === "auto"
+    ? "Auto" + (status.modelLabel && status.modelLabel !== "auto" ? " · " + status.modelLabel : "")
+    : status.selectedModel || status.modelLabel || "";
+  var model = modelName ? " · " + modelName : "";
   var stateLabel =
     status.state === "ready" ? "Ready" :
     status.state === "running" ? "Running" :
@@ -417,13 +744,15 @@ export function renderConnectionStatus(container: any, connection: any, doc?: an
     status.state === "invalid-credentials" ? "Invalid credentials" :
     status.state === "model-unavailable" ? "Model unavailable" :
     status.state === "timeout" ? "Timed out" : "Unavailable";
-  setText(wrap, backendLabel + model + " · " + stateLabel);
-  setAttr(wrap, "title", status.detail || stateLabel);
+  setText(wrap, stateLabel + model);
+  var title = status.detail || stateLabel;
+  if (status.endpoint) title += " (" + status.endpoint + ")";
+  setAttr(wrap, "title", backendLabel + " · " + title);
   setAttr(wrap, "aria-label", "Inference status: " + backendLabel + " " + stateLabel);
   if (postMessage) {
     onClick(wrap, function () {
       if (status.actionable === "check-connection") postMessage({ type: "chat.checkConnection" });
-      else postMessage({ type: "ui.openModelConfig" });
+      else postMessage({ type: "modelManager.open" });
     });
   }
   container.appendChild(wrap);
@@ -571,8 +900,6 @@ export function renderTerminalOutput(
   cmdBox.className = 'terminal-command-box';
   setAttr(cmdBox, 'aria-label', 'Command line');
   setText(cmdBox, term.command || '');
-  card.appendChild(cmdBox);
-
   var meta = d.createElement('div');
   meta.className = 'terminal-meta';
   if (term.executable) appendMetaRow(d, meta, 'Executable', term.executable, true);
@@ -581,7 +908,19 @@ export function renderTerminalOutput(
   appendMetaRow(d, meta, 'Source', term.provenance || '');
   if (term.scriptName && term.scriptBody) appendMetaRow(d, meta, 'Script', term.scriptBody, true);
   appendMetaRow(d, meta, 'Time limit', formatDuration(term.timeoutMs));
-  card.appendChild(meta);
+  if (finished) {
+    var details = d.createElement('details');
+    details.className = 'terminal-details';
+    var summary = d.createElement('summary');
+    setText(summary, 'Command details');
+    details.appendChild(summary);
+    details.appendChild(cmdBox);
+    details.appendChild(meta);
+    card.appendChild(details);
+  } else {
+    card.appendChild(cmdBox);
+    card.appendChild(meta);
+  }
 
   var elapsedEl = null;
   if (running && typeof term.startedAt === 'number') {
@@ -669,10 +1008,21 @@ function lineDelta(m: any): string {
   return parts.join(' ');
 }
 
-function reviewStatusLabel(status: string): string {
+function reviewStatusLabel(status: string, record?: any): string {
+  if (record && record.kind === 'mutation') {
+    if (status === 'pending') return 'Proposed';
+    if (status === 'approved') return 'Approved';
+    if (status === 'verified' || (status === 'applied' && record.verifiedBy && record.verifiedBy.status === 'succeeded')) return 'Verified';
+    if (status === 'applied') return 'Applied';
+    if (status === 'already-satisfied') return 'Already present — no write';
+    if (status === 'rejected') return 'Rejected';
+  }
   switch (status) {
     case 'pending': return 'Awaiting review';
+    case 'approved': return 'Approved';
     case 'applied': return 'Applied';
+    case 'already-satisfied': return 'Already present — no write';
+    case 'verified': return 'Verified';
     case 'rejected': return 'Rejected';
     case 'cancelled': return 'Cancelled';
     case 'stale': return 'Stale — not applied';
@@ -698,9 +1048,15 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
   var counts: Record<string, number> = {};
   for (var c = 0; c < list.length; c++) counts[list[c].status] = (counts[list[c].status] || 0) + 1;
   var summaryParts = [];
-  var order = ['pending', 'running', 'applied', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled', 'interrupted'];
+  var order = ['pending', 'approved', 'running', 'applied', 'already-satisfied', 'verified', 'succeeded', 'rejected', 'stale', 'failed', 'timed-out', 'cancelled', 'interrupted'];
   for (var o = 0; o < order.length; o++) {
-    if (counts[order[o]]) summaryParts.push(counts[order[o]] + ' ' + reviewStatusLabel(order[o]).toLowerCase());
+    if (counts[order[o]]) {
+      var sample = null;
+      for (var s = 0; s < list.length; s++) {
+        if (list[s].status === order[o]) { sample = list[s]; break; }
+      }
+      summaryParts.push(counts[order[o]] + ' ' + reviewStatusLabel(order[o], sample).toLowerCase());
+    }
   }
 
   var details = d.createElement('details');
@@ -718,7 +1074,8 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
     var r = list[i];
     if (r.kind === 'mutation' && r.status === 'applied') anyApplied = true;
     var li = d.createElement('li');
-    li.className = 'review-item is-' + r.status;
+    var displayStatus = (r.kind === 'mutation' && r.status === 'applied' && r.verifiedBy && r.verifiedBy.status === 'succeeded') ? 'verified' : r.status;
+    li.className = 'review-item is-' + displayStatus;
     var mark = d.createElement('span');
     mark.className = 'activity-mark';
     setAttr(mark, 'aria-hidden', 'true');
@@ -746,7 +1103,7 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
     }
     var state = d.createElement('span');
     state.className = 'review-status';
-    var stateText = reviewStatusLabel(r.status);
+    var stateText = reviewStatusLabel(r.status, r);
     if (r.kind === 'command' && r.exitCode !== undefined && r.exitCode !== null) stateText += ' · exit ' + r.exitCode;
     if (r.kind === 'command' && typeof r.durationMs === 'number') stateText += ' · ' + formatDuration(r.durationMs);
     setText(state, stateText);
@@ -779,10 +1136,14 @@ export function renderReviewLedger(container: any, reviews: any[], doc?: any, po
         var openBtn = d.createElement('button');
         openBtn.className = 'btn-reject review-action';
         openBtn.type = 'button';
-        setText(openBtn, r.status === 'applied' ? 'Changes' : 'Open');
-        setAttr(openBtn, 'aria-label', (r.status === 'applied' ? 'Show changes in ' : 'Open ') + r.path);
-        onClick(openBtn, function (mid: string) { return function () { send({ type: 'review.openChange', mutationId: mid }); }; }(r.id));
-        li.appendChild(openBtn);
+        var showApplied = r.status === 'applied' || r.status === 'verified';
+        var historical = r.status === 'rejected' || r.status === 'cancelled' || r.status === 'interrupted';
+        if (!historical) {
+          setText(openBtn, showApplied ? 'Changes' : 'Open');
+          setAttr(openBtn, 'aria-label', (showApplied ? 'Show changes in ' : 'Open ') + r.path);
+          onClick(openBtn, function (mid: string) { return function () { send({ type: 'review.openChange', mutationId: mid }); }; }(r.id));
+          li.appendChild(openBtn);
+        }
       } else if (r.kind === 'command' && r.status !== 'pending' && r.status !== 'rejected' && r.outputAvailable !== false) {
         var outBtn = d.createElement('button');
         outBtn.className = 'btn-reject review-action';
@@ -829,6 +1190,9 @@ export function renderConfirmationSummary(
   setAttr(div, 'role', 'alertdialog');
   setAttr(div, 'aria-label', conf.riskLabel || 'Approval required');
   setAttr(div, 'data-confirmation-id', conf.id || '');
+  setAttr(div, 'data-operation', conf.preparedCommand ? 'command' : ((conf.mutation && conf.mutation.operation) || (conf.mutationId ? 'patch' : '')));
+  setAttr(div, 'data-path', conf.path || '');
+  setAttr(div, 'data-cwd', (conf.preparedCommand && conf.preparedCommand.cwd) || '');
 
   const title = d.createElement('div');
   title.style.fontWeight = 'bold';
@@ -842,6 +1206,12 @@ export function renderConfirmationSummary(
 
   div.appendChild(title);
   div.appendChild(summary);
+  if (conf.mutationId && !conf.responding) {
+    var proposed = d.createElement('div');
+    proposed.className = 'review-detail';
+    setText(proposed, 'Proposed — nothing is written until you approve this change.');
+    div.appendChild(proposed);
+  }
   if (conf.preparedCommand) {
     var pc = conf.preparedCommand;
     var cmdBox = d.createElement('div');
@@ -884,14 +1254,14 @@ export function renderConfirmationSummary(
   btnReject.id = 'btn-reject';
   btnReject.type = 'button';
   btnReject.textContent = 'Reject';
-  setAttr(btnReject, 'aria-label', 'Reject this action');
+  setAttr(btnReject, 'aria-label', conf.preparedCommand ? 'Do not run this command' : 'Reject this file change');
 
   const btnApprove = d.createElement('button');
   btnApprove.className = 'btn-approve';
   btnApprove.id = 'btn-approve';
   btnApprove.type = 'button';
   btnApprove.textContent = conf.preparedCommand ? 'Run' : 'Approve';
-  setAttr(btnApprove, 'aria-label', conf.preparedCommand ? 'Run this command' : 'Approve this change');
+  setAttr(btnApprove, 'aria-label', conf.preparedCommand ? 'Run this command' : 'Approve this file change');
 
   let btnDiff: any = null;
   if (conf.mutationId) {
@@ -996,6 +1366,7 @@ function conversationStatusLabel(status: string): string {
     case 'interrupted': return 'Interrupted';
     case 'failed': return 'Failed';
     case 'cancelled': return 'Cancelled';
+    case 'rejected': return 'Rejected';
     default: return '';
   }
 }
@@ -1350,21 +1721,60 @@ export function renderRecoveryPanel(container: any, recovery: any, title: string
   setText(o2, 'New task with this context: starts a fresh conversation with the last turns as background. Every change and command needs a new approval.');
   options.appendChild(o2);
   var o3 = d.createElement('li');
-  setText(o3, 'Resume the interrupted run: not available from the editor. Interrupted changes, commands and external tool calls are never replayed.');
+  if (recovery.turnBudgetContinue) {
+    setText(o3, 'Continue this run: authorizes more turns on the same task. Writes and tests still need a new approval. Interrupted crash recovery is still not auto-replayed.');
+  } else {
+    setText(o3, 'Resume the interrupted run: not available from the editor. Interrupted changes, commands and external tool calls are never replayed.');
+  }
   options.appendChild(o3);
   panel.appendChild(options);
 
   var actions = d.createElement('div');
   actions.className = 'confirmation-actions';
   var cid = recovery.conversationId;
+  if (recovery.turnBudgetContinue) {
+    var budget = appendAction(d, actions, 'Continue this run', 'Authorize more turns on the same task. Writes still need approval.', function () {
+      send({ type: 'task.continueBudget', conversationId: cid });
+    });
+    budget.className = 'btn-approve btn-continue-run';
+  }
   var cont = appendAction(d, actions, 'Start new task with this context', 'Start a new conversation using this conversation as background context', function () {
     send({ type: 'conversation.continueFrom', conversationId: cid });
   });
-  cont.className = 'btn-approve';
+  if (!recovery.turnBudgetContinue) cont.className = 'btn-approve';
   appendAction(d, actions, 'Close', 'Close recovery status', function () { send({ type: 'conversation.closeRecovery' }); });
   panel.appendChild(actions);
   container.appendChild(panel);
   return panel;
+}
+
+export function renderTurnContinuation(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var d = docOf(doc);
+  var send = postMessage || function () {};
+  var pending = state && state.pendingTurnContinuation;
+  var sig = pending ? JSON.stringify(pending) : '';
+  if (container.__turnContSig === sig) return container.firstChild || null;
+  container.__turnContSig = sig;
+  container.textContent = '';
+  if (!pending) return null;
+  var bar = d.createElement('div');
+  bar.className = 'recovery-panel';
+  var title = d.createElement('h3');
+  setText(title, 'Turn budget used');
+  bar.appendChild(title);
+  var p = d.createElement('p');
+  p.className = 'recovery-state';
+  setText(p, 'This run stopped because it reached its turn limit. Continue keeps the same task and completed work. Writes still need approval.');
+  bar.appendChild(p);
+  var actions = d.createElement('div');
+  actions.className = 'confirmation-actions';
+  var btn = appendAction(d, actions, 'Continue this run', 'Authorize more turns on the same task', function () {
+    send({ type: 'task.continueBudget', conversationId: pending.conversationId });
+  });
+  btn.className = 'btn-approve btn-continue-run';
+  bar.appendChild(actions);
+  container.appendChild(bar);
+  return bar;
 }
 
 export function renderProfileSection(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
@@ -3427,6 +3837,199 @@ export function renderIntegrationsHub(container: any, state: any, doc?: any, pos
   return hub;
 }
 
+export function renderTrustNotice(container: any, state: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var trusted = !state || state.workspaceTrusted !== false;
+  var notice = state && state.modelManager && state.modelManager.trustNotice;
+  var sig = trusted ? "trusted" : "untrusted:" + (notice || "");
+  if (container.__trustSig === sig && container.firstChild) return container.firstChild;
+  container.__trustSig = sig;
+  container.innerHTML = "";
+  if (trusted) return null;
+  var d = docOf(doc);
+  var banner = d.createElement("div");
+  banner.className = "trust-banner";
+  setAttr(banner, "role", "status");
+  var text = d.createElement("p");
+  setText(text, notice || "This folder is not trusted. Ask can read. Agent and Debug stay unavailable until you trust the folder.");
+  banner.appendChild(text);
+  if (postMessage) {
+    var button = d.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    setText(button, "Manage Workspace Trust");
+    setAttr(button, "aria-label", "Manage Workspace Trust. This does not trust the folder automatically.");
+    onClick(button, function () { postMessage({ type: "ui.manageTrust" }); });
+    banner.appendChild(button);
+  }
+  container.appendChild(banner);
+  return banner;
+}
+
+export function renderModelManager(container: any, snapshot: any, doc?: any, postMessage?: (msg: any) => void): any {
+  var open = !!(snapshot && snapshot.open);
+  var sig = open ? JSON.stringify(snapshot) : "closed";
+  if (container.__modelSig === sig && (container.firstChild || !open)) return container.firstChild || null;
+  container.__modelSig = sig;
+  container.innerHTML = "";
+  if (!open) return null;
+  var d = docOf(doc);
+  var panel = d.createElement("section");
+  panel.className = "model-manager";
+  setAttr(panel, "aria-label", "Model manager");
+  var title = d.createElement("h2");
+  setText(title, "Models");
+  panel.appendChild(title);
+  var notice = d.createElement("p");
+  setText(notice, (snapshot && snapshot.notice) || "");
+  panel.appendChild(notice);
+  var status = d.createElement("p");
+  var statusText = snapshot && snapshot.endpointError
+    ? "Offline at " + snapshot.endpoint + ". " + snapshot.endpointError
+    : snapshot && snapshot.endpointReachable
+      ? "Connected to " + snapshot.endpoint + "."
+      : "Not connected.";
+  if (snapshot && snapshot.workspaceOverrideActive) statusText += " Workspace override is active.";
+  if (snapshot && snapshot.workspaceOverrideIgnored) statusText += " Workspace file ignored because the folder is untrusted.";
+  setText(status, statusText);
+  panel.appendChild(status);
+  appendManagerLine(d, panel, "Active chat model: " + ((snapshot && snapshot.chatModel) || "none"));
+  appendManagerLine(d, panel, "Active autocomplete model: " + ((snapshot && snapshot.autocompleteModel) || "none"));
+  appendManagerLine(d, panel, "Active endpoint: " + ((snapshot && snapshot.endpoint) || "none"));
+  appendManagerLine(d, panel, routingSourceLine(snapshot));
+  var overrideActive = !!(snapshot && snapshot.workspaceOverrideActive);
+  if (overrideActive) {
+    appendManagerLine(d, panel, "Global preferences stay saved. Changing them does not switch the active route. Use global models to suspend the override without editing the project file.");
+  }
+  if (snapshot && snapshot.workspaceTrusted === false && snapshot.trustNotice) {
+    appendManagerLine(d, panel, snapshot.trustNotice);
+  }
+  var chatLabel = overrideActive ? "Global chat preference" : "Chat and Agent";
+  var completeLabel = overrideActive ? "Global autocomplete preference" : "Autocomplete";
+  var chatSelected = overrideActive ? snapshot && snapshot.globalChatModel : snapshot && snapshot.chatModel;
+  var completeSelected = overrideActive ? snapshot && snapshot.globalAutocompleteModel : snapshot && snapshot.autocompleteModel;
+  appendModelSelect(d, panel, postMessage, chatLabel, snapshot && snapshot.installedModels, chatSelected, "modelManager.setChat");
+  appendModelSelect(d, panel, postMessage, completeLabel, snapshot && snapshot.installedModels, completeSelected, "modelManager.setAutocomplete");
+  var endpointLabel = d.createElement("label");
+  setText(endpointLabel, overrideActive ? "Global endpoint" : "Endpoint");
+  var endpoint = d.createElement("input");
+  endpoint.type = "text";
+  endpoint.value = overrideActive ? ((snapshot && snapshot.globalEndpoint) || "") : ((snapshot && snapshot.endpoint) || "");
+  setAttr(endpoint, "aria-label", "Local inference endpoint");
+  endpointLabel.appendChild(endpoint);
+  panel.appendChild(endpointLabel);
+  appendManagerButton(d, panel, postMessage, "Save endpoint", function () {
+    if (postMessage) postMessage({ type: "modelManager.setEndpoint", endpoint: endpoint.value || "" });
+  });
+  appendManagerButton(d, panel, postMessage, "Test connection", function () {
+    if (postMessage) postMessage({ type: "modelManager.test" });
+  });
+  if (snapshot && snapshot.workspaceOverridePresent && snapshot.workspaceTrusted) {
+    appendManagerButton(d, panel, postMessage, snapshot.workspaceOverrideActive ? "Use global models" : "Use workspace models.json", function () {
+      if (postMessage) postMessage({ type: snapshot.workspaceOverrideActive ? "modelManager.suspendOverride" : "modelManager.useOverride" });
+    });
+  }
+  appendManagerButton(d, panel, postMessage, "Open workspace file", function () {
+    if (postMessage) postMessage({ type: "ui.openModelConfig" });
+  });
+  var advanced = d.createElement("details");
+  var summary = d.createElement("summary");
+  setText(summary, "Advanced routing");
+  advanced.appendChild(summary);
+  var advancedInput = d.createElement("textarea");
+  setAttr(advancedInput, "aria-label", "Advanced routing JSON");
+  advancedInput.placeholder = "Optional routing JSON. Saved globally. It does not edit the project.";
+  advanced.appendChild(advancedInput);
+  appendManagerButton(d, advanced, postMessage, "Save advanced routing", function () {
+    if (postMessage) postMessage({ type: "modelManager.setAdvanced", text: advancedInput.value || "" });
+  });
+  if (snapshot && snapshot.advancedActive) {
+    appendManagerButton(d, advanced, postMessage, "Clear advanced routing", function () {
+      if (postMessage) postMessage({ type: "modelManager.clearAdvanced" });
+    });
+  }
+  panel.appendChild(advanced);
+  var tokenLabel = d.createElement("label");
+  setText(tokenLabel, snapshot && snapshot.credentialConfigured ? "Endpoint token (stored securely)" : "Endpoint token (optional)");
+  var token = d.createElement("input");
+  token.type = "password";
+  token.value = "";
+  setAttr(token, "aria-label", "Local endpoint token. Stored in secure storage only.");
+  token.placeholder = snapshot && snapshot.credentialConfigured ? "A token is already stored" : "Stored in secure storage, never in a project file";
+  tokenLabel.appendChild(token);
+  panel.appendChild(tokenLabel);
+  appendManagerButton(d, panel, postMessage, "Save token", function () {
+    if (postMessage) postMessage({ type: "modelManager.setCredential", token: token.value || "" });
+  });
+  appendManagerButton(d, panel, postMessage, "Close", function () {
+    if (postMessage) postMessage({ type: "modelManager.close" });
+  });
+  container.appendChild(panel);
+  return panel;
+}
+
+function routingSourceLine(snapshot: any): string {
+  if (!snapshot || snapshot.workspaceTrusted === false) {
+    return "Source: global. This folder is not trusted, so a workspace model file cannot redirect inference.";
+  }
+  if (snapshot.workspaceOverrideActive) return "Source: workspace override (active).";
+  if (snapshot.workspaceConfigInvalid && snapshot.workspaceOverridePresent) {
+    return "Source: global. The workspace model file is invalid and was not applied.";
+  }
+  if (snapshot.workspaceOverridePresent) {
+    return "Source: global. The workspace override is suspended. The project file was not modified.";
+  }
+  if (snapshot.source === "discovered") return "Source: models discovered from the global endpoint.";
+  if (snapshot.source === "none") return "Source: none. Choose a model.";
+  return "Source: global.";
+}
+
+function appendManagerLine(d: any, parent: any, text: string): void {
+  var line = d.createElement("p");
+  setText(line, text);
+  parent.appendChild(line);
+}
+
+function appendModelSelect(d: any, parent: any, postMessage: any, labelText: string, models: any, selected: any, messageType: string): void {
+  var label = d.createElement("label");
+  setText(label, labelText);
+  var select = d.createElement("select");
+  setAttr(select, "aria-label", labelText);
+  var names = models || [];
+  if (!names.length) {
+    var empty = d.createElement("option");
+    empty.value = "";
+    setText(empty, "No models discovered");
+    select.appendChild(empty);
+    select.disabled = true;
+  }
+  for (var i = 0; i < names.length; i++) {
+    var option = d.createElement("option");
+    option.value = names[i];
+    setText(option, names[i]);
+    if (names[i] === selected) option.selected = true;
+    select.appendChild(option);
+  }
+  if (postMessage) {
+    select.addEventListener("change", function () {
+      if (!select.value) return;
+      var message: any = { type: messageType, name: select.value };
+      postMessage(message);
+    });
+  }
+  label.appendChild(select);
+  parent.appendChild(label);
+}
+
+function appendManagerButton(d: any, parent: any, postMessage: any, label: string, run: () => void): void {
+  var button = d.createElement("button");
+  button.type = "button";
+  button.className = "secondary";
+  setText(button, label);
+  setAttr(button, "aria-label", label);
+  if (postMessage) onClick(button, run);
+  parent.appendChild(button);
+}
+
 export function webviewRenderRuntime(): string {
   return [
     "var MAX_CODE_CHARS = " + MAX_CODE_CHARS + ";",
@@ -3438,14 +4041,32 @@ export function webviewRenderRuntime(): string {
     parseMessageSegments.toString(),
     roleLabel.toString(),
     appendRoleLabel.toString(),
+    renderOutcomeBody.toString(),
     fillMessageBody.toString(),
     messageSig.toString(),
     renderChatMessage.toString(),
     updateChatMessage.toString(),
     syncTranscript.toString(),
+    activityCategory.toString(),
+    activityGroupStatus.toString(),
+    outcomeTitle.toString(),
+    activityFiles.toString(),
+    fileCountPhrase.toString(),
+    groupRetryNote.toString(),
+    groupTitle.toString(),
+    groupDetail.toString(),
+    pushActivityGroup.toString(),
+    summarizeActivities.toString(),
+    compressTrivialTimeline.toString(),
     renderActivityTimeline.toString(),
     renderContextChips.toString(),
     renderConnectionStatus.toString(),
+    renderTrustNotice.toString(),
+    renderModelManager.toString(),
+    routingSourceLine.toString(),
+    appendManagerLine.toString(),
+    appendModelSelect.toString(),
+    appendManagerButton.toString(),
     formatDuration.toString(),
     formatBytes.toString(),
     formatArgs.toString(),
@@ -3472,6 +4093,7 @@ export function webviewRenderRuntime(): string {
     operationKindLabel.toString(),
     operationStatusLabel.toString(),
     renderRecoveryPanel.toString(),
+    renderTurnContinuation.toString(),
     renderProfileSection.toString(),
     renderMcpDashboard.toString(),
     renderAddMcpWizard.toString(),

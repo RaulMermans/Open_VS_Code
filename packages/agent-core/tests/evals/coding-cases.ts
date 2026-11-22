@@ -86,7 +86,7 @@ export const CODING_EVAL_CASES: CodingEvalCase[] = [
     },
     "fixture": {
       "templateRelPath": "tests/fixtures/eval-repos/mini-express-app",
-      "setupScript": "sed -i.bak 's/status: \"ok\"/status: \"error\"/' src/routes/health.ts && rm -f src/routes/health.ts.bak"
+      "setupScript": "sed -i.bak 's/    status: \"ok\",/    status: \"error\",/' src/routes/health.ts && rm -f src/routes/health.ts.bak"
     },
     "successCriteria": {
       "requiredVerificationPass": [
@@ -159,7 +159,14 @@ export const CODING_EVAL_CASES: CodingEvalCase[] = [
     },
     "fixture": {
       "templateRelPath": "tests/fixtures/eval-repos/mini-express-app",
-      "setupScript": "sed -i.bak 's/if (!req.params.id) return res.status(400)/\\/\\/ missing check/' src/routes/users.ts && rm -f src/routes/users.ts.bak"
+      "setup": [
+        {
+          "operation": "replace_text",
+          "path": "src/routes/users.ts",
+          "search": "export function getUserById(id: string): User | undefined {\n  return mockUsers.find((u) => u.id === id)\n}",
+          "replace": "export function getUserById(id: string): User | undefined {\n  // missing check\n  return mockUsers.find((u) => u.id === id)\n}"
+        }
+      ]
     },
     "successCriteria": {
       "requiredVerificationPass": [
@@ -910,7 +917,7 @@ export const CODING_EVAL_CASES: CodingEvalCase[] = [
     },
     "fixture": {
       "templateRelPath": "tests/fixtures/eval-repos/cli-tool-repo",
-      "setupScript": "sed -i.bak 's/Promise<{/Promise<any>/' src/commands/build.ts && rm -f src/commands/build.ts.bak"
+      "setupScript": "sed -i.bak 's/: { success: boolean; target: string }/: Promise<any>/' src/commands/build.ts && rm -f src/commands/build.ts.bak"
     },
     "successCriteria": {
       "requiredVerificationPass": [
@@ -934,7 +941,7 @@ export const CODING_EVAL_CASES: CodingEvalCase[] = [
             "arguments": {
               "path": "src/commands/build.ts",
               "search": "Promise<any>",
-              "replace": "Promise<{ success: boolean; target: string }>"
+              "replace": "{ success: boolean; target: string }"
             }
           }
         ]
@@ -1215,8 +1222,8 @@ export const CODING_EVAL_CASES: CodingEvalCase[] = [
             "name": "apply_patch",
             "arguments": {
               "path": "src/config.ts",
-              "search": "  readonly env: string",
-              "replace": "  readonly env: string\n  readonly verbose: boolean"
+              "search": "  readonly env: string\n}\n\nexport const config: AppConfig = {\n  port: parseInt(process.env.PORT || \"3000\", 10),\n  jwtSecret: process.env.JWT_SECRET || \"dev-secret-key-12345\",\n  env: process.env.NODE_ENV || \"development\",\n}",
+              "replace": "  readonly env: string\n  readonly verbose: boolean\n}\n\nexport const config: AppConfig = {\n  port: parseInt(process.env.PORT || \"3000\", 10),\n  jwtSecret: process.env.JWT_SECRET || \"dev-secret-key-12345\",\n  env: process.env.NODE_ENV || \"development\",\n  verbose: false,\n}"
             }
           }
         ]

@@ -1,3 +1,126 @@
+Sprint 31 — MVP convergence
+STATUS: IN_PROGRESS
+  - Worktree `sprint/31-mvp-convergence`. `main` is `aec5d3aadb`. Installed production is `0.1.0-rc.26`. Rollback is `0.1.0-rc.25`. Qualification stays NO-GO.
+  - Native Agent Core stays the executor. Aider was compared once and is not a second engine. The gap after Sprint 30 was localization: Vitest's "undefined constructor" assertion is a missing package export, and the diagnosis did not say so.
+  - A failing constructor at a test line now names the import, the package entry's exports, and the existing definition, and tells the model to re-export that definition. When the loaded file is `dist`, the diagnosis says to build the package.
+  - A hand patch on a disposable copy of frozen i1 (re-export plus a bare-alias check that leaves `runtime/` refs alone) passes inference Vitest 27/27 and `qualify-oracle.py` (`SUCCESS`). The frozen tree and the installed app were not changed. The model did not apply the patch.
+  - A stale workspace `tsc` build is now part of the reviewed test command and runs in the verification sandbox. Six fresh `qwen3.6:35b` repairs (three ordinary, three with a visible pass/fail contract) all stayed at 4 or 5 inference failures. The contract prompt is not in the product. Supervised-testing and daily-driver remain NO-GO.
+  - See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
+
+Sprint 30 — Automated program repair
+STATUS: IN_PROGRESS
+  - Base `cc346f01ae`. Installed desktop stays `0.1.0-rc.25`.
+  - Recorded qualification run i1 failed 5 tests and was told to repair a truncated `better-sqlite3` path. Verification now keeps the output tail and a compact failure summary (ADR-050). A failure is pre-existing only with a pre-edit failing run.
+  - Scripted repair control passes. Two valid `qwen3.6:35b` replays of frozen i1 (after the worktree loaded this branch, not repair28) ran the inference package tests, showed the qualification assertions, and still left 5 failed / 3 passed. Repair mechanism, supervised testing, and daily-driver remain NO-GO.
+  - See `docs/sprints/SPRINT_30_AUTOMATED_PROGRAM_REPAIR.md`.
+
+Sprint 20 — Deterministic file editing
+STATUS: IMPLEMENTED
+  - Existing-file `create_file` is rejected or converted only when a unique preserving patch can be validated. Identical content is `ALREADY_SATISFIED`.
+  - Wrong-tool recovery includes bounded current file contents and an exact `apply_patch` instruction. The same invalid create is not retried indefinitely.
+  - Cross-file stuffing of an export that belongs in another existing sibling is rejected (`WRONG_FILE`).
+  - Live Qwen: existing-file edit PASS; wrong-tool create recovers to PASS; held-out TS PASS; held-out Python tests PASS with agent `MAX_TURNS_EXCEEDED`. Three-file `continue-lib` 1/3 after the import-extension correction (target 2/3 missed).
+  - Evidence: `evals/results/sprint-20-live-editing.json` and `evals/results/sprint-20-live-editing-round1.json`. CDP packaged rerun was not authorized this sprint.
+  - See `docs/sprints/SPRINT_20_DETERMINISTIC_FILE_EDITING.md`.
+
+Milestone 3 — Real coding intelligence
+STATUS: VERIFIED
+  - Final correction: “Do not change the test” no longer classifies an implementation task as test-authoring. Remaining-work notices and exploration signatures are restored from the turn-budget checkpoint.
+  - Continuation safety (`2026-11-13T15-00-58-990Z`): real `MAX_TURNS_EXCEEDED` at lab `maxTurns=2`, explicit Continue, idle wait with no writes, new approvals. Independent tests 1/3 on that budget (capability limit). `CODE-CONTINUE-STALE` PASS (`2026-11-13T16-04-14-137Z`).
+  - Coding completion (`CODE-CONTINUE-COMPLETE` `2026-11-13T15-17-03-087Z`): production 15 + one Continue; independent tests 3/3 on `format.ts`/`greet.ts`/`parse.ts`. Overlay extension SHA-256 `1e58f155ede4af92f7c37ca2fa927253bc9a3488154ea8377b52d9e512a99ad5`.
+  - Packaged rc.19 CDP (`2026-11-13` evening): critical safety and small coding PASS on the unpacked `.deb`. `CODE-CONTINUE-COMPLETE` FAIL this payload (model `create_file`). Restart recovery PARTIAL. Lab `maxTurns=2` Continue/Restart oracles no longer require 3/3 tests. Personal V1 `CONDITIONAL GO`, not installed. Daily driver still `0.1.0-rc.16`. Authoritative record: `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - OpenCode comparison remains INVALID. Native tool messages stay experimental.
+
+Milestone 2 — Agent workspace presentation
+STATUS: PARTIALLY_VERIFIED
+  - Activity summaries merge one kind of work inside a task. File counts come from tool and mutation paths already on those events. A model wait reads "Thinking" until that call finishes. Failures and retries stay visible. Interrupted is distinct. The technical trace stays collapsed and still lists every event.
+  - Sidebar and Wider Chat share one conversation, one composer draft, and one confirmation id. A second send is ignored while a turn is running. Opening a diff does not approve it.
+  - Review rows distinguish proposed, approved, rejected, applied, and verified. An unused approval becomes interrupted on restore and is not replayed.
+  - `MAX_TURNS_EXCEEDED` names finished work, unfinished work, and recovery. Nothing is written or replayed until a new request and a new approval.
+  - Acceptance harness: Agent Webview scenarios use CDP (`cdp-webview`). Playwright stays on workbench-only checks. A missing webview is `BLOCKED` tooling, not a product failure.
+  - Presentation polish after the rc.17 screenshot reject: Wider Chat makes the sidebar a compact companion (transcript stays in the DOM for sync), empty composer height is reduced, ordinary agent tasks append Output without revealing it, finished command output is collapsed, rejection is labeled “Change rejected — no files modified” and is not Failed, and completed coding turns show a compact outcome card. Permission ids and gates are unchanged. Streaming stays deferred.
+  - Clean Debian `0.1.0-rc.18` from `ff96af72e1`, SHA-256 `2e3d073417c35154d6118b0056c356d1a29b17ddba9c6db8b7e911b0bc2f7a6e`. Bundled extension SHA-256 `eb1e89b9fc007012b78367e600d25630a35801fd562b6b429ae9ffe795e5bd20` matches the built `extension.js`. It is not installed. Installed daily driver remains `0.1.0-rc.16`.
+  - Packaged CDP on `/tmp/ovsc-rc18` run `2026-11-13T08-51-11-683Z`: CODE-BUG, SAFE-APPROVE, SAFE-REJECT, SAFE-VERIFY, UX-WIDE, and LIFE-HISTORY PASS. UX-ACTIVITY and UX-DIFF met objective checks and remain `NEEDS_REVIEW`. Visual copies: `apps/desktop/acceptance/review/m2-rc18-visual-2026-11-13/`. A person has not signed appearance. Empty-editor dominance on coding tasks is still visible. M4 overlay CDP re-confirmed SAFE-APPROVE/REJECT/VERIFY. Personal V1 candidate work is in `docs/releases/V1_CONVERGENCE_STATUS.md`.
+
+Sprint 15 — Product acceptance lab
+STATUS: IN_VERIFICATION
+  - Permanent lab: `apps/desktop/acceptance/`, 46 scenarios, isolated temp profiles, sandbox left on, no silent approvals on real projects.
+  - 2026-11-10 rc.15 acceptance: installed driver remains `0.1.0-rc.13`. The current unpacked extension (`2026-11-10T17-44-22-671Z`) passed 15 of 16 coding and critical safety scenarios. CODE-MULTI failed. CODE-REFACTOR and CODE-RECOVER passed on that extension after earlier failures. Five coding repeats and a new package were not run. Personal V1 and public beta remain NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - 2026-11-10 rc.16 candidate: clean Debian from `0778f29779`, SHA-256 `4408697b7e7eaed8b4195b5b2dc7b8210be7eb9734dc60f2300b8efc6553898d`. `desktopName` is `open-vs-code.desktop`. Unpacked CDP on that package: eight coding scenarios passed, CODE-MULTI, CODE-REFACTOR, and CODE-RECOVER passed three more times each, and the critical safety set including SAFE-VERIFY passed. The installed driver is still `0.1.0-rc.13`. The dock icon was not visually confirmed. Personal V1 remains NO-GO. See `docs/releases/V1_CONVERGENCE_STATUS.md`.
+  - Playwright's Electron attach still drops the workbench when the vscode-webview OOPIF attaches. Chat scenarios do not use that path.
+  - Protocol parse drops an unfinished tool envelope. That correction is in the installed `0.1.0-rc.13` extension. Full gate: FAIL. See `docs/releases/V1_LIVE_ACCEPTANCE.md`.
+
+Sprint 14C.1A — Global model hardening and desktop acceptance
+STATUS: PARTIALLY_VERIFIED
+  - `ModelRoutingHost.refresh()` does not read `.open-vs-code/models.json` unless the folder is trusted. Presence is a stat. An unreadable file still cannot redirect inference.
+  - Saving a global chat, autocomplete, endpoint, or advanced route does not suspend an active workspace override and does not rewrite the file. "Use global models" is the switch.
+  - The Model Manager shows the active chat model, autocomplete model, endpoint, and source. A global preference is labeled separately while an override is active.
+  - Workspace mode and pack saves, and starter model-file creation, refuse an untrusted folder.
+  - The agent-core test `bounds large tool output in the recompiled model context and event trace` passes. The failure was the required prompt growing past 1,000 bytes after conversational guidance. The 32-byte observation cap and the event-trace check are unchanged. Recovery still sends one fresh message.
+  - vscode-integration tests: 313 pass. Typecheck, lint, and build passed. Desktop smoke, Linux package smoke, and Linux runtime acceptance passed.
+  - Clean Debian `0.1.0-rc.12` from `6417724105` is installed. Package SHA-256 `ad5dbe9c8d40bfcef15e5217575f352adc385b9d2d1e9f4fdb4ee37fea8a1958`. Playwright opened the installed binary with the sandbox enabled. An untrusted folder kept the global route, and `qwen3-coder:30b` answered `pong` after the launcher inference gate was set. Wider chat, a second repository, and a live-profile restart were not walked.
+
+Sprint 14C.1 — Global model management
+STATUS: IMPLEMENTED_NOT_INSTALLED
+  - Chat and autocomplete use extension storage. A trusted `.open-vs-code/models.json` remains an explicit override and is not rewritten.
+  - An untrusted workspace file cannot change the inference endpoint. Agent and Debug stay unavailable until the user trusts the folder.
+  - Starter creation no longer opens the model file. VS Code may still restore a tab that was already open.
+  - The installed desktop at the start of 14C.1A was `0.1.0-rc.11`. Details are in `docs/sprints/SPRINT_14C1_GLOBAL_MODEL_MANAGEMENT.md`.
+
+Sprint 14B.2 — Clean release and real GUI acceptance
+STATUS: PARTIALLY_VERIFIED
+  - A review supports an outcome only when its run id matches the turn. A missing run id matches nothing. Applied paths on the current runner result are still listed.
+  - "tests pass" and "tests will pass" do not add an unsupported-claim note. "tests passed" still does when this run has no passing test.
+  - Clean Debian `0.1.0-rc.11` is from `9d8ab96c06`. Package SHA-256 `36a7b49b22f7a2215f2db4f296b463a5e6df868e8ac847ec1a7d8cc793d64541`. `gitDirty` was false. It is not installed.
+  - Installed desktop remains `0.1.0-rc.9`. A rebuilt rollback deb whose `usr/` files match the installed md5sums is at `~/open-vs-code-backups/rollback-0.1.0-rc.9-2026-11-08`. The installed GUI walkthrough was not run.
+
+Sprint 14B.1 — Conversational truth and installed GUI acceptance
+STATUS: PARTIALLY_VERIFIED
+  - A final answer uses reviews stamped with the current run. An earlier run's files and checks stay in the conversation ledger and in that run's own message.
+  - Test, lint, typecheck, and other commands are classified from the script name or command text. A successful command is not called a passing test unless it is a test command. A reply that asserts an outcome the run did not record is marked unsupported and left intact.
+  - "Planning changes" is shown only for a PLAN-mode turn. Read-only work is labeled as reading files, exploring the repository, or consulting the model. Technical details stay collapsed.
+  - Candidate package `0.1.0-rc.10` was built from dirty commit `2bdbd7e67a`. It was not installed. The workspace directory was removed after that build; the extracted payload remains and was repacked. Installed desktop remains `0.1.0-rc.9`. `sudo` needs a password here. The unpackaged binary aborts because `chrome-sandbox` is not `root:root` mode `4755`.
+  - Live `qwen3-coder:30b` checks are in `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`. They are provider calls plus presentation checks, not an installed GUI walkthrough.
+
+Sprint 14B — Conversational agent experience
+STATUS: PARTIALLY_VERIFIED
+  - Presentation only. The same `AgentRuntime`, permission gate, and mutation path remain in place.
+  - Answers stay the model's `finalAnswer`. A verified-outcome block is added only from the current run's applied mutations and review rows.
+  - Activity in the chat view is grouped. The raw event list stays in a collapsed technical-details section. Planning is not inferred from a model wait.
+  - Streaming is deferred. Providers still return one complete response.
+  - Installed GUI acceptance for this presentation is still open. The installed package is `0.1.0-rc.9`.
+
+Sprint 14 — Final daily-driver stabilization
+STATUS: IN_VERIFICATION
+  - Wayland app id follows the Electron executable name. `--class` and `CHROME_DESKTOP` left the installed window as `codium`, so GNOME showed a gear. The Linux package renames that binary to `open-vs-code` and keeps `codium` as a symlink. rc.8 stays installed until rc.9 is checked.
+  - A fresh model file prefers `qwen3-coder:30b` for chat when that tag is installed, and leaves autocomplete on `qwen2.5-coder:7b`. An existing `models.json` is not rewritten.
+  - A greeting such as `hola` in Agent mode is a direct reply. It can finish without an edit. A repeated tool loop on that reply does not end as `NON_PROGRESS`. An edit task still does.
+  - A user rejection is shown as `Change rejected — no files modified.` Internal status stays `REJECTED`. Other failures stay failures.
+  - The motion claim still requires more than 10 frames and at least 30 FPS. Shared macOS GitHub runners skip that measurement. Linux CI still runs it. A skip is not a pass.
+  - Workspace tests use a 120 second test deadline and exit when the suite finishes.
+
+Sprint 13.1 — Daily driver acceptance
+STATUS: IN_VERIFICATION
+  - Motion sampling keeps the `>10` frame and `>=30` FPS bars. On macOS the motion browser is headed so the sample uses the display clock. Headless macOS runners were measuring 12 FPS and 29 FPS for the same animation.
+  - A path named after "do not edit" is refused before confirmation. A patch that repeats an `export function` is refused.
+  - Recovery files and the model ledger are added to `.git/info/exclude`. They are not deleted.
+  - Linux packaging rewrites workbench welcome strings from VSCodium to Open VS Code. The window icon is the supplied borderless mark. Package target is `0.1.0-rc.7`.
+
+Sprint 13 — Daily driver MVP
+STATUS: IN_VERIFICATION
+  - Agent view is in the secondary sidebar. Composer modes are Ask, Plan, and Agent, mapped to ASK, PLAN, and BUILD.
+  - Local model dropdown uses the Ollama tag probe. Autocomplete routes stay independent.
+  - `requiredEditPaths` treats a missing capture as "no only-target" without loosening the check. A path named after "do not edit" is not a required edit unless that exclusion would drop every path.
+  - Installed package is `0.1.0-rc.6` from `50e79ce463`. Debian SHA-256 `046e3a8af17a4c62b6d4d121364aceecb5dad290019b02a8a7007df38c35a973`. `gitDirty` was false. Sandbox helper is `4755 root:root`.
+  - Installed GUI on this machine: right-hand agent, Qwen3-Coder 30B ask and coding, approved repair, rejected edit with an unchanged file hash, restart persistence, offline endpoint error, and rollback through `0.1.0-rc.4` without changing the saved conversation. Details are in `docs/sprints/SPRINT_13_DAILY_DRIVER.md`. GitHub CI is still the acceptance gate.
+
+Sprint 12 — Personal V1 installed acceptance
+STATUS: PERSONAL_V1_BLOCKED
+  - Clean package `0.1.0-rc.4` from `02d21325ef` is installed. Sandbox helper is `4755 root:root`. Launcher does not pass `--no-sandbox`.
+  - Installed GUI: launch, terminal, Git, extensions, local model picker, Qwen3-Coder 30B chat, approved edit, debug repair with a passing test, rejected edit, restart persistence, and a dead-endpoint error were exercised on this machine.
+  - A file named next to "fix only" is context, not a second required edit. Chat context chips are not required edits. Motion sampling starts on the first animation frame. Linux CI enables user namespaces instead of skipping the Chromium sandbox.
+  - Local checks and the three-run 30B benchmark meet their gates. Remaining: push `.github/workflows/ci.yml` with a credential that has the `workflow` scope, then a green GitHub run. Details are in `docs/releases/PERSONAL_V1_ACCEPTANCE.md`.
+
 Sprint 2A — Project Memory & Session Continuity
 STATUS: COMPLETE
 
@@ -636,5 +759,17 @@ Sprint 10A.1D — Final Pre-HALO Readiness, Security Closure & Release Freeze �
   - Record: `docs/sprints/SPRINT_10A1D_FINAL_PRE_HALO_READINESS.md`.
   - Release Freeze Spec: `docs/releases/PRE_HALO_READINESS.md`.
 
+Sprint 11A.1 — Real-Model Coding Reliability — SPRINT_11A1_PARTIALLY_VERIFIED
+  - Tool-contract corrections and truthful edit completion on the existing AgentRunner.
+  - Local `qwen2.5-coder:7b` completed two unseen edits and failed the original two. GUI install is not verified.
+  - Record: `docs/sprints/SPRINT_11A1_REAL_CODING_RELIABILITY.md`.
+
+Sprint 11A — Linux Daily Driver & Real Local Inference — SPRINT_11A_PARTIALLY_VERIFIED
+  - Standalone Linux x64 package, setuid sandbox fail-closed behavior, and routed local-model identity.
+  - Real Ollama `qwen2.5-coder:7b` through the existing model gateway. One grounded explanation task passed. Two code-editing tasks failed honestly.
+  - Record: `docs/sprints/SPRINT_11A_LINUX_DAILY_DRIVER.md`.
+
 Next:
-1. Physical HALO hardware arrival & benchmark execution.
+1. Rebuild the Debian package with the 11A.1 runner, install it as root, and complete one approved edit plus test in the installed GUI.
+2. Sprint 11B model picker only after that installed session. `qwen2.5-coder:7b` is not reliable on the original edit tasks.
+3. Physical HALO hardware arrival and benchmark execution remain optional.

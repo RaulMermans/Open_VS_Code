@@ -1,0 +1,23 @@
+{
+  "before": {
+    "/home/raul-mermans/.config/Open VS Code/User/settings.json": {
+      "mtimeMs": 1794070950412.3901,
+      "size": 53
+    },
+    "/home/raul-mermans/.config/Code/User/settings.json": {
+      "mtimeMs": 1794427823639.7705,
+      "size": 533
+    }
+  },
+  "after": {
+    "/home/raul-mermans/.config/Open VS Code/User/settings.json": {
+      "mtimeMs": 1794070950412.3901,
+      "size": 53
+    },
+    "/home/raul-mermans/.config/Code/User/settings.json": {
+      "mtimeMs": 1794427823639.7705,
+      "size": 533
+    }
+  },
+  "liveProblems": []
+}

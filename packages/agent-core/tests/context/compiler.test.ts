@@ -81,6 +81,7 @@ test("keeps recent unique observations and deterministically drops stale duplica
     budget: calculateBudget({ contextWindow: 30, reservedOutput: 0, reservedToolHistory: 0 }),
   })
 
-  assert.deepEqual(result.items.map((item) => item.id), ["current-task", "observation:new", "observation:duplicate-new"])
-  assert.equal(result.items[1]!.source.path, "new.ts")
+  // The newest two survive; they are shown oldest first so the latest result is read last (Sprint 25).
+  assert.deepEqual(result.items.map((item) => item.id), ["current-task", "observation:duplicate-new", "observation:new"])
+  assert.equal(result.items[2]!.source.path, "new.ts")
 })

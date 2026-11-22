@@ -186,6 +186,8 @@ Or run the CLI directly:
 apps/desktop/dist/Open\ VS\ Code.app/Contents/Resources/app/bin/open-vs-code
 ```
 
+On Linux x64 the same packaging commands produce `apps/desktop/dist/open-vs-code_<version>_amd64.deb`. The installed daily driver on this machine is `0.1.0-rc.12`. Launch **Open VS Code** from the applications menu or with `open-vs-code /path/to/repo`. The launcher authorizes the workspace's configured local endpoint and does not disable the Electron sandbox. User data lives in `~/.config/Open VS Code`. Live product checks are `npm run accept:lab`. Release evidence is in [`docs/releases/V1_LIVE_ACCEPTANCE.md`](docs/releases/V1_LIVE_ACCEPTANCE.md).
+
 ### Target Inference Machine / Optional Live Evaluation
 
 * Node.js `>= 22.0.0`
@@ -193,9 +195,15 @@ apps/desktop/dist/Open\ VS\ Code.app/Contents/Resources/app/bin/open-vs-code
 * Local OpenAI-compatible inference server: [Ollama](https://ollama.ai) (`ollama serve` with `ollama pull qwen2.5-coder:7b`) or [vLLM](https://github.com/vllm-project/vllm) / [llama.cpp](https://github.com/ggerganov/llama.cpp).
 * Explicit operator authorization: `export OPEN_VS_CODE_REAL_INFERENCE=1`
 
-### Local Model Configuration (`.open-vs-code/models.json`)
+### Local Model Configuration
 
-To configure self-hosted local models for coding and editor autocomplete (see canonical example in [`config/examples/models.local.example.json`](config/examples/models.local.example.json)):
+Open **Models** in the agent panel. Open VS Code detects Ollama at `http://127.0.0.1:11434`, lists installed models, and stores the Chat/Agent model and the Autocomplete model in extension storage. That choice applies in every folder. Tokens, when used, stay in VS Code secure storage.
+
+A trusted workspace may still carry `.open-vs-code/models.json` as an explicit override. The agent panel says when that override is active. Model choices in the panel do not rewrite the file. An untrusted folder cannot change the inference endpoint; its `models.json` is ignored until you trust the folder yourself.
+
+Precedence: trusted workspace `models.json` (unless you suspend it), then global preferences, then models discovered from the global endpoint, then no route.
+
+The JSON shape remains the workspace override format (see [`config/examples/models.local.example.json`](config/examples/models.local.example.json)):
 
 ```json
 {

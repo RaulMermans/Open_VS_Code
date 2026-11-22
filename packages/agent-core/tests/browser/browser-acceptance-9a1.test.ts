@@ -24,8 +24,9 @@ import { classifyPermission } from "../../src/tools/permissions.ts";
 import { STARTER_MODE_PROFILES } from "../../src/modes/starter-profiles.ts";
 import { resolveExecutionProfile } from "../../src/modes/resolver.ts";
 import { BROWSER_QA_LOCAL_DEV_PACK, BROWSER_QA_INTERACTIVE_PACK } from "../../src/packs/starter-packs.ts";
+import { skipWithoutChromiumSandbox } from "./chromium-host.ts";
 
-describe("Sprint 9A.1 Acceptance Tests — Browser Security, Permission Integrity & Desktop Runtime Closure", () => {
+describe("Sprint 9A.1 Acceptance Tests — Browser Security, Permission Integrity & Desktop Runtime Closure", { skip: skipWithoutChromiumSandbox }, () => {
   let tmpRoot: string;
   let workspaceRootA: string;
   let workspaceRootB: string;

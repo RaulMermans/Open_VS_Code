@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopShell, type UpstreamSpec } from './prepare.js';
 import { bundleOpenVSCodeExtension, mergeProductJson } from './bundle-extension.js';
+import { PRODUCT_VERSION } from './product-version.js';
 
 export interface LinuxPackageResult {
   appPath: string;
@@ -22,12 +23,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DESKTOP_ROOT = join(__dirname, '..');
 const REPO_ROOT = join(DESKTOP_ROOT, '..', '..');
-const PRODUCT_VERSION = '0.1.0';
 
 function writeLinuxLauncher(binDir: string, electronName: string): void {
   const launcherPath = join(binDir, 'open-vs-code');
   const script = `#!/usr/bin/env bash
 set -euo pipefail
+# A parent VS Code or Cursor terminal exports ELECTRON_RUN_AS_NODE=1.
+# Leave it set only for the CLI handoff below; never inherit it into the GUI.
+unset ELECTRON_RUN_AS_NODE
+# Launching this desktop app is the operator authorization to call the
+# workspace's configured local endpoint. It does not enable cloud inference.
+export OPEN_VS_CODE_REAL_INFERENCE=1
+# Chromium on Wayland uses the executable's real path as the app id.
+# The binary is named open-vs-code so GNOME matches open-vs-code.desktop.
+export CHROME_DESKTOP="open-vs-code.desktop"
 ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
 ELECTRON="$ROOT/${electronName}"
 CLI="$ROOT/resources/app/out/cli.js"
@@ -44,18 +53,124 @@ exec "$ELECTRON" "$@"
   writeFileSync(launcherPath, script, { mode: 0o755 });
 }
 
+/**
+ * GNOME matches a Wayland window to a launcher by app id. Renaming the
+ * executable is not enough: Electron still reads `desktopName` from
+ * `resources/app/package.json`. Upstream leaves that as `codium.desktop`, so
+ * systemd registers `app-codium` and the dock shows a gear beside
+ * `open-vs-code.desktop`. The packaged binary is named `open-vs-code`.
+ * `codium` stays as a symlink for the CLI.
+ */
+const LINUX_DESKTOP_ID = 'open-vs-code.desktop';
+const BUNDLED_IDENTITY_FILES = ['resources/app/out/main.js', 'resources/app/out/cli.js'];
+
+export function rewriteElectronDesktopIdentity(payloadDir: string): void {
+  const packageJsonPath = join(payloadDir, 'resources', 'app', 'package.json');
+  if (!existsSync(packageJsonPath)) throw new Error(`Linux desktop identity rewrite missing ${packageJsonPath}`);
+  const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { name?: string; desktopName?: string };
+  manifest.desktopName = LINUX_DESKTOP_ID;
+  writeFileSync(packageJsonPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  for (const relative of BUNDLED_IDENTITY_FILES) {
+    const bundled = join(payloadDir, relative);
+    if (!existsSync(bundled)) throw new Error(`Linux desktop identity rewrite missing ${relative}`);
+    const source = readFileSync(bundled, 'utf8');
+    const rewritten = source
+      .replaceAll('"desktopName":"codium.desktop"', `"desktopName":"${LINUX_DESKTOP_ID}"`)
+      .replaceAll('"desktopName": "codium.desktop"', `"desktopName": "${LINUX_DESKTOP_ID}"`);
+    if (rewritten !== source) writeFileSync(bundled, rewritten);
+  }
+  assertLinuxDesktopIdentity(payloadDir);
+}
+
+/** The payload is not packagable unless Electron and the launcher agree on one desktop id. */
+export function assertLinuxDesktopIdentity(payloadDir: string): void {
+  const problems: string[] = [];
+  const packageJsonPath = join(payloadDir, 'resources', 'app', 'package.json');
+  let desktopName = '';
+  try {
+    const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { desktopName?: unknown };
+    desktopName = typeof manifest.desktopName === 'string' ? manifest.desktopName : '';
+  } catch (error) {
+    problems.push(`package.json unreadable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (desktopName !== LINUX_DESKTOP_ID) problems.push(`desktopName is "${desktopName}", expected ${LINUX_DESKTOP_ID}`);
+  if (existsSync(packageJsonPath) && readFileSync(packageJsonPath, 'utf8').includes('codium.desktop')) {
+    problems.push('package.json still names codium.desktop');
+  }
+  for (const relative of BUNDLED_IDENTITY_FILES) {
+    const bundled = join(payloadDir, relative);
+    if (!existsSync(bundled)) {
+      problems.push(`missing ${relative}`);
+      continue;
+    }
+    const text = readFileSync(bundled, 'utf8');
+    if (text.includes('codium.desktop')) problems.push(`${relative} still names codium.desktop`);
+    if (!text.includes(LINUX_DESKTOP_ID)) problems.push(`${relative} does not name ${LINUX_DESKTOP_ID}`);
+  }
+  const desktopFile = join(payloadDir, 'open-vs-code.desktop');
+  if (existsSync(desktopFile)) {
+    const entry = readFileSync(desktopFile, 'utf8');
+    if (!entry.includes('StartupWMClass=open-vs-code')) problems.push('desktop entry StartupWMClass is not open-vs-code');
+    if (!entry.includes('Icon=open-vs-code')) problems.push('desktop entry Icon is not open-vs-code');
+    if (!entry.includes('Name=Open VS Code')) problems.push('desktop entry Name is not Open VS Code');
+  }
+  const launcher = join(payloadDir, 'bin', 'open-vs-code');
+  if (existsSync(launcher)) {
+    const script = readFileSync(launcher, 'utf8');
+    if (!script.includes('CHROME_DESKTOP="open-vs-code.desktop"')) problems.push('launcher does not export open-vs-code.desktop');
+    if (!script.includes('ELECTRON="$ROOT/open-vs-code"')) problems.push('launcher does not execute the open-vs-code binary');
+    if (script.includes('--no-sandbox')) problems.push('launcher disables the Electron sandbox');
+  }
+  if (problems.length > 0) {
+    throw new Error(`Linux desktop identity postcondition failed:\n- ${problems.join('\n- ')}`);
+  }
+}
+function publishLinuxElectronIdentity(payloadDir: string, electronName: string): void {
+  if (electronName === 'open-vs-code') return;
+  const source = join(payloadDir, electronName);
+  const target = join(payloadDir, 'open-vs-code');
+  renameSync(source, target);
+  symlinkSync('open-vs-code', source);
+}
+
+function installBrandIcons(hicolorDir: string): void {
+  const sizes: Array<[number, string]> = [
+    [48, 'icon-48.png'],
+    [128, 'icon-128.png'],
+    [256, 'icon.png'],
+    [512, 'icon-512.png'],
+  ];
+  for (const [size, file] of sizes) {
+    const src = join(DESKTOP_ROOT, 'branding', file);
+    if (!existsSync(src)) continue;
+    const destDir = join(hicolorDir, `${size}x${size}`, 'apps');
+    mkdirSync(destDir, { recursive: true });
+    cpSync(src, join(destDir, 'open-vs-code.png'));
+  }
+}
+
+function installPayloadIcon(payloadDir: string): void {
+  const large = join(DESKTOP_ROOT, 'branding', 'icon-512.png');
+  const icon = existsSync(large) ? large : join(DESKTOP_ROOT, 'branding', 'icon.png');
+  if (!existsSync(icon)) return;
+  cpSync(icon, join(payloadDir, 'open-vs-code.png'));
+  const linuxDir = join(payloadDir, 'resources', 'app', 'resources', 'linux');
+  if (existsSync(linuxDir)) cpSync(icon, join(linuxDir, 'code.png'));
+}
+
 function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): string | undefined {
   const debRoot = join(distDir, `open-vs-code_${PRODUCT_VERSION}_amd64`);
   rmSync(debRoot, { recursive: true, force: true });
   const libDir = join(debRoot, 'usr', 'lib', 'open-vs-code');
   const binDir = join(debRoot, 'usr', 'bin');
   const appsDir = join(debRoot, 'usr', 'share', 'applications');
-  const iconDir = join(debRoot, 'usr', 'share', 'icons', 'hicolor', '256x256', 'apps');
+  for (const size of [48, 128, 256, 512]) {
+    mkdirSync(join(debRoot, 'usr', 'share', 'icons', 'hicolor', `${size}x${size}`, 'apps'), { recursive: true });
+  }
   const debianDir = join(debRoot, 'DEBIAN');
   mkdirSync(libDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
   mkdirSync(appsDir, { recursive: true });
-  mkdirSync(iconDir, { recursive: true });
   mkdirSync(debianDir, { recursive: true });
 
   execSync(`cp -a "${payloadDir}/." "${libDir}/"`);
@@ -65,10 +180,7 @@ function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): s
     { mode: 0o755 },
   );
   cpSync(join(DESKTOP_ROOT, 'branding', 'open-vs-code.desktop'), join(appsDir, 'open-vs-code.desktop'));
-  const iconSrc = join(DESKTOP_ROOT, 'branding', 'icon.png');
-  if (existsSync(iconSrc)) {
-    cpSync(iconSrc, join(iconDir, 'open-vs-code.png'));
-  }
+  installBrandIcons(join(debRoot, 'usr', 'share', 'icons', 'hicolor'));
 
   const installedSize = execSync(`du -sk "${debRoot}/usr" | cut -f1`).toString().trim();
   writeFileSync(
@@ -82,13 +194,27 @@ function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): s
       'Maintainer: Open VS Code <noreply@localhost>',
       `Installed-Size: ${installedSize}`,
       'Depends: libgtk-3-0, libnss3, libxss1, libasound2t64 | libasound2, libgbm1, libdrm2',
-      'Description: Local-first AI coding agent on a VSCodium shell',
-      ' Open VS Code bundles the local agent extension into a pinned VSCodium',
-      ` Linux build. Payload SHA-256: ${archiveSha256}`,
+      'Description: Local-first AI coding environment',
+      ' Open VS Code is a desktop editor with a local AI coding assistant.',
+      ` Payload SHA-256: ${archiveSha256}`,
       '',
     ].join('\n'),
   );
   chmodSync(join(debianDir, 'control'), 0o644);
+  writeFileSync(
+    join(debianDir, 'postinst'),
+    [
+      '#!/bin/sh',
+      'set -e',
+      'SANDBOX=/usr/lib/open-vs-code/chrome-sandbox',
+      'if [ -f "$SANDBOX" ]; then',
+      '  chown root:root "$SANDBOX"',
+      '  chmod 4755 "$SANDBOX"',
+      'fi',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
 
   if (!existsSync('/usr/bin/dpkg-deb')) {
     console.log('[package] dpkg-deb is not installed; wrote Debian tree without building .deb');
@@ -98,6 +224,20 @@ function buildDeb(payloadDir: string, distDir: string, archiveSha256: string): s
   rmSync(debPath, { force: true });
   execSync(`dpkg-deb --root-owner-group --build "${debRoot}" "${debPath}"`, { stdio: 'inherit' });
   return debPath;
+}
+
+/** The shell's own welcome and walkthrough strings. Extension catalogs stay upstream. */
+export function rewriteWelcomeIdentity(messagesPath: string): void {
+  if (!existsSync(messagesPath)) return;
+  const messages = JSON.parse(readFileSync(messagesPath, 'utf8')) as unknown;
+  if (!Array.isArray(messages)) return;
+  let changed = false;
+  const next = messages.map((entry) => {
+    if (typeof entry !== 'string' || !entry.includes('VSCodium')) return entry;
+    changed = true;
+    return entry.replaceAll('VSCodium', 'Open VS Code');
+  });
+  if (changed) writeFileSync(messagesPath, JSON.stringify(next));
 }
 
 export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
@@ -125,15 +265,45 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
     join(DESKTOP_ROOT, 'branding', 'product.json'),
     spec.upstreamCommit,
   );
+  rewriteWelcomeIdentity(join(payloadDir, 'resources', 'app', 'out', 'nls.messages.json'));
   bundleOpenVSCodeExtension({
     repoRoot: REPO_ROOT,
     extensionsDir: join(payloadDir, 'resources', 'app', 'extensions'),
   });
-  writeLinuxLauncher(join(payloadDir, 'bin'), electronName);
+  const gitCommit = execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim();
+  const gitDirty = execSync("git status --porcelain", { cwd: REPO_ROOT, encoding: "utf8" }).trim().length > 0;
+  if (gitDirty && process.env.OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE !== "1") {
+    throw new Error("Refusing to package a release candidate from a dirty source tree. Commit the tree, or set OPEN_VS_CODE_ALLOW_DIRTY_PACKAGE=1 for a diagnostic build.");
+  }
+  const extensionVersion = PRODUCT_VERSION;
+  const modelGatewayVersion = JSON.parse(readFileSync(join(REPO_ROOT, "packages/agent-core/package.json"), "utf8")).version;
+  const packagedAt = new Date().toISOString();
+  const releaseStamp = {
+    productVersion: PRODUCT_VERSION,
+    gitCommit,
+    gitDirty,
+    packagedAt,
+    extensionId: "open-vs-code.vscode-integration",
+    extensionVersion,
+    modelGatewayPackage: "@open-vs-code/agent-core",
+    modelGatewayVersion,
+  };
+  writeFileSync(
+    join(payloadDir, "resources", "app", "open-vs-code-release.json"),
+    `${JSON.stringify(releaseStamp, null, 2)}\n`,
+  );
+  rewriteElectronDesktopIdentity(payloadDir);
+  publishLinuxElectronIdentity(payloadDir, electronName);
+  writeLinuxLauncher(join(payloadDir, 'bin'), 'open-vs-code');
+  const sandboxHelper = join(payloadDir, 'chrome-sandbox');
+  if (existsSync(sandboxHelper)) {
+    chmodSync(sandboxHelper, 0o4755);
+  }
   cpSync(join(DESKTOP_ROOT, 'branding', 'open-vs-code.desktop'), join(payloadDir, 'open-vs-code.desktop'));
-  const iconSrc = join(DESKTOP_ROOT, 'branding', 'icon.png');
-  if (existsSync(iconSrc)) {
-    cpSync(iconSrc, join(payloadDir, 'open-vs-code.png'));
+  installPayloadIcon(payloadDir);
+  assertLinuxDesktopIdentity(payloadDir);
+  if (!existsSync(join(payloadDir, 'open-vs-code.png'))) {
+    throw new Error('Linux desktop identity postcondition failed: payload icon open-vs-code.png is missing');
   }
 
   const archiveName = `${payloadName}.tar.gz`;
@@ -149,6 +319,27 @@ export async function packageLinuxOpenVSCode(): Promise<LinuxPackageResult> {
   const archiveSha256 = createHash('sha256').update(archiveBuffer).digest('hex');
   const debPath = buildDeb(payloadDir, distDir, archiveSha256);
   rmSync(buildTmp, { recursive: true, force: true });
+  const debSha256 = debPath && existsSync(debPath)
+    ? createHash('sha256').update(readFileSync(debPath)).digest('hex')
+    : undefined;
+  writeFileSync(
+    join(distDir, `open-vs-code_${PRODUCT_VERSION}_release-stamp.json`),
+    `${JSON.stringify({
+      productVersion: PRODUCT_VERSION,
+      gitCommit,
+      gitDirty,
+      packagedAt,
+      sourceClean: !gitDirty,
+      extensionId: "open-vs-code.vscode-integration",
+      extensionVersion,
+      modelGatewayPackage: "@open-vs-code/agent-core",
+      modelGatewayVersion,
+      archivePath,
+      archiveSha256,
+      debPath: debPath ?? null,
+      packageSha256: debSha256 ?? null,
+    }, null, 2)}\n`,
+  );
 
   const result: LinuxPackageResult = {
     appPath: targetAppPath,

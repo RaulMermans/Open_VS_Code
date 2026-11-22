@@ -1,6 +1,7 @@
 import { readFile, writeFile, rename, unlink, mkdir, realpath, access, lstat } from "node:fs/promises"
 import { resolve, relative, dirname, isAbsolute, join, basename } from "node:path"
 import { createHash } from "node:crypto"
+import { danglingRenamedBinding } from "../agent/tool-contract.ts"
 import {
   type MutationRequest,
   type PreparedMutation,
@@ -19,6 +20,101 @@ import {
 
 export function sha256(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex")
+}
+
+/** Unique search/replace that yields `after` from `before` without replacing the whole file. */
+export function deriveUniquePatch(before: string, after: string): { search: string; replace: string } | undefined {
+  if (before === after || before.length === 0 || after.length === 0) return undefined
+  const nonempty = before.split("\n").filter((line) => line.trim().length > 0)
+  if (nonempty.length > 0) {
+    const retained = nonempty.filter((line) => after.includes(line)).length
+    if (retained / nonempty.length < 0.5) return undefined
+  }
+  let prefix = 0
+  const shared = Math.min(before.length, after.length)
+  while (prefix < shared && before[prefix] === after[prefix]) prefix++
+  let suffix = 0
+  while (
+    suffix < before.length - prefix
+    && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix++
+  }
+  if (prefix === 0 && suffix === 0) return undefined
+  let left = prefix
+  let right = suffix
+  const slice = () => ({
+    search: before.slice(left, before.length - right),
+    replace: after.slice(left, after.length - right),
+  })
+  let { search, replace } = slice()
+  if (search.length === 0) {
+    if (prefix > 0) left = Math.max(0, prefix - Math.min(32, prefix))
+    else if (suffix > 0) right = Math.max(0, suffix - Math.min(32, suffix))
+    else return undefined
+    ;({ search, replace } = slice())
+  }
+  const occurrenceCount = (needle: string): number => {
+    if (!needle) return 0
+    let count = 0
+    let from = 0
+    while (from <= before.length - needle.length) {
+      const at = before.indexOf(needle, from)
+      if (at === -1) break
+      count += 1
+      from = at + 1
+    }
+    return count
+  }
+  while (occurrenceCount(search) !== 1 && (left > 0 || right > 0)) {
+    if (left > 0) left -= 1
+    else right -= 1
+    ;({ search, replace } = slice())
+  }
+  if (occurrenceCount(search) !== 1 || search === before) return undefined
+  const at = before.indexOf(search)
+  const applied = before.slice(0, at) + replace + before.slice(at + search.length)
+  if (applied !== after) return undefined
+  return { search, replace }
+}
+
+export function existingFileCreateObservation(path: string, content: string): string {
+  const maxBytes = 2048
+  let bounded = content
+  let truncated = false
+  if (Buffer.byteLength(content) > maxBytes) {
+    truncated = true
+    bounded = ""
+    let bytes = 0
+    for (const character of content) {
+      const size = Buffer.byteLength(character)
+      if (bytes + size > maxBytes) break
+      bounded += character
+      bytes += size
+    }
+  }
+  return [
+    `FILE_ALREADY_EXISTS: create_file cannot overwrite ${path}. The file already exists.`,
+    "Do not call create_file again for this path. Do not overwrite it.",
+    `Read ${path} if you need more of the file, then call apply_patch with path ${path}, a search string copied exactly from the current file, and a replace string that keeps unrelated existing code.`,
+    `Current contents of ${path}${truncated ? " (truncated)" : ""}:`,
+    bounded,
+  ].join("\n")
+}
+
+/** The first exported function name that the text declares more than once. */
+export function duplicateExportFunction(source: string): string | undefined {
+  const counts = new Map<string, number>()
+  for (const match of source.matchAll(/^export function ([A-Za-z_$][\w$]*)/gm)) {
+    const name = match[1]
+    if (!name) continue
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  for (const [name, count] of counts) {
+    if (count > 1) return name
+  }
+  return undefined
 }
 
 // --- Path Safety for Writes ---
@@ -72,25 +168,37 @@ export async function resolveWritePath(
     return resolved
   }
 
-  // File should NOT exist - verify parent directory containment
+  // File should NOT exist. A missing parent inside the workspace is created on apply.
+  // An existing parent that resolves outside the workspace is rejected.
   const parentDir = dirname(candidate)
-  let resolvedParent: string
-  try {
-    resolvedParent = await realpath(parentDir)
-  } catch {
-    throw new MutationFailure("PARENT_NOT_FOUND", `Parent directory does not exist: ${requestedPath}`)
+  let cursor = parentDir
+  const missing: string[] = []
+  while (true) {
+    try {
+      const resolvedParent = await realpath(cursor)
+      if (!isContainedPath(root, resolvedParent)) {
+        throw new MutationFailure("SYMLINK_ESCAPE", `Parent directory resolves outside workspace: ${requestedPath}`)
+      }
+      const resolvedCandidate = join(resolvedParent, ...missing.slice().toReversed(), basename(candidate))
+      if (!isContainedPath(root, resolvedCandidate)) {
+        throw new MutationFailure("PATH_ESCAPE", `Resolved path escapes workspace: ${requestedPath}`)
+      }
+      return resolvedCandidate
+    } catch (error) {
+      if (error instanceof MutationFailure) throw error
+      const missingParent = error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+      if (!missingParent) throw error
+      if (cursor === root || cursor === dirname(cursor)) {
+        throw new MutationFailure("PARENT_NOT_FOUND", `Parent directory does not exist: ${requestedPath}`)
+      }
+      missing.push(basename(cursor))
+      const next = dirname(cursor)
+      if (!isContainedPath(root, next)) {
+        throw new MutationFailure("OUTSIDE_WORKSPACE", `Path is outside workspace: ${requestedPath}`)
+      }
+      cursor = next
+    }
   }
-  if (!isContainedPath(root, resolvedParent)) {
-    throw new MutationFailure("SYMLINK_ESCAPE", `Parent directory resolves outside workspace: ${requestedPath}`)
-  }
-
-  // Ensure the final candidate path under the resolved parent is still contained
-  const resolvedCandidate = join(resolvedParent, candidate.slice(parentDir.length))
-  if (!isContainedPath(root, resolvedCandidate)) {
-    throw new MutationFailure("PATH_ESCAPE", `Resolved path escapes workspace: ${requestedPath}`)
-  }
-
-  return resolvedCandidate
 }
 
 // --- Policy Checks ---
@@ -176,7 +284,29 @@ export function generateUnifiedDiff(
   const hunkLenBefore = hunkEndBefore - hunkStartBefore + 1
   const hunkLenAfter = hunkEndAfter - hunkStartAfter + 1
 
-  if (firstDiff <= lastDiffBefore || firstDiff <= lastDiffAfter || beforeContent !== afterContent) {
+  // An in-place edit (same line count, e.g. a rename with uses far apart) is rendered as one hunk per cluster of
+  // changed lines; the untouched span between them is neither shown nor counted against the budgets.
+  if (lastDiffBefore - firstDiff === lastDiffAfter - firstDiff && lastDiffBefore > firstDiff) {
+    const changed: number[] = []
+    for (let i = firstDiff; i <= lastDiffBefore; i++) if (beforeLines[i] !== afterLines[i]) changed.push(i)
+    let linesAddedHere = 0
+    for (let c = 0; c < changed.length; ) {
+      let end = c
+      while (end + 1 < changed.length && changed[end + 1]! - changed[end]! <= 2 * contextSize) end++
+      const from = Math.max(0, changed[c]! - contextSize)
+      const to = Math.min(beforeLines.length - 1, changed[end]! + contextSize)
+      diffLines.push(`@@ -${from + 1},${to - from + 1} +${from + 1},${to - from + 1} @@`)
+      for (let i = from; i <= to; i++) {
+        if (beforeLines[i] === afterLines[i]) diffLines.push(` ${beforeLines[i]}`)
+        else {
+          diffLines.push(`-${beforeLines[i]}`, `+${afterLines[i]}`)
+          linesAddedHere++
+        }
+      }
+      c = end + 1
+    }
+    linesAdded = linesRemoved = linesAddedHere
+  } else if (firstDiff <= lastDiffBefore || firstDiff <= lastDiffAfter || beforeContent !== afterContent) {
     diffLines.push(`@@ -${hunkStartBefore + 1},${hunkLenBefore} +${hunkStartAfter + 1},${hunkLenAfter} @@`)
 
     // Context before change
@@ -292,6 +422,160 @@ export function checkBudgets(diff: MutationDiff, budgets: MutationBudgets): Muta
   return null
 }
 
+// --- Patch Location ---
+
+export type PatchMatchKind = "EXACT" | "WHITESPACE_NORMALIZED"
+
+export type PatchLocation =
+  | { readonly ok: true; readonly afterContent: string; readonly matchKind: PatchMatchKind; readonly startLine: number }
+  | { readonly ok: false; readonly code: "PATCH_MISMATCH" | "PATCH_AMBIGUOUS"; readonly detail: string }
+
+const MAX_HINT_LINES = 24
+const MAX_HINT_BYTES = 2_400
+
+function key(line: string): string {
+  return line.trim()
+}
+
+function leadingWhitespace(line: string): string {
+  return line.match(/^[ \t]*/)?.[0] ?? ""
+}
+
+function numbered(lines: readonly string[], firstLine: number): string {
+  let text = ""
+  for (let index = 0; index < lines.length && index < MAX_HINT_LINES; index += 1) {
+    const next = `${String(firstLine + index).padStart(4)}| ${lines[index]!.replace(/\r$/, "")}\n`
+    if (text.length + next.length > MAX_HINT_BYTES) break
+    text += next
+  }
+  return text
+}
+
+/** True when every non-blank file line is its search line shifted by one shared indentation prefix. */
+function uniformIndentOffset(searchLines: readonly string[], fileLines: readonly string[]): boolean {
+  let shared: string | undefined
+  for (let index = 0; index < searchLines.length; index += 1) {
+    const search = searchLines[index]!
+    const file = fileLines[index]!
+    if (!search.trim() || !file.trim()) continue
+    const s = leadingWhitespace(search)
+    const f = leadingWhitespace(file)
+    const delta = f.endsWith(s) ? `+${f.slice(0, f.length - s.length)}` : s.endsWith(f) ? `-${s.slice(0, s.length - f.length)}` : undefined
+    if (delta === undefined || (shared !== undefined && delta !== shared)) return false
+    shared = delta
+  }
+  return true
+}
+
+/**
+ * Re-indents replacement lines by the uniform indentation offset between the model's search text and the
+ * matched file lines. Only a consistent prefix is added or removed; anything else is left untouched.
+ */
+function reindent(replaceLines: readonly string[], searchFirst: string, fileFirst: string): string[] {
+  const searchIndent = leadingWhitespace(searchFirst)
+  const fileIndent = leadingWhitespace(fileFirst)
+  if (searchIndent === fileIndent) return [...replaceLines]
+  if (fileIndent.endsWith(searchIndent)) {
+    const prefix = fileIndent.slice(0, fileIndent.length - searchIndent.length)
+    return replaceLines.map((line) => (line.trim() ? prefix + line : line))
+  }
+  if (searchIndent.endsWith(fileIndent)) {
+    const extra = searchIndent.slice(0, searchIndent.length - fileIndent.length)
+    if (replaceLines.every((line) => !line.trim() || line.startsWith(extra))) {
+      return replaceLines.map((line) => (line.trim() ? line.slice(extra.length) : line))
+    }
+  }
+  return [...replaceLines]
+}
+
+/**
+ * Locates a search/replace edit in file content.
+ *
+ * 1. Exact substring that occurs exactly once.
+ * 2. Otherwise, a unique window of whole lines equal to the search lines after trimming each line
+ *    (indentation, trailing spaces and CRLF differences). The replacement is re-indented by the observed
+ *    offset and the original line endings are kept. Text outside the window is preserved byte-for-byte.
+ * 3. Otherwise a typed failure whose detail carries the closest region with line numbers, so the caller can
+ *    correct the search text without another read.
+ *
+ * Pure function: no I/O. The caller still validates, diffs, budgets and requires approval.
+ */
+export function locatePatch(content: string, search: string, replace: string, displayPath: string): PatchLocation {
+  const first = content.indexOf(search)
+  if (first !== -1) {
+    const second = content.indexOf(search, first + 1)
+    if (second !== -1) {
+      const lineOf = (offset: number) => content.slice(0, offset).split("\n").length
+      return { ok: false, code: "PATCH_AMBIGUOUS", detail: `PATCH_AMBIGUOUS: search matched more than once in ${displayPath} (lines ${lineOf(first)} and ${lineOf(second)}). Include more surrounding lines so search matches exactly once.` }
+    }
+    return { ok: true, afterContent: content.slice(0, first) + replace + content.slice(first + search.length), matchKind: "EXACT", startLine: content.slice(0, first).split("\n").length }
+  }
+
+  const fileLines = content.split("\n")
+  const trimmedSearch = search.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "")
+  const searchLines = trimmedSearch.split("\n")
+  const searchKeys = searchLines.map(key)
+  const nonEmptyKeys = searchKeys.filter(Boolean)
+  const matches: number[] = []
+  if (nonEmptyKeys.length > 0 && nonEmptyKeys.join("").length >= 3) {
+    for (let start = 0; start + searchLines.length <= fileLines.length; start += 1) {
+      let equal = true
+      for (let offset = 0; offset < searchLines.length; offset += 1) {
+        if (key(fileLines[start + offset]!) !== searchKeys[offset]) { equal = false; break }
+      }
+      if (equal) matches.push(start)
+    }
+  }
+  if (matches.length > 1) {
+    return { ok: false, code: "PATCH_AMBIGUOUS", detail: `PATCH_AMBIGUOUS: search matched ${matches.length} places in ${displayPath} (lines ${matches.slice(0, 4).map((line) => line + 1).join(", ")}) when indentation is ignored. Include more surrounding lines so search matches exactly once.` }
+  }
+  if (matches.length === 1 && !uniformIndentOffset(searchLines, fileLines.slice(matches[0]!, matches[0]! + searchLines.length))) {
+    const start = matches[0]!
+    return {
+      ok: false,
+      code: "PATCH_MISMATCH",
+      detail: `PATCH_MISMATCH: search matches lines ${start + 1}-${start + searchLines.length} of ${displayPath} only if indentation is ignored, and the indentation differs unevenly. Copy search and replace with the file's exact indentation:\n${numbered(fileLines.slice(start, start + searchLines.length), start + 1)}`,
+    }
+  }
+  if (matches.length === 1) {
+    const start = matches[0]!
+    const window = fileLines.slice(start, start + searchLines.length)
+    const crlf = window.length > 0 && window.every((line) => line.endsWith("\r"))
+    const trimmedReplace = replace.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "")
+    const rawReplaceLines = trimmedReplace === "" ? [] : trimmedReplace.split("\n").map((line) => line.replace(/\r$/, ""))
+    const firstSearch = searchLines.find((line) => line.trim()) ?? ""
+    const firstFile = window[searchLines.indexOf(firstSearch)] ?? window[0] ?? ""
+    const replaceLines = reindent(rawReplaceLines, firstSearch, firstFile).map((line) => (crlf ? `${line}\r` : line))
+    const afterLines = [...fileLines.slice(0, start), ...replaceLines, ...fileLines.slice(start + searchLines.length)]
+    return { ok: true, afterContent: afterLines.join("\n"), matchKind: "WHITESPACE_NORMALIZED", startLine: start + 1 }
+  }
+
+  // No match: return the most similar region so the next attempt can copy exact text.
+  let bestStart = -1
+  let bestScore = 0
+  const searchSet = new Set(nonEmptyKeys)
+  const span = Math.max(1, searchLines.length)
+  for (let start = 0; start < fileLines.length; start += 1) {
+    let score = 0
+    for (let offset = 0; offset < span && start + offset < fileLines.length; offset += 1) {
+      if (searchSet.has(key(fileLines[start + offset]!))) score += 1
+    }
+    if (score > bestScore) { bestScore = score; bestStart = start }
+  }
+  const replaceKey = replace.trim()
+  const alreadyThere = replaceKey.length >= 3 && content.includes(replaceKey)
+    ? ` The replace text already appears in ${displayPath}; this edit may already be applied, so check before retrying.`
+    : ""
+  const regionStart = bestStart >= 0 ? Math.max(0, bestStart - 2) : 0
+  const regionLines = fileLines.slice(regionStart, regionStart + (bestStart >= 0 ? span + 4 : MAX_HINT_LINES))
+  const label = bestStart >= 0 ? `Closest lines in ${displayPath}` : `Start of ${displayPath} (${fileLines.length} lines)`
+  return {
+    ok: false,
+    code: "PATCH_MISMATCH",
+    detail: `PATCH_MISMATCH: search was not found in ${displayPath}.${alreadyThere} Copy search exactly from the current file text below (without the line-number prefix), or call read_file first. Do not call create_file.\n${label}:\n${numbered(regionLines, regionStart + 1)}`,
+  }
+}
+
 // --- Mutation Engine ---
 
 export interface MutationEngineOptions {
@@ -356,18 +640,21 @@ export class MutationEngine {
     const baseHash = sha256(beforeContent)
 
     // Apply patch: find search text and replace
-    const searchIndex = beforeContent.indexOf(request.patch.search)
-    if (searchIndex === -1) {
-      throw new MutationFailure("PATCH_MISMATCH", `Search text not found in ${request.path}`)
+    const relForError = relative(root, resolvedPath).replaceAll("\\", "/")
+    const location = locatePatch(beforeContent, request.patch.search, request.patch.replace, relForError)
+    if (!location.ok) throw new MutationFailure(location.code, location.detail)
+    const afterContent = location.afterContent
+    const duplicate = duplicateExportFunction(afterContent)
+    if (duplicate) {
+      throw new MutationFailure("INVALID_PATCH", `Patch would declare export function ${duplicate} more than once in ${relForError}`)
     }
-
-    // Check for ambiguity
-    const secondIndex = beforeContent.indexOf(request.patch.search, searchIndex + 1)
-    if (secondIndex !== -1) {
-      throw new MutationFailure("PATCH_AMBIGUOUS", `Search text found multiple times in ${request.path}`)
+    const dangling = danglingRenamedBinding(beforeContent, afterContent)
+    if (dangling) {
+      const lines = afterContent.split("\n")
+      const callLine = lines.findIndex((line) => new RegExp(`\\b${dangling.replace(/[$]/g, "\\$")}\\b`).test(line) && !/^\s*import\b/.test(line))
+      const where = callLine >= 0 ? ` (line ${callLine + 1}: ${lines[callLine]!.trim().slice(0, 160)})` : ""
+      throw new MutationFailure("INVALID_PATCH", `The patch removes the binding ${dangling} but ${relForError} still calls it${where}. Rename that call in the same patch: include the import line and that line in search and replace.`)
     }
-
-    const afterContent = beforeContent.slice(0, searchIndex) + request.patch.replace + beforeContent.slice(searchIndex + request.patch.search.length)
     const resultHash = sha256(afterContent)
 
     // Validate result is valid UTF-8 text
@@ -409,6 +696,57 @@ export class MutationEngine {
     }
   }
 
+  /**
+   * Prepare a rewrite of an existing file from `baseContent` (the text a language service computed edits
+   * against) to `afterContent`. Same path, policy, binary and budget checks as preparePatch; the file on
+   * disk must still equal `baseContent` (STALE_BASE otherwise, e.g. unsaved editor changes). Grouped
+   * callers enforce their own file cap, so the per-step file budget is not consumed here.
+   */
+  async prepareRewrite(path: string, baseContent: string, afterContent: string): Promise<PreparedMutation> {
+    const root = await realpath(this.#workspaceRoot)
+    const resolvedPath = await resolveWritePath(root, path, { mustExist: true })
+    const policyViolation = checkMutationPolicy(root, resolvedPath, this.#policy)
+    if (policyViolation) throw policyViolation
+    const rawBytes = await readFile(resolvedPath)
+    if (containsBinaryBytes(rawBytes) || hasBinaryExtension(resolvedPath)) {
+      throw new MutationFailure("BINARY_FILE", `Cannot patch binary file: ${path}`)
+    }
+    const relPath = relative(root, resolvedPath).replaceAll("\\", "/")
+    const beforeContent = rawBytes.toString("utf8")
+    const baseHash = sha256(beforeContent)
+    if (baseHash !== sha256(baseContent)) {
+      throw new MutationFailure("STALE_BASE", `${relPath} differs from the text the language service analyzed (unsaved editor changes or a concurrent write)`)
+    }
+    if (containsBinaryBytes(Buffer.from(afterContent, "utf8"))) {
+      throw new MutationFailure("ENCODING_ERROR", `Rewrite result contains binary content`)
+    }
+    const diff = generateUnifiedDiff(relPath, beforeContent, afterContent, this.#budgets.maxDiffBytes)
+    const budgetViolation = checkBudgets(diff, this.#budgets)
+    if (budgetViolation) throw budgetViolation
+    const resultHash = sha256(afterContent)
+    return {
+      id: this.#idFactory(),
+      operation: "patch",
+      path: relPath,
+      resolvedPath,
+      beforeContent,
+      proposedContent: afterContent,
+      baseHash,
+      resultHash,
+      diff,
+      fileChange: {
+        path: relPath,
+        operation: "patch",
+        beforeSize: Buffer.byteLength(beforeContent),
+        afterSize: Buffer.byteLength(afterContent),
+        beforeHash: baseHash,
+        afterHash: resultHash,
+      },
+      timestamp: this.#timestampFactory(),
+      valid: true,
+    }
+  }
+
   async prepareCreate(request: MutationRequest): Promise<PreparedMutation> {
     if (request.operation !== "create") {
       throw new MutationFailure("INVALID_PATCH", "Operation must be 'create'")
@@ -428,17 +766,65 @@ export class MutationEngine {
       throw new MutationFailure("OVERSIZED_FILE", `New file size ${contentBytes} exceeds budget ${this.#budgets.maxNewFileBytes}`)
     }
 
-    // Resolve path safely (must NOT exist)
     const root = await realpath(this.#workspaceRoot)
-    const resolvedPath = await resolveWritePath(root, request.path, { mustExist: false })
+    let existingPath: string | undefined
+    try {
+      existingPath = await resolveWritePath(root, request.path, { mustExist: true })
+    } catch (error) {
+      if (!(error instanceof MutationFailure) || error.code !== "FILE_NOT_FOUND") throw error
+    }
 
-    // Check file doesn't already exist
+    if (existingPath) {
+      const policyViolation = checkMutationPolicy(root, existingPath, this.#policy)
+      if (policyViolation) throw policyViolation
+      const rawBytes = await readFile(existingPath)
+      if (containsBinaryBytes(rawBytes) || hasBinaryExtension(existingPath)) {
+        throw new MutationFailure("BINARY_FILE", `Cannot create over binary file: ${request.path}`)
+      }
+      const beforeContent = rawBytes.toString("utf8")
+      const relPath = relative(root, existingPath).replaceAll("\\", "/")
+      if (sha256(beforeContent) === sha256(request.content)) {
+        const resultHash = sha256(request.content)
+        const diff = generateUnifiedDiff(relPath, beforeContent, request.content, this.#budgets.maxDiffBytes)
+        return {
+          id: this.#idFactory(),
+          operation: "create",
+          path: relPath,
+          resolvedPath: existingPath,
+          beforeContent,
+          proposedContent: request.content,
+          baseHash: resultHash,
+          resultHash,
+          diff,
+          fileChange: {
+            path: relPath,
+            operation: "create",
+            beforeSize: Buffer.byteLength(beforeContent),
+            afterSize: Buffer.byteLength(request.content),
+            beforeHash: resultHash,
+            afterHash: resultHash,
+          },
+          timestamp: this.#timestampFactory(),
+          valid: true,
+        }
+      }
+      const unique = deriveUniquePatch(beforeContent, request.content)
+      if (unique) {
+        try {
+          return await this.preparePatch({ operation: "patch", path: relPath, patch: unique })
+        } catch {
+          // Fall through to a typed create rejection. Never convert an ambiguous rewrite.
+        }
+      }
+      throw new MutationFailure("FILE_EXISTS", existingFileCreateObservation(relPath, beforeContent))
+    }
+
+    const resolvedPath = await resolveWritePath(root, request.path, { mustExist: false })
     try {
       await access(resolvedPath)
-      throw new MutationFailure("FILE_EXISTS", `Cannot create file that already exists: ${request.path}`)
+      throw new MutationFailure("FILE_EXISTS", existingFileCreateObservation(request.path, ""))
     } catch (error) {
       if (error instanceof MutationFailure) throw error
-      // File doesn't exist - good
     }
 
     // Policy check
@@ -535,7 +921,7 @@ export class MutationEngine {
       result = await this.#applyCreate(prepared)
     }
 
-    if (result.status === "APPLIED") {
+    if (result.status === "APPLIED" || result.status === "ALREADY_SATISFIED") {
       this.#consumed.add(prepared.id)
     }
     return result
@@ -552,6 +938,9 @@ export class MutationEngine {
     }
 
     const currentHash = sha256(currentContent)
+    if (currentHash === prepared.resultHash) {
+      return this.#alreadyAppliedResult(prepared)
+    }
     if (currentHash !== prepared.baseHash) {
       return this.#failureResult(prepared, "STALE_BASE", `File changed since preparation (expected ${prepared.baseHash.slice(0, 12)}, got ${currentHash.slice(0, 12)})`)
     }
@@ -607,6 +996,10 @@ export class MutationEngine {
     // Verify file still doesn't exist
     try {
       await access(prepared.resolvedPath)
+      const existing = await readFile(prepared.resolvedPath)
+      if (sha256(existing.toString("utf8")) === prepared.resultHash) {
+        return this.#alreadyAppliedResult(prepared)
+      }
       return this.#failureResult(prepared, "FILE_EXISTS", `File now exists: ${prepared.path}`)
     } catch (error) {
       if (error instanceof MutationFailure) throw error
@@ -763,6 +1156,17 @@ export class MutationEngine {
   }
 
   // --- Observation ---
+
+  #alreadyAppliedResult(prepared: PreparedMutation): MutationResult {
+    return {
+      id: prepared.id,
+      status: "ALREADY_SATISFIED",
+      path: prepared.path,
+      operation: prepared.operation,
+      diff: prepared.diff,
+      observation: `Already satisfied: ${prepared.path}\nThe file already matches the proposed content. No write.`,
+    }
+  }
 
   #formatObservation(prepared: PreparedMutation): string {
     const op = prepared.operation === "patch" ? "Modified" : "Created"

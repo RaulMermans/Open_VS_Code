@@ -1,6 +1,6 @@
-# Dependencies
+# Dependencies (including accidental workspace symlinks — never git-add these)
 node_modules/
-**/node_modules/
+**/node_modules
 .pnpm-store/
 !packages/agent-core/tests/fixtures/**/node_modules/
 !packages/agent-core/tests/fixtures/**/node_modules/**
@@ -12,6 +12,8 @@ ts-dist/
 apps/desktop/cache/
 apps/desktop/staging/
 apps/desktop/dist/
+apps/desktop/acceptance/evidence/
+apps/desktop/acceptance/results/
 
 
 # OS and Editor metadata
@@ -60,3 +62,6 @@ benchmark-results/
 !benchmark-results/*.md
 # Inference host performance profiles
 .model-profiles/
+
+# graphify knowledge graph output (regenerate with `graphify update .`)
+graphify-out/

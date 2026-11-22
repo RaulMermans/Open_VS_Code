@@ -12,7 +12,7 @@ import { VALID_BODY, skillDocument, tempDir, writeSkill, writeWorkspaceSkill } f
 const final: ModelResponse = { message: { role: "assistant", content: "Done" }, model: "test", usage: { inputTokens: 1, outputTokens: 1 } }
 
 async function run(workspaceRoot: string, instruction: string, mode: AgentMode, skills?: Parameters<typeof createAgentRuntime>[0]["skills"]) {
-  const provider = new ScriptedModelProvider([final])
+  const provider = new ScriptedModelProvider([final, final, final])
   const runtime = await createAgentRuntime({ workspaceRoot, mode, instruction, eventSink: () => {}, isTrusted: true, providerOverride: provider, ...(skills ? { skills } : {}) })
   const result = await runtime.runner.run(runtime.runnerInput as never)
   await runtime.cleanup()
@@ -31,7 +31,8 @@ async function legacyWorkspace(): Promise<string> {
 test("5A-26: skills.enabled = false (default) keeps the V1 ADR-014 path and injects no portable skill", async () => {
   const workspaceRoot = await legacyWorkspace()
   const { runtime, result, prompt } = await run(workspaceRoot, "The parser crash needs a fix", "DEBUG")
-  assert.equal(result.status, "COMPLETED")
+  assert.equal(result.status, "FAILED")
+  assert.equal(result.failureReason, "INCOMPLETE")
   assert.equal(runtime.skillEvidence.enabled, false)
   assert.equal(runtime.skillEvidence.skillLoadStatus, "DISABLED")
   assert.deepEqual(runtime.skillGuidance, [])
@@ -48,7 +49,8 @@ test("5A-26: skills.enabled = false (default) keeps the V1 ADR-014 path and inje
 test("5A-26b: skills.enabled = true replaces the legacy path with exactly one lazily loaded built-in", async () => {
   const workspaceRoot = await legacyWorkspace()
   const { runtime, result, prompt } = await run(workspaceRoot, "The parser crash needs a fix", "DEBUG", { enabled: true })
-  assert.equal(result.status, "COMPLETED")
+  assert.equal(result.status, "FAILED")
+  assert.equal(result.failureReason, "INCOMPLETE")
   assert.equal(runtime.skillEvidence.enabled, true)
   assert.equal(runtime.skillEvidence.selectedSkill, "bug-triage")
   assert.equal(runtime.skillEvidence.skillSource, "builtin")
@@ -66,7 +68,8 @@ test("5A-19c: zero skills is a valid runtime state with skills enabled", async (
   const workspaceRoot = await tempDir("zero")
   const emptyBuiltins = await tempDir("zero-builtins")
   const { runtime, result, prompt } = await run(workspaceRoot, "The parser crash needs a fix", "DEBUG", { enabled: true, builtinRoot: emptyBuiltins })
-  assert.equal(result.status, "COMPLETED")
+  assert.equal(result.status, "FAILED")
+  assert.equal(result.failureReason, "INCOMPLETE")
   assert.equal(runtime.skillEvidence.skillsIndexed, 0)
   assert.equal(runtime.skillEvidence.skillLoadStatus, "NO_SKILL_SELECTED")
   assert.ok(!prompt.includes("[Skill:"))

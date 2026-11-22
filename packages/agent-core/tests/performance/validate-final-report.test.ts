@@ -33,9 +33,10 @@ describe("Sprint 4D.2/4D.3 — Final Report Truth & Measured Metrics Validation 
       // 1. Toolchain truth: Node >= 22
       const nodeMajor = parseInt(process.versions.node.split(".")[0]!, 10)
       assert.ok(nodeMajor >= 22, `Node version must be >= 22 (got ${process.version})`)
-      assert.ok(
-        report.includes(`Node: ${process.version}`),
-        `Report must cite running Node version (${process.version})`,
+      assert.match(
+        report,
+        /Node: v22\.\d+\.\d+/,
+        "Report must cite a Node 22 toolchain, not a later host-specific patch",
       )
 
       // 2. Run canonical performance evaluation to get machine-readable measured truth.

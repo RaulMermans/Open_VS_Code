@@ -1,7 +1,12 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { promisify } from "node:util"
+import { fileURLToPath } from "node:url"
+
+const execFileAsync = promisify(execFile)
 
 const FORBIDDEN_IMPORT_PATTERNS = [
   /@kilocode\//,
@@ -30,7 +35,7 @@ async function getFilesRecursively(dir: string): Promise<string[]> {
 }
 
 test("agent-core codebase maintains strict zero-baggage architectural boundary", async () => {
-  const srcDir = path.resolve(new URL(".", import.meta.url).pathname, "../src")
+  const srcDir = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../src")
   const srcFiles = await getFilesRecursively(srcDir)
 
   for (const filePath of srcFiles) {
@@ -42,7 +47,7 @@ test("agent-core codebase maintains strict zero-baggage architectural boundary",
       if (!line.includes("import") && !line.includes("require")) continue
 
       for (const pattern of FORBIDDEN_IMPORT_PATTERNS) {
-        if (pattern.source.includes("child_process") && (filePath.endsWith("verification-engine.ts") || filePath.endsWith("kill-process-tree.ts") || filePath.endsWith("mcp-transport.ts"))) {
+        if (pattern.source.includes("child_process") && (filePath.endsWith("verification-engine.ts") || filePath.endsWith("kill-process-tree.ts") || filePath.endsWith("mcp-transport.ts") || filePath.endsWith("command-sandbox.ts") || filePath.endsWith("verification-discovery.ts"))) {
           continue
         }
         assert.equal(
@@ -118,5 +123,33 @@ test("repository does not contain model weight files", async () => {
 
   const weights = await findModelWeights(repoRoot)
   assert.equal(weights.length, 0, `Model weight files found in repository: ${weights.join(", ")}`)
+})
+
+async function findGitRoot(start: string): Promise<string> {
+  let dir = start
+  for (let i = 0; i < 10; i += 1) {
+    try {
+      await fs.access(path.join(dir, ".git"))
+      return dir
+    } catch {
+      dir = path.resolve(dir, "..")
+    }
+  }
+  throw new Error(`no git root above ${start}`)
+}
+
+test("git does not track workspace node_modules except allowlisted fixtures", async () => {
+  const repoRoot = await findGitRoot(process.cwd())
+  const { stdout } = await execFileAsync("git", ["ls-files", "-z"], { cwd: repoRoot })
+  const tracked = stdout.split("\0").filter(Boolean)
+  const forbidden = tracked.filter((file) => {
+    if (!/(^|\/)node_modules(\/|$)/.test(file)) return false
+    return !file.startsWith("packages/agent-core/tests/fixtures/")
+  })
+  assert.deepEqual(
+    forbidden,
+    [],
+    `Tracked node_modules entries break npm ci (ENOTDIR on a symlink): ${forbidden.join(", ")}`,
+  )
 })
 

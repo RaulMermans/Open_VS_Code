@@ -1,0 +1,4 @@
+dogfood-rc21-P1: approvals=0 blocked=false timedOut=false 320s
+Task failed (NON_PROGRESS): Stopped: search_text was refused 4 times with the same reason and nothing in the workspace changed in between. Last reason: That lookup already completed. Read a file you have not read, or apply a patch. If a test failure names a missing identifier, search for that identifier and update the remaining reference. No files were changed. No edit was approved. Tests did not run. Incomplete: The requested edit was not applied.
+
+Unsupported claim: the reply describes an outcome this run did not record.

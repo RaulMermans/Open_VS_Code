@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { PRODUCT_VERSION } from './product-version.js';
 
 export function bundleOpenVSCodeExtension(options: {
   repoRoot: string;
@@ -9,12 +10,10 @@ export function bundleOpenVSCodeExtension(options: {
   const { repoRoot, extensionsDir } = options;
   const extensionDistPath = join(repoRoot, 'packages', 'vscode-integration', 'dist', 'extension.js');
   const extensionManifestPath = join(repoRoot, 'packages', 'vscode-integration', 'package.json');
-  if (!existsSync(extensionDistPath)) {
-    execSync('npm --workspace=@open-vs-code/vscode-integration run build', {
-      cwd: repoRoot,
-      stdio: 'inherit',
-    });
-  }
+  execSync('npm --workspace=@open-vs-code/vscode-integration run build', {
+    cwd: repoRoot,
+    stdio: 'inherit',
+  });
 
   const bundledExtDir = join(extensionsDir, 'open-vs-code.vscode-integration');
   mkdirSync(join(bundledExtDir, 'dist'), { recursive: true });
@@ -23,12 +22,17 @@ export function bundleOpenVSCodeExtension(options: {
   const bundledManifest = {
     ...rawManifest,
     name: 'vscode-integration',
+    version: PRODUCT_VERSION,
     publisher: 'open-vs-code',
     displayName: 'Open VS Code Agent',
     description: 'Integrated local-first AI coding agent for Open VS Code desktop',
   };
   writeFileSync(join(bundledExtDir, 'package.json'), JSON.stringify(bundledManifest, null, 2) + '\n', 'utf8');
   writeFileSync(join(bundledExtDir, 'dist', 'extension.js'), readFileSync(extensionDistPath));
+  const mediaDir = join(repoRoot, 'packages', 'vscode-integration', 'media');
+  if (existsSync(mediaDir)) {
+    cpSync(mediaDir, join(bundledExtDir, 'media'), { recursive: true });
+  }
 
   const builtinSkillsPath = join(repoRoot, 'packages', 'agent-core', 'skills', 'builtins');
   cpSync(builtinSkillsPath, join(bundledExtDir, 'dist', 'skills', 'builtins'), { recursive: true });

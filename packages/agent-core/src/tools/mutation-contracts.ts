@@ -57,7 +57,7 @@ export interface FileChange {
 }
 
 // --- Mutation Result ---
-export type MutationResultStatus = "APPLIED" | "REJECTED" | "FAILED" | "STALE_BASE" | "ROLLBACK_CONFLICT"
+export type MutationResultStatus = "APPLIED" | "ALREADY_SATISFIED" | "REJECTED" | "FAILED" | "STALE_BASE" | "ROLLBACK_CONFLICT"
 
 export interface MutationResult {
   readonly id: string
@@ -126,11 +126,11 @@ export interface MutationBudgets {
 
 export const DEFAULT_MUTATION_BUDGETS: Readonly<MutationBudgets> = {
   maxFilesPerStep: 3,
-  maxTotalChangedBytes: 10_000,
-  maxAddedLines: 200,
+  maxTotalChangedBytes: 32_768,
+  maxAddedLines: 400,
   maxRemovedLines: 100,
-  maxNewFileBytes: 8_192,
-  maxDiffBytes: 16_384,
+  maxNewFileBytes: 32_768,
+  maxDiffBytes: 40_960,
 }
 
 // --- Sensitive Path Policy ---

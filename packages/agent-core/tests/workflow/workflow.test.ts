@@ -82,9 +82,10 @@ test("W-25: workflow disabled (default) keeps the direct runner path unchanged",
   assert.equal(runtime.workflow, undefined)
   assert.equal(runtime.workflowEligibility.reason, "DISABLED")
   const result = await runtime.runner.run(runtime.runnerInput as never)
-  assert.equal(result.status, "COMPLETED")
-  assert.equal(result.finalAnswer, "Done")
-  assert.equal(model.prompts.DIRECT.length, 1)
+  assert.equal(result.status, "FAILED")
+  assert.equal(result.failureReason, "INCOMPLETE")
+  assert.match(result.finalAnswer ?? "", /not applied/)
+  assert.equal(model.prompts.DIRECT.length, 3)
   assert.ok(!model.prompts.DIRECT[0]!.includes("Engineering workflow"))
   await runtime.cleanup()
 })
@@ -178,6 +179,11 @@ test("W-08: resume continues the paused stage and records the approved change; r
 
 // ---- 9, 19: TEST and VERIFY use the real verification machinery ---------------------------------
 
+/** Discovery may resolve npm to an absolute toolchain path (for example under nvm); compare the command shape. */
+function shape(command: string): string {
+  return command.replace(/^\S*[/\\]npm /, "npm ")
+}
+
 test("W-09/19: TEST and VERIFY execute the repository's configured commands through VerificationEngine", async () => {
   const root = await workspace({
     "src/math.ts": MATH_SOURCE,
@@ -186,8 +192,8 @@ test("W-09/19: TEST and VERIFY execute the repository's configured commands thro
   const workflow = startWorkflow(harness({ root, model: happyModel(), verifier: createWorkspaceVerifier(root) }))
   const { result, confirmations } = await drive(workflow)
   assert.equal(result.status, "COMPLETE")
-  assert.deepEqual(confirmations.map((item) => item.confirmation?.verification?.commands ?? item.confirmation?.runner?.toolName), ["apply_patch", ["npm run test"], ["npm run test"]])
-  assert.equal(result.state.test?.commands[0], "npm run test")
+  assert.deepEqual(confirmations.map((item) => item.confirmation?.verification?.commands?.map(shape) ?? item.confirmation?.runner?.toolName), ["apply_patch", ["npm run test"], ["npm run test"]])
+  assert.equal(shape(result.state.test?.commands[0] ?? ""), "npm run test")
   assert.equal(result.state.test?.outcomes[0]?.status, "PASS")
   assert.equal(result.state.verification?.outcomes.map((outcome) => outcome.action).join(","), "TEST", "VERIFY ran only checks the repository defines")
   assert.equal((await readFile(join(root, "test-runs.log"), "utf8")).trim().split("\n").length, 2, "TEST and VERIFY each really executed the script")

@@ -6,6 +6,7 @@ import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
 import { ToolRegistry } from "../../src/tools/registry.ts"
 import { VerificationEngine } from "../../src/tools/verification-engine.ts"
 import { RepairOrchestrator } from "../../src/agent/repair-loop.ts"
+import { classifyFailure } from "../../src/agent/failure-classification.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
 import type { ModelResponse } from "../../src/contracts/model.ts"
 import type { AgentRunnerInput } from "../../src/agent/runner.ts"
@@ -357,4 +358,26 @@ test("T-218 — Execution error in repair workflow", async () => {
   res = await orchestrator.resume("APPROVE")
   
   assert.equal(res.status, "EXECUTION_ERROR")
+})
+
+test("failed verification repair does not ask to approve the same verification again", async () => {
+  const engine = new MockVerificationEngine()
+  const registry = new MockRegistry()
+  const provider = new ScriptedModelProvider([
+    makeToolCall("call-1", "apply_patch", { path: "src/add.ts", search: "a", replace: "b" }),
+    response("done"),
+  ])
+  const orchestrator = new RepairOrchestrator(
+    { maxRepairAttempts: 2, maxMutations: 3, maxVerificationRuns: 3, maxTotalAgentTurns: 10 },
+    engine,
+    () => new AgentRunner({ provider, registry, permissionEvaluator: () => "CONFIRM" }),
+  )
+  const input: AgentRunnerInput = { task: { id: "original-task", mode: "BUILD", instruction: "fix src/add.ts" }, workspaceRoot: "/test", maxTurns: 10, contextBudget, projectInstructions: [] }
+  const failed = { status: "FAIL" as const, exitCode: 1, stdout: "expected 5", stderr: "", durationMs: 12 }
+  const first = await orchestrator.repairFromFailedVerification(input, ["src/add.ts"], classifyFailure("TEST", failed), failed)
+  assert.equal(engine.executeCalls.length, 0)
+  assert.notEqual(first.status, "AWAITING_VERIFICATION_APPROVAL")
+  assert.equal(first.status, "AWAITING_MUTATION_APPROVAL")
+  assert.ok(first.changedFiles.includes("src/add.ts"))
+  assert.equal(first.task, "original-task")
 })

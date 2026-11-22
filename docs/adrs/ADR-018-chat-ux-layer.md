@@ -87,3 +87,37 @@ The authority map is unchanged; no new Webview → Host message.
 - `ChatController.uiMetrics`: in-memory counters (numbers only), never persisted, logged or used to decide anything.
 
 Record: `docs/sprints/SPRINT_7D_IDE_PERFORMANCE.md`; ADR-026 (Sprint 7D amendment).
+
+## Sprint 14B refinements (conversation presentation)
+
+The authority map is unchanged. No new agent, permission, or provider method.
+
+- The runner appends `CONVERSATIONAL_RESPONSE_GUIDANCE` to the existing operating guidelines. It does not add a second model call.
+- `formatTerminalTaskMessage` may append a verified-outcome block built from `appliedMutations` and review rows whose `runId` matches the current turn. A review with no run id, or a different run id, does not support that block. It does not infer files or tests from the model's prose. A command is a test, lint, typecheck, or other check from its script name or command text. A successful command with no test identity is not reported as a passing test. An unsupported-claim note matches a past report such as "tests passed", and leaves "tests pass" and "tests will pass" alone.
+- The webview shows one summary line per activity kind inside a task. File work names the real paths: "Exploring repository — N files inspected", "Reading files — N files", "Implementing changes — N files". A model wait is "Thinking" until that call finishes, then "Model replied". "Planning changes" is used only when the turn's task mode is PLAN. The raw event labels stay in a collapsed technical-details list.
+- A file approval card says the change is proposed and is not written until that card is approved. The Approve click still posts the confirmation id already bound to that card.
+- Token streaming stays deferred. `ModelProvider` exposes `complete()` and no delta method. Ollama is called through that single response. A character-by-character animation would invent stream events the provider did not send.
+
+Record: `docs/sprints/SPRINT_14B_CONVERSATIONAL_EXPERIENCE.md`.
+
+## Milestone 2 refinements (agent workspace)
+
+The authority map is unchanged. No new agent, permission, or provider method. Streaming stays deferred.
+
+- Sidebar and Wider Chat attach to one `ChatController`. A second send is refused while a turn is in flight. Composer draft is shared in memory and is not persisted. Opening a diff never resolves a confirmation id. While Wider Chat is open, the sidebar is a compact companion; the wide panel is the visible transcript.
+- Review rows distinguish proposed, approved, rejected, applied, and verified. User rejection is a decision (`Change rejected — no files modified`), not a failed execution. Approval controls are cleared. Diff preview tabs close. An unused approval is interrupted on restore and is not replayed.
+- Activity summaries still merge one kind of work inside a task. Trivial ask turns keep the outcome line. Failures and retries stay visible. Interrupted is a distinct status. The technical trace stays collapsed. Ordinary agent tasks do not reveal the Output channel; `Open VS Code: Show Agent Output` remains available.
+- Completed coding turns show a compact outcome card (changed files, tests passed vs not executed). Finished command output stays collapsed until the user opens it.
+- `MAX_TURNS_EXCEEDED` is presented as a stop with finished work, unfinished work, and a recovery notice. Writes are not replayed.
+
+Installed `0.1.0-rc.16` was not replaced. Presentation polish is in `ff96af72e1`. Clean candidate `0.1.0-rc.18` is not installed. M4 overlay CDP (2026-11-13) re-confirmed approve, reject, and verify boundaries on the M2+M3 source line.
+
+Milestone 3 coding comparison (2026-11-13, overlay still not installed): same-digest `qwen3-coder:30b` 12-task live harness scored Open VS Code 11/12 vs OpenCode 3/12. Native tool messages stay opt-in.
+
+Milestone 3 visual corrections (unpacked extension overlay, daily driver still rc.16):
+
+- Reject awaits `closeDiffEditors` (in-flight `vscode.diff` included). After reject the Review tab is gone, the ledger is Rejected, and Open is not offered on a rejected row.
+- Completed coding turns keep a compact outcome card (`Task completed`, changed files, tests passed/failed/not executed) in view; finished command metadata is inside collapsed details.
+- Acceptance applies real window bounds and records `innerWidth`/`outerWidth`. At 1100×800, Models, composer, and Wider Chat remain usable; the header wraps instead of overlapping.
+
+CDP: UX-DIFF `2026-11-13T09-19-14-047Z` objective pass (`NEEDS_REVIEW` appearance), UX-WIDE PASS, CODE-BUG PASS with `outcomeVisible: true`. Copies: `apps/desktop/acceptance/review/m3-visual-2026-11-13/`.

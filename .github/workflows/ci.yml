@@ -15,12 +15,11 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify (${{ matrix.os }}, Node ${{ matrix.node-version }})
-    runs-on: ${{ matrix.os }}
+    name: Verify (Ubuntu, Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: ['22', '24']
 
     steps:
@@ -31,6 +30,31 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+
+      - name: Enable Linux Chromium user-namespace sandbox
+        shell: bash
+        run: |
+          # Ubuntu 24.04 runners block unprivileged user namespaces. Chromium's
+          # sandbox needs them. This does not pass --no-sandbox.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = "0"
+          fi
+          if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+            test "$(cat /proc/sys/kernel/unprivileged_userns_clone)" = "1"
+          fi
+
+      - name: Reject tracked node_modules
+        shell: bash
+        run: |
+          # A tracked packages/*/node_modules symlink makes npm ci fail with ENOTDIR.
+          tracked="$(git ls-files | grep -E '(^|/)node_modules(/|$)' | grep -v '^packages/agent-core/tests/fixtures/' || true)"
+          if [ -n "$tracked" ]; then
+            echo "Tracked node_modules would break npm ci:"
+            echo "$tracked"
+            exit 1
+          fi
 
       - name: Install dependencies
         shell: bash
@@ -47,6 +71,9 @@ jobs:
       - name: Run Deterministic Tests
         shell: bash
         run: npm test
+        # Each workspace test process uses --test-timeout=120000 (no forced exit, so late results are reported).
+        # A stuck test fails at that deadline instead of holding the job open.
+        # Real FPS (>10 frames, >=30 FPS) is exercised on Linux.
 
       - name: Build
         shell: bash

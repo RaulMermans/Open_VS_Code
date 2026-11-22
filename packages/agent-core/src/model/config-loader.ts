@@ -268,6 +268,7 @@ export function validateRoutingConfig(config: unknown): RoutingConfiguration {
  * Load and validate routing configuration from a JSON file.
  * Returns null if no config file exists (routing is optional).
  * Throws ConfigValidationError for malformed config.
+ * Callers must already know the workspace is trusted. An untrusted folder is not a reason to call this.
  */
 export async function loadRoutingConfig(workspaceRoot: string): Promise<RoutingConfiguration | null> {
   const configPath = join(workspaceRoot, ".open-vs-code", "models.json")

@@ -9,8 +9,9 @@ import {
   detectBrowserProvisioning,
   type AccessibilitySnapshot,
 } from "../../src/browser/index.ts";
+import { skipWithoutChromiumSandbox } from "./chromium-host.ts";
 
-describe("Sprint 9A — Governed Playwright Browser Runtime", () => {
+describe("Sprint 9A — Governed Playwright Browser Runtime", { skip: skipWithoutChromiumSandbox }, () => {
   let server: http.Server;
   let serverUrl: string;
   let serverPort: number;

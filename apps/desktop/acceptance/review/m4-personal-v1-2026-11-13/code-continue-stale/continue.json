@@ -1,0 +1,81 @@
+{
+  "taskId": "2026-11-13T16-04-14-137Z:CODE-CONTINUE-STALE:continue",
+  "targetUrl": "vscode-webview://10tuj7g5i4p902d5s51bmuq9t2q1m8mvc3ecav6umfur4hcn6foq/index.html",
+  "raw": {
+    "found": true,
+    "taskId": "2026-11-13T16-04-14-137Z:CODE-CONTINUE-STALE:continue",
+    "sendClicks": 1,
+    "approvalClicks": 4,
+    "rejectionClicks": 0,
+    "composerValue": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Implement formatName, greet, and parseName so test/lib.test.ts passes. Use apply_patch. Do not change the test.",
+        "status": ""
+      },
+      {
+        "role": "other",
+        "text": "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nNo files were changed. No edit was approved. Tests did not run. Incomplete: The requested edit was not applied.\n\nUnsupported claim: the reply describes an outcome this run did not record.\n\nContinue this run keeps the same task. Starting a new message does not continue it.",
+        "status": "failed"
+      },
+      {
+        "role": "other",
+        "text": "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nChanged: src/format.ts, src/greet.ts. Approval was granted for the applied edit. Tests failed. The edit is not complete.\n\nWhat finished\nChanged:\n- src/format.ts\n- src/greet.ts\nVerification was not executed.\n\nContinue this run keeps the same task. Starting a new message does not continue it.",
+        "status": "failed"
+      }
+    ],
+    "userCount": 1,
+    "assistant": "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nNo files were changed. No edit was approved. Tests did not run. Incomplete: The requested edit was not applied.\n\nUnsupported claim: the reply describes an outcome this run did not record.\n\nContinue this run keeps the same task. Starting a new message does not continue it.\nStopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nChanged: src/format.ts, src/greet.ts. Approval was granted for the applied edit. Tests failed. The edit is not complete.\n\nWhat finished\nChanged:\n- src/format.ts\n- src/greet.ts\nVerification was not executed.\n\nContinue this run keeps the same task. Starting a new message does not continue it.",
+    "running": false,
+    "timedOut": false,
+    "model": "qwen3-coder:30b",
+    "mode": "BUILD",
+    "readyText": "Running · qwen3-coder:30b",
+    "approvalNotes": [
+      "patch src/format.ts",
+      "command cwd is inside the fixture",
+      "patch src/greet.ts",
+      "command cwd is inside the fixture"
+    ],
+    "approvalBlocked": false,
+    "activities": [
+      "Read files",
+      "Understanding the request",
+      "Model replied",
+      "Explored repository",
+      "Edit failed — 1 file · retry recorded: src/greet.ts",
+      "Permission denied",
+      "Verification finished",
+      "read_file completed — session-1794585885600",
+      "Preparing context — session-1794585885600",
+      "Model responded — session-1794585885600",
+      "read_file completed — session-1794585885600",
+      "Preparing context — session-1794585885600",
+      "Model responded — session-1794585885600",
+      "list_directory completed — session-1794585885600",
+      "Preparing context — session-1794585885600",
+      "Model responded — session-1794585885600",
+      "read_file completed — session-1794585885600",
+      "Preparing context — session-1794585885600",
+      "Model responded — session-1794585885600",
+      "Preparing a change — src/greet.ts — session-1794585885600",
+      "Waiting for approval — session-1794585885600",
+      "Waiting for approval",
+      "Change approved — session-1794585885600",
+      "Change applied — src/greet.ts — session-1794585885600",
+      "Verification completed — FAIL — session-1794585885600",
+      "Waiting for approval — session-1794585885600",
+      "Waiting for approval"
+    ],
+    "frame": "active-frame",
+    "reason": ""
+  },
+  "interpreted": {
+    "ack": "acknowledged",
+    "assistant": "Stopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nNo files were changed. No edit was approved. Tests did not run. Incomplete: The requested edit was not applied.\n\nUnsupported claim: the reply describes an outcome this run did not record.\n\nContinue this run keeps the same task. Starting a new message does not continue it.\nStopped before the task finished — the turn budget was used up (MAX_TURNS_EXCEEDED).\nCompleted work is kept. Use Continue this run to authorize more turns. Writes still need a new approval.\n\nChanged: src/format.ts, src/greet.ts. Approval was granted for the applied edit. Tests failed. The edit is not complete.\n\nWhat finished\nChanged:\n- src/format.ts\n- src/greet.ts\nVerification was not executed.\n\nContinue this run keeps the same task. Starting a new message does not continue it.",
+    "userCount": 1,
+    "sendClicks": 1,
+    "problems": []
+  }
+}

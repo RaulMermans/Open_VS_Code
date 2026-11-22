@@ -1,5 +1,5 @@
-import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager } from "@open-vs-code/agent-core";
-import { createAgentRuntime, calculateBudget, isSkillApplied } from "@open-vs-code/agent-core";
+import { AgentMode, AgentEvent, AgentResult, ConversationTurn, type CodeIntelligenceProvider, type SkillEvidence, type WorkflowState, type WorkflowResult, type ResolvedExecutionProfile, type McpCatalog, type BrowserSessionManager, type ConfiguredRouteIdentity, type RepairOrchestrator, type RepairResult, type RoutingConfiguration } from "@open-vs-code/agent-core";
+import { createAgentRuntime, calculateBudget, isSkillApplied, classifyFailure, appliedPathsFromAgentResult, integrateRepairOutcome, lastFailedVerification, readMutationReview, readVerificationReview } from "@open-vs-code/agent-core";
 import { IdeHost, IdeContextSnapshot } from "./contracts.js";
 import { buildBoundedIdeContextSnapshot } from "./bounds.js";
 
@@ -7,6 +7,10 @@ export interface BridgeOptions {
   host: IdeHost;
   workspaceRoot: string;
   providerOverride?: any;
+  /** Resolved route. When set, the runtime does not read a workspace model file. */
+  routingConfigOverride?: RoutingConfiguration;
+  /** Do not fall back to `.open-vs-code/models.json` when no override is present. */
+  skipWorkspaceRoutingFile?: boolean;
   /** Portable Skills Runtime (ADR-029); disabled unless the host enables it. */
   skills?: { enabled: boolean; builtinRoot?: string };
   /** Structured Engineering Loop (ADR-030); disabled unless the host enables it. */
@@ -19,6 +23,12 @@ export interface BridgeOptions {
   mcpCatalog?: McpCatalog;
   /** Governed BrowserSessionManager (Sprint 9A) */
   browserSessionManager?: BrowserSessionManager;
+  /** Language service for find_symbol / rename_symbol (Sprint 24). */
+  codeIntelligence?: CodeIntelligenceProvider;
+  /** Supervised long tasks: wall-clock budget per work unit; the task then pauses for continueTurnBudget. */
+  unitBudgetMs?: number;
+  /** Sandbox for agent-initiated commands (ADR-046): "auto" (default), "required" or "off". */
+  commandSandbox?: "auto" | "required" | "off";
   /** Authenticated account identity scope for evidence and session isolation */
   accountScope?: string;
 }
@@ -28,6 +38,8 @@ export class AgentSessionBridge {
   private workspaceRoot: string;
   private activeSession: boolean = false;
   private providerOverride?: any;
+  private routingConfigOverride?: RoutingConfiguration;
+  private skipWorkspaceRoutingFile?: boolean;
   private skills?: BridgeOptions["skills"];
   private lastSkillEvidence?: SkillEvidence;
   private workflow?: BridgeOptions["workflow"];
@@ -35,25 +47,45 @@ export class AgentSessionBridge {
   private learning?: BridgeOptions["learning"];
   private mcpCatalog?: BridgeOptions["mcpCatalog"];
   private browserSessionManager?: BrowserSessionManager;
+  private codeIntelligence?: CodeIntelligenceProvider;
+  private unitBudgetMs?: number;
   private lastWorkflowState?: WorkflowState;
   private accountScope?: string;
+  private commandSandbox: "auto" | "required" | "off";
+  private lastRouteIdentity?: ConfiguredRouteIdentity;
+  private lastRuntime?: Awaited<ReturnType<typeof createAgentRuntime>>;
+  private heldForTurnBudget = false;
+  private lastOnEvent?: (ev: AgentEvent) => void;
+  private repairHandoffCount = 0;
+
+  static readonly TURN_BUDGET_CONTINUATION_TURNS = 8;
   
   constructor(options: BridgeOptions) {
     this.host = options.host;
     this.workspaceRoot = options.workspaceRoot;
     this.providerOverride = options.providerOverride;
+    this.routingConfigOverride = options.routingConfigOverride;
+    this.skipWorkspaceRoutingFile = options.skipWorkspaceRoutingFile;
     this.skills = options.skills;
     this.workflow = options.workflow;
     this.progressMonitor = options.progressMonitor;
     this.learning = options.learning;
     this.mcpCatalog = options.mcpCatalog;
     this.browserSessionManager = options.browserSessionManager;
+    this.codeIntelligence = options.codeIntelligence;
+    this.unitBudgetMs = options.unitBudgetMs;
     this.accountScope = options.accountScope;
+    this.commandSandbox = options.commandSandbox ?? "auto";
   }
 
   /** Bounded workflow state of the most recent structured task, if one ran. */
   public get workflowState(): WorkflowState | undefined {
     return this.lastWorkflowState;
+  }
+
+  /** Deployment that actually served the most recent model turn, when the gateway recorded one. */
+  public get routeIdentity(): ConfiguredRouteIdentity | undefined {
+    return this.lastRouteIdentity;
   }
 
   /** Bounded, privacy-safe skill evidence from the most recent task (ids, versions, reason codes only). */
@@ -76,7 +108,55 @@ export class AgentSessionBridge {
     
     this.activeSession = true;
     try {
+      await this.releaseHeldRuntime();
       return await this._run(instruction, mode, signal, onEvent, recentTurns, resolvedProfile);
+    } finally {
+      this.activeSession = false;
+    }
+  }
+
+  /**
+   * User-authorized continuation after MAX_TURNS_EXCEEDED.
+   * Same runner when still in this process; otherwise reload the durable checkpoint.
+   */
+  public async continueTurnBudget(
+    runId: string | undefined,
+    signal: AbortSignal,
+    onEvent?: (ev: AgentEvent) => void,
+  ): Promise<AgentResult> {
+    if (this.activeSession) {
+      await this.host.showError("A session is already active.");
+      return Promise.reject(new Error("A session is already active."));
+    }
+    this.activeSession = true;
+    this.lastOnEvent = onEvent;
+    try {
+      const extra = AgentSessionBridge.TURN_BUDGET_CONTINUATION_TURNS;
+      if (this.heldForTurnBudget && this.lastRuntime?.runner) {
+        const runner = this.lastRuntime.runner;
+        let result = await runner.continueFromLimit(extra);
+        result = await this.drivePausedLoop(runner, result, signal);
+        await this.finishHeldResult(result);
+        return result;
+      }
+      if (!runId?.trim()) {
+        return {
+          status: "FAILED",
+          failureReason: "INTERNAL_ERROR",
+          turns: 0,
+          finalState: { status: "FAILED", events: [] },
+          events: [],
+          contextDiagnostics: [],
+          toolCalls: [],
+          finalAnswer: "No checkpoint run id is available to continue.",
+        };
+      }
+      const runtime = await this.openRuntimeForRecovery(signal, onEvent);
+      this.lastRuntime = runtime;
+      let result = await runtime.runner.resumeFromRecovery(runId, { workspaceRoot: this.workspaceRoot, signal });
+      result = await this.drivePausedLoop(runtime.runner, result, signal);
+      await this.finishHeldResult(result);
+      return result;
     } finally {
       this.activeSession = false;
     }
@@ -164,10 +244,15 @@ export class AgentSessionBridge {
         isTrusted,
         eventSink: sink,
         providerOverride: this.providerOverride,
+        ...(this.routingConfigOverride ? { routingConfigOverride: this.routingConfigOverride } : {}),
+        ...(this.skipWorkspaceRoutingFile ? { skipWorkspaceRoutingFile: true } : {}),
         ...(this.accountScope ? { accountScope: this.accountScope } : {}),
+        commandSandbox: this.commandSandbox,
         ...(resolvedProfile ? { resolvedProfile } : {}),
         ...(this.mcpCatalog ? { mcpCatalog: this.mcpCatalog } : {}),
         ...(this.browserSessionManager ? { browserSessionManager: this.browserSessionManager } : {}),
+        ...(this.codeIntelligence ? { codeIntelligence: this.codeIntelligence } : {}),
+        ...(this.unitBudgetMs ? { unitBudgetMs: this.unitBudgetMs } : {}),
         ...(this.skills
           ? { skills: this.skills }
           : resolvedProfile?.appliedSkills && resolvedProfile.appliedSkills.length > 0
@@ -190,7 +275,7 @@ export class AgentSessionBridge {
           },
         } : {}),
       });
-      (this as any)._lastRuntime = runtime;
+      this.lastRuntime = runtime;
       
       if (runtime.workflow) {
         const workflowResult = await this._runWorkflow(runtime.workflow, signal);
@@ -200,88 +285,22 @@ export class AgentSessionBridge {
 
       const { runner, repairOrchestrator, runnerInput } = runtime;
       
-      let runnerResult = await runner.run(runnerInput as any);
-      
-      while (runnerResult.status === "PAUSED") {
-        if (signal.aborted) {
-          runnerResult = await runner.resume("REJECT");
-          break;
-        }
-        const conf = runnerResult.confirmation!;
-        let approved = false;
-        
-        if (conf.action === "write_file") {
-          const pm = conf.preparedMutation!;
-          const prompt = `Approve mutation on ${pm.path}? (${pm.operation})`;
-          const res = await this.host.requestConfirmation(prompt, pm);
-          approved = (res === "APPROVE");
-        } else if (conf.action === "run_known_test") {
-          const pv = conf.preparedCommand;
-          const actionName = pv?.action || (conf.arguments as any)?.action || "TEST";
-          const prompt = `Run verification ${actionName}?`;
-          const payload = {
-            action: conf.action,
-            arguments: conf.arguments,
-            preparedCommand: pv,
-          };
-          const res = await this.host.requestConfirmation(prompt, payload);
-          approved = (res === "APPROVE");
-        } else if (conf.action.startsWith("mcp_external") || conf.action === "mcp_sensitive_data_transmission") {
-          const prompt = `Approve MCP tool execution? (${conf.action})`;
-          const res = await this.host.requestConfirmation(prompt, conf);
-          approved = (res === "APPROVE");
-        } else if (conf.action.startsWith("browser_")) {
-          const review = (conf.preparedMutation ?? {}) as Record<string, unknown>;
-          const targetDesc =
-            typeof review.targetName === "string" && review.targetName
-              ? ` on "${review.targetName}"`
-              : typeof review.fieldName === "string" && review.fieldName
-              ? ` into "${review.fieldName}"`
-              : typeof review.url === "string" && review.url
-              ? ` to ${review.url}`
-              : typeof review.refId === "string"
-              ? ` (${review.refId})`
-              : "";
-          const prompt = `Approve ${conf.toolName}${targetDesc}? (${conf.action})`;
-          const res = await this.host.requestConfirmation(prompt, conf);
-          approved = (res === "APPROVE");
-        }
-        
-        if (approved) {
-          if (conf.action === "run_known_test" && (mode === "DEBUG" || mode === "BUILD")) {
-            let repairResult = await repairOrchestrator.run(runnerInput as any, (conf.preparedCommand || conf.preparedMutation) as any);
-            while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
-              if (signal.aborted) {
-                repairResult = await repairOrchestrator.resume("REJECT");
-                break;
-              }
-              let repApproved = false;
-              if (repairResult.status === "AWAITING_MUTATION_APPROVAL") {
-                const pm = repairResult.pendingReview as any;
-                const prompt = `Approve mutation on ${pm.path}? (${pm.operation})`;
-                const res = await this.host.requestConfirmation(prompt, pm);
-                repApproved = (res === "APPROVE");
-              } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
-                const pv = repairResult.pendingReview as any;
-                const actionName = pv?.action || pv?.arguments?.action || "TEST";
-                const prompt = `Run verification ${actionName}?`;
-                const payload = {
-                  action: "run_known_test",
-                  arguments: pv?.arguments || { action: actionName },
-                  preparedCommand: pv,
-                };
-                const res = await this.host.requestConfirmation(prompt, payload);
-                repApproved = (res === "APPROVE");
-              }
-              repairResult = await repairOrchestrator.resume(repApproved ? "APPROVE" : "REJECT");
-            }
-            runnerResult = repairResult as any;
-            break;
-          } else {
-            runnerResult = await runner.resume("APPROVE");
-          }
-        } else {
-          runnerResult = await runner.resume("REJECT");
+      let runnerResult: AgentResult = await runner.run(runnerInput);
+      runnerResult = await this.drivePausedLoop(runner, runnerResult, signal);
+
+      if ((mode === "BUILD" || mode === "DEBUG") && runnerResult.failureReason === "VERIFICATION_FAILED" && !signal.aborted) {
+        const verification = lastFailedVerification(runnerResult);
+        if (verification) {
+          this.repairHandoffCount += 1;
+          const priorPaths = appliedPathsFromAgentResult(runnerResult);
+          let repairResult = await repairOrchestrator.repairFromFailedVerification(
+            runnerInput,
+            priorPaths,
+            classifyFailure("TEST", verification),
+            verification,
+          );
+          repairResult = await this.driveRepair(repairOrchestrator, repairResult, signal);
+          runnerResult = integrateRepairOutcome(runnerResult, repairResult);
         }
       }
       // Final-context truth: report the skill only if its guidance reached a model request.
@@ -293,6 +312,10 @@ export class AgentSessionBridge {
       await this._learn(runtime, { kind: "direct", taskId: runnerInput.task.id, mode, result: runnerResult });
       if (runtime?.performanceLedger) {
         await runtime.performanceLedger.persist().catch(() => {});
+      }
+      if (runnerResult.failureReason === "MAX_TURNS_EXCEEDED") {
+        this.heldForTurnBudget = true;
+        this.lastOnEvent = onEvent;
       }
       return runnerResult as AgentResult;
     } catch (e: any) {
@@ -307,11 +330,137 @@ export class AgentSessionBridge {
     } finally {
       if (runtime) {
         this.lastSkillEvidence = runtime.skillEvidence;
-        await runtime.cleanup();
+        const identity = runtime.readRouteIdentity?.();
+        if (identity) this.lastRouteIdentity = identity;
+        if (!this.heldForTurnBudget) await runtime.cleanup();
       }
     }
   }
+
+  private async drivePausedLoop(runner: any, initial: AgentResult, signal: AbortSignal): Promise<AgentResult> {
+    let runnerResult = initial
+    while (runnerResult.status === "PAUSED") {
+      if (signal.aborted) {
+        runnerResult = await runner.resume("REJECT");
+        break;
+      }
+      const conf = runnerResult.confirmation!;
+      let approved = false;
+      if (conf.action === "write_file") {
+        const pm = conf.preparedMutation!;
+        const res = await this.host.requestConfirmation(mutationPrompt(pm), pm);
+        approved = (res === "APPROVE");
+      } else if (
+        conf.action === "run_known_test"
+        || conf.toolName === "run_verification"
+        || conf.toolName === "run_known_test"
+      ) {
+        const pv = conf.preparedCommand;
+        const actionName = pv?.action || (conf.arguments as any)?.action || "TEST";
+        const payload = { action: conf.action, arguments: conf.arguments, preparedCommand: pv };
+        const res = await this.host.requestConfirmation(`Run verification ${actionName}?`, payload);
+        approved = (res === "APPROVE");
+      } else if (conf.action.startsWith("mcp_external") || conf.action === "mcp_sensitive_data_transmission") {
+        const res = await this.host.requestConfirmation(`Approve MCP tool execution? (${conf.action})`, conf);
+        approved = (res === "APPROVE");
+      } else if (conf.action.startsWith("browser_")) {
+        const review = (conf.preparedMutation ?? {}) as Record<string, unknown>;
+        const targetDesc =
+          typeof review.targetName === "string" && review.targetName
+            ? ` on "${review.targetName}"`
+            : typeof review.fieldName === "string" && review.fieldName
+            ? ` into "${review.fieldName}"`
+            : typeof review.url === "string" && review.url
+            ? ` to ${review.url}`
+            : typeof review.refId === "string"
+            ? ` (${review.refId})`
+            : "";
+        const res = await this.host.requestConfirmation(`Approve ${conf.toolName}${targetDesc}? (${conf.action})`, conf);
+        approved = (res === "APPROVE");
+      } else {
+        const res = await this.host.requestConfirmation(`Approve ${conf.toolName}? (${conf.action})`, conf);
+        approved = (res === "APPROVE");
+      }
+      runnerResult = await runner.resume(approved ? "APPROVE" : "REJECT");
+    }
+    return runnerResult;
+  }
+
+  private async finishHeldResult(result: AgentResult): Promise<void> {
+    if (result.failureReason === "MAX_TURNS_EXCEEDED") {
+      this.heldForTurnBudget = true;
+      return;
+    }
+    this.heldForTurnBudget = false;
+    if (this.lastRuntime) {
+      await this.lastRuntime.cleanup().catch(() => {});
+    }
+  }
+
+  private async releaseHeldRuntime(): Promise<void> {
+    if (!this.heldForTurnBudget) return;
+    this.heldForTurnBudget = false;
+    if (this.lastRuntime) await this.lastRuntime.cleanup().catch(() => {});
+  }
+
+  private async openRuntimeForRecovery(signal: AbortSignal, onEvent?: (ev: AgentEvent) => void) {
+    const isTrusted = await this.host.isWorkspaceTrusted();
+    const sink = (ev: AgentEvent) => {
+      this.handleEvent(ev);
+      if (onEvent) onEvent(ev);
+    };
+    return createAgentRuntime({
+      workspaceRoot: this.workspaceRoot,
+      mode: "BUILD",
+      instruction: "Continue the previous coding task from its checkpoint.",
+      signal,
+      isTrusted,
+      eventSink: sink,
+      providerOverride: this.providerOverride,
+      ...(this.routingConfigOverride ? { routingConfigOverride: this.routingConfigOverride } : {}),
+      ...(this.skipWorkspaceRoutingFile ? { skipWorkspaceRoutingFile: true } : {}),
+      ...(this.accountScope ? { accountScope: this.accountScope } : {}),
+      commandSandbox: this.commandSandbox,
+    });
+  }
   
+  get repairHandoffs(): number {
+    return this.repairHandoffCount;
+  }
+
+  get debugRuntime(): Awaited<ReturnType<typeof createAgentRuntime>> | undefined {
+    return this.lastRuntime;
+  }
+
+  /** Repair approvals are only for a new edit or a new test after the original verification failed. */
+  private async driveRepair(orchestrator: RepairOrchestrator, initial: RepairResult, signal: AbortSignal): Promise<RepairResult> {
+    let repairResult = initial;
+    while (repairResult.status === "AWAITING_MUTATION_APPROVAL" || repairResult.status === "AWAITING_VERIFICATION_APPROVAL") {
+      if (signal.aborted) {
+        repairResult = await orchestrator.resume("REJECT");
+        break;
+      }
+      const mutation = readMutationReview(repairResult.pendingReview);
+      const verification = readVerificationReview(repairResult.pendingReview);
+      let approved = false;
+      if (repairResult.status === "AWAITING_MUTATION_APPROVAL" && mutation) {
+        const decision = await this.host.requestConfirmation(
+          `Approve mutation on ${mutation.path}? (${mutation.operation})`,
+          repairResult.pendingReview,
+        );
+        approved = decision === "APPROVE";
+      } else if (repairResult.status === "AWAITING_VERIFICATION_APPROVAL" && verification) {
+        const decision = await this.host.requestConfirmation(
+          `Run verification ${verification.action}?`,
+          repairResult.pendingReview,
+        );
+        approved = decision === "APPROVE";
+      }
+      repairResult = await orchestrator.resume(approved ? "APPROVE" : "REJECT");
+    }
+    return repairResult;
+  }
+
   /** Runs after the task is finished; learning never changes or fails the task (ADR-032). */
   private async _learn(runtime: any, input: unknown): Promise<void> {
     if (!this.learning?.enabled || typeof runtime?.learnAfter !== "function") return;
@@ -391,4 +540,17 @@ export class AgentSessionBridge {
         break;
     }
   }
+}
+
+/** A grouped (language-service) edit names every file it would change; a single edit keeps the classic prompt. */
+/** Package manifests and lockfiles: an edit changes dependencies or scripts, which is never approved implicitly. */
+export const DEPENDENCY_MANIFEST = /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|Cargo\.toml|Cargo\.lock|go\.mod|go\.sum|Gemfile(\.lock)?)$/i;
+
+export function mutationPrompt(pm: { path?: unknown; operation?: unknown; files?: unknown; summary?: unknown }): string {
+  const files = Array.isArray(pm.files) ? pm.files.map((file: any) => String(file?.path ?? "")).filter(Boolean) : [];
+  const touched = files.length > 0 ? files : [String(pm.path ?? "")];
+  const warning = touched.some((path) => DEPENDENCY_MANIFEST.test(path)) ? "This changes project dependencies or scripts. " : "";
+  if (files.length === 0) return `${warning}Approve mutation on ${pm.path}? (${pm.operation})`;
+  const summary = typeof pm.summary === "string" ? ` (${pm.summary})` : "";
+  return `${warning}Approve mutation on ${files.length} files${summary}: ${files.join(", ")}? (${pm.operation})`;
 }

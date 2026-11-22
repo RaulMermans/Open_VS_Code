@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { AgentRunner } from "./runner.ts";
 import { RepairOrchestrator } from "./repair-loop.ts";
 import { RoutedModelGateway, StaticHealthChecker } from "../model/routed-gateway.ts";
+import { formatRouteIdentity, type ConfiguredRouteIdentity } from "../model/router.ts";
 import { EndpointHealthChecker } from "../model/endpoint-health.ts";
 import { ModelPerformanceLedger } from "../model/performance-ledger.ts";
 import { loadRoutingConfig, resolveProviderApiKey } from "../model/config-loader.ts";
@@ -12,6 +13,8 @@ import { MutationEngine } from "../tools/mutation-engine.ts";
 import { VerificationEngine } from "../tools/verification-engine.ts";
 import { createReadOnlyToolRegistry } from "../tools/read-only-registry.ts";
 import { createMutationToolRegistrations } from "../tools/mutation-registry.ts";
+import { createCodeIntelligenceToolRegistrations, type CodeIntelligenceProvider } from "../tools/code-intelligence.ts";
+import type { CommandSandboxMode } from "../tools/command-sandbox.ts";
 import { createVerificationToolRegistrations } from "../tools/verification-registry.ts";
 import { McpCatalog, selectMcpTools, createMcpToolRegistration } from "../mcp/index.ts";
 import { loadMcpConfig } from "../mcp/mcp-config-loader.ts";
@@ -48,9 +51,15 @@ import type { ModelProvider } from "../contracts/model.ts";
 import type { RoutingConfiguration } from "../contracts/routing.ts";
 import type { HealthChecker } from "../model/router.ts";
 import type { ConversationTurn } from "../contracts/context.ts";
+import { resolveAcceptanceMaxTurns } from "./acceptance-budget.ts";
 
 export interface CreateAgentRuntimeOptions {
   workspaceRoot: string;
+  /**
+   * Sandbox for agent-initiated commands (ADR-046). "auto" (default) uses bubblewrap when it works and
+   * labels the result unsandboxed otherwise; "required" refuses to run without it; "off" runs on the host.
+   */
+  commandSandbox?: CommandSandboxMode;
   mode: AgentMode;
   instruction: string;
   recentTurns?: readonly ConversationTurn[];
@@ -59,6 +68,11 @@ export interface CreateAgentRuntimeOptions {
   isTrusted: boolean;
   providerOverride?: ModelProvider;
   routingConfigOverride?: RoutingConfiguration;
+  /**
+   * When set, a missing override does not read `.open-vs-code/models.json`.
+   * The extension sets this so an untrusted workspace file cannot redirect inference.
+   */
+  skipWorkspaceRoutingFile?: boolean;
   /**
    * Portable Skills Runtime (Sprint 5A, ADR-029). Disabled by default until the HALO A/B benchmark
    * is recorded. When disabled, the frozen ADR-014 `.agents/skills` path behaves exactly as in V1;
@@ -116,6 +130,13 @@ export interface CreateAgentRuntimeOptions {
    */
   browserSessionManager?: BrowserSessionManager;
   /**
+   * Optional language service (Sprint 24, ADR-047). When provided in a trusted workspace, exposes
+   * find_symbol and rename_symbol; renames still go through review and the MutationEngine.
+   */
+  codeIntelligence?: CodeIntelligenceProvider;
+  /** Supervised long tasks: pause for continuation after this many ms per work unit (see AgentRunnerInput). */
+  unitBudgetMs?: number;
+  /**
    * Optional account scope for authorization and evidence provenance isolation (Sprint 10A.1C).
    */
   accountScope?: string;
@@ -142,9 +163,14 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   let routedGateway: RoutedModelGateway | undefined;
   let healthChecker: HealthChecker | undefined;
   let performanceLedger: ModelPerformanceLedger | undefined;
+  let routingConfig: RoutingConfiguration | undefined;
+  let configuredWindow: number | undefined;
 
   if (!provider) {
-    const config = options.routingConfigOverride ?? (await loadRoutingConfig(options.workspaceRoot));
+    const readWorkspaceFile = options.isTrusted === true && options.skipWorkspaceRoutingFile !== true
+    const config = options.routingConfigOverride
+      ?? (readWorkspaceFile ? await loadRoutingConfig(options.workspaceRoot) : null);
+    if (config) routingConfig = config;
     if (!config) {
       throw new Error("No model routing configuration found.");
     }
@@ -173,10 +199,13 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
         if (headers) authHeadersMap.set(d.id, headers);
         const modelConfig = config.models.find((m: any) => m.id === d.modelId);
         const wireModel = resolveServedModelId(d, modelConfig);
+        const window = d.contextWindow ?? modelConfig?.contextWindow
+        if (typeof window === "number" && window > 0) configuredWindow = Math.min(configuredWindow ?? window, window)
         providers.set(d.id, new OpenAICompatibleProvider({
           baseUrl: ep,
           model: wireModel,
           contextWindow: d.contextWindow ?? modelConfig?.contextWindow,
+          timeoutMs: 180_000,
           ...(headers ? { headers } : {}),
         }));
       }
@@ -209,7 +238,8 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   }
 
   const mutationEngine = new MutationEngine(options.workspaceRoot);
-  const verificationEngine = new VerificationEngine({ workspaceRoot: options.workspaceRoot });
+  const commandSandbox: CommandSandboxMode = options.commandSandbox ?? "auto";
+  const verificationEngine = new VerificationEngine({ workspaceRoot: options.workspaceRoot, sandbox: commandSandbox });
   const checkpointCoordinator = new CheckpointCoordinator({
     workspaceRoot: options.workspaceRoot,
     mutationEngine,
@@ -221,8 +251,13 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     for (const r of createMutationToolRegistrations({ engine: mutationEngine })) {
       registry.register(r);
     }
-    for (const r of createVerificationToolRegistrations(options.workspaceRoot)) {
+    for (const r of createVerificationToolRegistrations(options.workspaceRoot, { sandbox: commandSandbox })) {
       registry.register(r);
+    }
+    if (options.codeIntelligence) {
+      for (const r of createCodeIntelligenceToolRegistrations(options.codeIntelligence, mutationEngine)) {
+        registry.register(r);
+      }
     }
   }
 
@@ -249,7 +284,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     schemaBudget: 1500
   });
 
-  const mcpStats = { callsStarted: 0, callsCompleted: 0, callsRejected: 0, callsCancelled: 0, callsTimedOut: 0, callsFailed: 0, resultBytesRetained: 0, resultsTruncated: 0 };
+  const mcpStats = { callsStarted: 0, callsCompleted: 0, callsRejected: 0, callsCancelled: 0, callsTimedOut: 0, callsFailed: 0, resultBytesRetained: 0, resultsTruncated: 0, cleanupCount: 0 };
   
   for (const mcpTool of selectedMcpTools) {
     if (options.resolvedProfile && !options.resolvedProfile.activeMcpServers.includes(mcpTool.serverId)) {
@@ -277,7 +312,9 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...mcpStats
   });
 
-  const contextBudget = calculateBudget({ contextWindow: 8000, reservedOutput: 1000, reservedToolHistory: 500 });
+  // The compile budget follows the smallest configured model window (clamped), not a fixed 8000: with 8000 the
+  // observations of a multi-file task were dropped after ~6K tokens and the model re-read what it had already read.
+  const contextBudget = calculateBudget({ contextWindow: Math.min(Math.max(configuredWindow ?? 8000, 8000), 24_576), reservedOutput: 1000, reservedToolHistory: 500 });
   
   const memoryLoader = new ProjectMemoryLoader(options.workspaceRoot);
   const memorySnapshot = await memoryLoader.load();
@@ -401,7 +438,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
   const runnerInput = {
     task: { id: `session-${Date.now()}`, mode: options.mode, instruction: options.instruction },
     workspaceRoot: options.workspaceRoot,
-    maxTurns: 15,
+    maxTurns: resolveAcceptanceMaxTurns(),
     contextBudget,
     projectInstructions: modeProjectInstructions,
     ...(options.recentTurns ? { recentTurns: options.recentTurns } : {}),
@@ -410,6 +447,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...(skillGuidance.length > 0 ? { skillGuidance } : {}),
     ...(learnedMemory.length > 0 ? { learnedMemory } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.unitBudgetMs ? { unitBudgetMs: options.unitBudgetMs } : {}),
   };
 
   const progressMonitorEnabled = options.progressMonitor?.enabled === true;
@@ -420,6 +458,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     registry,
     permissionEvaluator: classifyPermission,
     evidenceGate: false,
+    mutationStep: mutationEngine,
     eventSink: options.eventSink,
     checkpointCoordinator,
     contextCompiler,
@@ -579,6 +618,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       registry,
       permissionEvaluator: classifyPermission,
       evidenceGate: false,
+      mutationStep: mutationEngine,
       eventSink: options.eventSink,
       checkpointCoordinator,
       contextCompiler,
@@ -594,6 +634,11 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     mcpCatalog,
     mcpStats,
     routedGateway,
+    readRouteIdentity(): ConfiguredRouteIdentity | undefined {
+      const route = routedGateway?.lastDiagnostics?.route;
+      if (!route || !routingConfig) return undefined;
+      return formatRouteIdentity(routingConfig, route.deploymentId, route.providerId, route.modelId);
+    },
     mcpSnapshot,
     skillSelection,
     actualSkillTokens,
@@ -632,7 +677,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       if (!options.mcpCatalog) {
         await mcpCatalog.close();
       }
-      (mcpStats as any).cleanupCount = ((mcpStats as any).cleanupCount || 0) + 1;
+      mcpStats.cleanupCount += 1;
     }
   };
 }

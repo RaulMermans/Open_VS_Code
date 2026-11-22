@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { parseWebviewMessage } from "../src/chat-protocol.ts";
 import {
@@ -16,6 +17,8 @@ import {
   renderHistoryPanel,
   renderRecoveryPanel,
   renderReviewLedger,
+  renderTurnContinuation,
+  summarizeActivities,
   syncTranscript,
   webviewRenderRuntime,
 } from "../src/webview-render-helpers.ts";
@@ -165,11 +168,17 @@ function controllerFixture(storageRoot: string, workspaceRoot?: string) {
     openWorkspaceFile: async () => {},
   };
   const calls: Array<{ instruction: string; recentTurns: any[] }> = [];
+  const continueCalls: Array<{ runId?: string }> = [];
   let runTask: any = completedTurn;
+  let continueTask: any = async () => ({ status: "COMPLETED", finalAnswer: "continued" });
   const bridgeFactory = () => ({
     runTask: async (instruction: string, mode: string, signal: AbortSignal, onEvent: any, recentTurns: any[]) => {
       calls.push({ instruction, recentTurns: recentTurns || [] });
       return runTask(instruction, mode, signal, onEvent);
+    },
+    continueTurnBudget: async (runId: string | undefined, signal: AbortSignal, onEvent: any) => {
+      continueCalls.push({ runId });
+      return continueTask(runId, signal, onEvent);
     },
   });
   const controller = new ChatController(host, bridgeFactory);
@@ -182,6 +191,8 @@ function controllerFixture(storageRoot: string, workspaceRoot?: string) {
     attach: () => controller.attachConversationStore(st),
     state: () => controller.getState(),
     setRunTask: (fn: any) => { runTask = fn; },
+    setContinueTask: (fn: any) => { continueTask = fn; },
+    continueCalls,
     send: (text: string, mode = "ASK") => view.webview.send({ type: "chat.send", text, mode }),
   };
 }
@@ -437,7 +448,7 @@ describe("Sprint 7C conversation store", () => {
       await assert.rejects(s.read(bad), { code: "INVALID_ID" });
       await assert.rejects(s.save(conv(bad)), { code: "INVALID_ID" });
       await assert.rejects(s.delete(bad), { code: "INVALID_ID" });
-      for (const type of ["conversation.open", "conversation.delete", "conversation.continueFrom", "conversation.inspectRecovery"]) {
+      for (const type of ["conversation.open", "conversation.delete", "conversation.continueFrom", "task.continueBudget", "conversation.inspectRecovery"]) {
         assert.equal(parseWebviewMessage({ type, conversationId: bad }), null);
       }
       assert.equal(parseWebviewMessage({ type: "conversation.rename", conversationId: bad, title: "x" }), null);
@@ -910,13 +921,13 @@ describe("Sprint 7C history UI", () => {
   test("23. the bundled webview runtime includes the 7C surfaces and keeps text inert", () => {
     const esbuild = createRequire(import.meta.url)("esbuild");
     const bundled = esbuild.buildSync({
-      entryPoints: [new URL("../src/webview-render-helpers.ts", import.meta.url).pathname],
+      entryPoints: [fileURLToPath(new URL("../src/webview-render-helpers.ts", import.meta.url))],
       bundle: true, write: false, format: "cjs", platform: "node",
     });
     const mod: any = { exports: {} };
     new Function("module", "exports", bundled.outputFiles[0].text)(mod, mod.exports);
     const source = mod.exports.webviewRenderRuntime();
-    for (const name of ["renderHistoryPanel", "renderConversationBar", "renderRecoveryPanel", "filterConversations", "moveListFocus"]) {
+    for (const name of ["renderHistoryPanel", "renderConversationBar", "renderRecoveryPanel", "renderTurnContinuation", "filterConversations", "moveListFocus"]) {
       assert.ok(webviewRenderRuntime().includes("function " + name), name + " is shipped to the webview");
     }
     const api = new Function(source + "\nreturn { renderHistoryPanel, renderConversationBar, renderRecoveryPanel };")();
@@ -947,6 +958,7 @@ describe("Sprint 7C history UI", () => {
       set innerHTML(v: string) { if (v === "") { this.children = []; } }
       get innerHTML() { return ""; }
       get firstChild() { return this.children[0] || null; }
+      querySelector() { return null; }
       appendChild(c: El) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = this; this.children.push(c); return c; }
       removeChild(c: El) { this.children = this.children.filter((x) => x !== c); c.parentNode = null; return c; }
       replaceChildren() { this.children = []; }
@@ -1046,5 +1058,141 @@ describe("Sprint 7C history UI", () => {
     const size = readFileSync(join(root, "conversations", cid(49) + ".json")).length;
     assert.ok(size <= S.MAX_RECORD_BYTES);
     console.log(`[7C perf] 100 history renders (50 items): ${renderMs.toFixed(1)} ms; index load (50 records): ${loadMs.toFixed(1)} ms; full record read (${size} B): ${readMs.toFixed(1)} ms`);
+  });
+});
+
+describe("Sprint 14B.1 task evidence", () => {
+  test("25. a later task cannot claim an earlier run's files or checks", async () => {
+    const fx = controllerFixture(tmp("ovsc-14b1-"));
+    fx.attach();
+    fx.setRunTask(async (_instruction: string, _mode: string, _signal: AbortSignal, onEvent: any) => {
+      onEvent({ type: "task.started", taskId: "run-one", payload: { task: { id: "run-one", mode: "BUILD" } } });
+      const edit = fx.controller.requestConfirmation("Approve?", {
+        id: "mut-one",
+        action: "write_file",
+        operation: "patch",
+        path: "src/a.ts",
+        reviewPayload: { operation: "patch", path: "src/a.ts", beforeContent: "a\n", proposedContent: "b\n", linesAdded: 1, linesRemoved: 1 },
+      });
+      await waitFor(() => Boolean(fx.state().pendingConfirmation));
+      await fx.view.webview.send({ type: "confirmation.respond", confirmationId: fx.state().pendingConfirmation.id, action: "APPROVE" });
+      assert.equal(await edit, "APPROVE");
+      onEvent({ type: "mutation.applied", payload: { mutationId: "mut-one" } });
+      const check = fx.controller.requestConfirmation("Run tests?", {
+        action: "run_known_test",
+        preparedCommand: {
+          verificationId: "ver-one",
+          executable: "npm",
+          args: ["test"],
+          cwd: fx.root,
+          commandPreview: "npm test",
+          scriptName: "test",
+          timeoutMs: 1000,
+        },
+      });
+      await waitFor(() => Boolean(fx.state().pendingConfirmation));
+      await fx.view.webview.send({ type: "terminal.respond", confirmationId: fx.state().pendingConfirmation.id, action: "APPROVE" });
+      assert.equal(await check, "APPROVE");
+      onEvent({ type: "verification.requested", taskId: "run-one", payload: { executionId: "ver-one" } });
+      onEvent({ type: "verification.started", taskId: "run-one", payload: { executionId: "ver-one" } });
+      onEvent({ type: "verification.completed", taskId: "run-one", payload: { executionId: "ver-one", result: { status: "PASS", exitCode: 0, durationMs: 4 } } });
+      return { status: "COMPLETED", finalAnswer: "I updated the file.", appliedMutations: [{ path: "src/a.ts", status: "APPLIED" }] };
+    });
+    await fx.send("edit a", "BUILD");
+    const first = fx.state().messages.filter((message: any) => message.role === "assistant").at(-1);
+    assert.match(first.content, /src\/a\.ts/);
+    assert.match(first.content, /Tests passed\./);
+    const verificationRows = fx.state().activities.filter((activity: any) => activity.kind === "verification");
+    assert.equal(verificationRows.length, 1);
+    assert.equal(verificationRows[0].label, "Verification completed");
+    assert.equal(verificationRows[0].runId, "run-one");
+
+    fx.setRunTask(async (_instruction: string, _mode: string, _signal: AbortSignal, onEvent: any) => {
+      onEvent({ type: "task.started", taskId: "run-two", payload: { task: { id: "run-two", mode: "ASK" } } });
+      onEvent({ type: "tool.completed", taskId: "run-two", payload: { name: "read_file", path: "src/a.ts" } });
+      onEvent({ type: "model.requested", taskId: "run-two", payload: {} });
+      onEvent({ type: "model.completed", taskId: "run-two", payload: {} });
+      return { status: "COMPLETED", finalAnswer: "It exports one value. Tests passed and I updated the file." };
+    });
+    await fx.send("what is in a", "ASK");
+    const second = fx.state().messages.filter((message: any) => message.role === "assistant").at(-1);
+    assert.match(second.content, /It exports one value/);
+    assert.match(second.content, /Unsupported claim/);
+    assert.doesNotMatch(second.content, /src\/a\.ts|Changed:/);
+    assert.doesNotMatch(second.content.split("Verified outcome")[1] || "", /Tests passed/);
+    assert.match(fx.state().messages.filter((message: any) => message.role === "assistant")[0].content, /Tests passed\./);
+    assert.equal(fx.state().reviews.some((review: any) => review.runId === "run-one" && review.path === "src/a.ts"), true);
+    const titles = summarizeActivities(fx.state().activities).map((group) => group.title);
+    assert.equal(titles.includes("Planning changes"), false);
+    assert.equal(titles.includes("Read files — 1 file"), true);
+    assert.equal(titles.some((title) => title === "Thinking" || title === "Model replied"), true);
+
+    await fx.controller.flushPersistence();
+    const saved = await fx.st.read(fx.state().conversationId);
+    assert.equal(saved.reviews.some((review: any) => review.runId === "run-one" && review.scriptName === "test" && review.status === "succeeded"), true);
+    assert.equal(saved.messages.some((message: any) => String(message.content).includes("Tests passed.")), true);
+    assert.equal(saved.messages.filter((message: any) => String(message.content).includes("Unsupported claim")).length, 1);
+  });
+
+  test("turn-budget Continue keeps the same run and does not replay the prompt", async () => {
+    const fx = controllerFixture(tmp("ovsc-7c-continue-"));
+    await fx.attach();
+    fx.setRunTask(async () => ({
+      status: "FAILED",
+      failureReason: "MAX_TURNS_EXCEEDED",
+      finalAnswer: "Partial work. Stopped because the turn budget was exhausted.",
+      appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
+    }));
+    await fx.send("fix add", "BUILD");
+    assert.equal(fx.state().pendingTurnContinuation?.conversationId, fx.state().conversationId);
+    assert.match(fx.state().messages.at(-1).content, /Continue this run/);
+    const posted: any[] = [];
+    const banner = new MockElement();
+    renderTurnContinuation(banner, fx.state(), mockDoc(), (msg: any) => posted.push(msg));
+    assert.match(allText(banner), /Continue this run/);
+    fx.setContinueTask(async () => ({
+      status: "COMPLETED",
+      finalAnswer: "Finished remaining work.",
+      appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
+    }));
+    await fx.view.webview.send({ type: "task.continueBudget", conversationId: fx.state().conversationId });
+    assert.equal(fx.continueCalls.length, 1);
+    assert.equal(fx.calls.length, 1, "Continue must not start a new prompt");
+    assert.match(fx.state().messages.at(-1).content, /Finished remaining work/);
+    assert.equal(fx.state().pendingTurnContinuation, undefined);
+    await fx.controller.flushPersistence();
+    const saved = await fx.st.read(fx.state().conversationId);
+    assert.equal(saved.pendingTurnContinuation, undefined);
+  });
+
+  test("turn-budget Continue is restored after a conversation reload", async () => {
+    const storageRoot = tmp("ovsc-7c-continue-reload-");
+    const fx = controllerFixture(storageRoot);
+    await fx.attach();
+    fx.setRunTask(async () => ({
+      status: "FAILED",
+      failureReason: "MAX_TURNS_EXCEEDED",
+      finalAnswer: "Need more turns.",
+    }));
+    await fx.send("keep going", "BUILD");
+    await fx.controller.flushPersistence();
+    const cid = fx.state().conversationId;
+    const fx2 = controllerFixture(storageRoot, fx.root);
+    await fx2.attach();
+    await fx2.view.webview.send({ type: "conversation.open", conversationId: cid });
+    assert.equal(fx2.state().pendingTurnContinuation?.conversationId, cid);
+    const rec = new MockElement();
+    renderRecoveryPanel(rec, {
+      conversationId: cid,
+      lastStatus: "failed",
+      state: "STOPPED",
+      reasons: [],
+      manualInspectionRequired: false,
+      resumeAvailable: false,
+      operations: [],
+      files: [],
+      turnBudgetContinue: { additionalTurns: 8, runId: fx2.state().pendingTurnContinuation.runId },
+    }, "t", mockDoc(), () => {});
+    assert.match(allText(rec), /Continue this run/);
   });
 });

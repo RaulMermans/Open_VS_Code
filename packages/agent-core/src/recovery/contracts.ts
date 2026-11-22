@@ -157,6 +157,35 @@ export interface CheckpointRecord {
       readonly arguments?: unknown
       readonly requiresNewEpochApproval?: boolean | undefined
     } | undefined
+    /** Bounded resume facts. Never a full transcript dump. */
+    readonly workingContext?: {
+      readonly observations?: readonly {
+        readonly toolName: string
+        readonly callId: string
+        readonly ok: boolean
+        readonly content: string
+        readonly truncated: boolean
+        readonly provenance: { readonly kind: "tool"; readonly paths: readonly string[] }
+        readonly errorCategory?: string
+        readonly arguments?: Readonly<Record<string, unknown>>
+      }[]
+      readonly toolCalls?: readonly {
+        readonly id: string
+        readonly name: string
+        readonly outcome: string
+        readonly truncated?: boolean
+        readonly arguments?: Readonly<Record<string, unknown>>
+      }[]
+      readonly completedPaths?: readonly string[]
+      /** Paths whose bytes already matched; no write occurred this run. */
+      readonly alreadyPresentPaths?: readonly string[]
+      /** Signatures of directory/search lookups already completed this run. */
+      readonly explorationSignatures?: readonly string[]
+      readonly lastVerification?: {
+        readonly status: string
+        readonly failureSummary?: string
+      }
+    } | undefined
   }
 
   readonly recoveryFootprint: WorkspaceRecoveryFootprint

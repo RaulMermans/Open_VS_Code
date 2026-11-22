@@ -7,7 +7,9 @@ export const MAX_REVIEW_RECORDS = 20;
 
 export function reviewStatusFromMutation(status: ReviewStatus): ReviewRecordStatus {
   switch (status) {
+    case 'APPROVED': return 'approved';
     case 'APPLIED': return 'applied';
+    case 'ALREADY_SATISFIED': return 'already-satisfied';
     case 'REJECTED': return 'rejected';
     case 'CANCELLED': return 'cancelled';
     case 'STALE': return 'stale';

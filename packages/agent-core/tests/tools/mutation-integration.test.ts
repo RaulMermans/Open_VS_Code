@@ -123,7 +123,8 @@ test("rejection flow: caller rejects mutation, filesystem unchanged", async () =
 
     // REJECT the mutation
     const finalResult = await runner.resume("REJECT")
-    assert.equal(finalResult.status, "COMPLETED")
+    assert.equal(finalResult.status, "FAILED")
+    assert.equal(finalResult.failureReason, "REJECTED")
 
     // Filesystem MUST be unchanged
     const content = await readFile(join(ws, "keep.txt"), "utf8")
