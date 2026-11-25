@@ -223,6 +223,7 @@ async function runScenario(scenario: AcceptanceScenario, context: RunContext, ev
   if (harness === "unit") return runUnit(scenario, context.repositoryRoot)
   if (harness === "artifact") return runArtifact(scenario, context)
   if (harness === "cdp-webview") {
+    if (scenario.id === "LIFE-FIRST") return runCdpFirstLaunch(scenario, context, evidencePath)
     if (scenario.id === "UX-WIDE") return runCdpWide(scenario, context, evidencePath)
     if (scenario.id === "UX-ACTIVITY") return runCdpActivity(scenario, context, evidencePath)
     if (scenario.id === "UX-DIFF") return runCdpDiff(scenario, context, evidencePath)
@@ -837,6 +838,27 @@ async function startCdpSession(
     if (trust.restricted) throw new Error("FAIL: workspace remained in Restricted Mode after the trust control was used")
   }
   return { app, dirs, before }
+}
+
+/** Cold start on a fresh profile: the Agent webview must reach a usable composer and the empty-state copy. */
+async function runCdpFirstLaunch(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const started = Date.now()
+  const { app } = await startCdpSession(scenario, context, evidencePath)
+  try {
+    await waitForAgentViews(app, 1, 45000)
+    const ready = await waitAgentSurface(app, "sidebar", (snap) => snap.composerVisible === true && failuresForText(snap.bodyText ?? "", scenario.expected).length === 0, 30000)
+      .catch(() => agentSurface(app, { op: "snapshot" }, "sidebar"))
+    const coldStartMs = Date.now() - started
+    writeEvidence(evidencePath, "first-launch.json", JSON.stringify({ coldStartMs, composerVisible: ready.composerVisible ?? false, messages: ready.messages?.length ?? 0, bodyText: (ready.bodyText ?? "").slice(0, 1200) }, null, 2))
+    await saveShot(app, evidencePath, "chat.png", true)
+    if (!ready.composerVisible) return "FAIL: the Agent composer did not become visible"
+    if ((ready.messages ?? []).length > 0) return "FAIL: a fresh profile restored a conversation"
+    const problems = failuresForText(ready.bodyText ?? "", scenario.expected)
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return `Fresh profile shows the empty-state copy and a usable composer after ${coldStartMs} ms.`
+  } finally {
+    await app.close().catch(() => undefined)
+  }
 }
 
 async function runCdpWide(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {

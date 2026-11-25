@@ -391,6 +391,14 @@ async function main(): Promise<void> {
   const dirty = await run("git", ["status", "--porcelain", "--untracked-files=no"], REPO_ROOT)
   const tags = await fetch(ENDPOINT.replace(/\/v1$/, "/api/tags")).then((response) => response.json()).catch(() => ({ models: [] }))
   const digest = (tags.models ?? []).find((model: any) => model.name === MODEL)?.digest ?? "unknown"
+  // Environment integrity: fail before any inference if the model is absent or a workspace package resolves
+  // outside this checkout (cross-worktree node_modules contamination).
+  if (digest === "unknown") throw new Error(`INVALID_ENVIRONMENT: ${MODEL} is not installed at ${ENDPOINT}`)
+  const root = await realpath(REPO_ROOT)
+  for (const pkg of ["agent-core", "ide-adapter", "vscode-integration"]) {
+    const resolved = await realpath(join(REPO_ROOT, "node_modules/@open-vs-code", pkg))
+    if (!resolved.startsWith(`${root}/`)) throw new Error(`INVALID_ENVIRONMENT: @open-vs-code/${pkg} resolves to ${resolved}, outside ${root}`)
+  }
   const out = join(REPO_ROOT, "evals/results", `${args.label}-${args.split}${args.ids ? "-subset" : ""}.json`)
   const rows: Array<Record<string, unknown>> = []
   const meta = {
@@ -399,6 +407,7 @@ async function main(): Promise<void> {
     modelDigest: digest,
     endpoint: ENDPOINT,
     sourceHead: head.out.trim(),
+    benchmarkSha256: createHash("sha256").update(await readFile(join(REPO_ROOT, "packages/ide-adapter/evals/coding-tasks-s32.ts"))).digest("hex"),
     trackedDirty: dirty.out.trim().length > 0,
     startedAt: new Date().toISOString(),
     timeoutMin: args.timeoutMin,

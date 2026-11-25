@@ -103,6 +103,7 @@ const PLAYWRIGHT_WORKBENCH = new Set([
 ])
 
 const CDP_WEBVIEW = new Set([
+  "LIFE-FIRST",
   "UX-WIDE",
   "UX-ACTIVITY",
   "UX-DIFF",
