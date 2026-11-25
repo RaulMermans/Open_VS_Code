@@ -8,9 +8,10 @@
 
 import { fileURLToPath } from "node:url"
 import { S32_TASKS } from "./coding-tasks-s32.ts"
+import { S33_TASKS } from "./coding-tasks-s33.ts"
 
 /** S24: cross-file refactors written for Sprint 24 before any run; never used to tune. */
-export type TaskSplit = "DEV" | "HELD_OUT" | "S24" | "S24B" | "S32"
+export type TaskSplit = "DEV" | "HELD_OUT" | "S24" | "S24B" | "S32" | "S33"
 
 export type TaskCategory =
   | "BUGFIX"
@@ -523,6 +524,8 @@ export const CODING_TASKS: readonly CodingTask[] = [
   ...S24B_TASKS_FACTORY(),
   // ---------------------------------------------------------------- S32 (MVP benchmark, frozen before any run)
   ...S32_TASKS,
+  // ---------------------------------------------------------------- S33 (held out: written after the Sprint 32 fixes, frozen before any run)
+  ...S33_TASKS,
 ]
 
 // Oracles typecheck independently with the repository's TypeScript, then check structure and behavior.
