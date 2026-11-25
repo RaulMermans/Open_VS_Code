@@ -36,7 +36,13 @@ export function buildNativeToolMessages(input: {
       .filter((call) => call.arguments)
       .map((call) => [call.id, call.arguments ?? {}]),
   )
+  const modelCallIds = input.toolCalls ? new Set(input.toolCalls.map((call) => call.id)) : undefined
   for (const observation of observations) {
+    // Runner-issued notices (coding_gate, evidence_gate) were never model tool calls: never fabricate an assistant call for them.
+    if (modelCallIds && !modelCallIds.has(observation.callId)) {
+      messages.push({ role: "user", content: `[${observation.toolName}] ${observation.ok ? "" : `ERROR ${observation.errorCategory ?? "TOOL"}: `}${observation.content}` })
+      continue
+    }
     messages.push({
       role: "assistant",
       content: "",

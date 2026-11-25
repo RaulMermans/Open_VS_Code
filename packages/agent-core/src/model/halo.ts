@@ -96,7 +96,10 @@ export interface HaloConnectionInspection {
   readonly capabilityAllowed: boolean | null
   readonly inferenceStatus: string | null
   readonly streamingSupported: false
-  readonly toolsSupported: false
+  /** Core's provider can transport structured tools. Protocol support only, not model qualification. */
+  readonly toolTransport: boolean | null
+  /** The selected model's HALO operator opt-in for tools. Never proof that the model emits valid tool calls. */
+  readonly modelToolCalling: "experimental" | null
   readonly summary: string
 }
 
@@ -118,6 +121,8 @@ export async function inspectHaloConnection(options: {
   let selectedModelRegistered: boolean | null = options.modelId ? false : null
   let capabilityAllowed: boolean | null = null
   let inferenceStatus: string | null = null
+  let toolTransport: boolean | null = null
+  let modelToolCalling: "experimental" | null = null
   try {
     const health = await requestFetch(new URL("health", base))
     coreReachable = health.ok
@@ -130,8 +135,9 @@ export async function inspectHaloConnection(options: {
     if (status.ok) {
       const body = await status.json() as { status?: unknown; features?: { streaming?: unknown; tools?: unknown } }
       inferenceStatus = typeof body.status === "string" ? body.status : null
-      if (body.features?.streaming === true || body.features?.tools === true) {
-        return failInspection(authenticationConfigured, "HALO advertised unsupported streaming or tools.", {
+      toolTransport = typeof body.features?.tools === "boolean" ? body.features.tools : null
+      if (body.features?.streaming === true) {
+        return failInspection(authenticationConfigured, "HALO advertised unsupported streaming.", {
           coreReachable, authenticationConfigured, inferenceStatus,
         })
       }
@@ -156,6 +162,10 @@ export async function inspectHaloConnection(options: {
     try {
       const model = await requestFetch(new URL(`models/${encodeURIComponent(options.modelId)}`, base))
       selectedModelRegistered = model.ok
+      if (model.ok) {
+        const record = await model.json().catch(() => ({})) as { metadata?: { toolCalling?: unknown } }
+        modelToolCalling = record.metadata?.toolCalling === "experimental" ? "experimental" : null
+      }
     } catch {
       selectedModelRegistered = false
     }
@@ -176,7 +186,8 @@ export async function inspectHaloConnection(options: {
     capabilityAllowed,
     inferenceStatus,
     streamingSupported: false,
-    toolsSupported: false,
+    toolTransport,
+    modelToolCalling,
     summary,
   }
 }
@@ -194,7 +205,8 @@ function failInspection(
     capabilityAllowed: extra.capabilityAllowed ?? null,
     inferenceStatus: extra.inferenceStatus ?? null,
     streamingSupported: false,
-    toolsSupported: false,
+    toolTransport: extra.toolTransport ?? null,
+    modelToolCalling: null,
     summary,
   }
 }
@@ -256,7 +268,7 @@ function haloMessages(messages: readonly ModelMessage[]): unknown[] {
         toolCalls: message.toolCalls.map((call) => ({
           id: call.id,
           name: call.name,
-          arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {}),
+          arguments: encodeToolArguments(call.arguments),
         })),
       }
     }
@@ -264,9 +276,17 @@ function haloMessages(messages: readonly ModelMessage[]): unknown[] {
   })
 }
 
+/** Replayed history must carry the call's real arguments; a missing value is never invented as `{}`. */
+function encodeToolArguments(value: unknown): string {
+  if (typeof value === "string") return value
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new HaloProviderError("HALO_INVALID_REQUEST")
+  return JSON.stringify(value)
+}
+
 function parseHaloToolCalls(raw: unknown): ModelResponse["toolCalls"] {
   if (raw === undefined) return undefined
   if (!Array.isArray(raw) || raw.length === 0) throw new HaloProviderError("HALO_INVALID_RESPONSE")
+  const ids = new Set<string>()
   return raw.map((item) => {
     const call = item as HaloToolCall
     if (typeof call.id !== "string" || !call.id.trim() || typeof call.name !== "string" || typeof call.arguments !== "string") {
@@ -278,6 +298,10 @@ function parseHaloToolCalls(raw: unknown): ModelResponse["toolCalls"] {
     } catch {
       throw new HaloProviderError("HALO_INVALID_RESPONSE")
     }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || ids.has(call.id)) {
+      throw new HaloProviderError("HALO_INVALID_RESPONSE")
+    }
+    ids.add(call.id)
     return { id: call.id, name: call.name, arguments: parsed }
   })
 }
@@ -322,7 +346,7 @@ export class HaloProvider implements ModelProvider {
 
     const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
     const signal = request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal
-    const toolsOnWire = !this.#modelId && request.tools && request.tools.length > 0
+    const toolsOnWire = request.tools && request.tools.length > 0
       ? {
           tools: request.tools.map((tool) => ({
             name: tool.name,
@@ -338,6 +362,7 @@ export class HaloProvider implements ModelProvider {
         messages: haloMessages(request.messages),
         ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         ...(request.maxOutputTokens !== undefined ? { maxTokens: request.maxOutputTokens } : {}),
+        ...toolsOnWire,
       }
       : {
         capability: this.#capability,
