@@ -275,11 +275,12 @@ function runArtifact(scenario: AcceptanceScenario, context: RunContext): string 
     return `Installed version stayed ${now}. This run did not install a package.`
   }
   if (scenario.id === "LIFE-ROLLBACK") {
-    const deb = join(context.repositoryRoot, "apps", "desktop", "dist", "open-vs-code_0.1.0-rc.11_amd64.deb")
+    const deb = process.env.OPEN_VS_CODE_ROLLBACK_DEB?.trim()
+    if (!deb) return "FAIL: set OPEN_VS_CODE_ROLLBACK_DEB to the rollback .deb"
     if (!existsSync(deb)) return `FAIL: rollback package is missing at ${deb}`
-    const now = installedPackageVersion()
-    if (now === "0.1.0-rc.11") return "FAIL: the rollback package is the installed daily driver"
-    return `Rollback package is on disk and was not installed. Daily driver is ${now}.`
+    const version = spawnSync("dpkg-deb", ["-f", deb, "Version"], { encoding: "utf8" }).stdout.trim()
+    if (!version) return `FAIL: ${deb} is not a readable Debian package`
+    return `Rollback package ${version} is on disk at ${deb}. Daily driver is ${installedPackageVersion()}.`
   }
   return `FAIL: no artifact implementation for ${scenario.id}`
 }

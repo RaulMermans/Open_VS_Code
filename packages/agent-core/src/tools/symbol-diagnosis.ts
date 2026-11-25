@@ -133,10 +133,10 @@ async function packageFiles(root: string, specifier: string): Promise<{ source?:
     : ["src/index.ts", "src/index.js", "index.ts"]
   for (const candidate of candidates) {
     if (await readableFile(path.join(found, candidate))) {
-      return { source: path.relative(root, path.join(found, candidate)).replace(/\\/g, "/"), runtime }
+      return { source: path.relative(root, path.join(found, candidate)).replace(/\\/g, "/"), ...(runtime ? { runtime } : {}) }
     }
   }
-  return { runtime }
+  return runtime ? { runtime } : {}
 }
 
 function packageTarget(pkg: { main?: string; exports?: unknown }): string | undefined {

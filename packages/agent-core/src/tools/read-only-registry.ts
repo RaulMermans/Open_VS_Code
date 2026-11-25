@@ -80,7 +80,7 @@ const registrations: readonly ToolRegistration[] = [
   {
     definition: {
       name: "list_directory",
-      description: "List a directory two levels deep (skips node_modules and similar, up to 100 entries); says when the list is incomplete.",
+      description: "List a directory two levels deep, skipping node_modules (up to 100 entries); says if incomplete.",
       action: "read_repository",
       inputSchema: { type: "object", properties: { path: { type: "string" } }, additionalProperties: false },
     },

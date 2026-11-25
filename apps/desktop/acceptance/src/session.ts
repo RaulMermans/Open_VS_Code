@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core"
+import { acceptanceExtensionsDir } from "./cdp-driver.ts"
 import { assertIsolatedPath, assertLabWorkspace, chromeSandboxMode } from "./safety.ts"
 
 export interface LabSession {
@@ -68,6 +69,7 @@ export async function launchLab(input: {
   const workspace = assertLabWorkspace(input.workspace, input.repositoryRoot)
   prepareProfile(userData)
   const binary = acceptanceBinary()
+  const builtinExtensions = acceptanceExtensionsDir()
   process.stderr.write(`acceptance-launch ${binary} profile=${userData}\n`)
   const app = await electron.launch({
     executablePath: binary,
@@ -76,11 +78,14 @@ export async function launchLab(input: {
     env: labEnv(),
     args: [
       `--user-data-dir=${userData}`,
+      // The user's own extensions (e.g. ~/.vscode-oss) must not load into a lab profile.
+      `--extensions-dir=${join(userData, "..", "extensions")}`,
       "--disable-telemetry",
       "--disable-crash-reporter",
       "--skip-release-notes",
       "--no-first-run",
       "--disable-updates",
+      ...(builtinExtensions ? [`--builtin-extensions-dir=${builtinExtensions}`] : []),
       workspace,
     ],
   })
