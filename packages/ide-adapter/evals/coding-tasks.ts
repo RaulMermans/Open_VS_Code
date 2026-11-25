@@ -7,9 +7,10 @@
  */
 
 import { fileURLToPath } from "node:url"
+import { S32_TASKS } from "./coding-tasks-s32.ts"
 
 /** S24: cross-file refactors written for Sprint 24 before any run; never used to tune. */
-export type TaskSplit = "DEV" | "HELD_OUT" | "S24" | "S24B"
+export type TaskSplit = "DEV" | "HELD_OUT" | "S24" | "S24B" | "S32"
 
 export type TaskCategory =
   | "BUGFIX"
@@ -25,6 +26,10 @@ export type TaskCategory =
   | "SAFETY"
   | "STALE"
   | "INTERRUPT"
+  | "EXPLAIN"
+  | "FEATURE"
+  | "ADD_TESTS"
+  | "COMPLEX"
 
 export type Oracle =
   | { readonly kind: "node"; readonly script: string }
@@ -46,6 +51,12 @@ export interface CodingTask {
   readonly host?: "APPROVE_ALL" | "REJECT_WRITES" | "STALE_ON_FIRST_WRITE" | "INTERRUPT_AFTER_FIRST_WRITE"
   /** For STALE_ON_FIRST_WRITE: path and marker the harness appends before approving. */
   readonly staleMarker?: { readonly path: string; readonly text: string }
+  /** Composer mode. Defaults to BUILD (Agent). */
+  readonly mode?: "ASK" | "BUILD"
+  /** Hidden checks on the final answer (all must match). Used for explanation tasks. */
+  readonly answerOracle?: readonly RegExp[]
+  /** The final answer must match none of these. */
+  readonly answerForbidden?: readonly RegExp[]
 }
 
 const TS_PKG = JSON.stringify({ name: "fixture", private: true, type: "module", scripts: { test: "node --experimental-strip-types --test" } }, null, 2) + "\n"
@@ -510,6 +521,8 @@ export const CODING_TASKS: readonly CodingTask[] = [
   ...S24_TASKS_FACTORY(),
   // ---------------------------------------------------------------- S24B (held out: written after S24 results informed a fix, before any S24B run)
   ...S24B_TASKS_FACTORY(),
+  // ---------------------------------------------------------------- S32 (MVP benchmark, frozen before any run)
+  ...S32_TASKS,
 ]
 
 // Oracles typecheck independently with the repository's TypeScript, then check structure and behavior.
