@@ -102,6 +102,25 @@ export function excludedEditPaths(instruction: string): string[] {
   return negated
 }
 
+/**
+ * Paths the user protected by reference instead of by name: "PATH fails. The test is correct; do not change it.",
+ * "PATH has its own helper; leave that file alone.", "Leave PATH alone." Each clause binds to the last path named
+ * before it in the same paragraph.
+ */
+export function protectedEditPaths(instruction: string): string[] {
+  const protectedPaths: string[] = []
+  const direct = new RegExp(String.raw`\bleave\s+${EDIT_PATH}\s+(?:alone|as\s+is|unchanged|untouched)\b`, "gi")
+  for (const match of instruction.matchAll(direct)) if (match[1]) protectedPaths.push(match[1].replace(/^\.\//, ""))
+  const byReference = /\b(?:(?:do not|don't|never)\s+(?:edit|modify|change|update|touch|alter)\s+(?:it|that file|this file|them|those files)|leave\s+(?:it|that file|this file|them|those files)\s+(?:alone|as\s+is|unchanged|untouched))\b/gi
+  for (const match of instruction.matchAll(byReference)) {
+    const before = instruction.slice(0, match.index)
+    const window = before.split(/\n\s*\n/).at(-1) ?? before
+    const named = [...window.matchAll(new RegExp(EDIT_PATH, "g"))].at(-1)?.[1]
+    if (named) protectedPaths.push(named.replace(/^\.\//, ""))
+  }
+  return protectedPaths
+}
+
 /** The user forbade editing tests, without naming a specific test path. */
 export function forbidsTestEdits(instruction: string): boolean {
   return /\b(?:do not|don't|never)\b(?:(?!\.)[^\n]){0,80}\b(?:the|that|those)\s+tests?\b/i.test(instruction)
@@ -130,6 +149,9 @@ export function requiredEditPaths(instruction: string, explicitPaths: readonly s
     ...dependencyPaths(instruction),
     ...readContextPaths(instruction),
   ]
+  // A protected path is never required, even when it was the only path named.
+  const protectedPaths = protectedEditPaths(instruction)
+  paths = paths.filter((path) => !protectedPaths.some((named) => pathsReferToSameFile(path, named)))
   let kept = paths.filter((path) => !negated.some((named) => pathsReferToSameFile(path, named)))
   if (forbidsTestEdits(instruction)) {
     kept = kept.filter((path) => !isTestArtifactPath(path))
