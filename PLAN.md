@@ -5,6 +5,7 @@ STATUS: IN_PROGRESS (technical MVP candidate built and exercised; not installed)
   - Frozen S32 benchmark (10 tasks, hidden oracles, `cd86f3b`). Baseline: qwen3.6:35b 7/10, qwen3-coder:30b 6/10. After two runtime fixes (protected paths as required edits; failed edits blocking a verified workspace): qwen3.6 9/10 with 10/10 clean completions, qwen3-coder 6/10. No false completions. S32 informed the fixes, so it is no longer unseen.
   - 97–98% of task time is model generation. HALO cannot carry tool calls as deployed and does not manage Open VS Code's models; Agent mode stays on Direct Ollama (ADR-051).
   - Held-out S33 on the rc.28 runtime (frozen `d3f863b`): qwen3.6:35b 16/20, qwen3-coder:30b 16/20 over two runs each (8/10 per run on average, 7/10 on each first run), 0 false completions. A rename-coverage check marks correct renames Incomplete when a protected file has a same-named function (4/4).
+  - Two rename defects fixed (`2af8812` protected-file coverage, `5d1253e` rename_symbol/apply_patch deadlock on a same-named export elsewhere); confirmation 8/8. Held-out S34 (frozen `75ea63d`, before the deadlock fix): qwen3.6 14/20, qwen3-coder 15/20, 0 false completions. Next defect: Ask answers without reading files.
   - Supervised-testing and daily-driver remain NO-GO. See `docs/sprints/SPRINT_32_PRODUCT_CONVERGENCE.md`.
 
 Sprint 31 — MVP convergence

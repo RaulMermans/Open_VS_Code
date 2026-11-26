@@ -161,6 +161,29 @@ What S33 says:
 - **Model ranking does not hold.** On unseen tasks qwen3-coder matches qwen3.6 (16/20 each) at about 3× less time. Across S32 and S33 together: qwen3.6 32/40, qwen3-coder 28/40; the gap comes from S32. Auto's order (qwen3.6 first) is no longer clearly supported; correctness is tied on unseen work and qwen3-coder is much faster. Not changed in this pass.
 - S33 is now observed. Any fix for the 06 defect must be judged on another held-out set.
 
+## Rename fixes and the S34 held-out benchmark
+
+**Fix 1, rename coverage (`2af8812`).** The S33-06 completeness check counted a protected file's same-named function, and imports from it, as unfinished rename work, and read an aliased import as unused. Protected paths and imports from them are now skipped; a real unrenamed caller is still reported (`requirement-checks.test.ts`, which fails on the old code).
+
+**S34**, `packages/ide-adapter/evals/coding-tasks-s34.ts`, written after fix 1 and frozen at `75ea63d` (SHA-256 `a30d42f8051fa740…`) before any run. Ten new tasks: Ask (cache TTL and invalidation), truncate off-by-one, deep config merge, query-parser tests judged by five mutants, Python word-wrap repair, TypeScript rename with a vendored same-named export and an aliased import of it, multi-file note tags with `tsc`, Python CSV regression, React-style tabs, Python undo/redo with history and tests. `--check-references --split S34`: 10/10. Runtime `2af8812`, both models twice, 10-minute budget.
+
+| | qwen3.6:35b | qwen3-coder:30b |
+| --- | --- | --- |
+| Run 1 / run 2 | 7/10, 7/10 | 8/10, 7/10 |
+| Total | **14/20** | **15/20** |
+| False completions | 0 | 0 |
+| Median task time | 90 s, 115 s | 20 s, 11 s |
+| Total time | 3,084 s | 665 s |
+
+- **06 rename, 0/4 for both models: agent runtime.** `rename_symbol` refused because coverage treated `export function loadSettings` in the unrelated vendored module as an import it could not resolve, and `apply_patch` then refused the manual rename (RENAME_BY_PATCH). No model could rename. **Fix 2 (`5d1253e`):** an occurrence whose definition is itself, on a line that is not an import or re-export, is a different symbol's declaration; unresolved imports still block (`code-intelligence.test.ts`, which fails on the old code).
+- **01 explain, 0/4 for both models.** Neither model opened a file: they answered from search snippets (qwen3-coder partially; qwen3.6 concluded the information did not exist after literal searches found nothing). Same cause as S32-01 and the GUI's CONV-FILE-REF. Not fixed.
+- **10 undo/redo, 3 of 4 runs failed: model.** Wrong undo/redo state handling.
+- Everything else passed in every run.
+
+**Confirmation on the fixed runtime (`5d1253e`), observed tasks, not an unseen score:** S33-06 and S34-06, both models twice: **8/8 pass and COMPLETED** (S33-06 was 0/4 clean; S34-06 was 0/4). Results: `evals/results/confirm-*.json`.
+
+Across the three held-out-style sets, unseen scores per run sit at 7–9/10 for both models. The 8/10 daily-driver gate is not reliably met. The remaining shared failure is Ask mode answering without reading files. On unseen tasks qwen3-coder matches qwen3.6 (31/40 vs 30/40 on S33+S34) at 3–5× less time.
+
 ## Not run or not established
 
 - Autocomplete quality (responsiveness, relevance, interference with agent inference) was not measured; the provider path is unchanged.
@@ -200,7 +223,7 @@ Install (needs authorization): `sudo apt install ./open-vs-code_0.1.0-rc.28_amd6
 ## Prioritized backlog
 
 P0
-1. Fix the rename-coverage check so a protected path and imports of a different same-named symbol are not "remaining rename work" (S33-06, 4/4). Judge the fix on a new held-out set, not S33.
+1. Ask mode answers from search snippets without reading files (S32-01, S34-01 0/4, CONV-FILE-REF). Test a read-before-answer rule; judge it on a new held-out set. (The S33/S34 rename defects are fixed: `2af8812`, `5d1253e`.)
 1a. Re-decide Auto order and the fresh-install default: on unseen S33 qwen3-coder ties qwen3.6 (16/20) at about 3× less time.
 2. Port SAFE-CANCEL, LIFE-MODEL, UX-MODELS, UX-ERROR and UX-KEYS to the CDP harness so cancellation and model persistence are verified in the packaged GUI.
 
