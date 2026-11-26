@@ -132,6 +132,35 @@ Also fixed this sprint: `main` typecheck and test (`1a3ffbb`), acceptance-lab is
 
 Full suites on `1d467d1`: typecheck clean; agent-core 1,294 pass (the Real Chromium motion test failed once under benchmark GPU load and passed 3/3 idle), vscode-integration 343, account-service 84, cli 21, ide-adapter 26, desktop lab 8.
 
+## S33 held-out benchmark on rc.28
+
+`packages/ide-adapter/evals/coding-tasks-s33.ts`, written after the Sprint 32 fixes and frozen at `d3f863b` (SHA-256 `1a425cba380fc9cb…`) before any run; never used to tune. Same schema and categories as S32, new code, more Python (sentence count, mutant-judged tests, cross-file rename without a language-service rename, env-parsing regression). Every behaviour an oracle checks is stated in the instruction or fixture. `--check-references --split S33`: 10/10. The agent runtime is byte-identical to the rc.28 bundle (`git diff 6db8732 -- packages/agent-core packages/ide-adapter/src packages/vscode-integration` is empty). Two repetitions per model, 10-minute budget, code intelligence on.
+
+| | qwen3.6:35b | qwen3-coder:30b |
+| --- | --- | --- |
+| Run 1 / run 2 (oracle pass) | 7/10, 9/10 | 7/10, 9/10 |
+| Total (20 runs) | **16/20** | **16/20** |
+| Clean (pass and COMPLETED) | 6/10, 8/10 | 6/10, 8/10 |
+| False completions | 0 | 0 |
+| Median task time | 93 s, 44 s | 19 s, 13 s |
+| Total time (20 runs) | 2,365 s | 749 s |
+| Write / command approvals | 43 / 22 | 53 / 33 |
+
+Per task (both models): 02 bugfix, 04 write tests, 05 failed-test repair, 07 multi-file TS (with `tsc`), 08 Python regression and 09 frontend passed 4/4. 01 explain and 03 sentence count failed once per model. 10 limiter failed 4/4. 06 rename produced correct code 4/4 but always ended FAILED/INCOMPLETE.
+
+Failures by first cause:
+
+- **06 (4/4), agent runtime.** The rename-coverage requirement check counts every `calc_total` in the repository. It told the agent to rename it in `shop/legacy_reports.py`, which the instruction protects ("Do not edit shop/legacy_reports.py"), and in `tests/test_shop.py`'s import of that unrelated function. The permission layer correctly denied the edit, so correct work ended "Incomplete". Same family as S32-06 (a protected file treated as work to do), different mechanism: the coverage check does not use `protectedEditPaths`/`excludedEditPaths`. `rename_symbol` also reports "typescript language service found no definition" on a `.py` file and that failure feeds an extra REVISE.
+- **10 (4/4), model.** Both models refill only inside `tryTake`, so the `available` getter returns stale tokens, against "refills continuously". qwen3.6 even wrote tests that call `tryTake(0)` to "trigger lazy refill".
+- **01 (1/2 each), model.** qwen3.6 run 1 quoted the unused 10-second legacy delay; qwen3-coder run 1 named neither the function nor the numbers.
+- **03 (1/2 each), model.** Trailing text without a terminator counted as 0 (qwen3.6); `"Hi!!! "` counted as two sentences (qwen3-coder).
+
+What S33 says:
+
+- **Daily-driver 8/10 unseen gate: met on average (8.0/10 per run for both models), not on every run** (7/10 in each model's first run). On the clean-outcome measure (pass and COMPLETED) both average 7/10, below the gate, entirely because of the 06 defect.
+- **Model ranking does not hold.** On unseen tasks qwen3-coder matches qwen3.6 (16/20 each) at about 3× less time. Across S32 and S33 together: qwen3.6 32/40, qwen3-coder 28/40; the gap comes from S32. Auto's order (qwen3.6 first) is no longer clearly supported; correctness is tied on unseen work and qwen3-coder is much faster. Not changed in this pass.
+- S33 is now observed. Any fix for the 06 defect must be judged on another held-out set.
+
 ## Not run or not established
 
 - Autocomplete quality (responsiveness, relevance, interference with agent inference) was not measured; the provider path is unchanged.
@@ -152,7 +181,7 @@ Unmet: three consecutive independently verified HALO qualification successes (no
 
 ### C. Daily-driver — **NO-GO**
 
-Unmet: 8/10 on an *unseen* set (S32 informed the fixes; a new held-out set is needed); the HALO multi-outcome regression; real GUI coding sessions on a real repository; fault-injection beyond the lab's kill/stale scenarios; autocomplete evaluation. Inference performance is a product problem: the most correct model averages 92 s per task.
+S33 (unseen): 16/20 for each model, 8/10 per run on average, 7/10 on each model's first run, 0 false completions; clean outcomes average 7/10 because of the rename-coverage defect. Unmet: the HALO multi-outcome regression; real GUI coding sessions on a real repository; fault-injection beyond the lab's kill/stale scenarios; autocomplete evaluation. Inference performance is a product problem: the most correct model averages 92 s per task.
 
 ### Package identity and rollback
 
@@ -171,7 +200,8 @@ Install (needs authorization): `sudo apt install ./open-vs-code_0.1.0-rc.28_amd6
 ## Prioritized backlog
 
 P0
-1. Write a new held-out task set (10+, same schema as S32) before any further runtime change, and run both models twice. This is the daily-driver 8/10 gate.
+1. Fix the rename-coverage check so a protected path and imports of a different same-named symbol are not "remaining rename work" (S33-06, 4/4). Judge the fix on a new held-out set, not S33.
+1a. Re-decide Auto order and the fresh-install default: on unseen S33 qwen3-coder ties qwen3.6 (16/20) at about 3× less time.
 2. Port SAFE-CANCEL, LIFE-MODEL, UX-MODELS, UX-ERROR and UX-KEYS to the CDP harness so cancellation and model persistence are verified in the packaged GUI.
 
 P1
