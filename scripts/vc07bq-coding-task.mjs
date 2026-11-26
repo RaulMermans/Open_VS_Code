@@ -26,7 +26,7 @@ import { createVerificationToolRegistrations } from '../packages/agent-core/src/
 
 // Proposed limits (VC-07B-Q plan §D2). Fixed for the run; never raised to rescue a failing attempt.
 const LIMITS = Object.freeze({
-  turns: 6, outputTokensPerTurn: 1024, inputCharsPerRequest: 20_000, toolCalls: 8, wallClockMs: 180_000,
+  turns: 6, outputTokensPerTurn: 512, inputCharsPerRequest: 20_000, toolCalls: 8, wallClockMs: 180_000, // live admission maxOutputTokens=512; attempt 1 at 1024 was rejected
   testRuns: 1, perRequestTimeoutMs: 100_000,
 });
 const MODEL_ID = 'x3-qwen3-14b-vulkan';
