@@ -86,8 +86,8 @@ test("HaloProvider round-trips structured tool calls and tool results without ex
     assert.equal(completed.finalAnswer, "Updated add.ts")
     assert.equal(await readFile(join(workspace, "add.ts"), "utf8"), "export function add(a: number, b: number): number {\n  return a + b\n}\n")
     assert.ok(bodies[0]?.tools)
-    assert.ok((bodies[1]?.messages as { role?: string }[]).some((message) => message.role === "tool"))
-    assert.equal((bodies[1]?.messages as { role?: string; toolCallId?: string }[]).find((message) => message.role === "tool")?.toolCallId, "call_1")
+    assert.ok((bodies[1]!.messages as { role?: string }[]).some((message) => message.role === "tool"))
+    assert.equal((bodies[1]!.messages as { role?: string; toolCallId?: string }[]).find((message) => message.role === "tool")?.toolCallId, "call_1")
   })
 })
 
