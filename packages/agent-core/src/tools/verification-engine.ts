@@ -97,6 +97,8 @@ export interface VerificationEngineOptions {
   readonly workspaceRoot: string
   /** ADR-046. Library default "off"; the desktop runtime passes the user setting (default "auto"). */
   readonly sandbox?: CommandSandboxMode
+  /** Per-scope sandbox memory cap override (default SANDBOX_LIMITS.memory). */
+  readonly sandboxMemoryMax?: string | undefined
 }
 
 export class VerificationEngine {
@@ -257,6 +259,7 @@ export class VerificationEngine {
       executable: prepared.executable,
       args: prepared.args,
       env,
+      memoryMax: this.options.sandboxMemoryMax,
     })
     if ("error" in plan) {
       return { status: "EXECUTION_ERROR", exitCode: null, stdout: "", stderr: plan.error, durationMs: Date.now() - startTime, sandbox: plan.status }

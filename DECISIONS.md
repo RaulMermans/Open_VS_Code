@@ -66,3 +66,4 @@ Sprint 2C complete. MCP Runtime fully integrated and proven.
 - **Sprint 8E / 8E.1**: Capability Packs Architecture & Governed Installation (ADR-038) — Accepted.
 - **Sprint 9A / 9A.1 / 9A.2**: Governed Playwright Browser Runtime & Agent Tool Integration (ADR-039) — Accepted.
 - **Sprint 9B**: Integrated Visual Browser Panel & Agent Observation UX (ADR-040) — Accepted; passive observation presentation layer over single authoritative session, outside-workspace screenshot ring buffer, bounded timeline with correlation, coordinate-free accessibility highlighting, governed manual controls, and Sprint 9C/9D observation contracts.
+- **Sprint 32**: HALO Agent-mode eligibility and MVP model routing (ADR-051) — Accepted; Direct Ollama stays the Agent transport, HALO is Ask-only until its tool protocol is deployed and qualified, Auto keeps qwen3.6 first on S32 evidence.

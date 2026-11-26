@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "label": "confirm-ask-S32-qwen3-6-35b",
+    "model": "qwen3.6:35b",
+    "modelDigest": "a7eb95c53bcf96b4bdd008d0fab4a5dac88047d9c1a7a9ab88ed453423fbd87c",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "3d4e0838fe",
+    "benchmarkSha256": "ba854248e2cb5bf435cd5751082f1cd00e3eeef1d18a92e573f3686eeb98286f",
+    "trackedDirty": false,
+    "startedAt": "2026-11-26T15:14:34.320Z",
+    "timeoutMin": 10,
+    "codeIntelligence": "typescript LanguageService (find_symbol, rename_symbol)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "s32-01-explain",
+      "split": "S32",
+      "category": "EXPLAIN",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/middleware/throttle.ts": true,
+        "src/app.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 31377,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 31228,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 2038,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "Based on the source code in **`src/middleware/throttle.ts`**, the service enforces rate limiting using the exported **`throttle`** function.\n\n*   **Limit and Window:** It allows a maximum of **30 requests** (`MAX_REQUESTS`) within a sliding window of **60,000 ms** (1 minute) (`WINDOW_MS`).\n*   **Client Response on Limit Exceeded:** When the request count reaches 30 or more within that minute, the function returns an object with **status `429`**. The response body includes an error message and a calculated wait time: `{ error: \"too many requests\", retryAfter }`.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "list_directory:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 4,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 588,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    },
+    {
+      "id": "s32-01-explain",
+      "split": "S32",
+      "category": "EXPLAIN",
+      "repeat": 2,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/middleware/throttle.ts": true,
+        "src/app.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 26821,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 26708,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 2038,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "Based on the provided files, specifically **`src/middleware/throttle.ts`**, here are the details regarding how request limits are enforced:\n\n*   **Enforcing File and Function:** The logic is defined in the file **`src/middleware/throttle.ts`** within the exported function **`throttle`**. It tracks usage per `apiKey`.\n*   **Limit and Time Window:** The service enforces a limit of **30 requests** (`MAX_REQUESTS`) within a sliding time window of **60,000 milliseconds** (1 minute).\n*   **Client Response on Limit:** If the client exceeds this limit, the function returns an object containing:\n    *   **Status:** `429`\n    *   **Body:** `{ \"error\": \"too many requests\", \"retryAfter\": <seconds> }`, where `retryAfter` indicates how many seconds to wait before retrying.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "list_directory:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 4,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 588,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    }
+  ]
+}

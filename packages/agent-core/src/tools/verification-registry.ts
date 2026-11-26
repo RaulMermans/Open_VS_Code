@@ -86,7 +86,7 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
           }
           const rebuiltNote = notes.length > 0 ? notes.join(" ") : undefined
           const result = await engine.execute(prepared, applyContext.signal, applyContext.onOutput)
-          const noted = (diagnosis?: string) => rebuiltNote ? (diagnosis ? `${rebuiltNote}\n\n${diagnosis}` : rebuiltNote) : diagnosis
+          const noted = (diagnosis?: string): string => [rebuiltNote, diagnosis].filter(Boolean).join("\n\n")
           const setup = result.status === "EXECUTION_ERROR" && result.stderr.startsWith("ENVIRONMENT_SETUP_REQUIRED:") ? result.stderr.slice("ENVIRONMENT_SETUP_REQUIRED: ".length).trim() : undefined
           if (setup) return { ...result, diagnosis: noted(`ENVIRONMENT_SETUP_REQUIRED: ${setup} This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.`) }
           if (result.status !== "FAIL") return rebuiltNote ? { ...result, diagnosis: noted() } : result

@@ -1,0 +1,145 @@
+{
+  "meta": {
+    "label": "confirm-ask-S33-qwen3-6-35b",
+    "model": "qwen3.6:35b",
+    "modelDigest": "a7eb95c53bcf96b4bdd008d0fab4a5dac88047d9c1a7a9ab88ed453423fbd87c",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "3d4e0838fe",
+    "benchmarkSha256": "1a425cba380fc9cba1ae7a0ae6acf90499e08673d3ddc257aad43b9b78cf9301",
+    "trackedDirty": false,
+    "startedAt": "2026-11-26T15:15:33.040Z",
+    "timeoutMin": 10,
+    "codeIntelligence": "typescript LanguageService (find_symbol, rename_symbol)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "s33-01-explain",
+      "split": "S33",
+      "category": "EXPLAIN",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/worker/retry.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 89398,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 4,
+          "inferenceMs": 89250,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 1872,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 4,
+          "finalAnswer": "When a background job throws, the error is caught and handled in **`src/worker/retry.ts`** by the **`runWithRetry`** function.\n\n- **Maximum attempts:** A job gets **5** total attempts (`MAX_ATTEMPTS = 5`).\n- **Wait before second attempt:** The worker waits **500 ms**. The delay is calculated using `backoff(attempt)`, which applies `BASE_DELAY_MS * 2 ** (attempt - 1)`. After the first failed attempt, `attempt` is `1`, so `500 * 2 ** 0 = 500` milliseconds. The worker sleeps for this duration before starting the second attempt.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [
+            "evidence_gate: [READ BEFORE ANSWERING] You have not opened any file; search results show only single matching lines. Call read_file on the file(s) that hold the answer (for example src/worker/retry.ts) and answer from what they say, in"
+          ],
+          "toolCalls": 4,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 638,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    },
+    {
+      "id": "s33-01-explain",
+      "split": "S33",
+      "category": "EXPLAIN",
+      "repeat": 2,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/worker/retry.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 52694,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 6,
+          "inferenceMs": 52563,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 3077,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 6,
+          "finalAnswer": "Based on the provided source files, here are the answers to your questions:\n\n* **Handler File & Function:** The thrown error is caught and handled in `src/worker/retry.ts` inside the `runWithRetry` function. It wraps each job execution in a `try/catch` block and retries only if the attempt number is less than the maximum.\n* **Maximum Attempts:** A job gets a total of **5** attempts, defined by the constant `MAX_ATTEMPTS = 5`.\n* **Wait Time Before Second Attempt:** The worker waits **500 ms** before the second attempt. This is calculated using the `backoff` function when `attempt = 1`: `BASE_DELAY_MS * 2 ** (1 - 1)` → `500 * 1 = 500`.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "list_directory:REJECTED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [
+            "list_directory: Invalid arguments for list_directory: path must be a non-empty string",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: list_directory {}: Invalid arguments for list_directory: path must be a non-empty string Please analyze the root cause and pr"
+          ],
+          "toolCalls": 9,
+          "explorationCalls": 9,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 806,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    }
+  ]
+}

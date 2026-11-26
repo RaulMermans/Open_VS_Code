@@ -91,3 +91,43 @@ test("a partially done request is nudged with the specific gap and never complet
     await rm(root, { recursive: true, force: true })
   }
 })
+
+async function gapsFor(files: Record<string, string>, instruction: string): Promise<string[]> {
+  const root = await mkdtemp(join(tmpdir(), "ovsc-rename-protected-"))
+  try {
+    for (const [rel, content] of Object.entries(files)) {
+      await mkdir(dirname(join(root, rel)), { recursive: true })
+      await writeFile(join(root, rel), content)
+    }
+    return await requirementGaps({ workspaceRoot: root, instruction, appliedPaths: Object.keys(files), isTestPath: isTestArtifactPath })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+test("a protected file's same-named symbol, and imports from it, are not rename work", async () => {
+  const ts = {
+    "src/dates.ts": "export function displayDate(d: Date): string { return d.toISOString() }\n",
+    "src/view.ts": "import { displayDate } from \"./dates.ts\"\nexport const show = (d: Date) => displayDate(d)\n",
+    "lib/old/format.ts": "export function formatDate(s: string): string { return s.trim() }\n",
+    "test/view.test.ts": "import { formatDate as legacyFormat } from \"../lib/old/format.ts\"\nimport { displayDate } from \"../src/dates.ts\"\nlegacyFormat(displayDate(new Date(0)))\n",
+  }
+  assert.deepEqual(await gapsFor(ts, "Rename formatDate to displayDate in src. lib/old/format.ts keeps its own formatDate; leave it alone."), [])
+  const py = {
+    "billing/core.py": "def net_amount(lines):\n    return sum(lines)\n",
+    "billing/api.py": "from .core import net_amount\n\n\ndef total(lines):\n    return net_amount(lines)\n",
+    "billing/archive.py": "def gross(rows):\n    return sum(rows)\n",
+    "billing/report.py": "from .archive import gross as archived\n\n\ndef old(rows):\n    return archived(rows)\n",
+  }
+  assert.deepEqual(await gapsFor(py, "Rename gross to net_amount in billing. Never edit billing/archive.py."), [])
+})
+
+test("an unrenamed caller outside protected files is still reported", async () => {
+  const gaps = await gapsFor({
+    "billing/core.py": "def net_amount(lines):\n    return sum(lines)\n",
+    "billing/api.py": "from billing.core import gross\n\n\ndef total(lines):\n    return gross(lines)\n",
+    "billing/archive.py": "def gross(rows):\n    return sum(rows)\n",
+  }, "Rename gross to net_amount. Do not edit billing/archive.py.")
+  assert.equal(gaps.length, 1)
+  assert.match(gaps[0]!, /billing\/api\.py:1/)
+})

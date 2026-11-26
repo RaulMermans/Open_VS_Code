@@ -1,0 +1,682 @@
+{
+  "meta": {
+    "label": "s32-qwen3-6-35b",
+    "model": "qwen3.6:35b",
+    "modelDigest": "a7eb95c53bcf96b4bdd008d0fab4a5dac88047d9c1a7a9ab88ed453423fbd87c",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "2f5a619dd2",
+    "benchmarkSha256": "ba854248e2cb5bf435cd5751082f1cd00e3eeef1d18a92e573f3686eeb98286f",
+    "trackedDirty": false,
+    "startedAt": "2026-11-25T19:35:45.431Z",
+    "timeoutMin": 10,
+    "codeIntelligence": "typescript LanguageService (find_symbol, rename_symbol)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "s32-01-explain",
+      "split": "S32",
+      "category": "EXPLAIN",
+      "repeat": 1,
+      "pass": false,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "answerMisses": [
+        "missing /\\b30\\b/",
+        "missing /60[_,]?000|60\\s*(s\\b|sec|second)|one minute|1 minute|per minute|a minute/i"
+      ],
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/middleware/throttle.ts": true,
+        "src/app.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 38799,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 2,
+          "inferenceMs": 38683,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 672,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 2,
+          "finalAnswer": "Based on the provided observations:\n\n- **File & Function**: The rate limit is enforced in `src/middleware/throttle.ts` by the exported `throttle(apiKey, now)` function, which is called from `src/app.ts`.\n- **Limit & Time Window**: The exact numeric request cap and time window duration are defined as configuration values inside `throttle.ts`. The function uses the `now` timestamp parameter to calculate whether the client's requests fall within the allowed window.\n- **Response when exceeded**: When a client exceeds the limit, the service returns an object with `status: 429` and a body of `{ error: \"too many requests\", retryAfter }`. This informs the client they've been throttled and provides a `retryAfter` value indicating when to attempt the request again.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "search_text:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 3,
+          "explorationCalls": 3,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 357,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    },
+    {
+      "id": "s32-02-bugfix",
+      "split": "S32",
+      "category": "BUGFIX",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/paginate.ts"
+      ],
+      "unchangedOk": {
+        "test/paginate.test.ts": true,
+        "src/search.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 23755,
+      "writeApprovals": 1,
+      "commandApprovals": 1,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 2,
+          "inferenceMs": 23321,
+          "firstEditMs": 23369,
+          "estimatedPromptTokens": 1286,
+          "verificationRuns": 1,
+          "status": "COMPLETED",
+          "turns": 2,
+          "finalAnswer": "Changed: src/paginate.ts. Approval was granted for the applied edit. Tests passed. The requested edit was applied.",
+          "toolSequence": [
+            "read_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 1,
+          "patchApplied": 1,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 3,
+          "explorationCalls": 1,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 692,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 2
+        }
+      ]
+    },
+    {
+      "id": "s32-03-feature",
+      "split": "S32",
+      "category": "FEATURE",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/report.ts"
+      ],
+      "unchangedOk": {
+        "test/report.test.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 54730,
+      "writeApprovals": 1,
+      "commandApprovals": 1,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 2,
+          "inferenceMs": 54278,
+          "firstEditMs": 54314,
+          "estimatedPromptTokens": 1372,
+          "verificationRuns": 1,
+          "status": "COMPLETED",
+          "turns": 2,
+          "finalAnswer": "Changed: src/report.ts. Approval was granted for the applied edit. Tests passed. The requested edit was applied.",
+          "toolSequence": [
+            "read_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 1,
+          "patchApplied": 1,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 3,
+          "explorationCalls": 1,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 731,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 2
+        }
+      ]
+    },
+    {
+      "id": "s32-04-add-tests",
+      "split": "S32",
+      "category": "ADD_TESTS",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "test/duration.test.ts"
+      ],
+      "unchangedOk": {
+        "src/duration.ts": true,
+        "src/timeout.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 99088,
+      "writeApprovals": 1,
+      "commandApprovals": 2,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 98022,
+          "firstEditMs": 77261,
+          "estimatedPromptTokens": 4605,
+          "verificationRuns": 2,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "**Findings**\n`src/duration.ts` exports a `parseDuration(text: string): number` function. It extracts numeric values paired with unit suffixes (`ms`, `s`, `m`, `h`) using a regex, multiplies them by their millisecond equivalents (1, 1000, 60000, 3600000), and sums them. The function throws an error if the input contains characters other than valid duration tokens after trimming.\n\n**Actions Taken**\nCreated `test/duration.test.ts` with a test suite for `parseDuration`. The tests explicitly cover:\n- Individual units (`\"100ms\"`, `\"1s\"`, `\"2m\"`, `\"1h\"`)\n- Combined values like `\"1h30m\"`\n- Invalid inputs (empty string `\"\"` and non-matching text `\"abc\"`)\nNo modifications were applied to `src/duration.ts`.\n\n**Verification Results**\nRan the test suite. All 6 tests passed successfully:\n- `parses ms`: passed\n- `parses s`: passed\n- `parses m`: passed\n- `parses h`: passed\n- `parses combined values like '1h30m'`: passed\n- `throws on invalid input`: passed\nExit code 0. No failures, cancellations, or skipped tests. Task completed.",
+          "toolSequence": [
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "create_file:DENIED",
+            "run_verification:COMPLETED",
+            "create_file:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 2,
+          "createApplied": 1,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 1,
+          "failureObservations": [
+            "create_file: These imports do not exist: \"../src/duration\" must be written \"../src/duration.ts\" (this project resolves imports with the exact file extension). Use exactly the specifier shown, or import a file that is already in the w"
+          ],
+          "toolCalls": 6,
+          "explorationCalls": 2,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 1459,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 3
+        }
+      ]
+    },
+    {
+      "id": "s32-05-repair-test",
+      "split": "S32",
+      "category": "FAILED_TEST_REPAIR",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/invoice.ts"
+      ],
+      "unchangedOk": {
+        "test/invoice.test.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": true,
+      "durationMs": 600175,
+      "writeApprovals": 2,
+      "commandApprovals": 2,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 20,
+          "inferenceMs": 564349,
+          "firstEditMs": 69841,
+          "estimatedPromptTokens": 48266,
+          "verificationRuns": 2,
+          "status": "CANCELLED",
+          "failureReason": "CANCELLED",
+          "turns": 21,
+          "finalAnswer": "Task cancelled. Changed unrelated file: src/invoice.ts, src/invoice.ts. No edit was approved. Tests passed. Incomplete: The applied edit does not match the requested file.",
+          "toolSequence": [
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "run_verification:COMPLETED",
+            "apply_patch:COMPLETED",
+            "apply_patch:FAILED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 3,
+          "patchApplied": 2,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 1,
+          "deniedToolCalls": 0,
+          "failureObservations": [
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: air-test-WvQa4r/ws/test/invoice.test.ts:4:1' failureType: 'testCodeFailure' error: 'Reduce of empty array with no initial val",
+            "apply_patch: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; this edit may already be applied, so check before retrying. Copy search exactly from the current file text below",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: air-test-WvQa4r/ws/test/invoice.test.ts:4:1' failureType: 'testCodeFailure' error: 'Reduce of empty array with no initial val",
+            "coding_gate: [EDIT REQUIRED] Create or update only test/invoice.test.ts. Those files already exist. Use apply_patch only. A prose answer is not enough.",
+            "coding_gate: [EDIT REQUIRED] Create or update only test/invoice.test.ts. Those files already exist. Use apply_patch only. A prose answer is not enough.",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; t",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; t",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; t",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; t",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; t",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; t",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/invoice.ts. The replace text already appears in src/invoice.ts; t"
+          ],
+          "toolCalls": 7,
+          "explorationCalls": 2,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 2712,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 4
+        }
+      ]
+    },
+    {
+      "id": "s32-06-rename",
+      "split": "S32",
+      "category": "REFACTOR",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/routes/admin.ts",
+        "src/routes/profile.ts",
+        "src/users/index.ts",
+        "src/users/repo.ts",
+        "test/users.test.ts"
+      ],
+      "unchangedOk": {
+        "src/legacy/cache.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 140231,
+      "writeApprovals": 1,
+      "commandApprovals": 1,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 137680,
+          "firstEditMs": 25860,
+          "estimatedPromptTokens": 5121,
+          "verificationRuns": 1,
+          "status": "FAILED",
+          "failureReason": "NON_PROGRESS",
+          "turns": 5,
+          "finalAnswer": "Changed unrelated file: src/routes/admin.ts, src/routes/profile.ts, src/users/index.ts, src/users/repo.ts, test/users.test.ts. No edit was approved. Tests passed. Incomplete: The applied edit does not match the requested file.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "rename_symbol:COMPLETED",
+            "run_verification:COMPLETED",
+            "apply_patch:FAILED",
+            "apply_patch:FAILED",
+            "apply_patch:FAILED",
+            "apply_patch:FAILED",
+            "apply_patch:FAILED",
+            "apply_patch:FAILED"
+          ],
+          "patchAttempts": 6,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 6,
+          "deniedToolCalls": 0,
+          "failureObservations": [
+            "coding_gate: [EDIT REQUIRED] The requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+            "coding_gate: [EDIT REQUIRED] The requested implementation change is not applied. Call apply_patch on the existing source file, or create_file only for a new file. A test-only edit or a prose answer is not enough.",
+            "apply_patch: PATCH_MISMATCH: search was not found in src/routes/admin.ts. The replace text already appears in src/routes/admin.ts; this edit may already be applied, so check before retrying. Copy search exactly from the current file ",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/routes/admin.ts. The replace text already appears in src/routes/a",
+            "apply_patch: PATCH_MISMATCH: search was not found in src/routes/admin.ts. The replace text already appears in src/routes/admin.ts; this edit may already be applied, so check before retrying. Copy search exactly from the current file ",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: apply_patch {}: PATCH_MISMATCH: search was not found in src/routes/admin.ts. The replace text already appears in src/routes/a",
+            "apply_patch: PATCH_MISMATCH: search was not found in src/routes/profile.ts. The replace text already appears in src/routes/profile.ts; this edit may already be applied, so check before retrying. Copy search exactly from the current f",
+            "runtime_eval_replan: [RUNTIME EVALUATION - REPLAN REQUIRED] Current approach has repeated failures or non-progress loops (apply_patch {}: PATCH_MISMATCH: search was not found in src/routes/admin.ts. The replace text already appears in src/ro",
+            "apply_patch: PATCH_MISMATCH: search was not found in src/routes/profile.ts. The replace text already appears in src/routes/profile.ts; this edit may already be applied, so check before retrying. Copy search exactly from the current f",
+            "runtime_eval_replan: [RUNTIME EVALUATION - REPLAN REQUIRED] Current approach has repeated failures or non-progress loops (apply_patch {}: PATCH_MISMATCH: search was not found in src/routes/admin.ts. The replace text already appears in src/ro",
+            "apply_patch: PATCH_MISMATCH: search was not found in src/users/index.ts. The replace text already appears in src/users/index.ts; this edit may already be applied, so check before retrying. Copy search exactly from the current file te",
+            "runtime_eval_replan: [RUNTIME EVALUATION - REPLAN REQUIRED] Current approach has repeated failures or non-progress loops (apply_patch {}: PATCH_MISMATCH: search was not found in src/routes/profile.ts. The replace text already appears in src/"
+          ],
+          "toolCalls": 9,
+          "explorationCalls": 1,
+          "repeatedExploration": 0,
+          "symbolCalls": [
+            "rename_symbol:COMPLETED"
+          ],
+          "context": {
+            "maxEstimatedTokens": 1248,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 2
+        }
+      ]
+    },
+    {
+      "id": "s32-07-multifile-ts",
+      "split": "S32",
+      "category": "MULTI_FILE",
+      "repeat": 1,
+      "pass": false,
+      "codeCorrect": false,
+      "visiblePass": true,
+      "oraclePass": false,
+      "oracleDetail": "typecheck: ../ovsc-eval-s32-07-multifile-ts-DURI0H/ws/src/order.ts(4,23): error TS2322: Type 'string' is not assignable to type '\"USD\" | \"EUR\" | \"GBP\"'.\n\n",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/format.ts",
+        "src/order.ts",
+        "src/types.ts"
+      ],
+      "unchangedOk": {
+        "test/order.test.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 97812,
+      "writeApprovals": 3,
+      "commandApprovals": 1,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 4,
+          "inferenceMs": 97023,
+          "firstEditMs": 39867,
+          "estimatedPromptTokens": 4120,
+          "verificationRuns": 1,
+          "status": "COMPLETED",
+          "turns": 4,
+          "finalAnswer": "Changed: src/types.ts, src/order.ts, src/format.ts. Approval was granted for the applied edit. Tests passed. The requested edit was applied.",
+          "toolSequence": [
+            "find_symbol:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "apply_patch:COMPLETED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 3,
+          "patchApplied": 3,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 8,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [
+            "find_symbol:COMPLETED"
+          ],
+          "context": {
+            "maxEstimatedTokens": 1321,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 4
+        }
+      ]
+    },
+    {
+      "id": "s32-08-python-regression",
+      "split": "S32",
+      "category": "PYTHON",
+      "repeat": 1,
+      "pass": false,
+      "codeCorrect": false,
+      "visiblePass": true,
+      "oraclePass": false,
+      "oracleDetail": "accepted '+12'\n",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "contacts/phone.py"
+      ],
+      "unchangedOk": {
+        "tests/test_phone.py": true,
+        "contacts/book.py": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 65635,
+      "writeApprovals": 1,
+      "commandApprovals": 1,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 3,
+          "inferenceMs": 59827,
+          "firstEditMs": 59839,
+          "estimatedPromptTokens": 1772,
+          "verificationRuns": 1,
+          "status": "COMPLETED",
+          "turns": 3,
+          "finalAnswer": "Changed: contacts/phone.py. Approval was granted for the applied edit. Tests passed. The requested edit was applied.",
+          "toolSequence": [
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 1,
+          "patchApplied": 1,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 4,
+          "explorationCalls": 2,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 696,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 2
+        }
+      ]
+    },
+    {
+      "id": "s32-09-frontend",
+      "split": "S32",
+      "category": "REACT_STYLE",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/components/TodoList.js"
+      ],
+      "unchangedOk": {
+        "test/todo.test.js": true,
+        "src/h.js": true,
+        "src/components/TodoItem.js": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 51691,
+      "writeApprovals": 1,
+      "commandApprovals": 1,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 2,
+          "inferenceMs": 51318,
+          "firstEditMs": 51335,
+          "estimatedPromptTokens": 1379,
+          "verificationRuns": 1,
+          "status": "COMPLETED",
+          "turns": 2,
+          "finalAnswer": "Changed: src/components/TodoList.js. Approval was granted for the applied edit. Tests passed. The requested edit was applied.",
+          "toolSequence": [
+            "read_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 1,
+          "patchApplied": 1,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 3,
+          "explorationCalls": 1,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 722,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 2
+        }
+      ]
+    },
+    {
+      "id": "s32-10-complex",
+      "split": "S32",
+      "category": "COMPLEX",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [
+        "src/service.ts",
+        "src/cache.ts",
+        "test/cache.test.ts"
+      ],
+      "unchangedOk": {
+        "test/service.test.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 305451,
+      "writeApprovals": 3,
+      "commandApprovals": 1,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 6,
+          "inferenceMs": 304666,
+          "firstEditMs": 151885,
+          "estimatedPromptTokens": 9688,
+          "verificationRuns": 1,
+          "status": "COMPLETED",
+          "turns": 6,
+          "finalAnswer": "All requested changes have been implemented and verified successfully:\n\n1. **`src/cache.ts`** created with the `TtlCache<K, V>` class. It stores entries with timestamps, expires them on `get()` if `now() - timestamp >= ttlMs`, evicts the least recently used entry via a `usageOrder` array when `size >= maxEntries`, and provides a `size` getter.\n2. **`src/service.ts`** updated to import `TtlCache` and instantiate it with `ttlMs: 60000`, `maxEntries: 100`, and `now: this.now`. The `getUser()` method now checks the cache before invoking the fetcher, satisfying the caching requirement.\n3. **`test/cache.test.ts`** added with four test cases covering basic set/get, LRU eviction under capacity, `get()` updating usage order, and TTL expiration thresholds.\n4. All **5 tests passed** (including the existing `UserService` test), confirming both the cache logic and its integration work as intended.",
+          "toolSequence": [
+            "read_file:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED",
+            "create_file:COMPLETED",
+            "apply_patch:COMPLETED",
+            "create_file:COMPLETED",
+            "run_verification:COMPLETED"
+          ],
+          "patchAttempts": 1,
+          "patchApplied": 1,
+          "createAttempts": 2,
+          "createApplied": 2,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 8,
+          "explorationCalls": 4,
+          "repeatedExploration": 1,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 2724,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 4
+        }
+      ]
+    }
+  ]
+}

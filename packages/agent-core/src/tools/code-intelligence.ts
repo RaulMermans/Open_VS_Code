@@ -407,6 +407,9 @@ async function uncoveredUses(provider: CodeIntelligenceProvider, root: string, s
     for (const occurrence of identifierOccurrences(text, symbol).slice(0, 5)) {
       const definitions = await provider.definitions(file, occurrence).catch(() => [])
       if (definitions.some((item) => locationKey(item) === target)) { missing.push(path); break }
+      // The occurrence is itself a declaration (e.g. "export function name" in an unrelated module): not a use.
+      const declarationLine = !/^\s*import\b|\bfrom\s+["']|\brequire\(/.test(lines[occurrence.line] ?? "")
+      if (declarationLine && definitions.some((item) => item.file === file && item.range.start.line === occurrence.line && item.range.start.character <= occurrence.character && occurrence.character <= item.range.end.character)) continue
       // An import the service cannot resolve past itself (project still loading) cannot be confirmed as unrelated.
       const importLine = /^\s*(?:import|export)\b|\bfrom\s+["'][^"']+["']/.test(lines[occurrence.line] ?? "")
       const unresolved = definitions.every((item) => item.file === file && /^\s*(?:import|export)\b|\bfrom\s+["']/.test(lines[item.range.start.line] ?? ""))

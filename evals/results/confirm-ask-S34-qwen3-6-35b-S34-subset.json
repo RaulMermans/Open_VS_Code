@@ -1,0 +1,143 @@
+{
+  "meta": {
+    "label": "confirm-ask-S34-qwen3-6-35b",
+    "model": "qwen3.6:35b",
+    "modelDigest": "a7eb95c53bcf96b4bdd008d0fab4a5dac88047d9c1a7a9ab88ed453423fbd87c",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "3d4e0838fe",
+    "benchmarkSha256": "a30d42f8051fa740705b9dee4ecb593738c10e3f100cef156cbb0dea1ae3472a",
+    "trackedDirty": false,
+    "startedAt": "2026-11-26T15:17:55.631Z",
+    "timeoutMin": 10,
+    "codeIntelligence": "typescript LanguageService (find_symbol, rename_symbol)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "s34-01-explain",
+      "split": "S34",
+      "category": "EXPLAIN",
+      "repeat": 1,
+      "pass": false,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "answerMisses": [
+        "missing /updateProduct/"
+      ],
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/cache/products.ts": true,
+        "src/admin.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 24369,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 4,
+          "inferenceMs": 24235,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 1503,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 4,
+          "finalAnswer": "Product listings are cached for **300 seconds**. This duration is determined by the `TTL_SECONDS` constant in the file **`src/cache/products.ts`**.\n\nThe cache can be cleared before it expires using the function **`invalidateProducts`**, which sets the cached data to `undefined`. This function is also located in **`src/cache/products.ts`**.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "find_files:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 4,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 481,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    },
+    {
+      "id": "s34-01-explain",
+      "split": "S34",
+      "category": "EXPLAIN",
+      "repeat": 2,
+      "pass": false,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "answerMisses": [
+        "missing /updateProduct/"
+      ],
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/cache/products.ts": true,
+        "src/admin.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 20535,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 3,
+          "inferenceMs": 20416,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 1202,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 3,
+          "finalAnswer": "Product listings are cached for **300 seconds** (5 minutes) in the file `src/cache/products.ts`. The function `getCachedProducts` handles this duration logic by comparing the current time against the time the cache was created.\n\nThe cache can be cleared manually before it expires by calling the function **`invalidateProducts`** in the same file, which resets the cached data to undefined.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 4,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 508,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    }
+  ]
+}
