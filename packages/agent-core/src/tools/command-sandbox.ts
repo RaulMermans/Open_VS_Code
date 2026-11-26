@@ -66,7 +66,8 @@ export function resetBubblewrapProbe(forced?: { available: boolean; path?: strin
 }
 
 /** 512 tasks made ordinary pnpm-monorepo test runs fail (vitest worker pools across packages): measured fail at 512, pass at 2048. Still a hard fork-bomb bound. */
-export const SANDBOX_LIMITS = { memory: "4G", tasks: 2048 } as const
+/** Sized for a 61 GiB host: one scope may use 16 GiB (throttled from 12 GiB); all scopes together share a 32 GiB slice. */
+export const SANDBOX_LIMITS = { memory: "16G", memoryHigh: "12G", nodeHeapMb: 12288, slice: "ovsc-sandbox.slice", sliceMemory: "32G", tasks: 2048 } as const
 let limitsCache: { available: boolean; path?: string; env?: Record<string, string> } | undefined
 
 /**
@@ -80,6 +81,8 @@ export function detectResourceLimits(): { available: boolean; path?: string; env
   if (!systemdRun || !runtimeDir) return (limitsCache = { available: false })
   const env: Record<string, string> = { XDG_RUNTIME_DIR: runtimeDir, PATH: "/usr/bin:/bin" }
   if (process.env.DBUS_SESSION_BUS_ADDRESS) env.DBUS_SESSION_BUS_ADDRESS = process.env.DBUS_SESSION_BUS_ADDRESS
+  // Caps the shared slice before any scope joins it. --runtime keeps it until reboot; a failure leaves per-scope caps in place.
+  spawnSync(path.join(path.dirname(systemdRun), "systemctl"), ["--user", "set-property", "--runtime", SANDBOX_LIMITS.slice, `MemoryMax=${SANDBOX_LIMITS.sliceMemory}`, "MemorySwapMax=0"], { timeout: 5_000, stdio: "pipe", env })
   const probe = spawnSync(systemdRun, ["--user", "--scope", "--quiet", "-p", "MemoryMax=64M", "-p", "TasksMax=8", "--", "/bin/true"], { timeout: 5_000, stdio: "pipe", env })
   return (limitsCache = probe.status === 0 ? { available: true, path: systemdRun, env } : { available: false })
 }
@@ -155,6 +158,8 @@ export function planSandboxedCommand(input: {
   readonly env: Record<string, string>
   /** Extra host directories exposed read-only (validated by the caller), e.g. a cached package manager. */
   readonly readOnlyBinds?: readonly string[]
+  /** Per-scope MemoryMax override, e.g. "4G" for deliberate OOM tests. */
+  readonly memoryMax?: string | undefined
 }): SandboxPlan | { readonly error: string; readonly status: SandboxStatus } {
   const unsandboxed = (reason: string): SandboxPlan => ({
     executable: input.executable,
@@ -195,16 +200,19 @@ export function planSandboxedCommand(input: {
   args.push("--bind", workspace, workspace)
   args.push("--chdir", cwd)
   const env: Record<string, string> = { ...input.env, HOME: home, TMPDIR: "/tmp", LANG: input.env.LANG ?? "C.UTF-8" }
+  // Node's default heap (~4 GiB) would fail builds long before the cgroup cap does.
+  if (!/--max-old-space-size/.test(env.NODE_OPTIONS ?? "")) env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ""} --max-old-space-size=${SANDBOX_LIMITS.nodeHeapMb}`.trim()
   for (const [key, value] of Object.entries(env)) args.push("--setenv", key, value)
   args.push("--", input.executable, ...input.args)
   const limits = detectResourceLimits()
   if (limits.available && limits.path) {
+    const memory = input.memoryMax ?? SANDBOX_LIMITS.memory
     // systemd-run execs bwrap inside a new cgroup scope; its D-Bus variables never enter the sandbox (--clearenv).
     return {
       executable: limits.path,
-      args: ["--user", "--scope", "--quiet", "-p", `MemoryMax=${SANDBOX_LIMITS.memory}`, "-p", "MemorySwapMax=0", "-p", `TasksMax=${SANDBOX_LIMITS.tasks}`, "--", bwrap.path, ...args],
+      args: ["--user", "--scope", "--quiet", `--slice=${SANDBOX_LIMITS.slice}`, "-p", `MemoryMax=${memory}`, "-p", `MemoryHigh=${SANDBOX_LIMITS.memoryHigh}`, "-p", "MemorySwapMax=0", "-p", `TasksMax=${SANDBOX_LIMITS.tasks}`, "--", bwrap.path, ...args],
       env: { ...env, ...limits.env },
-      status: { mode: input.mode, sandboxed: true, backend: "bubblewrap", limits: `memory ${SANDBOX_LIMITS.memory}B, ${SANDBOX_LIMITS.tasks} tasks` },
+      status: { mode: input.mode, sandboxed: true, backend: "bubblewrap", limits: `memory ${memory}B, ${SANDBOX_LIMITS.tasks} tasks` },
     }
   }
   return { executable: bwrap.path, args, env, status: { mode: input.mode, sandboxed: true, backend: "bubblewrap", limits: "none (user cgroups unavailable)" } }
