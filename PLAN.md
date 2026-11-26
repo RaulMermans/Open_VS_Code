@@ -7,6 +7,7 @@ STATUS: IN_PROGRESS (technical MVP candidate built and exercised; not installed)
   - Held-out S33 on the rc.28 runtime (frozen `d3f863b`): qwen3.6:35b 16/20, qwen3-coder:30b 16/20 over two runs each (8/10 per run on average, 7/10 on each first run), 0 false completions. A rename-coverage check marks correct renames Incomplete when a protected file has a same-named function (4/4).
   - Two rename defects fixed (`2af8812` protected-file coverage, `5d1253e` rename_symbol/apply_patch deadlock on a same-named export elsewhere); confirmation 8/8. Held-out S34 (frozen `75ea63d`, before the deadlock fix): qwen3.6 14/20, qwen3-coder 15/20, 0 false completions. Next defect: Ask answers without reading files.
   - Ask now reads the relevant file before answering from search hits (`3d4e083`); explain confirmations 8/12 (were 3/12 on the same tasks). Candidate `0.1.0-rc.29` carries the rename and Ask fixes.
+  - rc.29 (`b6872ed`, `.deb` `20ad448a…`): GUI 37 pass / 1 review / 1 fail; CODE-CONTINUE-STALE fails ~1 in 3 on rc.28 and rc.29 when the agent wrote nothing before the pause (pre-existing; P0 backlog). CI green.
   - Supervised-testing and daily-driver remain NO-GO. See `docs/sprints/SPRINT_32_PRODUCT_CONVERGENCE.md`.
 
 Sprint 31 — MVP convergence

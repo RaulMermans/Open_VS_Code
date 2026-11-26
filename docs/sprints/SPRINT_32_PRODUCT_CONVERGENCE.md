@@ -198,6 +198,14 @@ Confirmation on observed explain tasks (not an unseen score), both models twice 
 
 On S34-01 all four answers now give the file, the 300-second TTL and `invalidateProducts`; they still omit the caller `updateProduct`, which the strict oracle requires. Results: `evals/results/confirm-ask-*.json`.
 
+### rc.29 candidate
+
+`0.1.0-rc.29` from clean `b6872ed`, `.deb` SHA-256 `20ad448a7c1f5cf0ec926b0a30f4c844b9c2f931fe2dde456eecee06e9608f5a`, archive `0d5df3185f26449f…`, bundled `extension.js` `2e753cc5ba33bbbb…`. Contains the rename and Ask fixes (checked by string in the bundle). Later commits on the branch change only docs and one test file. CI (Ubuntu, Node 22 and 24: typecheck, lint, tests, build) is green on the branch; the first push failed on two oxlint errors in `halo-tool-cycle.test.ts`, fixed in `c260184`.
+
+Packaged GUI (runs `2026-11-26T15-21-22-438Z`, `…15-21-34-027Z`): cold launch 3/3 (2.9–3.2 s); 37 PASS, 1 NEEDS_REVIEW (UX-DIFF), 1 FAIL (CODE-CONTINUE-STALE). New passes over rc.28's set: CONV-EN, CONV-EXPLORE, CODE-ARCH.
+
+**CODE-CONTINUE-STALE is a pre-existing gap, not an rc.29 regression.** Repeats: rc.29 1 pass / 2 fail, rc.28 2 pass / 1 fail. Every failure (3/3) is a run where the agent wrote nothing before the turn-budget pause; when it had written, divergence was detected and nothing was replayed. The checkpoint only protects files the agent wrote, so a user edit made during the pause to a file the agent had not written is not flagged on Continue, and the agent proposed patches that dropped the added lines (the lab approves writes; a person would see the diff). Two earlier rc.28 attempts were invalid: the extracted rc.28 extensions directory had been deleted with the scratchpad, giving "no debug target".
+
 ## Not run or not established
 
 - Autocomplete quality (responsiveness, relevance, interference with agent inference) was not measured; the provider path is unchanged.
@@ -237,6 +245,7 @@ Install (needs authorization): `sudo apt install ./open-vs-code_0.1.0-rc.28_amd6
 ## Prioritized backlog
 
 P0
+0. Continue after a pause must treat files changed during the pause as stale even when the agent never wrote them (record hashes of files it read, or of the whole tracked tree, at the checkpoint). CODE-CONTINUE-STALE fails in about 1 of 3 runs on rc.28 and rc.29.
 1. Judge the rename fixes (`2af8812`, `5d1253e`) and the Ask read-before-answer rule (`3d4e083`) on a new held-out set (S35), written before any run.
 1a. Re-decide Auto order and the fresh-install default: on unseen S33 qwen3-coder ties qwen3.6 (16/20) at about 3× less time.
 2. Port SAFE-CANCEL, LIFE-MODEL, UX-MODELS, UX-ERROR and UX-KEYS to the CDP harness so cancellation and model persistence are verified in the packaged GUI.
