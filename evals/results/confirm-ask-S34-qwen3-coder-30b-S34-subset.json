@@ -1,0 +1,144 @@
+{
+  "meta": {
+    "label": "confirm-ask-S34-qwen3-coder-30b",
+    "model": "qwen3-coder:30b",
+    "modelDigest": "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "3d4e0838fe",
+    "benchmarkSha256": "a30d42f8051fa740705b9dee4ecb593738c10e3f100cef156cbb0dea1ae3472a",
+    "trackedDirty": false,
+    "startedAt": "2026-11-26T15:19:36.882Z",
+    "timeoutMin": 10,
+    "codeIntelligence": "typescript LanguageService (find_symbol, rename_symbol)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "s34-01-explain",
+      "split": "S34",
+      "category": "EXPLAIN",
+      "repeat": 1,
+      "pass": false,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "answerMisses": [
+        "missing /updateProduct/"
+      ],
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/cache/products.ts": true,
+        "src/admin.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 5316,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 5199,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 1870,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "The product listings are cached for 300 seconds, as defined by the constant `TTL_SECONDS` in the file `src/cache/products.ts`.\n\nThe cache is cleared by the function `invalidateProducts`, also located in the same file (`src/cache/products.ts`). This function sets the `cached` variable to `undefined`, effectively invalidating the cache.\n\nNo other files were inspected or modified.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "list_directory:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 4,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 501,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    },
+    {
+      "id": "s34-01-explain",
+      "split": "S34",
+      "category": "EXPLAIN",
+      "repeat": 2,
+      "pass": false,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "answerMisses": [
+        "missing /getCachedProducts|TTL_SECONDS/",
+        "missing /updateProduct/"
+      ],
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/cache/products.ts": true,
+        "src/admin.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 4314,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 4204,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 1870,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "The product listings are cached for 300 seconds. The cache is cleared by the `invalidateProducts` function, which sets the `cached` variable to `undefined`. The file involved is `src/cache/products.ts`.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "list_directory:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 4,
+          "explorationCalls": 4,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 501,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    }
+  ]
+}

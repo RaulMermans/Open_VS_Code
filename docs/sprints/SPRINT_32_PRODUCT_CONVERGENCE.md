@@ -184,6 +184,20 @@ What S33 says:
 
 Across the three held-out-style sets, unseen scores per run sit at 7–9/10 for both models. The 8/10 daily-driver gate is not reliably met. The remaining shared failure is Ask mode answering without reading files. On unseen tasks qwen3-coder matches qwen3.6 (31/40 vs 30/40 on S33+S34) at 3–5× less time.
 
+## Ask reads before answering (`3d4e083`) and rc.29
+
+Ask answers were built from single search-hit lines, or from a literal phrase search that matched nothing, without opening a file (S32-01, S34-01 0/4 for both models, the GUI's CONV-FILE-REF). The general evidence gate is off in production (`createAgentRuntime` sets `evidenceGate: false`), so a narrow rule was added instead: in Ask mode, an answer after a content lookup (`search_text`, `find_symbol`) with no `read_file` gets one READ BEFORE ANSWERING nudge naming the files the searches hit; a zero-hit `search_text` in a read-only turn says the search is literal and suggests identifiers, listing or reading. Listing questions, direct replies and other modes are unchanged (`read-before-answer.test.ts`). A first version that also covered Plan mode and listings broke three existing scripted tests and was narrowed.
+
+Confirmation on observed explain tasks (not an unseen score), both models twice each:
+
+| Task | before (base runs) | after |
+| --- | --- | --- |
+| S32-01 | qwen3.6 1/2, coder 0/2 | qwen3.6 2/2, coder 1/2 |
+| S33-01 | qwen3.6 1/2, coder 1/2 | qwen3.6 2/2, coder 2/2 |
+| S34-01 | 0/2, 0/2 ("no information" / partial) | 0/2, 0/2 |
+
+On S34-01 all four answers now give the file, the 300-second TTL and `invalidateProducts`; they still omit the caller `updateProduct`, which the strict oracle requires. Results: `evals/results/confirm-ask-*.json`.
+
 ## Not run or not established
 
 - Autocomplete quality (responsiveness, relevance, interference with agent inference) was not measured; the provider path is unchanged.
@@ -223,7 +237,7 @@ Install (needs authorization): `sudo apt install ./open-vs-code_0.1.0-rc.28_amd6
 ## Prioritized backlog
 
 P0
-1. Ask mode answers from search snippets without reading files (S32-01, S34-01 0/4, CONV-FILE-REF). Test a read-before-answer rule; judge it on a new held-out set. (The S33/S34 rename defects are fixed: `2af8812`, `5d1253e`.)
+1. Judge the rename fixes (`2af8812`, `5d1253e`) and the Ask read-before-answer rule (`3d4e083`) on a new held-out set (S35), written before any run.
 1a. Re-decide Auto order and the fresh-install default: on unseen S33 qwen3-coder ties qwen3.6 (16/20) at about 3× less time.
 2. Port SAFE-CANCEL, LIFE-MODEL, UX-MODELS, UX-ERROR and UX-KEYS to the CDP harness so cancellation and model persistence are verified in the packaged GUI.
 
