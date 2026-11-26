@@ -1,6 +1,18 @@
+Sprint 32 — Product convergence, managed inference and functional MVP
+STATUS: IN_PROGRESS (technical MVP candidate built and exercised; not installed)
+  - Starting state revalidated: installed is `0.1.0-rc.26` (rc.27 was packaged, never installed). `main` failed typecheck and one test; fixed.
+  - Candidate `0.1.0-rc.28` from clean `6db8732`, `.deb` SHA-256 `75ec9a0abccefb1721ca91a94fde42006b38c0782ac75a6429960c003b216e2e`. Not installed. Rollback `.deb` rc.26 matches the installed files (2,545/2,545).
+  - Frozen S32 benchmark (10 tasks, hidden oracles, `cd86f3b`). Baseline: qwen3.6:35b 7/10, qwen3-coder:30b 6/10. After two runtime fixes (protected paths as required edits; failed edits blocking a verified workspace): qwen3.6 9/10 with 10/10 clean completions, qwen3-coder 6/10. No false completions. S32 informed the fixes, so it is no longer unseen.
+  - 97–98% of task time is model generation. HALO cannot carry tool calls as deployed and does not manage Open VS Code's models; Agent mode stays on Direct Ollama (ADR-051).
+  - Held-out S33 on the rc.28 runtime (frozen `d3f863b`): qwen3.6:35b 16/20, qwen3-coder:30b 16/20 over two runs each (8/10 per run on average, 7/10 on each first run), 0 false completions. A rename-coverage check marks correct renames Incomplete when a protected file has a same-named function (4/4).
+  - Two rename defects fixed (`2af8812` protected-file coverage, `5d1253e` rename_symbol/apply_patch deadlock on a same-named export elsewhere); confirmation 8/8. Held-out S34 (frozen `75ea63d`, before the deadlock fix): qwen3.6 14/20, qwen3-coder 15/20, 0 false completions. Next defect: Ask answers without reading files.
+  - Ask now reads the relevant file before answering from search hits (`3d4e083`); explain confirmations 8/12 (were 3/12 on the same tasks). Candidate `0.1.0-rc.29` carries the rename and Ask fixes.
+  - rc.29 (`b6872ed`, `.deb` `20ad448a…`): GUI 37 pass / 1 review / 1 fail; CODE-CONTINUE-STALE fails ~1 in 3 on rc.28 and rc.29 when the agent wrote nothing before the pause (pre-existing; P0 backlog). CI green.
+  - Supervised-testing and daily-driver remain NO-GO. See `docs/sprints/SPRINT_32_PRODUCT_CONVERGENCE.md`.
+
 Sprint 31 — MVP convergence
 STATUS: IN_PROGRESS
-  - Worktree `sprint/31-mvp-convergence`. `main` is `aec5d3aadb`. Installed production is `0.1.0-rc.26`. Rollback is `0.1.0-rc.25`. Qualification stays NO-GO.
+  - Worktree `sprint/31-mvp-convergence`. `main` is `f83bfc8203`. Installed production target is `0.1.0-rc.27`. Rollback is `0.1.0-rc.25`. Qualification stays NO-GO.
   - Native Agent Core stays the executor. Aider was compared once and is not a second engine. The gap after Sprint 30 was localization: Vitest's "undefined constructor" assertion is a missing package export, and the diagnosis did not say so.
   - A failing constructor at a test line now names the import, the package entry's exports, and the existing definition, and tells the model to re-export that definition. When the loaded file is `dist`, the diagnosis says to build the package.
   - A hand patch on a disposable copy of frozen i1 (re-export plus a bare-alias check that leaves `runtime/` refs alone) passes inference Vitest 27/27 and `qualify-oracle.py` (`SUCCESS`). The frozen tree and the installed app were not changed. The model did not apply the patch.

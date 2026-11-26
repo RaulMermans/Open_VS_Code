@@ -7,7 +7,7 @@ import test from "node:test"
 
 import { AgentRunner } from "../../src/agent/runner.ts"
 import { calculateBudget } from "../../src/context/budget.ts"
-import { HaloProvider, HaloProviderError } from "../../src/model/halo.ts"
+import { HaloProvider, HaloProviderError, inspectHaloConnection } from "../../src/model/halo.ts"
 import { MutationEngine } from "../../src/tools/mutation-engine.ts"
 import { createMutationToolRegistrations } from "../../src/tools/mutation-registry.ts"
 import { ToolRegistry } from "../../src/tools/registry.ts"
@@ -86,8 +86,8 @@ test("HaloProvider round-trips structured tool calls and tool results without ex
     assert.equal(completed.finalAnswer, "Updated add.ts")
     assert.equal(await readFile(join(workspace, "add.ts"), "utf8"), "export function add(a: number, b: number): number {\n  return a + b\n}\n")
     assert.ok(bodies[0]?.tools)
-    assert.ok((bodies[1]?.messages as { role?: string }[]).some((message) => message.role === "tool"))
-    assert.equal((bodies[1]?.messages as { toolCallId?: string }[]).find((message) => message.role === "tool")?.toolCallId, "call_1")
+    assert.ok((bodies[1]!.messages as { role?: string }[]).some((message) => message.role === "tool"))
+    assert.equal((bodies[1]!.messages as { role?: string; toolCallId?: string }[]).find((message) => message.role === "tool")?.toolCallId, "call_1")
   })
 })
 
@@ -118,5 +118,53 @@ test("HaloProvider refuses a tool-capable request that HALO cannot support and n
       new HaloProvider({ coreUrl, capability: "coding", token: "token" }).complete({ messages: [{ role: "user", content: "read" }] }),
       (error: unknown) => error instanceof HaloProviderError && error.code === "HALO_INVALID_RESPONSE",
     )
+  })
+})
+
+test("the explicit-model route refuses write tools before any request and still serves read-only Ask", async () => {
+  const bodies: Record<string, unknown>[] = []
+  await withServer(async (request, response) => {
+    bodies.push(await readJson(request))
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({ modelId: "x3-qwen3-14b-vulkan", output: { role: "assistant", content: "answer" }, finishReason: "stop" }))
+  }, async (coreUrl) => {
+    const provider = new HaloProvider({ coreUrl, capability: "coding", modelId: "x3-qwen3-14b-vulkan", token: "token" })
+    await assert.rejects(
+      provider.complete({
+        messages: [{ role: "user", content: "edit" }],
+        tools: [{ name: "apply_patch", description: "Edit a file", action: "write_file", inputSchema: { type: "object" } }],
+      }),
+      (error: unknown) => error instanceof HaloProviderError && error.code === "HALO_UNSUPPORTED_FEATURE",
+    )
+    assert.equal(bodies.length, 0)
+    const answer = await provider.complete({
+      messages: [{ role: "user", content: "explain" }],
+      tools: [{ name: "read_file", description: "Read a file", action: "read_repository", inputSchema: { type: "object" } }],
+    })
+    assert.equal(answer.message.content, "answer")
+    assert.equal(bodies.length, 1)
+    assert.equal("tools" in bodies[0]!, false)
+  })
+})
+
+test("a Core that advertises tool calls is reported as tool-capable on the capability route only", async () => {
+  await withServer((request, response) => {
+    response.setHeader("content-type", "application/json")
+    const bodies: Record<string, string> = {
+      "/health": "{}",
+      "/inference/status": JSON.stringify({ status: "available", features: { streaming: false, tools: true } }),
+      "/applications/open-vscode/access": JSON.stringify({ allowedCapabilities: ["coding"] }),
+      "/models/x3-qwen3-14b-vulkan": "{}",
+    }
+    const body = bodies[request.url ?? ""]
+    if (body === undefined) response.statusCode = 500
+    response.end(body ?? "unexpected inference")
+  }, async (coreUrl) => {
+    const capability = await inspectHaloConnection({ coreUrl, token: "token", capability: "coding" })
+    assert.equal(capability.coreReachable, true)
+    assert.equal(capability.toolsSupported, true)
+    const pinned = await inspectHaloConnection({ coreUrl, token: "token", capability: "coding", modelId: "x3-qwen3-14b-vulkan" })
+    assert.equal(pinned.toolsSupported, false)
+    assert.match(pinned.summary, /Ask only/)
   })
 })

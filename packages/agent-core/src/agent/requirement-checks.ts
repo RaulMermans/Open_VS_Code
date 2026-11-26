@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises"
 import * as path from "node:path"
 import { collectSourceFiles } from "../tools/symbol-diagnosis.ts"
+import { excludedEditPaths, pathsReferToSameFile, protectedEditPaths } from "./tool-contract.ts"
 
 /**
  * Deterministic checks that explicit, general request language was carried out before a coding task may
@@ -13,7 +14,8 @@ import { collectSourceFiles } from "../tools/symbol-diagnosis.ts"
  * - an identifier the request names that an edited file imports but never uses.
  *
  * Only exported definitions and imports count for renames, so unrelated local helpers that share a name are
- * never flagged. Returns at most four short, actionable lines.
+ * never flagged. Files the request protects ("do not edit X", "leave X alone"), and imports from them, are not
+ * rename work: a same-named function there is a different symbol. Returns at most four short, actionable lines.
  */
 export async function requirementGaps(input: {
   readonly workspaceRoot: string
@@ -28,6 +30,8 @@ export async function requirementGaps(input: {
     .filter((pair) => pair.from !== pair.to)
   if (renames.length > 0) {
     const contents = await readSources(input.workspaceRoot)
+    const protectedPaths = [...excludedEditPaths(instruction), ...protectedEditPaths(instruction)]
+    const isProtected = (rel: string) => protectedPaths.some((named) => pathsReferToSameFile(rel, named))
     for (const { from, to } of renames.slice(0, 2)) {
       const exported = new RegExp(`\\bexport\\s+(?:default\\s+)?(?:async\\s+)?(?:function\\*?|const|let|var|class|interface|type|enum)\\s+${escape(from)}\\b|\\bexport\\s*\\{[^}]*\\b${escape(from)}\\b[^}]*\\}|^\\s*(?:async\\s+)?def\\s+${escape(from)}\\s*\\(`, "m")
       const imported = new RegExp(`\\bimport\\s*(?:type\\s*)?\\{[^}]*\\b${escape(from)}\\b[^}]*\\}\\s*from|^\\s*from\\s+[\\w.]+\\s+import\\s+[^\\n]*\\b${escape(from)}\\b`, "m")
@@ -35,10 +39,9 @@ export async function requirementGaps(input: {
       let newExists = false
       for (const [rel, content] of contents) {
         if (new RegExp(`(?<![\\w$])${escape(to)}(?![\\w$])`).test(content)) newExists = true
-        if (exported.test(content) || imported.test(content)) {
-          const line = content.split("\n").findIndex((text) => exported.test(text) || imported.test(text))
-          leftovers.push(`${rel}:${line + 1}`)
-        }
+        if (isProtected(rel)) continue
+        const line = content.split("\n").findIndex((text) => exported.test(text) || (imported.test(text) && !importsFromProtected(text, isProtected, [...contents.keys()])))
+        if (line >= 0) leftovers.push(`${rel}:${line + 1}`)
       }
       if (leftovers.length > 0) gaps.push(`The rename of ${from} to ${to} is not done: ${from} is still exported or imported at ${leftovers.slice(0, 4).join(", ")}. Rename it there too.`)
       else if (!newExists) gaps.push(`The rename of ${from} to ${to} is not done: ${to} does not exist anywhere in the workspace.`)
@@ -55,11 +58,21 @@ export async function requirementGaps(input: {
     for (const name of named) {
       const importLine = new RegExp(`\\bimport\\s*(?:type\\s*)?\\{[^}]*\\b${escape(name)}\\b[^}]*\\}|^\\s*from\\s+[\\w.]+\\s+import\\s+[^\\n]*\\b${escape(name)}\\b`, "m")
       if (!importLine.test(content)) continue
+      // "import { name as other }" / "from m import name as other": the name is used through its alias.
+      if (new RegExp(`\\b${escape(name)}\\s+as\\s+[\\w$]+`).test(content)) continue
       const uses = content.match(new RegExp(`(?<![\\w$])${escape(name)}(?![\\w$])`, "g"))?.length ?? 0
       if (uses <= 1) gaps.push(`${name} is imported in ${applied} but never used there. Use it where the request asks.`)
     }
   }
   return gaps.slice(0, 4)
+}
+
+/** True when an import line's module ("./legacy/cache.ts", "shop.legacy_reports") is a protected workspace file. */
+function importsFromProtected(line: string, isProtected: (rel: string) => boolean, files: readonly string[]): boolean {
+  const spec = /\bfrom\s+["'`]([^"'`]+)["'`]/.exec(line)?.[1] ?? /^\s*from\s+([\w.]+)\s+import\b/.exec(line)?.[1]
+  if (!spec) return false
+  const stem = (spec.includes("/") ? spec : spec.replace(/\./g, "/")).replace(/^(?:\.\.?\/)+/, "").replace(/\.[cm]?[jt]sx?$/, "")
+  return files.some((file) => isProtected(file) && file.replace(/\.[^./]+$/, "").endsWith(stem))
 }
 
 function escape(text: string): string {

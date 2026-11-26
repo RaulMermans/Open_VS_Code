@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "label": "confirm-ask-S33-qwen3-coder-30b",
+    "model": "qwen3-coder:30b",
+    "modelDigest": "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "3d4e0838fe",
+    "benchmarkSha256": "1a425cba380fc9cba1ae7a0ae6acf90499e08673d3ddc257aad43b9b78cf9301",
+    "trackedDirty": false,
+    "startedAt": "2026-11-26T15:19:23.403Z",
+    "timeoutMin": 10,
+    "codeIntelligence": "typescript LanguageService (find_symbol, rename_symbol)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "s33-01-explain",
+      "split": "S33",
+      "category": "EXPLAIN",
+      "repeat": 1,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/worker/retry.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 7042,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 6917,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 2063,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "When a background job throws an error, the system handles it using the retry mechanism defined in `src/worker/retry.ts`. The function `runWithRetry` is responsible for managing retries. It allows a maximum of 5 attempts in total for a job (including the initial attempt). \n\nFor the delay between retries, the system uses exponential backoff. The delay before the second attempt is calculated as `BASE_DELAY_MS * 2 ** (attempt - 1)`, where `BASE_DELAY_MS` is 500 milliseconds. Therefore, the delay before the second attempt is 500 milliseconds.\n\nThe process of handling jobs and retries is orchestrated by `processQueue` in `src/worker/run.ts`. It calls `runWithRetry` for each job in the queue, and if a job succeeds after retries, its ID is added to the list of completed jobs. If all attempts are exhausted, the job is considered failed, and it does not get added to the list of completed jobs.\n\nIn summary:\n- The file that handles job errors and retries is `src/worker/retry.ts`.\n- The function responsible for retry logic is `runWithRetry`.\n- The maximum number of attempts a job gets in total is 5.\n- The worker waits 500 milliseconds before the second attempt.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "list_directory:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 5,
+          "explorationCalls": 5,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 638,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    },
+    {
+      "id": "s33-01-explain",
+      "split": "S33",
+      "category": "EXPLAIN",
+      "repeat": 2,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/worker/retry.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 5923,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 5803,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 2063,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "When a background job throws an exception, the error is handled by the `runWithRetry` function in the file `src/worker/retry.ts`. This function manages retries for jobs that fail.\n\n- The maximum number of attempts a job gets in total is **5**.\n- The worker waits before the second attempt for **500 milliseconds**, as defined by `BASE_DELAY_MS`. The delay doubles with each subsequent attempt (e.g., 500ms, 1000ms, 2000ms, etc.), but the wait time for the second attempt is 500ms.\n\nThe `processQueue` function in `src/worker/run.ts` calls `runWithRetry` to process each job in a queue, and if a job fails all retries, it is not added to the list of completed jobs.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "list_directory:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 5,
+          "explorationCalls": 5,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 638,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    }
+  ]
+}

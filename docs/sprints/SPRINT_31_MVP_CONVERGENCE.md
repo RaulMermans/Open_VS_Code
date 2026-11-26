@@ -1,6 +1,6 @@
 # Sprint 31 — MVP convergence
 
-STATUS: `IN_PROGRESS`. On `main` at `aec5d3aadb`. Installed production is `open-vs-code 0.1.0-rc.26` (package SHA-256 `323ccfe3351f7698710b6d9e63fa34615f1c7bd9df11fc1dc945e5032ff357f5`). Rollback is `~/open-vs-code-backups/pre-rc26-2026-11-22/open-vs-code_0.1.0-rc.25_amd64.deb`. Qualification gates stay NO-GO.
+STATUS: `IN_PROGRESS`. On `main` at `f83bfc8203`. Installed production target is `open-vs-code 0.1.0-rc.27` (HALO VC-07). Rollback remains `~/open-vs-code-backups/pre-rc26-2026-11-22/open-vs-code_0.1.0-rc.25_amd64.deb`. Qualification gates stay NO-GO.
 
 ## Source
 

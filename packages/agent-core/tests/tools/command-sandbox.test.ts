@@ -21,8 +21,8 @@ async function workspace(files: Record<string, string>): Promise<string> {
   return root
 }
 
-async function run(root: string, executable: string, args: string[], sandbox: "required" | "off" = "required", signal?: AbortSignal) {
-  const engine = new VerificationEngine({ workspaceRoot: root, sandbox })
+async function run(root: string, executable: string, args: string[], sandbox: "required" | "off" = "required", signal?: AbortSignal, sandboxMemoryMax?: string) {
+  const engine = new VerificationEngine({ workspaceRoot: root, sandbox, sandboxMemoryMax })
   return engine.execute({
     verificationId: `sb-${Math.random()}`,
     action: "TEST",
@@ -145,8 +145,9 @@ test("sandboxed commands are capped in memory (no swap) and in process count", {
     "forks.cjs": "const { spawn } = require('node:child_process'); let ok = 0, refused = 0; for (let i = 0; i < 2600; i++) { try { const c = spawn('/bin/sleep', ['2']); c.on('error', () => {}); if (c.pid) ok++; else refused++ } catch { refused++ } } console.log(JSON.stringify({ ok, refused }))\n",
   })
   try {
-    const hog = await run(root, resolveNodeBinary(), ["--max-old-space-size=16384", join(root, "hog.cjs")])
-    assert.equal(hog.sandbox?.limits?.startsWith("memory"), true, JSON.stringify(hog.sandbox))
+    // Deliberate OOM stays at 4 GiB; the 5 GiB hog must not fit.
+    const hog = await run(root, resolveNodeBinary(), ["--max-old-space-size=16384", join(root, "hog.cjs")], "required", undefined, "4G")
+    assert.equal(hog.sandbox?.limits, "memory 4GB, 2048 tasks", JSON.stringify(hog.sandbox))
     assert.notEqual(hog.status, "PASS")
     assert.doesNotMatch(hog.stdout, /survived/)
     const forks = await run(root, resolveNodeBinary(), [join(root, "forks.cjs")])

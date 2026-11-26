@@ -338,3 +338,23 @@ test("a partial rename proposal (language server still loading) is retried while
     } finally { await ws.cleanup() }
   }
 })
+
+test("an unrelated exported function with the same name, and an aliased import of it, do not block a rename", async () => {
+  const files = {
+    "src/money.ts": "export function roundAmount(value: number): number {\n  return Math.round(value * 100) / 100\n}\n",
+    "src/invoice.ts": "import { roundAmount } from \"./money.ts\"\n\nexport const line = (v: number) => roundAmount(v)\n",
+    "lib/stats/round.ts": "export function roundAmount(values: number[]): number[] {\n  return values.map(Math.round)\n}\n",
+    "src/chart.ts": "import { roundAmount as roundAll } from \"../lib/stats/round.ts\"\n\nexport const bars = (v: number[]) => roundAll(v)\n",
+  }
+  const ws = await workspace(files)
+  try {
+    const reviewable = await tools(ws.root).rename({ path: "src/money.ts", symbol: "roundAmount", newName: "roundCents" })
+    const changed = (reviewable.reviewPayload.files as Array<{ path: string }>).map((file) => file.path)
+    assert.deepEqual(changed, ["src/invoice.ts", "src/money.ts"])
+    const result = await reviewable.apply({ workspaceRoot: ws.root, signal: new AbortController().signal }) as any
+    assert.equal(result.status, "APPLIED", result.observation)
+    assert.equal(await read(ws.root, "lib/stats/round.ts"), files["lib/stats/round.ts"])
+    assert.equal(await read(ws.root, "src/chart.ts"), files["src/chart.ts"])
+    assert.match(await read(ws.root, "src/invoice.ts"), /roundCents\(v\)/)
+  } finally { await ws.cleanup() }
+})

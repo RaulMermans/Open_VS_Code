@@ -1,0 +1,161 @@
+{
+  "meta": {
+    "label": "confirm-ask-S32-qwen3-coder-30b",
+    "model": "qwen3-coder:30b",
+    "modelDigest": "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "sourceHead": "3d4e0838fe",
+    "benchmarkSha256": "ba854248e2cb5bf435cd5751082f1cd00e3eeef1d18a92e573f3686eeb98286f",
+    "trackedDirty": false,
+    "startedAt": "2026-11-26T15:18:41.054Z",
+    "timeoutMin": 10,
+    "codeIntelligence": "typescript LanguageService (find_symbol, rename_symbol)",
+    "path": "AgentSessionBridge.runTask -> createAgentRuntime with the desktop's chat-model routing (desktop defaults: workflow/progressMonitor/learning off)"
+  },
+  "rows": [
+    {
+      "id": "s32-01-explain",
+      "split": "S32",
+      "category": "EXPLAIN",
+      "repeat": 1,
+      "pass": false,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "answerMisses": [
+        "missing /\\b30\\b/",
+        "missing /60[_,]?000|60\\s*(s\\b|sec|second)|one minute|1 minute|per minute|a minute/i",
+        "missing /\\b429\\b/"
+      ],
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/middleware/throttle.ts": true,
+        "src/app.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 32772,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 10,
+          "inferenceMs": 32641,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 6210,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 10,
+          "finalAnswer": "The service limits client requests using a throttling mechanism implemented in the `throttle` function. Here's how it works:\n\n1. **File and Function**: The `throttle` function is defined in `src/middleware/throttle.ts`.\n2. **Limit and Time Window**: Although the exact limit and time window are not specified in the provided code snippet, the function `throttle(auth.apiKey, now)` suggests that it enforces rate limits based on the API key and current time.\n3. **Client Response**: When a client exceeds the request limit, the `throttle` function returns a response indicating the limit has been exceeded.\n\nTo determine the exact limit and time window, one would need to examine the implementation of the `throttle` function in `src/middleware/throttle.ts`.",
+          "toolSequence": [
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "list_directory:REJECTED",
+            "list_directory:REJECTED",
+            "list_directory:REJECTED",
+            "list_directory:REJECTED",
+            "list_directory:FAILED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 1,
+          "deniedToolCalls": 0,
+          "failureObservations": [
+            "list_directory: Invalid arguments for list_directory: path must be a non-empty string",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: list_directory {}: Invalid arguments for list_directory: path must be a non-empty string Please analyze the root cause and pr",
+            "list_directory: Invalid arguments for list_directory: path must be a non-empty string",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: list_directory {}: Invalid arguments for list_directory: path must be a non-empty string Please analyze the root cause and pr",
+            "list_directory: Invalid arguments for list_directory: path must be a non-empty string",
+            "runtime_eval_replan: [RUNTIME EVALUATION - REPLAN REQUIRED] Current approach has repeated failures or non-progress loops (list_directory {}: Invalid arguments for list_directory: path must be a non-empty string). Please step back, reassess t",
+            "list_directory: Invalid arguments for list_directory: path must be a non-empty string",
+            "runtime_eval_replan: [RUNTIME EVALUATION - REPLAN REQUIRED] Current approach has repeated failures or non-progress loops (list_directory {}: Invalid arguments for list_directory: path must be a non-empty string). Please step back, reassess t",
+            "list_directory: INVALID_PATH: use a workspace-relative path such as src/add.ts, or \".\" for the workspace root (/tmp/ovsc-eval-s32-01-explain-8ogFIO/ws). Absolute paths outside the workspace and path traversal are not permitted; a reposi",
+            "runtime_eval_revision: [RUNTIME EVALUATION - REVISE REQUIRED] Your previous action resulted in an unresolved failure: list_directory {\"path\":\"/\"}: INVALID_PATH: use a workspace-relative path such as src/add.ts, or \".\" for the workspace root (/"
+          ],
+          "toolCalls": 9,
+          "explorationCalls": 9,
+          "repeatedExploration": 5,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 1041,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    },
+    {
+      "id": "s32-01-explain",
+      "split": "S32",
+      "category": "EXPLAIN",
+      "repeat": 2,
+      "pass": true,
+      "codeCorrect": true,
+      "visiblePass": true,
+      "oraclePass": true,
+      "oracleDetail": "",
+      "visibleTail": "",
+      "unauthorized": [],
+      "changes": [],
+      "unchangedOk": {
+        "src/middleware/throttle.ts": true,
+        "src/app.ts": true,
+        "src/config.ts": true
+      },
+      "falseCompletion": false,
+      "timedOut": false,
+      "durationMs": 9074,
+      "writeApprovals": 0,
+      "commandApprovals": 0,
+      "phases": [
+        {
+          "phase": "first",
+          "modelCalls": 5,
+          "inferenceMs": 8970,
+          "firstEditMs": null,
+          "estimatedPromptTokens": 2310,
+          "verificationRuns": 0,
+          "status": "COMPLETED",
+          "turns": 5,
+          "finalAnswer": "The service enforces a rate limit using the file `src/middleware/throttle.ts`. The function `throttle` is responsible for this enforcement.\n\n- **Limit**: The maximum number of requests allowed is 30.\n- **Time Window**: The time window is 60,000 milliseconds (or 1 minute).\n- **Client Response on Exceeding Limit**: When the client exceeds the limit, it receives a response with:\n  - Status code: `429`\n  - Body: An object containing an error message `\"too many requests\"` and a `retryAfter` value indicating how many seconds to wait before retrying.\n\nThis rate limiting is implemented using a sliding window algorithm that tracks request times per API key.",
+          "toolSequence": [
+            "find_files:COMPLETED",
+            "find_files:COMPLETED",
+            "search_text:COMPLETED",
+            "search_text:COMPLETED",
+            "list_directory:COMPLETED",
+            "list_directory:COMPLETED",
+            "read_file:COMPLETED"
+          ],
+          "patchAttempts": 0,
+          "patchApplied": 0,
+          "createAttempts": 0,
+          "createApplied": 0,
+          "failedToolCalls": 0,
+          "deniedToolCalls": 0,
+          "failureObservations": [],
+          "toolCalls": 7,
+          "explorationCalls": 7,
+          "repeatedExploration": 0,
+          "symbolCalls": [],
+          "context": {
+            "maxEstimatedTokens": 656,
+            "turnsWithOmission": 0,
+            "maxOmitted": 0
+          },
+          "approvals": 0
+        }
+      ]
+    }
+  ]
+}

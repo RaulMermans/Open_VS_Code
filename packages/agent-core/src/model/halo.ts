@@ -96,7 +96,7 @@ export interface HaloConnectionInspection {
   readonly capabilityAllowed: boolean | null
   readonly inferenceStatus: string | null
   readonly streamingSupported: false
-  readonly toolsSupported: false
+  readonly toolsSupported: boolean
   readonly summary: string
 }
 
@@ -118,6 +118,7 @@ export async function inspectHaloConnection(options: {
   let selectedModelRegistered: boolean | null = options.modelId ? false : null
   let capabilityAllowed: boolean | null = null
   let inferenceStatus: string | null = null
+  let toolsSupported = false
   try {
     const health = await requestFetch(new URL("health", base))
     coreReachable = health.ok
@@ -130,11 +131,7 @@ export async function inspectHaloConnection(options: {
     if (status.ok) {
       const body = await status.json() as { status?: unknown; features?: { streaming?: unknown; tools?: unknown } }
       inferenceStatus = typeof body.status === "string" ? body.status : null
-      if (body.features?.streaming === true || body.features?.tools === true) {
-        return failInspection(authenticationConfigured, "HALO advertised unsupported streaming or tools.", {
-          coreReachable, authenticationConfigured, inferenceStatus,
-        })
-      }
+      toolsSupported = body.features?.tools === true
     }
   } catch {
     inferenceStatus = null
@@ -165,9 +162,11 @@ export async function inspectHaloConnection(options: {
     && (selectedModelRegistered !== false)
     && (capabilityAllowed !== false)
     && inferenceStatus !== "disabled"
-  const summary = ready
-    ? "HALO Core is reachable; selected model and capability still require a governed inference request."
-    : "HALO connection check failed; select Direct Ollama explicitly if you need local inference."
+  const summary = !ready
+    ? "HALO connection check failed; select Direct Ollama explicitly if you need local inference."
+    : toolsSupported && !options.modelId
+      ? "HALO Core is reachable and advertises tool calls; selected model and capability still require a governed inference request."
+      : "HALO Core is reachable for Ask only: this HALO route cannot carry tool calls, so Agent and Debug will refuse to run through it."
   return {
     coreReachable,
     authenticationConfigured,
@@ -176,7 +175,7 @@ export async function inspectHaloConnection(options: {
     capabilityAllowed,
     inferenceStatus,
     streamingSupported: false,
-    toolsSupported: false,
+    toolsSupported: toolsSupported && !options.modelId,
     summary,
   }
 }
@@ -231,6 +230,8 @@ const HALO_ERROR_CODES = new Set<HaloProviderErrorCode>([
   "INFERENCE_INVALID_RESPONSE",
   "UNSUPPORTED_INFERENCE_FEATURE",
 ])
+
+const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set(["read_repository", "search_repository", "read_markdown"])
 
 function parseCoreUrl(value: string | URL): URL {
   const url = new URL(value)
@@ -316,6 +317,12 @@ export class HaloProvider implements ModelProvider {
       throw new HaloProviderError("HALO_INVALID_REQUEST", undefined, { cause: error })
     }
     if (!request.messages.every(isHaloMessage)) throw new HaloProviderError("HALO_INVALID_REQUEST")
+
+    // The explicit-model route cannot carry tools. Dropping write tools would leave Agent mode unable to edit
+    // while looking normal, so refuse; read-only tools may still be dropped for Ask (VC-07 Gate C).
+    if (this.#modelId && request.tools?.some((tool) => !READ_ONLY_ACTIONS.has(tool.action))) {
+      throw new HaloProviderError("HALO_UNSUPPORTED_FEATURE")
+    }
 
     const token = typeof this.#token === "function" ? await this.#token() : this.#token
     if (!token?.trim()) throw new HaloProviderError("HALO_AUTH_REQUIRED")

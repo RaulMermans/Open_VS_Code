@@ -30,7 +30,9 @@
 
 ## Current sprint
 
-Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. On `main` at `aec5d3aadb`. Installed production is `0.1.0-rc.26`. Rollback is `0.1.0-rc.25`. Stale dependency builds go through the verification sandbox. Six fresh Qwen repairs stayed at 4 or 5 inference failures. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
+Sprint 32 — Product convergence. Status: `IN_PROGRESS`. Candidate `0.1.0-rc.29` (rename and Ask fixes); installed is `0.1.0-rc.26` until rc.29 is installed. Frozen S32 benchmark: qwen3.6:35b 9/10 after two runtime fixes (7/10 before), qwen3-coder:30b 6/10. HALO is Ask-only; Agent stays on Direct Ollama (ADR-051). Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_32_PRODUCT_CONVERGENCE.md`.
+
+Previous: Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. On `main` at `f83bfc8203`. Installed production target is `0.1.0-rc.27` (HALO VC-07 optional provider and tool round-trip). Rollback is `0.1.0-rc.25`. Stale dependency builds go through the verification sandbox. Six fresh Qwen repairs stayed at 4 or 5 inference failures. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
 
 Sprint 23 — Cross-file refactors and real-project dogfooding. Status: `CANDIDATE` `0.1.0-rc.23` (`794b2f9426`), **not installed**; daily driver stays `0.1.0-rc.21`. Five new tasks on a real repository through the GUI: rc.21 0/4 valid → rc.23 1 fully correct + 1 correct code missing requested tests; no false verification PASS, no unbounded loops. Remaining blocker: incomplete instruction-following (stale importer, missing tests, test-gaming). See `docs/sprints/SPRINT_23_DOGFOODING.md`.
 

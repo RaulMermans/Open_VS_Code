@@ -11,6 +11,8 @@ Enable HALO only after Gate B approval:
 
 Rollback: set the backend back to `standalone-local`. Do not change HALO services.
 
-Streaming: unsupported. Tools: unsupported. BUILD/DEBUG through HALO is blocked until HALO grows a tool protocol.
+Streaming: unsupported. Capability-path BUILD/DEBUG can round-trip HALO native `output.toolCalls`; explicit `modelId` chat still does not send tools. OpenAI-style `tool_calls` remain refused.
 
 Physical Gate C (2026-11-22): three ASK completions through `HaloProvider` to resident `x3-qwen3-14b-vulkan` (pid 3841757, reuse). Capability `coding` to 4B is admission-rejected while that runtime is `model_advertised`. Package default remains Direct Ollama.
+
+Sprint 32 (2026-11-25): the deployed Core (`ccd05e5`) predates VC-07B and reports `tools: false`, so Agent and Debug cannot run through HALO. With `open-vs-code.halo.modelId` set, write-capable tools are now refused before any request instead of being dropped; Ask still works. Check HALO Connection reports tool support from `/inference/status`. Handoff: `HALO_SPRINT32_HANDOFF.md`. Decision: ADR-051.

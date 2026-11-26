@@ -311,6 +311,7 @@ export async function launchCdpApp(input: {
   const extensionsDir = acceptanceExtensionsDir()
   const args = [
     `--user-data-dir=${userData}`,
+    `--extensions-dir=${join(userData, "..", "extensions")}`,
     `--remote-debugging-port=${port}`,
     "--remote-debugging-address=127.0.0.1",
     "--disable-telemetry",

@@ -27,3 +27,4 @@
 - [ADR-044: Native tool-message conversation encoding (opt-in)](ADR-044-native-tool-messages.md)
 
 - [ADR-047: Language-service symbol tools (find_symbol, rename_symbol)](ADR-047-language-service-symbol-tools.md)
+- [ADR-051: HALO Agent-mode eligibility and MVP model routing](ADR-051-halo-agent-eligibility-and-mvp-routing.md)

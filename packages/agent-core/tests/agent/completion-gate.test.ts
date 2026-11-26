@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { assessCodingCompletion, requestsExistingFileEdit, requestsNewTest } from "../../src/agent/tool-contract.ts"
+import { assessCodingCompletion, requestsExistingFileEdit, requestsNewTest, requiredEditPaths } from "../../src/agent/tool-contract.ts"
 
 const named = ["src/index.ts", "src/strings.ts"]
 const edit = [{ path: "src/index.ts", status: "APPLIED", at: "2026-11-16T00:00:01.000Z", operation: "patch" as const }]
@@ -98,8 +98,17 @@ test("a requested new test is not excused by a passing run when the named test f
 })
 
 test("naming a test while forbidding changes to it does not make that test the required edit", async () => {
-  const { requiredEditPaths } = await import("../../src/agent/tool-contract.ts")
+
   const instruction = "packages/inference/test/modelQualification.test.ts already exists and fails. Fix the implementation so those tests pass.\n\nDo not change, delete, or weaken that test."
   assert.deepEqual(requiredEditPaths(instruction, ["packages/inference/test/modelQualification.test.ts"]), [])
   assert.deepEqual(requiredEditPaths(`${instruction}\nDo not edit package.json.`, ["packages/inference/test/modelQualification.test.ts", "package.json"]), [])
+})
+
+test("a path protected by reference is never the required edit", () => {
+  assert.deepEqual(requiredEditPaths("spec/parser.spec.ts is failing in CI. Please fix the parser. The spec is right; don't touch it.", ["spec/parser.spec.ts"]), [])
+  assert.deepEqual(requiredEditPaths("Rename loadConfig to readConfig across the project. lib/old/config.js defines an unrelated loadConfig; leave that file alone.", ["lib/old/config.js"]), [])
+  assert.deepEqual(requiredEditPaths("Update src/a.ts and leave src/b.ts alone.", ["src/a.ts", "src/b.ts"]), ["src/a.ts"])
+  // A clause binds only to the path just before it.
+  assert.deepEqual(requiredEditPaths("Fix src/math.ts. Then tell me about docs/guide.md but leave it as is.", ["src/math.ts", "docs/guide.md"]), ["src/math.ts"])
+  assert.deepEqual(requiredEditPaths("Change src/item.mjs and test/item.test.mjs.", ["src/item.mjs", "test/item.test.mjs"]), ["src/item.mjs", "test/item.test.mjs"])
 })

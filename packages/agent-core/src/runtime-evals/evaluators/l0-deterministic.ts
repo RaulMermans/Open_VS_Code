@@ -8,6 +8,8 @@ import type {
 } from "../contracts.ts"
 import { deterministicHash } from "../evidence.ts"
 
+const NON_MUTATING_FAILURE = /^(?:apply_patch|create_file|rename_symbol|read_file|search_text|find_files|list_directory|find_symbol)\b/
+
 export interface L0EvaluatorOptions {
   readonly repeatedFailureThreshold?: number
   readonly securityDenialThreshold?: number
@@ -117,14 +119,16 @@ export function evaluateL0(
         })
         recommendedAction = "Revise code to resolve failing verification"
       } else {
-        // T-4405: Verified completion
-        if (evidence.unresolvedFailures.length > 0) {
+        // T-4405: Verified completion. A failed edit or lookup changed nothing, so after a passing verification with no
+        // later edit it cannot make the verified workspace wrong; only failed checks still block.
+        const blocking = evidence.unresolvedFailures.filter((failure) => !NON_MUTATING_FAILURE.test(failure.summary))
+        if (blocking.length > 0) {
           decision = "REVISE"
           completionConfidence = 0.4
           verificationCoverage = 0.8
           signals.push({
             code: "UNRESOLVED_ERRORS",
-            message: `${evidence.unresolvedFailures.length} unresolved failures remain`,
+            message: `${blocking.length} unresolved failures remain`,
             severity: "WARNING",
           })
           recommendedAction = "Resolve remaining errors before completing"
