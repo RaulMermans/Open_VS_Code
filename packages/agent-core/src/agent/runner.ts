@@ -175,6 +175,8 @@ interface Session {
   danglingWarned?: Set<string>
   /** Applied-edit count when the completion gate last nudged; the nudge limit resets when it grows. */
   gateAppliedMark?: number
+  /** Read-only turn: the one "open a file before answering" nudge was given. */
+  readNudged?: boolean
   /** Context items the latest model request actually contained (older observations are reduced to an index line). */
   shownItemIds?: Set<string>
   /** The current work unit (only when unitBudgetMs is set): its number, deadline and progress at its start. */
@@ -214,6 +216,8 @@ const MAX_READ_TURNS_WITHOUT_EDIT = 10
 const EXPLORATION_TOOLS = new Set(["list_directory", "find_files", "search_text", "find_symbol"])
 const READ_TOOLS = new Set(["read_file", "list_directory", "find_files", "search_text", "find_symbol"])
 const MISSING_SEARCH_HINT = "This string is not in the workspace. If the task requires this behavior, implement it with create_file or apply_patch; do not search for the same query again."
+const LITERAL_SEARCH_HINT = "search_text matches literal text, so a phrase finds nothing unless it appears verbatim. Search for one identifier or word at a time (for example a function or constant name), or list_directory, then read_file the files that look relevant."
+const CONTENT_LOOKUPS: ReadonlySet<string> = new Set(["search_text", "find_symbol"])
 const MISSING_FILES_HINT = "No file matched. If the task requires a new file, create it; do not keep searching for a path that is not there."
 interface CompletedRename {
   readonly path: string
@@ -1524,6 +1528,29 @@ export class AgentRunner {
           }))
           continue
         }
+        // A read-only answer built only from search hits (never opening a file) missed constants, callers and
+        // whole files in S32/S34 and the GUI lab. Once, ask for the relevant files to be read first.
+        if (calls.length === 0 && !codingVerdict && session.input.task.mode === "ASK" && !session.taskProfile.directReply && !session.readNudged) {
+          const done = session.observations.filter((item) => item.ok)
+          // A listing answers "which files"; only a content lookup (search, symbol) needs the file read.
+          const looked = done.some((item) => CONTENT_LOOKUPS.has(item.toolName))
+          const read = done.some((item) => item.toolName === "read_file")
+          if (looked && !read) {
+            session.readNudged = true
+            const hits = [...new Set(done.filter((item) => item.toolName === "search_text" || item.toolName === "find_symbol" || item.toolName === "find_files")
+              .flatMap((item) => [...item.content.matchAll(/^\s*([\w./-]+\.[A-Za-z0-9]+)(?::\d+)?/gm)].map((match) => match[1]!)))].slice(0, 4)
+            session.observations.push(createToolObservation({
+              toolName: "evidence_gate",
+              callId: `read-before-answer-${turn}`,
+              error: {
+                category: "EVIDENCE_INSUFFICIENT",
+                message: `[READ BEFORE ANSWERING]\nYou have not opened any file; search results show only single matching lines. Call read_file on the file(s) that hold the answer${hits.length ? ` (for example ${hits.join(", ")})` : " (use list_directory if you do not know which)"} and answer from what they say, including exact values, names and callers.`,
+              },
+              maxContentBytes: this.#observationMaxBytes,
+            }))
+            continue
+          }
+        }
         if (calls.length === 0 && this.#evidenceGate && !codingVerdict) {
           const evalResult = session.evidenceLedger.evaluate(
             session.taskProfile.evidenceRequirements,
@@ -2251,6 +2278,9 @@ export class AgentRunner {
         maxContentBytes: this.#observationMaxBytes,
         ...(toolArguments(prepared.arguments) ? { arguments: toolArguments(prepared.arguments) } : {}),
       })
+      if (!session.taskProfile.requiresCodeChange && observation.ok && prepared.name === "search_text" && observation.content.startsWith("No matching text found")) {
+        observation = { ...observation, content: `${observation.content}\n${LITERAL_SEARCH_HINT}` }
+      }
       if (session.taskProfile.requiresCodeChange && observation.ok) {
         if (prepared.name === "search_text" && observation.content.startsWith("No matching text found")) {
           observation = { ...observation, content: `${observation.content}\n${MISSING_SEARCH_HINT}` }
