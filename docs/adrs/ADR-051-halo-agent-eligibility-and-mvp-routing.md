@@ -22,3 +22,7 @@ Sprint 32 measured the product instead of adding mechanisms. Three findings cons
 - Agent mode through HALO is unavailable today; users see an explicit refusal instead of a silently tool-less agent.
 - A Phase D Direct-vs-HALO benchmark becomes possible only after HALO registers an Ollama-served coding model and deploys VC-07B.
 - Revisit the Auto order when a new held-out set or a new model shows a different correctness ranking.
+
+## Update (2026-11-26, VC-07B-Q)
+
+The deployed HALO Core (`ceee13f`) now advertises `tools: true`. VC-07B-Q sends tools on the model-pinned route as well and replaces this ADR's write-tool refusal and `toolsSupported` flag with `toolTransport` (Core protocol support) and `modelToolCalling` (operator opt-in per model). Neither is model qualification: Direct Ollama remains the default Agent transport until HALO-routed coding tasks pass with the same independent oracles (see `scripts/vc07bq-coding-task.mjs`).

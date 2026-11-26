@@ -35,3 +35,7 @@ Streaming is not required for Agent mode qualification. Open VS Code's agent pat
 ## Open VS Code qualification once 1–3 exist
 
 Run `packages/agent-core/tests/model/halo-tool-cycle.test.ts` against a live Core (replace the stub server), then the S32 benchmark subset through `HaloProvider` with the same model and digest as the Direct Ollama run. HALO becomes eligible for Agent mode only if its independently verified S32 results match Direct Ollama.
+
+## Update (2026-11-26)
+
+Item 1 is done: the deployed Core is `ceee13f` and `/inference/status` reports `tools: true`. Open VS Code's VC-07B-Q branch sends tools on both the capability and the model-pinned route. Items 2–5 are unchanged.

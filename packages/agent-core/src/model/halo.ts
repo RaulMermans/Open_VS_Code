@@ -96,7 +96,10 @@ export interface HaloConnectionInspection {
   readonly capabilityAllowed: boolean | null
   readonly inferenceStatus: string | null
   readonly streamingSupported: false
-  readonly toolsSupported: boolean
+  /** Core's provider can transport structured tools. Protocol support only, not model qualification. */
+  readonly toolTransport: boolean | null
+  /** The selected model's HALO operator opt-in for tools. Never proof that the model emits valid tool calls. */
+  readonly modelToolCalling: "experimental" | null
   readonly summary: string
 }
 
@@ -118,7 +121,8 @@ export async function inspectHaloConnection(options: {
   let selectedModelRegistered: boolean | null = options.modelId ? false : null
   let capabilityAllowed: boolean | null = null
   let inferenceStatus: string | null = null
-  let toolsSupported = false
+  let toolTransport: boolean | null = null
+  let modelToolCalling: "experimental" | null = null
   try {
     const health = await requestFetch(new URL("health", base))
     coreReachable = health.ok
@@ -131,7 +135,12 @@ export async function inspectHaloConnection(options: {
     if (status.ok) {
       const body = await status.json() as { status?: unknown; features?: { streaming?: unknown; tools?: unknown } }
       inferenceStatus = typeof body.status === "string" ? body.status : null
-      toolsSupported = body.features?.tools === true
+      toolTransport = typeof body.features?.tools === "boolean" ? body.features.tools : null
+      if (body.features?.streaming === true) {
+        return failInspection(authenticationConfigured, "HALO advertised unsupported streaming.", {
+          coreReachable, authenticationConfigured, inferenceStatus,
+        })
+      }
     }
   } catch {
     inferenceStatus = null
@@ -153,6 +162,10 @@ export async function inspectHaloConnection(options: {
     try {
       const model = await requestFetch(new URL(`models/${encodeURIComponent(options.modelId)}`, base))
       selectedModelRegistered = model.ok
+      if (model.ok) {
+        const record = await model.json().catch(() => ({})) as { metadata?: { toolCalling?: unknown } }
+        modelToolCalling = record.metadata?.toolCalling === "experimental" ? "experimental" : null
+      }
     } catch {
       selectedModelRegistered = false
     }
@@ -162,11 +175,9 @@ export async function inspectHaloConnection(options: {
     && (selectedModelRegistered !== false)
     && (capabilityAllowed !== false)
     && inferenceStatus !== "disabled"
-  const summary = !ready
-    ? "HALO connection check failed; select Direct Ollama explicitly if you need local inference."
-    : toolsSupported && !options.modelId
-      ? "HALO Core is reachable and advertises tool calls; selected model and capability still require a governed inference request."
-      : "HALO Core is reachable for Ask only: this HALO route cannot carry tool calls, so Agent and Debug will refuse to run through it."
+  const summary = ready
+    ? "HALO Core is reachable; selected model and capability still require a governed inference request."
+    : "HALO connection check failed; select Direct Ollama explicitly if you need local inference."
   return {
     coreReachable,
     authenticationConfigured,
@@ -175,7 +186,8 @@ export async function inspectHaloConnection(options: {
     capabilityAllowed,
     inferenceStatus,
     streamingSupported: false,
-    toolsSupported: toolsSupported && !options.modelId,
+    toolTransport,
+    modelToolCalling,
     summary,
   }
 }
@@ -193,7 +205,8 @@ function failInspection(
     capabilityAllowed: extra.capabilityAllowed ?? null,
     inferenceStatus: extra.inferenceStatus ?? null,
     streamingSupported: false,
-    toolsSupported: false,
+    toolTransport: extra.toolTransport ?? null,
+    modelToolCalling: null,
     summary,
   }
 }
@@ -231,8 +244,6 @@ const HALO_ERROR_CODES = new Set<HaloProviderErrorCode>([
   "UNSUPPORTED_INFERENCE_FEATURE",
 ])
 
-const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set(["read_repository", "search_repository", "read_markdown"])
-
 function parseCoreUrl(value: string | URL): URL {
   const url = new URL(value)
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new TypeError("HALO Core URL must use HTTP or HTTPS")
@@ -257,7 +268,7 @@ function haloMessages(messages: readonly ModelMessage[]): unknown[] {
         toolCalls: message.toolCalls.map((call) => ({
           id: call.id,
           name: call.name,
-          arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {}),
+          arguments: encodeToolArguments(call.arguments),
         })),
       }
     }
@@ -265,9 +276,17 @@ function haloMessages(messages: readonly ModelMessage[]): unknown[] {
   })
 }
 
+/** Replayed history must carry the call's real arguments; a missing value is never invented as `{}`. */
+function encodeToolArguments(value: unknown): string {
+  if (typeof value === "string") return value
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new HaloProviderError("HALO_INVALID_REQUEST")
+  return JSON.stringify(value)
+}
+
 function parseHaloToolCalls(raw: unknown): ModelResponse["toolCalls"] {
   if (raw === undefined) return undefined
   if (!Array.isArray(raw) || raw.length === 0) throw new HaloProviderError("HALO_INVALID_RESPONSE")
+  const ids = new Set<string>()
   return raw.map((item) => {
     const call = item as HaloToolCall
     if (typeof call.id !== "string" || !call.id.trim() || typeof call.name !== "string" || typeof call.arguments !== "string") {
@@ -279,6 +298,10 @@ function parseHaloToolCalls(raw: unknown): ModelResponse["toolCalls"] {
     } catch {
       throw new HaloProviderError("HALO_INVALID_RESPONSE")
     }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || ids.has(call.id)) {
+      throw new HaloProviderError("HALO_INVALID_RESPONSE")
+    }
+    ids.add(call.id)
     return { id: call.id, name: call.name, arguments: parsed }
   })
 }
@@ -318,18 +341,12 @@ export class HaloProvider implements ModelProvider {
     }
     if (!request.messages.every(isHaloMessage)) throw new HaloProviderError("HALO_INVALID_REQUEST")
 
-    // The explicit-model route cannot carry tools. Dropping write tools would leave Agent mode unable to edit
-    // while looking normal, so refuse; read-only tools may still be dropped for Ask (VC-07 Gate C).
-    if (this.#modelId && request.tools?.some((tool) => !READ_ONLY_ACTIONS.has(tool.action))) {
-      throw new HaloProviderError("HALO_UNSUPPORTED_FEATURE")
-    }
-
     const token = typeof this.#token === "function" ? await this.#token() : this.#token
     if (!token?.trim()) throw new HaloProviderError("HALO_AUTH_REQUIRED")
 
     const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
     const signal = request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal
-    const toolsOnWire = !this.#modelId && request.tools && request.tools.length > 0
+    const toolsOnWire = request.tools && request.tools.length > 0
       ? {
           tools: request.tools.map((tool) => ({
             name: tool.name,
@@ -345,6 +362,7 @@ export class HaloProvider implements ModelProvider {
         messages: haloMessages(request.messages),
         ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         ...(request.maxOutputTokens !== undefined ? { maxTokens: request.maxOutputTokens } : {}),
+        ...toolsOnWire,
       }
       : {
         capability: this.#capability,

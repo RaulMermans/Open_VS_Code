@@ -142,7 +142,7 @@ test("HALO selection never falls back to the standalone provider after a HALO fa
   assert.equal(standaloneCalls, 0)
 })
 
-test("explicit model ID uses /inference/chat and never sends tools on the wire", async () => {
+test("explicit model ID uses /inference/chat for a text-only request (tools: halo-tool-cycle.test.ts)", async () => {
   await withServer(async (request, response) => {
     assert.equal(request.url, "/inference/chat")
     const body = await readJson(request) as Record<string, unknown>
@@ -152,10 +152,7 @@ test("explicit model ID uses /inference/chat and never sends tools on the wire",
     response.end(JSON.stringify({ modelId: "x3-qwen3-4b-vulkan", output: { role: "assistant", content: "function add() {}" }, finishReason: "stop", usage: { inputTokens: 8, outputTokens: 4 } }))
   }, async (coreUrl) => {
     const provider = new HaloProvider({ coreUrl, capability: "coding", token: "token", modelId: "x3-qwen3-4b-vulkan" })
-    const result = await provider.complete({
-      messages: [{ role: "user", content: "write add" }],
-      tools: [{ name: "read_file", description: "read", inputSchema: { type: "object" }, action: "read_repository" }],
-    })
+    const result = await provider.complete({ messages: [{ role: "user", content: "write add" }] })
     assert.equal(result.message.content, "function add() {}")
     assert.equal(result.toolCalls, undefined)
     assert.equal(result.metadata?.tools, false)
@@ -224,7 +221,8 @@ test("inspectHaloConnection does not dispatch inference and does not treat healt
     assert.equal(inspection.selectedModelRegistered, true)
     assert.equal(inspection.capabilityAllowed, true)
     assert.equal(inspection.streamingSupported, false)
-    assert.equal(inspection.toolsSupported, false)
+    assert.equal(inspection.toolTransport, false)
+    assert.equal(inspection.modelToolCalling, null)
     assert.equal(seen.includes("/inference/capability/chat"), false)
     assert.equal(seen.includes("/inference/chat"), false)
   })

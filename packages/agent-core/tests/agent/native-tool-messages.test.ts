@@ -46,3 +46,17 @@ test("tool results are attributed as tool messages instead of one user blob", ()
   assert.equal(wire[1]?.tool_calls?.[0]?.function?.arguments, JSON.stringify({ path: "src/add.js" }))
   assert.equal(wire[2]?.tool_call_id, "call-1")
 })
+
+test("runner gate notices are user messages, never fabricated assistant tool calls (HALO rejects unknown call names)", () => {
+  const messages = buildNativeToolMessages({
+    promptContent: "Fix sum.ts",
+    toolCalls: [{ id: "call_r1", name: "read_file", outcome: "COMPLETED", arguments: { path: "src/sum.ts" } }],
+    observations: [
+      { toolName: "read_file", callId: "call_r1", ok: true, content: "export function sum() {}", truncated: false, provenance: { kind: "tool", paths: ["src/sum.ts"] } },
+      { toolName: "coding_gate", callId: "edit-gate-1", ok: false, content: "[EDIT REQUIRED] apply the change", truncated: false, provenance: { kind: "tool", paths: [] }, errorCategory: "EDIT_REQUIRED" },
+    ],
+  })
+  assert.deepEqual(messages.map((message) => message.role), ["user", "assistant", "tool", "user"])
+  assert.equal(messages.some((message) => message.toolCalls?.some((call) => call.name === "coding_gate")), false)
+  assert.match(messages[3]?.content || "", /^\[coding_gate\] ERROR EDIT_REQUIRED: /)
+})
