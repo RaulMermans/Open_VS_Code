@@ -3949,7 +3949,11 @@ async function requiresExplicitExtension(workspaceRoot: string, filePath: string
     if (directory === workspaceRoot || parent === directory || relative(workspaceRoot, parent).startsWith("..")) break
     directory = parent
   }
-  const nativeTypeScript = /--experimental-(?:strip|transform)-types/.test(packageText) || /allowImportingTsExtensions|rewriteRelativeImportExtensions/.test(tsconfigText)
+  // Only the test script says how project code runs: one native script (a migration in a Next.js app) does not
+  // make every import need ".ts", which that app's tsconfig would reject.
+  let testScript = ""
+  try { testScript = String(JSON.parse(packageText || "{}")?.scripts?.test ?? "") } catch { /* unreadable package.json */ }
+  const nativeTypeScript = /--experimental-(?:strip|transform)-types/.test(testScript) || /allowImportingTsExtensions|rewriteRelativeImportExtensions/.test(tsconfigText)
   if (TS_EXTENSIONS.includes(importerExt)) return nativeTypeScript || !hasTsconfig
   return /"type"\s*:\s*"module"/.test(packageText) && !hasTsconfig
 }
