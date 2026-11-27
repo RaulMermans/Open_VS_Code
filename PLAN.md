@@ -1,3 +1,10 @@
+Release 0.1.0-rc.30 — installed production (2026-11-27)
+STATUS: INSTALLED
+  - Built from clean `main` `f4a083a` (Sprint 32 runtime fixes, verification sandbox sizing, VC-07B-Q HALO tool path). `.deb` SHA-256 `b27d4308bb77bd9bbdff81429a420d35f73dd94dde126278eeb51296cbffef43`; bundled `extension.js` `539134376179bcfe…`.
+  - Packaged GUI before install: cold launch 3/3 (about 3 s), 39 pass, 1 needs review (UX-DIFF), 0 fail. CODE-CONTINUE-STALE passed this run but still fails in about 1 of 3 runs when the agent wrote nothing before a pause (P0 backlog).
+  - Installed over rc.26; installed files match the package md5sums; `chrome-sandbox` root 4755. Installed smoke: LIFE-SANDBOX, LIFE-FIRST, CONV-PING, CODE-BUG pass.
+  - Rollback: `sudo apt install --allow-downgrades ~/open-vs-code-backups/pre-rc28-2026-11-25/open-vs-code_0.1.0-rc.26_amd64.deb`.
+
 Sprint 32 — Product convergence, managed inference and functional MVP
 STATUS: IN_PROGRESS (technical MVP candidate built and exercised; not installed)
   - Starting state revalidated: installed is `0.1.0-rc.26` (rc.27 was packaged, never installed). `main` failed typecheck and one test; fixed.

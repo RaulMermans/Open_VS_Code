@@ -30,7 +30,7 @@
 
 ## Current sprint
 
-Sprint 32 — Product convergence. Status: `IN_PROGRESS`. Candidate `0.1.0-rc.29` (rename and Ask fixes); installed is `0.1.0-rc.26` until rc.29 is installed. Frozen S32 benchmark: qwen3.6:35b 9/10 after two runtime fixes (7/10 before), qwen3-coder:30b 6/10. HALO is Ask-only; Agent stays on Direct Ollama (ADR-051). Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_32_PRODUCT_CONVERGENCE.md`.
+Sprint 32 — Product convergence. Status: `IN_PROGRESS`. Installed production is `0.1.0-rc.30` (`main` `f4a083a`); rollback is `0.1.0-rc.26`. Frozen S32 benchmark: qwen3.6:35b 9/10 after two runtime fixes (7/10 before), qwen3-coder:30b 6/10. HALO is Ask-only; Agent stays on Direct Ollama (ADR-051). Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_32_PRODUCT_CONVERGENCE.md`.
 
 Previous: Sprint 31 — MVP convergence. Status: `IN_PROGRESS`. On `main` at `f83bfc8203`. Installed production target is `0.1.0-rc.27` (HALO VC-07 optional provider and tool round-trip). Rollback is `0.1.0-rc.25`. Stale dependency builds go through the verification sandbox. Six fresh Qwen repairs stayed at 4 or 5 inference failures. Supervised-testing and daily-driver are NO-GO. See `docs/sprints/SPRINT_31_MVP_CONVERGENCE.md`.
 
