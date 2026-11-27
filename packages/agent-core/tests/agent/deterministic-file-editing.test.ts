@@ -281,6 +281,40 @@ test("path traversal remains blocked", async () => {
   }
 })
 
+test("an extensionless import is accepted when the tsconfig does not allow .ts imports, even if a script strips types", async () => {
+  const root = await workspace()
+  await writeFile(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, moduleResolution: "Bundler" } }))
+  await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { migrate: "node --experimental-strip-types scripts/migrate.ts", test: "vitest run" } }))
+  const provider = new ScriptedModelProvider([
+    response("", [{ id: "read", name: "read_file", arguments: { path: "src/format.ts" } }]),
+    response("", [{
+      id: "patch",
+      name: "apply_patch",
+      arguments: {
+        path: "src/greet.ts",
+        search: "export function greet(first: string, last: string): string {\n  throw new Error('not implemented')\n}",
+        replace: "import { formatName } from './format'\nexport function greet(first: string, last: string): string {\n  return `Hello, ${formatName(first, last)}`\n}",
+      },
+    }]),
+    response("done"),
+  ])
+  try {
+    const runner = agent(provider, registry(root))
+    await runner.run({
+      task: { id: "task", mode: "BUILD", instruction: "Implement greet in src/greet.ts using formatName from src/format.ts." },
+      workspaceRoot: root,
+      maxTurns: 4,
+      contextBudget: budget,
+      projectInstructions: [],
+    })
+    // The model is never told to add ".ts" (which this tsconfig rejects) and the patch is not refused for its import.
+    const seen = provider.requests.map((request) => request.messages.map((message) => message.content).join("\n")).join("\n")
+    assert.doesNotMatch(seen, /must be written "\.\/format\.ts"|These imports do not exist/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("an extensionless TypeScript import is rejected when only a .ts file exists", async () => {
   const root = await workspace()
   const greetBefore = await readFile(join(root, "src/greet.ts"), "utf8")
