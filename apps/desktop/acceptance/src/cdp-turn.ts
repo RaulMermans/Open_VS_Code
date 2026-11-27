@@ -310,6 +310,7 @@ export interface AgentSurfaceSnapshot {
   readonly approveVisible?: boolean
   readonly rejectVisible?: boolean
   readonly continueVisible?: boolean
+  readonly cancelVisible?: boolean
   readonly bodyText?: string
   readonly reviews?: readonly string[]
   readonly outcomeVisible?: boolean
@@ -380,6 +381,7 @@ export const CDP_SURFACE_RUNTIME = `function cdpSurface(op) {
       bodyText: String((doc.body && doc.body.innerText) || "").slice(0, 4000),
       reviews: Array.from(doc.querySelectorAll(".review-item")).map((node) => String(node.textContent || "").replace(/\\s+/g, " ").trim()).slice(0, 20),
       continueVisible: visible(doc.querySelector(".btn-continue-run")),
+      cancelVisible: visible(doc.getElementById("cancel-btn")),
       modelValue: doc.getElementById("model-selector") ? String(doc.getElementById("model-selector").value || "") : "",
       statusText: doc.getElementById("connection-status") ? String(doc.getElementById("connection-status").textContent || "").trim() : "",
     };

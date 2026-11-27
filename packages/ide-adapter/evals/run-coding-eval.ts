@@ -45,7 +45,7 @@ function evalRoutingConfig(model: string) {
 
 interface Args {
   label: string
-  split: "DEV" | "HELD_OUT" | "S24" | "S24B" | "S32" | "S33" | "S34" | "ALL"
+  split: "DEV" | "HELD_OUT" | "S24" | "S24B" | "S32" | "S33" | "S34" | "S35" | "ALL"
   codeIntel: boolean
   ids?: string[]
   repeat: number
@@ -284,7 +284,7 @@ async function runTask(task: CodingTask, args: Args, repeat: number) {
     }
     approvals.push(...host.approvals)
     phases.push({ phase, ...summarizeResult(result), approvals: host.approvals.length })
-    if (args.traceDir && (task.split === "DEV" || task.split === "S32" || task.split === "S33" || task.split === "S34")) {
+    if (args.traceDir && (task.split === "DEV" || task.split === "S32" || task.split === "S33" || task.split === "S34" || task.split === "S35")) {
       // Full observations for DEV tasks, and S32 for failure classification; S32 is frozen, so traces cannot change it.
       await mkdir(args.traceDir, { recursive: true })
       const trace = {
@@ -354,7 +354,8 @@ async function checkReferences(): Promise<void> {
   const { S32_REFERENCE } = await import("./s32-reference.ts")
   const { S33_REFERENCE } = await import("./s33-reference.ts")
   const { S34_REFERENCE } = await import("./s34-reference.ts")
-  const references: Record<string, { files?: Record<string, string>; answer?: string }> = { ...S32_REFERENCE, ...S33_REFERENCE, ...S34_REFERENCE }
+  const { S35_REFERENCE } = await import("./s35-reference.ts")
+  const references: Record<string, { files?: Record<string, string>; answer?: string; untreated?: string }> = { ...S32_REFERENCE, ...S33_REFERENCE, ...S34_REFERENCE, ...S35_REFERENCE }
   const split = parseArgs(process.argv.slice(2)).split
   let failures = 0
   for (const task of CODING_TASKS.filter((item) => item.split === split)) {
@@ -366,7 +367,7 @@ async function checkReferences(): Promise<void> {
     const workspaceRoot = await realpath(root)
     const answerOk = (text: string) => (task.answerOracle ?? []).every((pattern) => pattern.test(text)) && !(task.answerForbidden ?? []).some((pattern) => pattern.test(text))
     const visibleBefore = await visibleTests(workspaceRoot, task)
-    const before = task.answerOracle ? answerOk(task.split === "S34" ? "Listings are cached for an hour (CDN_MAX_AGE_SECONDS in src/config.ts)." : task.split === "S33" ? "Jobs are retried 3 times, waiting 10 seconds, per src/config.ts." : "The limit is 100 requests per minute, set in src/config.ts.") : (await runOracle(workspaceRoot, task)).pass
+    const before = task.answerOracle ? answerOk(reference.untreated ?? (task.split === "S34" ? "Listings are cached for an hour (CDN_MAX_AGE_SECONDS in src/config.ts)." : task.split === "S33" ? "Jobs are retried 3 times, waiting 10 seconds, per src/config.ts." : "The limit is 100 requests per minute, set in src/config.ts.")) : (await runOracle(workspaceRoot, task)).pass
     for (const [rel, content] of Object.entries(reference.files ?? {})) {
       await mkdir(dirname(join(workspaceRoot, rel)), { recursive: true })
       await writeFile(join(workspaceRoot, rel), content)
@@ -411,7 +412,7 @@ async function main(): Promise<void> {
     modelDigest: digest,
     endpoint: ENDPOINT,
     sourceHead: head.out.trim(),
-    benchmarkSha256: ["S32", "S33", "S34"].includes(args.split) ? createHash("sha256").update(await readFile(join(REPO_ROOT, `packages/ide-adapter/evals/coding-tasks-${args.split.toLowerCase()}.ts`))).digest("hex") : null,
+    benchmarkSha256: ["S32", "S33", "S34", "S35"].includes(args.split) ? createHash("sha256").update(await readFile(join(REPO_ROOT, `packages/ide-adapter/evals/coding-tasks-${args.split.toLowerCase()}.ts`))).digest("hex") : null,
     trackedDirty: dirty.out.trim().length > 0,
     startedAt: new Date().toISOString(),
     timeoutMin: args.timeoutMin,

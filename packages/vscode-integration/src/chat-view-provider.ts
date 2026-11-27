@@ -1651,8 +1651,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         var lastModelSig = '__initial__';
         var syncingModels = false;
         function preferredModelRank(name) {
-            if (name.indexOf('qwen3.6') === 0) return 0;
-            if (name.indexOf('qwen3-coder') === 0) return 1;
+            if (name.indexOf('qwen3-coder') === 0) return 0;
+            if (name.indexOf('qwen3.6') === 0) return 1;
             if (name.indexOf('qwen2.5-coder') === 0) return 2;
             return 3;
         }

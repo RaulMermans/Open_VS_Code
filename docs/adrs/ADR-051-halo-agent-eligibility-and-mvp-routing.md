@@ -26,3 +26,12 @@ Sprint 32 measured the product instead of adding mechanisms. Three findings cons
 ## Update (2026-11-26, VC-07B-Q)
 
 The deployed HALO Core (`ceee13f`) now advertises `tools: true`. VC-07B-Q sends tools on the model-pinned route as well and replaces this ADR's write-tool refusal and `toolsSupported` flag with `toolTransport` (Core protocol support) and `modelToolCalling` (operator opt-in per model). Neither is model qualification: Direct Ollama remains the default Agent transport until HALO-routed coding tasks pass with the same independent oracles (see `scripts/vc07bq-coding-task.mjs`).
+
+## Update (2026-11-27, Sprint 33): Auto prefers `qwen3-coder`
+
+The revisit condition above was met. On the held-out S33 and S34 sets (same runtime commit per pair, two runs each), `qwen3-coder:30b` passed 31/40 and `qwen3.6:35b` 30/40, with no false completions from either. `qwen3-coder` took 1,414 s in total against 5,449 s (about 4× faster) and was faster on every task. No held-out task passed with `qwen3.6` and failed with `qwen3-coder`. `qwen3.6` failed all four COMPLEX runs and `qwen3-coder` failed three. The S32 advantage for `qwen3.6` (9/10 against 6/10 after fixes, one run each) was on a development set and did not repeat on held-out tasks.
+
+- **Auto now lists `qwen3-coder` before `qwen3.6`**, and the model picker orders them the same way. ModelRouter still falls back to `qwen3.6` when `qwen3-coder` is unavailable.
+- **No automatic escalation to `qwen3.6`.** No task category showed a measured `qwen3.6` advantage on held-out data. Add one only when a category shows that advantage.
+- A stored manual model choice is unchanged. A stored Auto preference now resolves to `qwen3-coder` first. The fresh-install chat default was already `qwen3-coder:30b`.
+- S35 (new held-out set) is the confirming measurement.

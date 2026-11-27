@@ -39,3 +39,24 @@ Run `packages/agent-core/tests/model/halo-tool-cycle.test.ts` against a live Cor
 ## Update (2026-11-26)
 
 Item 1 is done: the deployed Core is `ceee13f` and `/inference/status` reports `tools: true`. Open VS Code's VC-07B-Q branch sends tools on both the capability and the model-pinned route. Items 2–5 are unchanged.
+
+## Update (2026-11-27, Sprint 33)
+
+Re-observed with read-only, unauthenticated GETs against `127.0.0.1:4310`. Nothing on the HALO host was changed.
+
+| Requirement | Observed | State |
+|---|---|---|
+| Tool calls (item 1) | `/inference/status` `tools: true` | done |
+| Coding model Open VS Code also serves (item 2) | `/models`: only `x3-qwen3-4b-vulkan` and `x3-qwen3-14b-vulkan`, 8,192-token context; every route (coding, reasoning, general) → the 4B | open |
+| Ollama visibility (item 5) | `/infrastructure/model-runtimes` lists only the llama.cpp Vulkan 4B runtime | open |
+| Identity on responses (item 3) | the runtime lists the GGUF SHA-256; `/inference/admission` `runtimeIdentity` fields are all `null` | partial |
+| Cancellation (item 4) | not documented | open |
+| Admission limits | `maxOutputTokens: 512`, `maxInputChars: 32000`, `executionTimeoutMs: 90000`, `maxActiveRequests: 1` | new blocker: an agent turn needs more output than 512 tokens and more input than 32K characters, and S35 tasks run for minutes |
+| Hardware | GPU now reported (`gfx1151`, temperature), `haloHardwareVerified: true`; GPU memory bytes still `null` | improved |
+| Streaming | `false` | not required |
+
+A same-model Direct-vs-HALO comparison is still impossible: HALO serves none of `qwen3-coder:30b` or `qwen3.6:35b`. Even a registered model would be cut off by the 512-token output cap and the 32K-character input cap.
+
+Smallest next HALO step: register `qwen3-coder:30b` (Ollama digest `06c1097efce0…`) through an Ollama-backed runtime with at least a 32K context, and give a coding workload class admission limits of at least 4,096 output tokens, at least 128K input characters and at least a 10-minute execution timeout. Then Open VS Code runs S35 through `HaloProvider` and compares it with the Direct Ollama results on the same digest.
+
+Direct Ollama remains the only Agent transport. HALO stays optional (ADR-051).

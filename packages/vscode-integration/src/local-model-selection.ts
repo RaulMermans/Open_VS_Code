@@ -6,8 +6,8 @@ export const PREFERRED_CODING_MODEL = "qwen3-coder:30b"
 export const PREFERRED_AUTOCOMPLETE_MODEL = "qwen2.5-coder:7b"
 /** Stored as the chat preference when the user picks Auto; expanded to the eligible installed models at routing time. */
 export const AUTO_MODEL = "auto"
-/** Complex-coding preference order for Auto: current evidence favours Qwen3.6, then Qwen3-Coder. */
-export const AUTO_MODEL_PREFERENCE = ["qwen3.6", "qwen3-coder"] as const
+/** Auto order (ADR-051, Sprint 33): held-out S33+S34 tie on correctness (coder 31/40, 3.6 30/40) and Qwen3-Coder is ~4x faster. */
+export const AUTO_MODEL_PREFERENCE = ["qwen3-coder", "qwen3.6"] as const
 const AUTO_MIN_BILLIONS = 14
 
 /** Routes the chat picker is allowed to retarget. Autocomplete and any other key stay put. */

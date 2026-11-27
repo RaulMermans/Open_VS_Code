@@ -14,14 +14,14 @@ import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.t
 const tool = (id: string, name: string, args: Record<string, unknown>): ModelResponse => ({ model: "scripted", message: { role: "assistant", content: "" }, toolCalls: [{ id, name, arguments: args }] })
 const answer = (text: string): ModelResponse => ({ model: "scripted", message: { role: "assistant", content: text } })
 
-async function ask(steps: ModelResponse[], instruction: string) {
+async function ask(steps: ModelResponse[], instruction: string, mode: "ASK" | "BUILD" = "ASK") {
   const root = await mkdtemp(join(tmpdir(), "ovsc-read-first-"))
   try {
     await mkdir(join(root, "src"))
     await writeFile(join(root, "src/session.ts"), "export const IDLE_MINUTES = 45\nexport function expireIdle() {}\n")
     const provider = new ScriptedModelProvider(steps)
     const agent = new AgentRunner({ provider, registry: createReadOnlyToolRegistry(), evidenceGate: false, eventFactory: { createId: () => "e", now: () => "2026-11-26T00:00:00.000Z" } })
-    const result = await agent.run({ task: { id: "t", mode: "ASK", instruction }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: calculateBudget({ contextWindow: 32_000, reservedOutput: 2_000, reservedToolHistory: 2_000 }), projectInstructions: [] })
+    const result = await agent.run({ task: { id: "t", mode, instruction }, workspaceRoot: root, maxTurns: UNLIMITED_MAX_TURNS, contextBudget: calculateBudget({ contextWindow: 32_000, reservedOutput: 2_000, reservedToolHistory: 2_000 }), projectInstructions: [] })
     return { result, provider }
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -53,4 +53,16 @@ test("the nudge is given at most once, and not to an answer with no repository l
   const direct = await ask([answer("pong")], "Reply with the single word pong.")
   assert.equal(direct.result.finalAnswer, "pong")
   assert.equal(direct.provider.requests.length, 1)
+})
+
+test("a question asked in Agent mode gets the same read-before-answer nudge", async () => {
+  const { result, provider } = await ask([
+    tool("1", "search_text", { query: "expireIdle" }),
+    answer("Sessions expire in src/session.ts."),
+    tool("2", "read_file", { path: "src/session.ts" }),
+    answer("Idle sessions expire after IDLE_MINUTES = 45 minutes (src/session.ts)."),
+  ], "How long before idle sessions expire?", "BUILD")
+  assert.equal(result.status, "COMPLETED")
+  assert.match(result.finalAnswer ?? "", /45 minutes/)
+  assert.match(JSON.stringify(provider.requests[2]), /READ BEFORE ANSWERING/)
 })

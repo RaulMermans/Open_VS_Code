@@ -87,7 +87,6 @@ export function validateCatalog(scenarios: readonly AcceptanceScenario[]): void 
 }
 
 const PLAYWRIGHT_WORKBENCH = new Set([
-  "SAFE-CANCEL",
   "LIFE-MODEL",
   "LIFE-SANDBOX",
   "LIFE-CRASH",
@@ -103,6 +102,8 @@ const PLAYWRIGHT_WORKBENCH = new Set([
 ])
 
 const CDP_WEBVIEW = new Set([
+  "SAFE-CANCEL",
+  "SAFE-CANCEL-APPROVAL",
   "LIFE-FIRST",
   "UX-WIDE",
   "UX-ACTIVITY",

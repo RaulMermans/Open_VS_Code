@@ -232,6 +232,7 @@ async function runScenario(scenario: AcceptanceScenario, context: RunContext, ev
     if (scenario.id === "CODE-CONTINUE-RESTART") return runCdpContinueRestart(scenario, context, evidencePath)
     if (scenario.id === "CODE-CONTINUE-COMPLETE") return runCdpContinueComplete(scenario, context, evidencePath)
     if (scenario.id === "CODE-CONTINUE-STALE") return runCdpContinueStale(scenario, context, evidencePath)
+    if (scenario.id === "SAFE-CANCEL" || scenario.id === "SAFE-CANCEL-APPROVAL") return runCdpCancel(scenario, context, evidencePath)
     if (scenario.prompt) return runCdpChat(scenario, context, evidencePath)
     return `BLOCKED: CDP webview harness has no flow for ${scenario.id}`
   }
@@ -1287,17 +1288,127 @@ async function runCdpContinueStale(scenario: AcceptanceScenario, context: RunCon
     const text = `${paused.text}\n${continued.text}`
     writeEvidence(evidencePath, "assistant-final.txt", text)
     await saveShot(app, evidencePath, "after-stale-continue.png", true)
+    writeEvidence(evidencePath, "git-diff.patch", spawnSync("git", ["diff", "--"], { cwd: dirs.workspace, encoding: "utf8" }).stdout || "")
     const problems: string[] = []
-    for (const relativePath of ["src/format.ts", "src/greet.ts", "src/parse.ts"]) {
+    const marked = ["src/format.ts", "src/greet.ts", "src/parse.ts"]
+    for (const relativePath of marked) {
       const body = readFileSync(join(dirs.workspace, relativePath), "utf8")
       if (!body.includes("EXTERNAL_STALE_MARKER")) problems.push(`overwrote external edit in ${relativePath}`)
     }
-    const blob = text.toLowerCase()
-    const noticed = /stale|diverg|changed since|checkpoint|resolve the stale|external/i.test(blob)
-    if (!noticed) problems.push("agent did not report stale or diverged workspace state")
+    // The Recovery panel lists the files the pause checkpoint protects. A stale report is owed only when one of
+    // them was edited; otherwise the agent has seen nothing outdated and should continue from current files.
+    const protectedFiles = text.match(/\nFiles\n([\s\S]*?)\n(?:Conversation display|Continue this run)/)?.[1]?.split("\n").map((line) => line.trim()).filter(Boolean)
+    const staleOwed = protectedFiles === undefined || protectedFiles.some((path) => marked.includes(path))
+    writeEvidence(evidencePath, "stale-oracle.json", JSON.stringify({ protectedFiles: protectedFiles ?? null, staleOwed }, null, 2))
+    // Only the reply after Continue counts; UI chrome such as "Checkpoint" is not a report.
+    if (staleOwed && !/stale|diverg|changed since/i.test(continued.text)) problems.push("agent did not report stale or diverged workspace state")
     problems.push(...filesystemProblems(dirs.workspace, before, { unchangedPaths: scenario.expected.unchangedPaths }))
     if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
-    return "External edits survived Continue; the agent reported stale state and did not overwrite them."
+    return staleOwed
+      ? "External edits survived Continue; the agent reported stale state and did not overwrite them."
+      : "No protected file was edited during the pause; Continue proceeded and the external edits survived."
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
+    throw error
+  } finally {
+    await app.close().catch(() => undefined)
+  }
+}
+
+/** Descendant processes of pid, as "pid comm" lines. */
+function descendantProcesses(root: number): string[] {
+  const ps = spawnSync("ps", ["-e", "-o", "pid=,ppid=,comm="], { encoding: "utf8" })
+  const rows = (ps.stdout || "").split("\n").map((line) => line.trim().split(/\s+/)).filter((row) => row.length >= 3)
+  const children = new Map<string, string[][]>()
+  for (const row of rows) children.set(row[1]!, [...(children.get(row[1]!) ?? []), row])
+  const found: string[] = []
+  const queue = [String(root)]
+  while (queue.length > 0) {
+    for (const row of children.get(queue.shift()!) ?? []) {
+      found.push(`${row[0]} ${row.slice(2).join(" ")}`)
+      queue.push(row[0]!)
+    }
+  }
+  return found
+}
+
+/** Ollama logs one GIN line when each /api/chat request ends; read those that ended after `sinceMs`. */
+function ollamaChatEnds(sinceMs: number): string[] {
+  const since = `@${Math.floor(sinceMs / 1000)}`
+  const log = spawnSync("journalctl", ["-u", "ollama", "--since", since, "--no-pager", "-o", "short-iso"], { encoding: "utf8" })
+  return (log.stdout || "").split("\n").filter((line) => line.includes('"/api/chat"') || line.includes('"/v1/chat/completions"')).slice(0, 5)
+}
+
+/** Stop during generation (SAFE-CANCEL) or while an edit awaits approval (SAFE-CANCEL-APPROVAL). */
+async function runCdpCancel(scenario: AcceptanceScenario, context: RunContext, evidencePath: string): Promise<string> {
+  const { app, dirs, before } = await startCdpSession(scenario, context, evidencePath)
+  const atApproval = scenario.id === "SAFE-CANCEL-APPROVAL"
+  try {
+    await saveShot(app, evidencePath, "window.png", true)
+    const baseline = new Set(descendantProcesses(app.pid))
+    const taskId = `${context.runId}:${scenario.id}`
+    const turn = runCdpTurn(app, {
+      taskId,
+      prompt: scenario.prompt!,
+      mode: scenario.mode,
+      model: scenario.model,
+      timeoutMs: atApproval ? scenario.timeoutMs : 90000,
+      decision: atApproval ? "hold" : "none",
+      workspace: dirs.workspace,
+    }).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }))
+    if (atApproval) {
+      await turn
+      const held = await agentSurface(app, { op: "snapshot" }, "any")
+      if (held.approveVisible !== true) return "BLOCKED: the model did not reach an approval card; Stop at approval was not exercised"
+    } else {
+      await waitAgentSurface(app, "any", (snap) => snap.cancelVisible === true, 60000)
+      await sleep(2000)
+    }
+    await saveShot(app, evidencePath, "before-stop.png", true)
+    const stopAt = Date.now()
+    const clicked = await agentSurface(app, { op: "click", selector: "#cancel-btn" }, "any")
+    if (clicked.found === false) return `FAIL: Stop control not clickable (${clicked.reason ?? "missing"})`
+    let ackMs = -1
+    let settled = clicked
+    while (Date.now() - stopAt < 30000) {
+      settled = await agentSurface(app, { op: "snapshot" }, "any")
+      if (settled.cancelVisible !== true && settled.composerVisible === true && settled.approveVisible !== true) {
+        ackMs = Date.now() - stopAt
+        break
+      }
+      await sleep(100)
+    }
+    await saveShot(app, evidencePath, "after-stop.png", true)
+    await sleep(5000)
+    const survivors = descendantProcesses(app.pid).filter((line) => !baseline.has(line))
+    const providerEnds = ollamaChatEnds(stopAt - 1000)
+    if (!atApproval) await Promise.race([turn, sleep(30000)])
+    const workspaceProblems = filesystemProblems(dirs.workspace, before, scenario.expected)
+    const next = await oneCdpTurn(app, { ...scenario, mode: "ASK", approval: "none" }, "Reply with the single word pong.", `${taskId}:after`, dirs.workspace, evidencePath, "after-send.json")
+    const evidence = {
+      stage: atApproval ? "awaiting-approval" : "model-generation",
+      stopToUiAckMs: ackMs,
+      approvalControlsAfterStop: settled.approveVisible === true || settled.rejectVisible === true,
+      survivingNewDescendants: survivors,
+      ollamaChatRequestEndsAfterStop: providerEnds,
+      workspaceProblems,
+      gitStatus: gitPorcelain(dirs.workspace),
+      nextTask: { blocked: next.blocked ?? null, text: next.text.slice(0, 200) },
+    }
+    writeEvidence(evidencePath, "cancel.json", JSON.stringify(evidence, null, 2))
+    const problems: string[] = []
+    if (ackMs < 0) problems.push("Stop was not acknowledged within 30 s")
+    else if (ackMs > 1000) problems.push(`Stop acknowledged in ${ackMs} ms (target 1000 ms)`)
+    if (evidence.approvalControlsAfterStop) problems.push("approval controls still usable after Stop")
+    // Electron may start its own helpers; anything else new (sandbox, test runner, shell) is a leak.
+    const leaked = survivors.filter((line) => /\b(bwrap|systemd-run|node|npm|npx|vitest|python3?|sh|bash|git|rg)$/.test(line))
+    if (leaked.length > 0) problems.push(`subprocesses survived Stop: ${leaked.join(", ")}`)
+    problems.push(...workspaceProblems)
+    if (next.blocked) problems.push(`next task after Stop: ${next.blocked}`)
+    else if (!/pong/i.test(next.text)) problems.push("next task after Stop did not answer")
+    if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
+    return `Stop (${evidence.stage}) acknowledged in ${ackMs} ms; no subprocess survived; workspace unchanged; a new task completed. Ollama chat ends after Stop: ${providerEnds.length}.`
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`

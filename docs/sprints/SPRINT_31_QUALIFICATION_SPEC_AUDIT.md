@@ -46,3 +46,19 @@ FAIL_TO_PASS is the frozen qualification file: export the error, rebuild `dist`,
 PASS_TO_PASS is the existing inference tests, including every `runtime/` ref.
 
 The brief's env-id-to-alias step remains unimplemented by both the tests and the oracle. A repair is not accepted on the oracle alone.
+
+## Sprint 33 finding: the frozen contract cannot be met as specified
+
+Checked on the frozen file (SHA-256 `a720192c…`, unchanged) and HALO's `service.test.ts`, without modifying either:
+
+| Test | Model id | Capability | `modelRef` | Env var | Required result |
+|---|---|---|---|---|---|
+| `service.test.ts` | `coder` | coding | `runtime/coder` | unset | `chat` resolves |
+| `modelQualification.test.ts` ("Expected alias missing") | `coder` | coding | `some-other-alias` | unset | `ModelQualificationError` `ALIAS_RESOLUTION_MISMATCH` |
+
+The two cases have the same model id, capability, enablement, lifecycle, provider and environment. Only the `modelRef` string differs. Any implementation that passes both must therefore decide from the alias text alone, for example the slash or `runtime/` exception. This sprint's brief forbids treating that as the qualification rule. The brief's own rule, that `HALO_INFERENCE_QUALIFY_MODEL_ID=x3-qwen3-4b-vulkan` resolves through the registry to `qwen3-4b-q4km`, is not exercised by any frozen test. No specification-complete implementation can pass the frozen suite.
+
+Consequences:
+
+- The clean-baseline 3/3 HALO qualification gate cannot be run honestly. A pass would prove only the syntactic exception. **It remains a supervised-testing blocker.**
+- Resolving it needs the benchmark owner to issue a new, versioned qualification test that sets `HALO_INFERENCE_QUALIFY_MODEL_ID` explicitly in each case, plus a test that `runtime/` refs are untouched when the variable is unset. The historical frozen file, its evaluator and past scores stay as they are. Sprint 33 does not make that change without authorization.
