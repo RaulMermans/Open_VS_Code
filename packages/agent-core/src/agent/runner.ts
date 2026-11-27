@@ -224,6 +224,8 @@ const READ_TOOLS = new Set(["read_file", "list_directory", "find_files", "search
 const MISSING_SEARCH_HINT = "This string is not in the workspace. If the task requires this behavior, implement it with create_file or apply_patch; do not search for the same query again."
 const LITERAL_SEARCH_HINT = "search_text matches literal text, so a phrase finds nothing unless it appears verbatim. Search for one identifier or word at a time (for example a function or constant name), or list_directory, then read_file the files that look relevant."
 const CONTENT_LOOKUPS: ReadonlySet<string> = new Set(["search_text", "find_symbol"])
+/** Ask and Agent (BUILD/DEBUG) answers are grounding-gated; PLAN and planning custom modes are left as they were. */
+const GROUNDED_ANSWER_MODES: ReadonlySet<string> = new Set(["ASK", "BUILD", "DEBUG"])
 const MISSING_FILES_HINT = "No file matched. If the task requires a new file, create it; do not keep searching for a path that is not there."
 interface CompletedRename {
   readonly path: string
@@ -1549,7 +1551,7 @@ export class AgentRunner {
         }
         // A read-only answer built only from search hits (never opening a file) missed constants, callers and
         // whole files in S32/S34 and the GUI lab. Once, ask for the relevant files to be read first (Ask, or a question in Agent mode).
-        if (calls.length === 0 && !codingVerdict && !session.taskProfile.requiresCodeChange && !session.taskProfile.directReply && !session.readNudged) {
+        if (calls.length === 0 && !codingVerdict && GROUNDED_ANSWER_MODES.has(session.input.task.mode) && !session.taskProfile.requiresCodeChange && !session.taskProfile.directReply && !session.readNudged) {
           const done = session.observations.filter((item) => item.ok)
           // A listing answers "which files"; only a content lookup (search, symbol) needs the file read.
           const looked = done.some((item) => CONTENT_LOOKUPS.has(item.toolName))
@@ -1572,7 +1574,7 @@ export class AgentRunner {
         }
         // S34-01: answers named the function in the file they read but never its caller elsewhere (4/4, both models).
         // Once, resolve the identifiers the draft names with the language service and show references in unread files.
-        if (calls.length === 0 && !codingVerdict && !session.taskProfile.requiresCodeChange && !session.taskProfile.directReply && !session.callersChecked
+        if (calls.length === 0 && !codingVerdict && GROUNDED_ANSWER_MODES.has(session.input.task.mode) && !session.taskProfile.requiresCodeChange && !session.taskProfile.directReply && !session.callersChecked
           && this.#registry.listDefinitions().some((definition) => definition.name === "find_symbol")) {
           session.callersChecked = true
           const checked = await this.#unreadReferences(response.message.content, turn)
