@@ -35,3 +35,9 @@ The revisit condition above was met. On the held-out S33 and S34 sets (same runt
 - **No automatic escalation to `qwen3.6`.** No task category showed a measured `qwen3.6` advantage on held-out data. Add one only when a category shows that advantage.
 - A stored manual model choice is unchanged. A stored Auto preference now resolves to `qwen3-coder` first. The fresh-install chat default was already `qwen3-coder:30b`.
 - S35 (new held-out set) is the confirming measurement.
+
+## Update (2026-11-27, Sprint 33B): S35 does not confirm the Auto order
+
+S35 was the confirming measurement. It did not confirm. Same runtime (`f5428c2`), two runs each: `qwen3-coder:30b` 5/10 and 5/10, `qwen3.6:35b` 8/10 and 7/10. `qwen3-coder` lost on explain (decoy constant, incomplete caller answer) and on the bugfix edge case, where `qwen3.6` passed every run. `qwen3-coder` stayed about 4× faster (26–32 s per correct task against 87–116 s). Across S33–S35 held-out runs the totals are 41/60 for `qwen3-coder` and 45/60 for `qwen3.6`.
+
+Neither model meets the release gate, so neither is a qualified Auto choice for coding. The Auto order is unchanged in this sprint: switching it trades a 4× latency cost for a gain measured on one set, and it is a product decision, not a qualification result. Decision owner: the product owner. The no-escalation rule stands. See `docs/evals/S35_BENCHMARK.md`.
