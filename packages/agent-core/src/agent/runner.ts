@@ -46,6 +46,8 @@ import { discoverVerificationCommand } from "../tools/verification-discovery.ts"
 import { readRepositoryFile } from "../tools/read-file.ts"
 import { searchText } from "../tools/search-text.ts"
 import type { CheckpointCoordinator } from "../recovery/checkpoint-coordinator.ts"
+import type { FileStateFootprint } from "../recovery/contracts.ts"
+import { observeFilePath, reconcileFootprint } from "../recovery/reconciliation.ts"
 import { evaluateL0 } from "../runtime-evals/evaluators/l0-deterministic.ts"
 import { join, dirname, normalize, relative, isAbsolute, basename, extname } from "node:path"
 import { access, readFile } from "node:fs/promises"
@@ -181,6 +183,8 @@ interface Session {
   shownItemIds?: Set<string>
   /** The current work unit (only when unitBudgetMs is set): its number, deadline and progress at its start. */
   unit?: { index: number; deadline: number; appliedAtStart: number; metAtStart: number }
+  /** Hashes, at the turn-budget pause, of every file the agent read or wrote; Continue refuses if any changed. */
+  pauseFootprint?: FileStateFootprint[]
   /**
    * Task-scoped registry of successful read-only lookups (signature -> result). A repeat is answered from
    * here as ALREADY_OBSERVED instead of being refused. Cleared whenever the workspace changes.
@@ -475,6 +479,17 @@ export class AgentRunner {
         return this.#result()
       }
       session.unit = { index: session.unit.index + 1, deadline: Date.now() + (session.input.unitBudgetMs ?? 0), appliedAtStart: now.applied, metAtStart: now.met }
+    }
+    if (session.pauseFootprint) {
+      const { divergedFiles } = await reconcileFootprint({ files: session.pauseFootprint })
+      if (divergedFiles.length > 0) {
+        const names = divergedFiles.map((path) => relative(session.input.workspaceRoot, path) || path).join(", ")
+        session.failureReason = "INCOMPLETE"
+        session.finalAnswer = `Workspace files changed since the turn-budget pause: ${names}. The agent's earlier reads are stale, so this run was not continued and nothing was written. Start a new task to work from the current files.`
+        session.state = { ...session.state, status: "OBSERVING" }
+        this.#emit("task.failed", { message: `BLOCKED_DIVERGENCE: ${names} changed during the pause` })
+        return this.#result()
+      }
     }
     const nextBudget = session.input.maxTurns + additionalTurns
     session.input = { ...session.input, maxTurns: nextBudget }
@@ -1074,7 +1089,9 @@ export class AgentRunner {
         evalAnalytics,
         evalResults: [],
         state: {
-          status: "FAILED",
+          // task.failed below moves this to FAILED; starting terminal made #emit throw.
+          status: "PLANNING",
+          task: { id: runId, instruction, mode },
           events: [],
         },
         turns: latestCp.turnId ?? 0,
@@ -1798,7 +1815,6 @@ export class AgentRunner {
 
   async #persistTurnLimitCheckpoint(): Promise<void> {
     const session = this.#requiredSession()
-    if (!this.#checkpointCoordinator) return
     const observations = session.observations.slice(-8)
     const toolCalls = session.toolCalls.slice(-16)
     const completedPaths = [...new Set(
@@ -1813,9 +1829,15 @@ export class AgentRunner {
     )].slice(-16)
     const lastVerification = session.evidenceCollector.getEvidence().verificationOutcomes.at(-1)
     const explorationSignatures = [...(session.observedLookups?.keys() ?? [])].slice(-32)
-    const touchedFilePaths = [...completedPaths, ...alreadyPresentPaths].map((path) => (
+    // Files only read count too: a user edit to them during the pause makes the agent's view stale.
+    const touchedFilePaths = [...new Set([...completedPaths, ...alreadyPresentPaths, ...session.evidenceLedger.filesRead.slice(-64)].map((path) => (
       isAbsolute(path) ? path : join(session.input.workspaceRoot, path)
-    ))
+    )))]
+    session.pauseFootprint = await Promise.all(touchedFilePaths.map(async (path) => {
+      const observed = await observeFilePath(path)
+      return { path, exists: observed.exists, hash: observed.hash }
+    }))
+    if (!this.#checkpointCoordinator) return
     try {
       await this.#checkpointCoordinator.checkpoint({
         runId: session.input.task.id,
