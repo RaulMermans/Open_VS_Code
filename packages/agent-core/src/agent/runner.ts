@@ -179,6 +179,8 @@ interface Session {
   gateAppliedMark?: number
   /** Read-only turn: the one "open a file before answering" nudge was given. */
   readNudged?: boolean
+  /** Read-only turn: the draft answer's symbols were checked once for references in unread files. */
+  callersChecked?: boolean
   /** Context items the latest model request actually contained (older observations are reduced to an index line). */
   shownItemIds?: Set<string>
   /** The current work unit (only when unitBudgetMs is set): its number, deadline and progress at its start. */
@@ -1546,8 +1548,8 @@ export class AgentRunner {
           continue
         }
         // A read-only answer built only from search hits (never opening a file) missed constants, callers and
-        // whole files in S32/S34 and the GUI lab. Once, ask for the relevant files to be read first.
-        if (calls.length === 0 && !codingVerdict && session.input.task.mode === "ASK" && !session.taskProfile.directReply && !session.readNudged) {
+        // whole files in S32/S34 and the GUI lab. Once, ask for the relevant files to be read first (Ask, or a question in Agent mode).
+        if (calls.length === 0 && !codingVerdict && !session.taskProfile.requiresCodeChange && !session.taskProfile.directReply && !session.readNudged) {
           const done = session.observations.filter((item) => item.ok)
           // A listing answers "which files"; only a content lookup (search, symbol) needs the file read.
           const looked = done.some((item) => CONTENT_LOOKUPS.has(item.toolName))
@@ -1562,6 +1564,26 @@ export class AgentRunner {
               error: {
                 category: "EVIDENCE_INSUFFICIENT",
                 message: `[READ BEFORE ANSWERING]\nYou have not opened any file; search results show only single matching lines. Call read_file on the file(s) that hold the answer${hits.length ? ` (for example ${hits.join(", ")})` : " (use list_directory if you do not know which)"} and answer from what they say, including exact values, names and callers.`,
+              },
+              maxContentBytes: this.#observationMaxBytes,
+            }))
+            continue
+          }
+        }
+        // S34-01: answers named the function in the file they read but never its caller elsewhere (4/4, both models).
+        // Once, resolve the identifiers the draft names with the language service and show references in unread files.
+        if (calls.length === 0 && !codingVerdict && !session.taskProfile.requiresCodeChange && !session.taskProfile.directReply && !session.callersChecked
+          && this.#registry.listDefinitions().some((definition) => definition.name === "find_symbol")) {
+          session.callersChecked = true
+          const checked = await this.#unreadReferences(response.message.content, turn)
+          if (checked.stop) break
+          if (checked.lines.length > 0) {
+            session.observations.push(createToolObservation({
+              toolName: "evidence_gate",
+              callId: `check-callers-${turn}`,
+              error: {
+                category: "EVIDENCE_INSUFFICIENT",
+                message: `[CHECK CALLERS]\nThe language service found references to symbols in your answer, in files you have not read:\n${checked.lines.map((line) => `- ${line}`).join("\n")}\nIf they bear on the question (who calls it, what triggers it, what depends on it), read those lines and include them. Then give your final answer.`,
               },
               maxContentBytes: this.#observationMaxBytes,
             }))
@@ -1811,6 +1833,36 @@ export class AgentRunner {
       ...(session.outcomes?.length ? [formatOutcomeReport(session.outcomes).replace(/\n/g, " ")] : []),
       "Do not repeat completed writes or directory listings already done. Finish remaining work only.",
     ].join(" ")
+  }
+
+  /** Code identifiers a read-only draft names, resolved with find_symbol; returns references in files the agent has not read. */
+  async #unreadReferences(answer: string, turn: number): Promise<{ stop: boolean; lines: string[] }> {
+    const session = this.#requiredSession()
+    const read = session.evidenceLedger.filesRead
+    const names = [...new Set([...answer.matchAll(/`([A-Za-z_$][\w$]{2,})(?:\(\))?`|\b([A-Za-z_$][\w$]{2,})\(\)/g)].map((match) => match[1] ?? match[2]!))]
+    const lines: string[] = []
+    let lookups = 0
+    for (const symbol of names) {
+      if (lookups >= 3) break
+      const word = new RegExp(`(^|[^\\w$])${symbol.replace(/\$/g, "\\$")}([^\\w$]|$)`)
+      let path: string | undefined
+      for (const candidate of read) {
+        const text = await readFile(join(session.input.workspaceRoot, candidate), "utf8").catch(() => "")
+        if (word.test(text)) { path = candidate; break }
+      }
+      if (!path) continue
+      lookups += 1
+      const before = session.observations.length
+      if (await this.#handleCall({ id: `check-callers-${turn}-${lookups}`, name: "find_symbol", arguments: { path, symbol } })) return { stop: true, lines }
+      const observation = session.observations.slice(before).find((item) => item.toolName === "find_symbol" && item.ok)
+      let references: unknown = []
+      try { references = (JSON.parse(observation?.content ?? "{}") as { references?: unknown }).references ?? [] } catch { /* truncated output: skip */ }
+      for (const reference of Array.isArray(references) ? references : []) {
+        const match = typeof reference === "string" ? reference.match(/^([^:\s]+):(\d+):\d+(\s*\[definition\])?\s+(.*)$/) : null
+        if (match && !match[3] && !read.includes(match[1]!)) lines.push(`${match[1]}:${match[2]}  ${match[4]!.trim()}`)
+      }
+    }
+    return { stop: false, lines: [...new Set(lines)].slice(0, 8) }
   }
 
   async #persistTurnLimitCheckpoint(): Promise<void> {

@@ -213,13 +213,15 @@ test("unlimited production budget does not pause after 15 tool turns", async () 
       arguments: { query: `greet-${index}` },
     }])),
     response("Done after sixteen searches."),
+    // A search-only answer gets one read-before-answer nudge (Ask and Agent-mode questions alike).
+    response("Done after sixteen searches."),
   ]
   const result = await createRunner(new ScriptedModelProvider(replies), createReadOnlyToolRegistry(), 40).run(
     input({ maxTurns: UNLIMITED_MAX_TURNS }),
   )
   assert.equal(result.status, "COMPLETED")
   assert.equal(result.failureReason, undefined)
-  assert.equal(result.turns, 17)
+  assert.equal(result.turns, 18)
   assert.equal(result.events.some((event) => event.type === "task.max_turns"), false)
 })
 
