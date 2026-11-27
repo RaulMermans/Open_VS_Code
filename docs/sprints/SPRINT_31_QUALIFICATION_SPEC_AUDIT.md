@@ -62,3 +62,22 @@ Consequences:
 
 - The clean-baseline 3/3 HALO qualification gate cannot be run honestly. A pass would prove only the syntactic exception. **It remains a supervised-testing blocker.**
 - Resolving it needs the benchmark owner to issue a new, versioned qualification test that sets `HALO_INFERENCE_QUALIFY_MODEL_ID` explicitly in each case, plus a test that `runtime/` refs are untouched when the variable is unset. The historical frozen file, its evaluator and past scores stay as they are. Sprint 33 does not make that change without authorization.
+
+## Qualification V2 proposal (Sprint 33B, not active)
+
+Status: PROPOSED. Not activated. Activating it, or retiring the historical gate, needs the benchmark owner's approval. The historical file (`a720192c…`), `qualify-oracle.py` and every past score stay as they are.
+
+A new file, `packages/inference/test/modelQualification.v2.test.ts`, with its own frozen hash and its own oracle. Every case sets or clears `HALO_INFERENCE_QUALIFY_MODEL_ID` explicitly and restores it afterwards.
+
+| # | Env var | Registry | Request | Required result |
+|---|---|---|---|---|
+| V2-1 | `x3-qwen3-4b-vulkan` | id registered, `modelRef` `qwen3-4b-q4km` | runtime advertises `qwen3-4b-q4km` | `chat` resolves; the provider sees `qwen3-4b-q4km` |
+| V2-2 | `x3-qwen3-4b-vulkan` | same | runtime advertises another alias | `ModelQualificationError` `ALIAS_RESOLUTION_MISMATCH`; `provider.chat` not called |
+| V2-3 | `x3-qwen3-4b-vulkan` | same | HTTP reachable, alias not yet advertised (not ready) | same error; `provider.chat` not called |
+| V2-4 | `unknown-id` | not registered | any | a registry error naming the id, before any provider call |
+| V2-5 | unset | any | `runtime/coder`, `runtime/embedder`, `runtime/vision-*` | unchanged from today (qualification disabled) |
+| V2-6 | `x3-qwen3-4b-vulkan` | same | provider unreachable | the provider error, not a qualification error |
+| V2-7 | `x3-qwen3-4b-vulkan` | same | provider returns 401/403 | the authentication error, not a qualification error |
+| V2-8 | `x3-qwen3-4b-vulkan` | same | an unrelated route (embeddings, media) | unchanged; qualification applies only to the configured id |
+
+The V2 oracle passes only when V2-1…V2-8 pass and the full inference suite (`service.test.ts`, `media.test.ts` and the rest of `packages/inference`) passes unchanged. A change that only edits test files, or decides from the alias text (a slash or `runtime/` exception), fails by construction: V2-1 and V2-2 use the same alias text with a different registry answer.

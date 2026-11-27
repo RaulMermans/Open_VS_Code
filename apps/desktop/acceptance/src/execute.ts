@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { scenarioHarness, type AcceptanceScenario, type ScenarioExpected } from "./catalog.ts"
@@ -1078,6 +1079,24 @@ async function waitForWorkbenchDiff(app: CdpApp, timeoutMs: number): Promise<{ d
 
 const STALE_MARKER = 'export const EXTERNAL_STALE_MARKER = "do-not-overwrite"'
 
+const sha256 = (text: string | Buffer): string => createHash("sha256").update(text).digest("hex")
+
+/**
+ * Why a user edit made during the pause is gone. The runtime stores the exact disk content before each write
+ * (a recovery preimage). A1: the write was based on the pre-edit content (stale runtime state). A2: the write was
+ * based on the user-edited content, so the model's own approved patch removed the edit.
+ */
+export function classifyLostEdit(input: { readonly preEditSha: string; readonly postEditSha: string; readonly preimageShas: readonly string[] }): "A1_STALE_WRITE" | "A2_MODEL_PROPOSAL" | "UNCLASSIFIED" {
+  if (input.preimageShas.includes(input.postEditSha)) return "A2_MODEL_PROPOSAL"
+  if (input.preimageShas.includes(input.preEditSha)) return "A1_STALE_WRITE"
+  return "UNCLASSIFIED"
+}
+
+function recoveryPreimageShas(dir: string): string[] {
+  if (!existsSync(dir)) return []
+  return (readdirSync(dir, { recursive: true }) as string[]).filter((name) => name.endsWith(".bin")).map((name) => sha256(readFileSync(join(dir, name))))
+}
+
 function continuationEnv(scenario: AcceptanceScenario): Record<string, string> | undefined {
   return scenario.maxTurns ? { OPEN_VS_CODE_ACCEPTANCE_MAX_TURNS: String(scenario.maxTurns) } : undefined
 }
@@ -1268,12 +1287,13 @@ async function runCdpContinueStale(scenario: AcceptanceScenario, context: RunCon
     await saveShot(app, evidencePath, "window.png", true)
     const paused = await pauseAtTurnLimit(app, scenario, context, evidencePath)
     if (paused.blocked) return paused.blocked
+    const hashes: Record<string, { preEdit: string; postEdit: string; final?: string; classification?: string }> = {}
     for (const relativePath of ["src/format.ts", "src/greet.ts", "src/parse.ts"]) {
       const target = join(dirs.workspace, relativePath)
       const current = readFileSync(target, "utf8")
-      if (!current.includes("EXTERNAL_STALE_MARKER")) {
-        writeFileSync(target, `${current.trimEnd()}\n${STALE_MARKER}\n`)
-      }
+      const edited = current.includes("EXTERNAL_STALE_MARKER") ? current : `${current.trimEnd()}\n${STALE_MARKER}\n`
+      if (edited !== current) writeFileSync(target, edited)
+      hashes[relativePath] = { preEdit: sha256(current), postEdit: sha256(edited) }
     }
     writeEvidence(evidencePath, "external-edit.txt", STALE_MARKER)
     app = await relaunchCdpApp(app, {
@@ -1291,10 +1311,20 @@ async function runCdpContinueStale(scenario: AcceptanceScenario, context: RunCon
     writeEvidence(evidencePath, "git-diff.patch", spawnSync("git", ["diff", "--"], { cwd: dirs.workspace, encoding: "utf8" }).stdout || "")
     const problems: string[] = []
     const marked = ["src/format.ts", "src/greet.ts", "src/parse.ts"]
+    // The run's journal, checkpoints and preimages: the tool calls and the exact base of every write.
+    const recovery = join(dirs.workspace, ".open-vs-code", "recovery")
+    if (existsSync(recovery)) cpSync(recovery, join(evidencePath, "recovery"), { recursive: true })
+    const preimageShas = recoveryPreimageShas(recovery)
     for (const relativePath of marked) {
       const body = readFileSync(join(dirs.workspace, relativePath), "utf8")
-      if (!body.includes("EXTERNAL_STALE_MARKER")) problems.push(`overwrote external edit in ${relativePath}`)
+      const entry = hashes[relativePath]!
+      entry.final = sha256(body)
+      if (!body.includes("EXTERNAL_STALE_MARKER")) {
+        entry.classification = classifyLostEdit({ preEditSha: entry.preEdit, postEditSha: entry.postEdit, preimageShas })
+        problems.push(`overwrote external edit in ${relativePath} (${entry.classification})`)
+      }
     }
+    writeEvidence(evidencePath, "stale-hashes.json", JSON.stringify({ files: hashes, preimageShas }, null, 2))
     // The Recovery panel lists the files the pause checkpoint protects. A stale report is owed only when one of
     // them was edited; otherwise the agent has seen nothing outdated and should continue from current files.
     const protectedFiles = text.match(/\nFiles\n([\s\S]*?)\n(?:Conversation display|Continue this run)/)?.[1]?.split("\n").map((line) => line.trim()).filter(Boolean)

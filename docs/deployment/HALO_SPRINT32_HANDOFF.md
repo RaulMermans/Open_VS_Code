@@ -60,3 +60,24 @@ A same-model Direct-vs-HALO comparison is still impossible: HALO serves none of 
 Smallest next HALO step: register `qwen3-coder:30b` (Ollama digest `06c1097efce0…`) through an Ollama-backed runtime with at least a 32K context, and give a coding workload class admission limits of at least 4,096 output tokens, at least 128K input characters and at least a 10-minute execution timeout. Then Open VS Code runs S35 through `HaloProvider` and compares it with the Direct Ollama results on the same digest.
 
 Direct Ollama remains the only Agent transport. HALO stays optional (ADR-051).
+
+## Update (2026-11-27, Sprint 33B)
+
+Re-observed read-only (`/inference/status`, `/models`, `/inference/admission`). Nothing changed since the Sprint 33 observation: tools on, only the 4B and 14B Vulkan models (8K context), every route → the 4B, general admission `maxOutputTokens: 512`, `maxInputChars: 32000`, `executionTimeoutMs: 90000`, `runtimeIdentity` all `null`.
+
+HALO-side requirements, in order. None is Open VS Code work.
+
+| # | Requirement | Minimum for Agent mode |
+|---|---|---|
+| 1 | Register `qwen3-coder:30b` | Ollama digest `06c1097efce0…`, same weights as Direct Ollama |
+| 2 | Context | ≥ 32K tokens |
+| 3 | Output limit (coding workload class) | ≥ 4,096 tokens |
+| 4 | Input limit | ≥ 128K characters |
+| 5 | Request timeout | ≥ 10 minutes |
+| 6 | Tool-call transport | done (`tools: true`) |
+| 7 | Cancellation | documented: closing the request aborts generation and frees the admission slot |
+| 8 | Identity and usage | `runtimeIdentity` and GGUF/digest on every response; input and output tokens |
+| 9 | GPU telemetry and residency | GPU memory bytes; which models are loaded (Ollama `/api/ps` equivalent) |
+| 10 | Scheduling | admission that accounts for Direct Ollama load, or a stated policy that it does not |
+
+The qualification contract defect and its V2 proposal are in `docs/sprints/SPRINT_31_QUALIFICATION_SPEC_AUDIT.md`. Direct Ollama remains the only Agent transport.
