@@ -13,7 +13,7 @@ For every task:
 7. Test the change.
 8. Inspect the diff.
 9. Update project state when a meaningful decision or status changes.
-10. After a major milestone, update production: merge it to `main`, package the next `0.1.0-rc.N` from a clean tree, keep the previous `.deb` for rollback, and install it.
+10. After a sprint that changes production behaviour, validate the implementation, merge it to canonical `main`, package the next `0.1.0-rc.N` from a clean tree, keep the previous `.deb` for rollback, install the package on the target machine, and run the applicable live acceptance tests against the installed application. Source-level, mocked and development-host tests do not substitute for installed-production evidence. If installation or production validation is blocked, the sprint stays explicitly incomplete or blocked. Documentation-only changes do not need a new package.
 
 ## Context discipline
 

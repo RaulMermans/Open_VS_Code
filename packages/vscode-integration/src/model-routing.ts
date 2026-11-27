@@ -4,6 +4,7 @@ import {
   applyChatModelSelection,
   applyAutoModelSelection,
   AUTO_MODEL,
+  autoEligibleModels,
   buildStarterRoutingConfig,
   chooseInstalledModel,
   localProviderBaseUrl,
@@ -391,7 +392,10 @@ export function connectionFromSnapshot(snapshot: ModelRoutingSnapshot): {
     : "present"
   let lastError: "disconnected" | "model-unavailable" | undefined
   if (snapshot.endpointError) lastError = "disconnected"
-  else if (snapshot.endpointReachable && snapshot.chatModel && !snapshot.installedModels.includes(snapshot.chatModel)) {
+  // "auto" is never an installed name; Auto is unavailable only when no eligible model is installed.
+  else if (snapshot.endpointReachable && snapshot.chatModel && (snapshot.chatModel === AUTO_MODEL
+    ? autoEligibleModels(snapshot.installedModels).length === 0
+    : !snapshot.installedModels.includes(snapshot.chatModel))) {
     lastError = "model-unavailable"
   }
   return {

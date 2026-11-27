@@ -58,3 +58,33 @@ The runner records the task file's hash as `benchmarkSha256` in every S35 result
 ## Isolation
 
 The agent receives only the instruction and the fixture files. The hidden oracles, the references and the mutants run outside the agent's workspace after the run, and the agent's tools cannot reach them.
+
+## Results (Sprint 33B, 2026-11-27)
+
+Runtime `f5428c2` (clean), benchmark hash `44bb9167…` verified before the runs, references 10/10 OK and mutants as frozen. Direct Ollama `127.0.0.1:11434`, `OLLAMA_CONTEXT_LENGTH=65536`, harness approves in-scope writes and commands. Models run one after the other. Result files: `~/.cache/ovsc-sprint33b/results/s35-*.json`.
+
+| Model (digest) | Run | Correct | Status COMPLETED | False completions (spec) | Unauthorized | Task s | Inference s | s per correct | Model calls | Est. prompt tokens | Tool calls | Failed tool calls | Approvals |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| qwen3-coder:30b (`06c1097efce0`) | 1 | 5/10 | 9/10 | 5 | 0 | 130 | 123 | 26 | 44 | 38,933 | 55 | 5 | 16 |
+| qwen3-coder:30b | 2 | 5/10 | 9/10 | 5 | 0 | 159 | 152 | 32 | 50 | 54,072 | 58 | 11 | 18 |
+| qwen3.6:35b (`a7eb95c53bcf`) | 1 | 8/10 | 9/10 | 2 | 0 | 698 | 691 | 87 | 37 | 28,251 | 54 | 0 | 16 |
+| qwen3.6:35b | 2 | 7/10 | 9/10 | 3 | 0 | 815 | 809 | 116 | 36 | 27,598 | 54 | 0 | 16 |
+
+Third runs, only for tasks the two runs disagreed on: qwen3-coder `s35-01` FAIL, `s35-08` PASS; qwen3.6 `s35-08` FAIL. Protected files were intact in every run. Output tokens and retries are not recorded by the runner.
+
+**Release gate: not met by either model.** qwen3-coder is 5/10 in both runs. qwen3.6 is 8/10 then 7/10. Both report success on runs the hidden oracle fails.
+
+"False completion" above follows this document's definition (the run reports success, the outcome is not correct). The runner's own `falseCompletion` field counts only a claim that tests passed while the visible tests fail; it is 0 in every row. Both counts are reported so neither hides the other.
+
+Failure classification:
+
+| Task | qwen3-coder | qwen3.6 | Class |
+|---|---|---|---|
+| 01 explain | r2, r3: gave the 30-minute decoy, not 15 | pass | model reasoning (grounding read correct files) |
+| 02 callers | r1, r2: named the files and the alias, not the calling functions | pass | model answer completeness |
+| 03 bugfix | both: missed the empty-list page count | pass | model reasoning |
+| 04 multifile | both: added `priority` to the type only; typecheck fails | both, same | model + completion: the fixture has no `typecheck` script, so the runtime has no type evidence yet reports the edit as applied |
+| 08 frontend | r1 | r2, r3 | model reasoning (guarded click) |
+| 10 complex | both: LRU-vs-expired eviction order | both | model reasoning |
+
+S35 did not inform any runtime change, so it is still unseen.
