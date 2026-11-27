@@ -11,7 +11,7 @@ import { assessJourney } from "./src/journey.ts"
 import { GUEST_RUNTIME } from "./src/guest-bridge.ts"
 import { loadCatalog, scenarioHarness } from "./src/catalog.ts"
 import { assertApprovalTarget, assertIsolatedPath, fingerprintDrift, liveProfileDirs } from "./src/safety.ts"
-import { notRun } from "./src/execute.ts"
+import { classifyLostEdit, notRun } from "./src/execute.ts"
 import {
   classifyPingContent,
   classifySendAck,
@@ -681,4 +681,10 @@ test("webview detach plus attach after Send is an unexpected reload", () => {
   assert.equal(unexpectedReload([
     { at: 1, kind: "frame-detached", detail: "vscode-webview://agent" },
   ], 4), false)
+})
+
+test("a lost user edit is classified by the base of the write that removed it", () => {
+  assert.equal(classifyLostEdit({ preEditSha: "old", postEditSha: "new", preimageShas: ["x", "new"] }), "A2_MODEL_PROPOSAL")
+  assert.equal(classifyLostEdit({ preEditSha: "old", postEditSha: "new", preimageShas: ["old"] }), "A1_STALE_WRITE")
+  assert.equal(classifyLostEdit({ preEditSha: "old", postEditSha: "new", preimageShas: [] }), "UNCLASSIFIED")
 })
