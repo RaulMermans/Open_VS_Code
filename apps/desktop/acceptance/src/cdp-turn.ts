@@ -179,7 +179,7 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
           }
           // The app applies a model change asynchronously; send only once its status line confirms the model,
           // or the turn would still run on the previous one.
-          if (status && readyText.indexOf(op.model) < 0) {
+          if (status && readyText.toLowerCase().indexOf(String(op.model).toLowerCase()) < 0) {
             modelWaits += 1;
             if (modelWaits > 120) return finish({ reason: "model switch to " + op.model + " was not confirmed by the app" });
             return;

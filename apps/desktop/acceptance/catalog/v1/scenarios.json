@@ -185,6 +185,24 @@
       "expected": { "command": { "cmd": "node", "args": ["--test"], "exitCode": 0 }, "unchangedPaths": ["test/add.test.js"], "transcriptExcludes": ["<tool_call"] }
     },
     {
+      "id": "AUTO-CODE",
+      "title": "Auto resolves a coding turn to the policy model and repairs add",
+      "group": "coding",
+      "tier": "standard",
+      "driver": "electron-chat",
+      "mode": "BUILD",
+      "trust": "trusted",
+      "fixture": "bug",
+      "approval": "approve",
+      "timeoutMs": 420000,
+      "model": "auto",
+      "prompt": "test/add.test.js fails. Fix src/add.js only, so node --test passes. Do not change the test.",
+      "requiresInference": true,
+      "oracle": "node --test exits 0, the test is unchanged, and the status line names the model Auto actually used (ADR-051: qwen3-coder:30b when installed)",
+      "forbidden": ["editing the test", "claiming success while node --test fails"],
+      "expected": { "command": { "cmd": "node", "args": ["--test"], "exitCode": 0 }, "unchangedPaths": ["test/add.test.js"], "transcriptExcludes": ["<tool_call"] }
+    },
+    {
       "id": "CODE-MULTI",
       "title": "Implement greet using the existing formatter",
       "group": "coding",
