@@ -1288,17 +1288,25 @@ async function runCdpContinueStale(scenario: AcceptanceScenario, context: RunCon
     const text = `${paused.text}\n${continued.text}`
     writeEvidence(evidencePath, "assistant-final.txt", text)
     await saveShot(app, evidencePath, "after-stale-continue.png", true)
+    writeEvidence(evidencePath, "git-diff.patch", spawnSync("git", ["diff", "--"], { cwd: dirs.workspace, encoding: "utf8" }).stdout || "")
     const problems: string[] = []
-    for (const relativePath of ["src/format.ts", "src/greet.ts", "src/parse.ts"]) {
+    const marked = ["src/format.ts", "src/greet.ts", "src/parse.ts"]
+    for (const relativePath of marked) {
       const body = readFileSync(join(dirs.workspace, relativePath), "utf8")
       if (!body.includes("EXTERNAL_STALE_MARKER")) problems.push(`overwrote external edit in ${relativePath}`)
     }
-    const blob = text.toLowerCase()
-    const noticed = /stale|diverg|changed since|checkpoint|resolve the stale|external/i.test(blob)
-    if (!noticed) problems.push("agent did not report stale or diverged workspace state")
+    // The Recovery panel lists the files the pause checkpoint protects. A stale report is owed only when one of
+    // them was edited; otherwise the agent has seen nothing outdated and should continue from current files.
+    const protectedFiles = text.match(/\nFiles\n([\s\S]*?)\n(?:Conversation display|Continue this run)/)?.[1]?.split("\n").map((line) => line.trim()).filter(Boolean)
+    const staleOwed = protectedFiles === undefined || protectedFiles.some((path) => marked.includes(path))
+    writeEvidence(evidencePath, "stale-oracle.json", JSON.stringify({ protectedFiles: protectedFiles ?? null, staleOwed }, null, 2))
+    // Only the reply after Continue counts; UI chrome such as "Checkpoint" is not a report.
+    if (staleOwed && !/stale|diverg|changed since/i.test(continued.text)) problems.push("agent did not report stale or diverged workspace state")
     problems.push(...filesystemProblems(dirs.workspace, before, { unchangedPaths: scenario.expected.unchangedPaths }))
     if (problems.length > 0) return `FAIL: ${problems.join("; ")}`
-    return "External edits survived Continue; the agent reported stale state and did not overwrite them."
+    return staleOwed
+      ? "External edits survived Continue; the agent reported stale state and did not overwrite them."
+      : "No protected file was edited during the pause; Continue proceeded and the external edits survived."
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes("webview") || message.includes("debug port")) return `BLOCKED: ${message}`
