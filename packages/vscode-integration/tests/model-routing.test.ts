@@ -270,6 +270,13 @@ test("offline ollama and a missing model are distinct", () => {
   }))
   assert.equal(missing.lastError, "model-unavailable")
   assert.equal(missing.selectedModel, "qwen3-coder:30b")
+  const auto = (installedModels: string[]) => connectionFromSnapshot({
+    ...snapshotFromResolution({ resolution: offlineResolution, installedModels, workspaceTrusted: true, credentialConfigured: false, advancedActive: false, probedEndpoint: globalPrefs.endpoint }),
+    chatModel: "auto",
+  })
+  // "auto" is never an installed name: it is available whenever an eligible coding model is installed.
+  assert.equal(auto(["qwen2.5-coder:7b", "qwen3-coder:30b"]).lastError, undefined)
+  assert.equal(auto(["qwen2.5-coder:7b"]).lastError, "model-unavailable")
 })
 
 test("discovery chooses a stable pair", () => {
