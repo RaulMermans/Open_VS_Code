@@ -9,21 +9,21 @@ const selection = (installed = INSTALLED) => routingFromSelection({ endpoint: "h
 const req = { taskClass: "coding", needsTools: true, needsStructuredOutput: false, estimatedInputTokens: 4000, requiredContextWindow: 8000 } as const
 const health = (down: readonly string[]) => ({ checkHealth: async (id: string) => (down.includes(id) ? "unavailable" : "ready") as "ready" | "unavailable" })
 
-test("Auto offers only large coding models, Qwen3.6 first; the 7B, 4B and embedding models are never eligible", () => {
-  assert.deepEqual(autoEligibleModels(INSTALLED), ["qwen3.6:35b", "qwen3-coder:30b"])
+test("Auto offers only large coding models, Qwen3-Coder first; the 7B, 4B and embedding models are never eligible", () => {
+  assert.deepEqual(autoEligibleModels(INSTALLED), ["qwen3-coder:30b", "qwen3.6:35b"])
   assert.throws(() => selection(["qwen2.5-coder:7b", "qwen3.5:4b"]), /NO_AUTO_MODEL/)
 })
 
-test("the real router picks Qwen3.6 for coding, falls back only to Qwen3-Coder, and fails closed rather than using the 7B", async () => {
+test("the real router picks Qwen3-Coder for coding, falls back only to Qwen3.6, and fails closed rather than using the 7B", async () => {
   const config = selection()
   const router = new ModelRouter(config)
   const name = async (down: string[]) => {
     const d = await router.route(req, health(down))
     return config.deployments.find((x) => x.id === d.deploymentId)!.modelName
   }
-  assert.equal(await name([]), "qwen3.6:35b")
+  assert.equal(await name([]), "qwen3-coder:30b")
   const first = config.routes.coding![0]!
-  assert.equal(await name([first]), "qwen3-coder:30b")
+  assert.equal(await name([first]), "qwen3.6:35b")
   await assert.rejects(router.route(req, health([...config.routes.coding!])), /ROUTE_UNAVAILABLE|unavailable|No/i)
   assert.equal(config.deployments.find((x) => x.id === config.routes.autocomplete![0])!.modelName, "qwen2.5-coder:7b")
   assert.ok(!config.routes.coding!.some((id) => config.deployments.find((x) => x.id === id)!.modelName === "qwen2.5-coder:7b"))
