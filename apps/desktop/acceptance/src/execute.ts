@@ -212,7 +212,9 @@ function causeFor(scenario: AcceptanceScenario, detail: string): FailureCause {
     || detail.includes("CDP")
   ) return "tooling"
   if (detail.includes("forbidden text") || detail.includes("<tool_call") || detail.includes("protocol leak")) return "presentation"
-  if (detail.includes("oracle") || detail.includes("exited")) return "model"
+  // A runtime stale write outranks a model proposal in the same cycle.
+  if (detail.includes("A1_STALE_WRITE") || detail.includes("UNCLASSIFIED")) return "orchestration"
+  if (detail.includes("oracle") || detail.includes("exited") || detail.includes("A2_MODEL_PROPOSAL")) return "model"
   if (detail.includes("Restricted Mode") || detail.includes("trust")) return "permission"
   if (scenario.group === "safety") return "permission"
   if (scenario.group === "lifecycle") return "persistence"
