@@ -16,7 +16,7 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 
 ---
 
-**Installed production (2026-11-28):** `0.1.0-rc.34`. Sprint 34 repository-aware verification is in source, not yet packaged (`0.1.0-rc.35`, interactive sudo). Daily-driver: NO-GO. See `docs/sprints/SPRINT_34_REPOSITORY_ENGINEERING.md`.
+**Installed production (2026-11-28):** `0.1.0-rc.35`. Live lab: stale-Continue 5/5, Stop 3/3 + 3/3, AUTO-CODE PASS. Daily-driver: NO-GO. Rollback: `0.1.0-rc.34`. See `docs/sprints/SPRINT_34_REPOSITORY_ENGINEERING.md`.
 
 ## 2. Current Status
 

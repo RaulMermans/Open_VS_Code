@@ -1,6 +1,6 @@
 # Sprint 34 — Repository-aware software engineering
 
-Date: 2026-11-28. Status: **PACKAGING rc.35.** Source implements repository-aware verification and stale-Continue conflict protection. Installed production at the start of this packaging was `0.1.0-rc.34`. The unused version is **0.1.0-rc.35**. Installed-production live gates run after `sudo apt install` of that package.
+Date: 2026-11-28. Status: **INSTALLED `0.1.0-rc.35`.** Live lab on the installed binary passed smoke, stale-Continue 5/5, cancellation 3/3 + 3/3, and AUTO-CODE. Daily-driver and Personal V1 remain **NO-GO**. Fictional Workbench and Logsmith/Stockroom/Taskflow campaigns were not run on this package.
 
 ## 1. Starting state (reconciled)
 
@@ -32,49 +32,55 @@ Date: 2026-11-28. Status: **PACKAGING rc.35.** Source implements repository-awar
 
 Deterministic tests: 74 targeted tests pass, including package-manager fixtures, continue-stale conflict, lab benchmark registry, and conversation integrity.
 
-## 4. Not done in this change (explicit)
+## 4. Not done (explicit)
 
-- Packaged **rc.35** and installed-production acceptance.
-- Stale-Continue 5/5 on the installed IDE.
-- Cancellation 3/3 + 3/3 on the installed IDE.
-- AUTO-CODE on the installed IDE.
-- Workbench WB-01/02/03 frozen assignments under `~/ovsc-benchmarks` (fixtures in tests only).
+- Workbench WB-01/02/03 frozen assignments under `~/ovsc-benchmarks`.
 - Definitive Logsmith / Stockroom / Taskflow runs on installed production.
 - Model Auto policy change (S35 still does not qualify either model).
 - HALO Agent path (unchanged, BLOCKED).
 - Historical REEPROV cleanup (proposal only; no deletes).
+- Daily-driver / Personal V1 GO.
 
 ## 5. Production
 
 ```yaml
 production:
-  installed_version: 0.1.0-rc.34
-  source_commit: 7c8c205e990d9db0e87b485ac96d458d637aedd2
-  current_source: 96b951eb plus Sprint 34 (unreleased)
-  package_sha256: 754efcc4f69d24759e0af8c887d3eecd1d820a1bdb368d7ea7dd40609a2d2deb
-  installed_extension_sha256: 9c79d2be3faeb1c523ea34fb4f69d6aeaf3406f9a03cea9e0185d9e0d7190137
+  installed_version: 0.1.0-rc.35
+  source_commit: d401aae5a98604700db45d5408b4d4f187287e0d
+  git_dirty: false
+  packaged_at: 2026-11-28T11:11:14.111Z
+  package_sha256: 54bbff793dcb2495d4a6e001a2cf835273e304286970a3b78ca63cb9e46adda2
+  installed_extension_sha256: 21e558d5dd4a10e8baa3f2dc3b654f4dd17d24c8fd02c64baabe3659f1ce68d6
   executable_path: /usr/bin/open-vs-code
+  binary: /usr/lib/open-vs-code/open-vs-code
+  chrome_sandbox: "4755 setuid root"
   provider: Direct Ollama
-  resolved_model: not re-measured this change
-  next_package: 0.1.0-rc.35
-  install_command: sudo apt install <path-to-rc.35.deb>
-  rollback_command: sudo apt install --allow-downgrades ~/.cache/ovsc-sprint33b/open-vs-code_0.1.0-rc.34_amd64.deb
+  resolved_model: qwen3-coder:30b
+  auto_status_line: "Ready · Auto · qwen3-coder:30b · qwen3-coder:30b"
+  rollback_deb: ~/.cache/ovsc-sprint34/open-vs-code_0.1.0-rc.34_amd64.deb
+  rollback_command: sudo apt install --allow-downgrades ~/.cache/ovsc-sprint34/open-vs-code_0.1.0-rc.34_amd64.deb
+live_lab:
+  smoke: PASS (CONV-PING, LIFE-SANDBOX, LIFE-FIRST, LIFE-UPGRADE; LIFE-ROLLBACK PASS with OPEN_VS_CODE_ROLLBACK_DEB)
+  CODE-CONTINUE-STALE: 5/5 PASS (run 2026-11-28T11-18-00-232Z)
+  SAFE-CANCEL: 3/3 PASS (ack 6–113 ms)
+  SAFE-CANCEL-APPROVAL: 3/3 PASS (ack 114–127 ms)
+  AUTO-CODE: PASS (independent tests passed; Auto used qwen3-coder:30b)
 ```
 
-Interactive sudo is still required. Do not classify uninstalled rc.35 as production.
+LIFE-ROLLBACK's "Daily driver is 0.1.0-rc.35" is the lab's installed-version string, not a product GO.
 
 ## 6. Verdicts
 
 | Gate | Verdict |
 |---|---|
-| Runtime safety | **BLOCKED** — deterministic conflict protection is in source; installed 5/5 not run on rc.35 |
-| Repository-aware execution | **GO** for deterministic selection; **BLOCKED** for installed-production proof |
-| Atomic coding | Unchanged S35 **NO-GO** |
-| Greenfield application development | **BLOCKED** — no installed fictional app run this sprint |
+| Runtime safety | **GO** for installed stale-Continue 5/5 and Stop 3/3 + 3/3 on rc.35 |
+| Repository-aware execution | **GO** deterministic; **BLOCKED** for installed Workbench / monorepo campaign |
+| Atomic coding | Unchanged S35 **NO-GO** (AUTO-CODE is the small add.js fixture, not S35) |
+| Greenfield application development | **BLOCKED** |
 | Brownfield sprint engineering | **BLOCKED** |
 | Monorepo engineering | **GO** deterministic; **BLOCKED** installed Workbench |
 | Multi-sprint continuity | **BLOCKED** |
-| Sustained autonomous execution | **BLOCKED** — profiles exist; no 90–120 minute installed run |
+| Sustained autonomous execution | **BLOCKED** — no 90–120 minute installed run |
 | Supervised engineering | **NO-GO** |
 | Daily-driver readiness | **NO-GO** |
 | HALO-managed inference | **BLOCKED** |

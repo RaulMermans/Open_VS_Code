@@ -1,12 +1,8 @@
 Sprint 34 — Repository-aware software engineering (2026-11-28)
-STATUS: PACKAGING `0.1.0-rc.35` (installed was `0.1.0-rc.34`; live gates after sudo install)
-  - Starting production was reconciled: rc.34 **is** installed (extension `9c79d2be…`). Sprint 33B's "not installed" note is historical.
-  - Verification now runs the declared package manager (`pnpm`/`yarn`/`npm`); conflicting lockfiles are setup errors, not silent npm.
-  - Stale-Continue: overlapping user edits are `USER_EDIT_CONFLICT` approvals; unrelated files continue; deleted files still block.
-  - Completion: exported-type changes without a typecheck script are unverified; outcome text cannot say tests passed when verification did not run.
-  - Autocomplete default off; suspended during Agent runs. Chromium sandbox oracle accepts namespace or setuid.
-  - Compact repository engineering profile; execution profile ceilings 15–120 min. Benchmark registry required.
-  - Installed-production 5/5 stale-Continue, cancellation, AUTO-CODE, and fictional benchmarks remain BLOCKED until rc.35 is installed. See `docs/sprints/SPRINT_34_REPOSITORY_ENGINEERING.md`.
+STATUS: INSTALLED `0.1.0-rc.35` (`d401aae5`, extension `21e558d5…`). Daily-driver remains **NO-GO**.
+  - Live lab on `/usr/lib/open-vs-code/open-vs-code`: CONV-PING, LIFE-SANDBOX, LIFE-FIRST; CODE-CONTINUE-STALE 5/5; SAFE-CANCEL 3/3; SAFE-CANCEL-APPROVAL 3/3; AUTO-CODE PASS (`qwen3-coder:30b`). Rollback `.deb` is `~/.cache/ovsc-sprint34/open-vs-code_0.1.0-rc.34_amd64.deb`.
+  - Verification runs the declared package manager; overlapping pause-time user edits are `USER_EDIT_CONFLICT`. Autocomplete default off.
+  - Not run on this package: Workbench WB-01–03, Logsmith/Stockroom/Taskflow campaigns. S35 Auto order unchanged. See `docs/sprints/SPRINT_34_REPOSITORY_ENGINEERING.md`.
 
 Benchmark isolation and fictional portfolio (2026-11-28)
 STATUS: IN_PROGRESS (harness validated on the rc.34 candidate; definitive runs wait for an installed release that includes Sprint 34)
