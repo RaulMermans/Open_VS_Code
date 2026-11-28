@@ -4,6 +4,7 @@ import type { ElectronApplication, Page } from "playwright-core"
 import { queryGuest, type GuestOp } from "./guest-bridge.ts"
 import {
   classifySendAck,
+  messageHasPrompt,
   redactUrl,
   turnAssistantText,
   type ChatMessage,
@@ -329,7 +330,7 @@ export async function sendPrompt(
 }
 
 function userAlreadyPresent(userMessages: readonly string[], prompt: string): boolean {
-  return userMessages.some((text) => text.includes(prompt.trim()))
+  return userMessages.some((text) => messageHasPrompt(text, prompt))
 }
 
 export async function waitForTurnAssistant(

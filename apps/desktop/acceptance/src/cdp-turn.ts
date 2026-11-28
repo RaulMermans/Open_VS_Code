@@ -1,4 +1,4 @@
-import { classifySendAck, turnReplyText, type ChatMessage, type SendAck } from "./oracles.ts"
+import { classifySendAck, messageHasPrompt, turnReplyText, type ChatMessage, type SendAck } from "./oracles.ts"
 
 export interface CdpTurnRaw {
   readonly found?: boolean
@@ -100,13 +100,16 @@ export const CDP_TURN_RUNTIME = `function cdpTurn(op) {
   };
   window.__ovscLab = window.__ovscLab || { pending: null, permit: null };
   const prompt = String(op.prompt || "");
-  const countUsers = (messages) => messages.filter((message) => message.role === "user" && message.text.indexOf(prompt) !== -1).length;
+  const plain = (text) => String(text).replace(/[\x60*_#>]/g, "").replace(/\\s+/g, " ").trim();
+  const promptKey = (text) => plain(text).slice(0, 160);
+  const hasPrompt = (text) => plain(text).indexOf(promptKey(prompt)) !== -1;
+  const countUsers = (messages) => messages.filter((message) => message.role === "user" && hasPrompt(message.text)).length;
   const assistantFor = (messages) => {
     let seen = false;
     const parts = [];
     for (let index = 0; index < messages.length; index += 1) {
       const message = messages[index];
-      if (!seen && message.role === "user" && message.text.indexOf(prompt) !== -1) {
+      if (!seen && message.role === "user" && hasPrompt(message.text)) {
         seen = true;
         continue;
       }
@@ -446,7 +449,7 @@ export function interpretCdpTurn(input: {
 }): InterpretedTurn {
   const messages = input.raw.messages ?? []
   const users = messages
-    .filter((message) => message.role === "user" && message.text.includes(input.prompt.trim()))
+    .filter((message) => message.role === "user" && messageHasPrompt(message.text, input.prompt))
     .map((message) => message.text)
   const sendClicks = input.raw.sendClicks ?? 0
   const ack = input.raw.found === false && sendClicks === 0
