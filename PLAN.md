@@ -4,8 +4,8 @@ STATUS: BLOCKED (installation needs interactive sudo; candidate rc.34 built, CI 
   - Two runtime fixes: Auto no longer shows "Model unavailable" (`44061ad`); the import check no longer forces `.ts` specifiers when only a non-test script strips types (found by the real-repository pilot).
   - S35 (unseen): qwen3-coder 5/10 and 5/10, qwen3.6 8/10 and 7/10. Gate not met by either model. ADR-051 Auto order not confirmed; unchanged pending a product decision.
   - Stale-Continue on the candidate 4/5: the failure is A2 (the model's approved patch removed the user's edit), with 0 A1 stale writes. Cancellation 3/3 during generation and 3/3 during approval (~112 ms).
-  - REEPROV pilot on rc.34: RP-01 correct and commit-ready, RP-02 correct per its oracle, RP-03 failed; 0 unauthorized writes, 0 false success claims.
-  - Autocomplete not qualified (median 733 ms, p95 2.1 s). Standalone readiness and the formal gate NO-GO; pilot GO. See `docs/sprints/SPRINT_33B_FINAL_QUALIFICATION.md`.
+  - The REEPROV pilot is withdrawn (2026-11-28 policy: benchmarks use fictional repositories only, `docs/evals/BENCHMARK_POLICY.md`).
+  - Autocomplete not qualified (median 733 ms, p95 2.1 s). Standalone readiness and the formal gate NO-GO. See `docs/sprints/SPRINT_33B_FINAL_QUALIFICATION.md`.
 
 Release 0.1.0-rc.30 — installed production (2026-11-27)
 STATUS: INSTALLED

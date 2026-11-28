@@ -10,7 +10,7 @@ import { parseAcceptanceWindowSize } from "./src/cdp-driver.ts"
 import { assessJourney } from "./src/journey.ts"
 import { GUEST_RUNTIME } from "./src/guest-bridge.ts"
 import { loadCatalog, scenarioHarness } from "./src/catalog.ts"
-import { assertApprovalTarget, assertIsolatedPath, fingerprintDrift, liveProfileDirs } from "./src/safety.ts"
+import { assertApprovalTarget, assertBenchmarkWorkspace, assertIsolatedPath, BENCHMARK_MARKER, fingerprintDrift, liveProfileDirs } from "./src/safety.ts"
 import { classifyLostEdit, notRun } from "./src/execute.ts"
 import {
   classifyPingContent,
@@ -687,4 +687,24 @@ test("a lost user edit is classified by the base of the write that removed it", 
   assert.equal(classifyLostEdit({ preEditSha: "old", postEditSha: "new", preimageShas: ["x", "new"] }), "A2_MODEL_PROPOSAL")
   assert.equal(classifyLostEdit({ preEditSha: "old", postEditSha: "new", preimageShas: ["old"] }), "A1_STALE_WRITE")
   assert.equal(classifyLostEdit({ preEditSha: "old", postEditSha: "new", preimageShas: [] }), "UNCLASSIFIED")
+})
+
+test("benchmark runs refuse a repository that is not a marked fictional benchmark", async () => {
+  const { writeFileSync, mkdirSync } = await import("node:fs")
+  const { spawnSync } = await import("node:child_process")
+  const root = mkdtempSync(join(tmpdir(), "ovsc-bench-root-"))
+  const ws = mkdtempSync(join(tmpdir(), "ovsc-bench-ws-"))
+  spawnSync("git", ["init", "-q", ws])
+  assert.throws(() => assertBenchmarkWorkspace(ws, root), /is missing/)
+  writeFileSync(join(ws, BENCHMARK_MARKER), JSON.stringify({ fictional: false }))
+  assert.throws(() => assertBenchmarkWorkspace(ws, root), /does not declare/)
+  writeFileSync(join(ws, BENCHMARK_MARKER), JSON.stringify({ fictional: true }))
+  assert.doesNotThrow(() => assertBenchmarkWorkspace(ws, root))
+  const outside = mkdtempSync(join(tmpdir(), "ovsc-real-project-"))
+  spawnSync("git", ["-C", ws, "remote", "add", "origin", outside])
+  assert.throws(() => assertBenchmarkWorkspace(ws, root), /outside/)
+  const inside = join(root, "track-b", "stockroom")
+  mkdirSync(inside, { recursive: true })
+  spawnSync("git", ["-C", ws, "remote", "set-url", "origin", inside])
+  assert.doesNotThrow(() => assertBenchmarkWorkspace(ws, root))
 })

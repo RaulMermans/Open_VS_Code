@@ -1,4 +1,5 @@
-import { realpathSync, existsSync, statSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { realpathSync, existsSync, readFileSync, statSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve, sep } from "node:path"
 
@@ -84,4 +85,31 @@ export function chromeSandboxMode(binaryPath: string): string {
   const sandbox = resolve(binaryPath, "..", "chrome-sandbox")
   if (!existsSync(sandbox)) throw new Error(`chrome-sandbox is missing beside ${binaryPath}`)
   return (statSync(sandbox).mode & 0o7777).toString(8)
+}
+
+/** Marker every fictional benchmark repository carries at its root (AGENTS.md, docs/evals/BENCHMARK_POLICY.md). */
+export const BENCHMARK_MARKER = ".ovsc-benchmark.json"
+
+export function benchmarkRoot(): string {
+  return resolve(process.env.OPEN_VS_CODE_BENCHMARK_ROOT?.trim() || join(homedir(), "ovsc-benchmarks"))
+}
+
+/**
+ * Benchmarks run only on fictional repositories: the workspace must carry the benchmark marker with
+ * "fictional": true, and a git origin, if any, must lie inside the benchmark root. A clone of a real project has
+ * neither, so it is refused before the app starts.
+ */
+export function assertBenchmarkWorkspace(workspace: string, root = benchmarkRoot()): void {
+  const marker = join(workspace, BENCHMARK_MARKER)
+  const refuse = (why: string) => new Error(`Benchmark workspace refused: ${why}. Benchmarks use fictional repositories only (AGENTS.md).`)
+  if (!existsSync(marker)) throw refuse(`${BENCHMARK_MARKER} is missing`)
+  let meta: { fictional?: unknown }
+  try { meta = JSON.parse(readFileSync(marker, "utf8")) } catch { throw refuse(`${BENCHMARK_MARKER} is not valid JSON`) }
+  if (meta.fictional !== true) throw refuse(`${BENCHMARK_MARKER} does not declare "fictional": true`)
+  const origin = spawnSync("git", ["-C", workspace, "remote", "get-url", "origin"], { encoding: "utf8" })
+  if (origin.status === 0) {
+    const url = origin.stdout.trim()
+    const local = url.replace(/^file:\/\//, "")
+    if (!existsSync(local) || !existsSync(root) || !isInside(realpathSync(local), realpathSync(root))) throw refuse(`git origin ${url} is outside ${root}`)
+  }
 }

@@ -95,7 +95,9 @@ Intermediate candidates rc.32 (`26e1a0b`, `adeddd2c…`) and rc.33 (`3db5a99`, `
 
 Not run on installed production: the full catalog, lifecycle, restart, recovery. The 5/5 stale-Continue gate (G03) is **not met**.
 
-## 8. Real-repository pilot (REEPROV)
+## 8. Real-repository pilot (REEPROV) — WITHDRAWN
+
+> **Withdrawn 2026-11-28.** The owner's benchmark isolation policy (`docs/evals/BENCHMARK_POLICY.md`) forbids benchmarks on real projects. These results are kept as history only and are not qualification evidence. The import-extension defect it exposed is a genuine runtime fix and stays.
 
 Disposable clone of `main` (`83afc49`) with a baseline commit adding one failing test (RP-01). Tasks frozen before execution (`TASKS.md` `a3e119fd…`). Agent: Open VS Code BUILD mode, `qwen3-coder:30b`, GUI harness; approvals in-scope only; no human code intervention.
 
@@ -134,24 +136,24 @@ Unauthorized writes 0, false success claims 0, critical safety failures 0. REEPR
 release_decision:
   standalone_technical_readiness: NO_GO
   formal_supervised_testing_gate: NO_GO
-  real_repository_pilot: GO   # supervised, on the candidate; 2/3 correct, 0 unsafe events
+  real_repository_pilot: WITHDRAWN   # out of policy since 2026-11-28; replaced by fictional benchmarks
   daily_driver: NO_GO
   halo_managed_inference: BLOCKED
   production_updated: false
   production_verified: false
-  sprint_34_ready: true   # conditional: install rc.34 first and run the installed P0 set
+  sprint_34_ready: false   # Sprint 34 becomes fictional-benchmark qualification; install rc.34 first
 ```
 
 - Standalone technical readiness NO-GO: D-01 (G03 not met) and D-02 (G06 not met).
 - Formal gate NO-GO: same, plus the historical HALO qualification gate cannot be run honestly.
-- Pilot GO: supervised real-repository work produced one commit-ready fix and one oracle-correct feature with no unsafe event; failures were reported honestly.
+- Pilot WITHDRAWN: it ran on a real project, which the 2026-11-28 policy forbids. Fictional Track A–C benchmarks replace it.
 - Daily driver NO-GO: autocomplete unqualified, D-01, D-02.
 - HALO BLOCKED: no shared coding model, 512-token output cap, 32K-character input cap.
-- Sprint 34 ready, conditionally: Sprint 34 is supervised dogfooding, which the pilot supports, once rc.34 is installed and its installed P0 set passes.
+- Sprint 34 is redefined by the policy: fictional-benchmark qualification (Tracks A–C) on the installed release, not real-repository dogfooding.
 
 ## 12. Roadmap
 
-- **Sprint 34 (dogfooding and shipping):** install rc.34; run installed P0 (stale ×5, cancel ×3 ×2, smoke, AUTO-CODE); fix D-01 and re-run 5/5; fix D-03; decide the Auto order; run dogfooding with fresh, non-confounded task baselines; commit RP-01 to REEPROV if the owner wants it.
+- **Sprint 34 (dogfooding and shipping):** install rc.34; run installed P0 (stale ×5, cancel ×3 ×2, smoke, AUTO-CODE); fix D-01 and re-run 5/5; fix D-03; decide the Auto order; run Tracks A–C on fictional repositories (`docs/evals/BENCHMARK_POLICY.md`).
 - **Sprint 35 (personal V1 daily driver):** autocomplete default and scheduling (D-07), a new frozen held-out set after any model or runtime change, D-04 decision.
 - **HALO (parallel):** handoff items 1–10 and the V2 qualification approval.
 
