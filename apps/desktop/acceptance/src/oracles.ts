@@ -82,12 +82,25 @@ export function turnAssistantText(messages: readonly ChatMessage[], prompt: stri
   return turnReplyText(messages, prompt, false)
 }
 
+/**
+ * The chat renders Markdown (inline code loses its backticks), so a long Markdown prompt never appears verbatim.
+ * Match on its opening text with Markdown punctuation removed and whitespace collapsed.
+ */
+const plain = (text: string) => text.replace(/[`*_#>]/g, "").replace(/\s+/g, " ").trim()
+
+export function promptKey(text: string): string {
+  return plain(text).slice(0, 160)
+}
+
+export function messageHasPrompt(message: string, prompt: string): boolean {
+  return plain(message).includes(promptKey(prompt))
+}
+
 export function turnReplyText(messages: readonly ChatMessage[], prompt: string, includeOther = true): string {
-  const needle = prompt.trim()
   let lastUser = -1
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]!
-    if (message.role === "user" && message.text.includes(needle)) lastUser = index
+    if (message.role === "user" && messageHasPrompt(message.text, prompt)) lastUser = index
   }
   if (lastUser < 0) return ""
   const parts: string[] = []

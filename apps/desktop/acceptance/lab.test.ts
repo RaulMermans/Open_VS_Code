@@ -708,3 +708,22 @@ test("benchmark runs refuse a repository that is not a marked fictional benchmar
   spawnSync("git", ["-C", ws, "remote", "set-url", "origin", inside])
   assert.doesNotThrow(() => assertBenchmarkWorkspace(ws, root))
 })
+
+test("a long Markdown prompt is recognised in its rendered form", async () => {
+  const { messageHasPrompt, turnReplyText } = await import("./src/oracles.ts")
+  const prompt = "# Logsmith — log analysis CLI\n\n- Entry point: `bin/logsmith.js`, run as `node bin/logsmith.js <command>`.\n" + "More text. ".repeat(40)
+  const rendered = "Logsmith — log analysis CLI\n- Entry point: bin/logsmith.js, run as node bin/logsmith.js <command>.\n" + "More text. ".repeat(40)
+  assert.equal(messageHasPrompt(rendered, prompt), true)
+  assert.equal(messageHasPrompt("Something else entirely", prompt), false)
+  assert.equal(turnReplyText([{ role: "user", text: rendered, status: "" }, { role: "assistant", text: "done", status: "" }], prompt), "done")
+})
+
+test("the in-page turn runtime recognises a rendered Markdown prompt", () => {
+  const prompt = "# Title\n\nUse `bin/x.js` here. " + "Words ".repeat(50)
+  const rendered = "Title\nUse bin/x.js here. " + "Words ".repeat(50)
+  const match = /const plain = [^\n]+\n\s*const promptKey = [^\n]+\n\s*const hasPrompt = [^\n]+/.exec(CDP_TURN_RUNTIME)
+  assert.ok(match, "runtime defines promptKey and hasPrompt")
+  const hasPrompt = runInNewContext(`(() => { const prompt = ${JSON.stringify(prompt)}; ${match[0]}; return hasPrompt })()`) as (t: string) => boolean
+  assert.equal(hasPrompt(rendered), true)
+  assert.equal(hasPrompt("unrelated"), false)
+})
