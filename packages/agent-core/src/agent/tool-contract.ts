@@ -270,6 +270,8 @@ export function assessCodingCompletion(input: {
   readonly additionalVerification?: readonly string[]
   /** Explicit request parts not carried out yet (requirement-checks.ts). Non-empty means edits are unsatisfied. */
   readonly requirementGaps?: readonly string[]
+  /** Checks that apply to the edit but cannot run (for example TYPECHECK with no typecheck script). */
+  readonly unverifiedActions?: readonly string[]
 }): CodingCompletion {
   const applied = relevantAppliedPaths(input.mutations, input.explicitPaths)
   const satisfied = relevantSatisfiedPaths(input.mutations, input.explicitPaths)
@@ -368,6 +370,19 @@ export function assessCodingCompletion(input: {
           ? `${changed} ${approval} Tests failed. The edit is not complete.`
           : `${changed} ${approval} ${detail}`,
       }
+    }
+  }
+
+  if ((input.unverifiedActions?.length ?? 0) > 0) {
+    const label = input.unverifiedActions!.includes("TYPECHECK")
+      ? "Typecheck is unavailable (no typecheck script). Exported types changed and remain unverified."
+      : `${input.unverifiedActions!.join(", ")} could not be verified.`
+    return {
+      accept: false,
+      editsSatisfied: true,
+      verificationSatisfied: false,
+      failureReason: "VERIFICATION_UNAVAILABLE",
+      summary: `${changed} ${approval} ${tests} Incomplete: ${label}`,
     }
   }
 

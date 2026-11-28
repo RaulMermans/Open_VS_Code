@@ -70,6 +70,8 @@ export interface MutationReviewPayload {
   readonly linesRemoved: number
   readonly bytesChanged: number
   readonly diff: string
+  readonly conflict?: "USER_EDIT"
+  readonly conflictNote?: string
 }
 
 export interface AgentConfirmationRequest {

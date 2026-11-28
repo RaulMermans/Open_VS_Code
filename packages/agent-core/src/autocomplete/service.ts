@@ -174,6 +174,8 @@ export class AutocompleteService {
 
   // Enabled flag
   #enabled = true
+  /** Set while a substantial Agent run is in progress. Inference is skipped until the run ends. */
+  #suspended = false
 
   // Disposed flag (deactivation)
   #disposed = false
@@ -194,6 +196,9 @@ export class AutocompleteService {
   get enabled(): boolean { return this.#enabled }
   set enabled(v: boolean) { this.#enabled = v }
 
+  get suspended(): boolean { return this.#suspended }
+  set suspended(v: boolean) { this.#suspended = v }
+
   get telemetry(): Readonly<AutocompleteTelemetry> { return { ...this.#telemetry } }
 
   /**
@@ -212,7 +217,7 @@ export class AutocompleteService {
     vsCodeAbortSignal?: AbortSignal,
     liveEditorSupplier?: () => LiveEditorState | null,
   ): Promise<CompletionResult | null> {
-    if (this.#disposed || !this.#enabled) return null
+    if (this.#disposed || !this.#enabled || this.#suspended) return null
 
     this.#telemetry.requests++
 

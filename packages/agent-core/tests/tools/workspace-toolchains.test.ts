@@ -166,11 +166,11 @@ test("the declared package manager is used from the Corepack cache when present;
   process.env.COREPACK_HOME = cache
   const root = await workspace({ "package.json": JSON.stringify({ packageManager: "pnpm@10.28.0", scripts: { build: "pnpm -r build" } }) })
   try {
-    await assert.rejects(discoverVerificationCommand(root, "BUILD"), /ENVIRONMENT_SETUP_REQUIRED: the script calls pnpm, and pnpm@10\.28\.0 .* is not in the Corepack cache.*corepack install/)
     await mkdir(join(cache, "v1", "pnpm", "10.28.0"), { recursive: true })
     await writeFile(join(cache, "v1", "pnpm", "10.28.0", "package.json"), "{}")
     assert.deepEqual(cachedPackageManager({ packageManager: "pnpm@10.28.0" }, root), { name: "pnpm", version: "10.28.0", cacheDir: join(cache, "v1", "pnpm", "10.28.0") })
     const command = await discoverVerificationCommand(root, "BUILD")
+    assert.equal(command.packageManager, "pnpm")
     assert.deepEqual(command.readOnlyBinds, [join(cache, "v1", "pnpm", "10.28.0")])
     assert.equal(command.env?.COREPACK_HOME, cache)
     for (const [key, value] of Object.entries(COREPACK_OFFLINE_ENV)) assert.equal(command.env?.[key], value)

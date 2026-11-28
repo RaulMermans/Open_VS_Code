@@ -134,8 +134,11 @@ function appendVerified(content: string, result: TerminalTaskInput): string {
   if (result.status === "CANCELLED") {
     return facts.length > 0 ? content + "\n\n" + facts.join("\n") : content
   }
-  const note = claimNote(result, facts)
-  const blocks = [content]
+  const body = facts.some((line) => line === "Verification was not executed.")
+    ? content.replace(/\btests?\s+(have\s+)?(passed|succeeded)\.?/gi, "").replace(/[ \t]+\n/g, "\n").trim() || content
+    : content
+  const note = claimNote({ ...result, finalAnswer: body }, facts)
+  const blocks = [body]
   if (note) blocks.push("", note)
   // The card title follows the run status; a failed or incomplete run must never read "Task completed."
   if (facts.length > 0) blocks.push("", result.status === "COMPLETED" ? "Verified outcome" : "Verified outcome: not completed", ...facts)
@@ -369,6 +372,7 @@ const ACTIVITY_LABELS: Record<string, { kind: ChatActivity["kind"]; label: strin
   "task.completed": { kind: "task", label: "Completed" },
   "task.failed": { kind: "task", label: "Failed" },
   "task.cancelled": { kind: "task", label: "Cancelled" },
+  "task.max_turns": { kind: "task", label: "Paused" },
 };
 
 export function sanitizeRelativePath(raw: string): string | null {

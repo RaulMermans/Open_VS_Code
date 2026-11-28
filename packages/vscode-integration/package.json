@@ -214,6 +214,24 @@
           "default": false,
           "description": "Run eligible Build/Debug tasks through the Structured Engineering Loop (PLAN → IMPLEMENT → TEST → fresh-context REVIEW → VERIFY). Every change and check still needs your approval. Off until the HALO A/B benchmark is recorded."
         },
+        "open-vs-code.autocomplete.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable editor autocomplete (FIM). Off by default until latency and Agent-run contention are qualified. Toggle remains available."
+        },
+        "open-vs-code.agent.executionProfile": {
+          "type": "string",
+          "enum": ["small", "application", "engineering", "sprint", "extended"],
+          "enumDescriptions": [
+            "15-minute wall-clock ceiling",
+            "30-minute wall-clock ceiling",
+            "60-minute wall-clock ceiling",
+            "90-minute wall-clock ceiling",
+            "120-minute wall-clock ceiling"
+          ],
+          "default": "engineering",
+          "description": "Wall-clock ceiling for Agent/Debug runs. This is a limit, not a target duration. Continue stays available after a pause."
+        },
         "open-vs-code.agent.commandSandbox": {
           "type": "string",
           "enum": ["auto", "required", "off"],

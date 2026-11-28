@@ -16,6 +16,8 @@ It decouples the agent's reasoning core, context engine, and permission boundari
 
 ---
 
+**Installed production (2026-11-28):** `0.1.0-rc.34`. Sprint 34 repository-aware verification is in source, not yet packaged (`0.1.0-rc.35`, interactive sudo). Daily-driver: NO-GO. See `docs/sprints/SPRINT_34_REPOSITORY_ENGINEERING.md`.
+
 ## 2. Current Status
 
 | Capability | Status | Notes |

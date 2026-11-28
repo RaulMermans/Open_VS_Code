@@ -1,5 +1,15 @@
+Sprint 34 — Repository-aware software engineering (2026-11-28)
+STATUS: PACKAGING `0.1.0-rc.35` (installed was `0.1.0-rc.34`; live gates after sudo install)
+  - Starting production was reconciled: rc.34 **is** installed (extension `9c79d2be…`). Sprint 33B's "not installed" note is historical.
+  - Verification now runs the declared package manager (`pnpm`/`yarn`/`npm`); conflicting lockfiles are setup errors, not silent npm.
+  - Stale-Continue: overlapping user edits are `USER_EDIT_CONFLICT` approvals; unrelated files continue; deleted files still block.
+  - Completion: exported-type changes without a typecheck script are unverified; outcome text cannot say tests passed when verification did not run.
+  - Autocomplete default off; suspended during Agent runs. Chromium sandbox oracle accepts namespace or setuid.
+  - Compact repository engineering profile; execution profile ceilings 15–120 min. Benchmark registry required.
+  - Installed-production 5/5 stale-Continue, cancellation, AUTO-CODE, and fictional benchmarks remain BLOCKED until rc.35 is installed. See `docs/sprints/SPRINT_34_REPOSITORY_ENGINEERING.md`.
+
 Benchmark isolation and fictional portfolio (2026-11-28)
-STATUS: IN_PROGRESS (harness validated on the rc.34 candidate; definitive runs wait for an installed release)
+STATUS: IN_PROGRESS (harness validated on the rc.34 candidate; definitive runs wait for an installed release that includes Sprint 34)
   - Owner policy: benchmarks use fictional repositories only (`docs/evals/BENCHMARK_POLICY.md`, AGENTS.md). The GUI benchmark driver refuses a workspace without `.ovsc-benchmark.json` (`"fictional": true`) or with a git origin outside `~/ovsc-benchmarks`. The REEPROV pilot is withdrawn.
   - Portfolio in `~/ovsc-benchmarks` (local, independent histories; hidden evaluators 0700). Frozen and validated: Track A Logsmith (reference 26/26, 8/8 mutants rejected), Track B Stockroom SR-14 (30/30, baseline 9/30, 10/10 mutants), Track C Taskflow sprint 1 (20/20, 7/7 mutants). Still to build: five Track A apps, five Track B repositories, Taskflow sprints 2–5.
   - Runner: fresh /tmp clone, identity record (INSTALLED vs CANDIDATE), GUI agent with Continue within a 30/60/90/120-minute budget, evaluation on a copy with no network and 4 GiB memory.

@@ -173,6 +173,8 @@ interface Session {
   autoVerifyPending?: boolean
   /** Files whose proposed edit changed an exported type; checked by an early typecheck after the turn's edits. */
   typeShapePaths?: Set<string>
+  /** An applied edit changed an exported type or signature. */
+  exportedTypeChanged?: boolean
   /** `path|value` pairs already warned about as dangling references; a repeated edit goes through. */
   danglingWarned?: Set<string>
   /** Applied-edit count when the completion gate last nudged; the nudge limit resets when it grows. */
@@ -187,6 +189,8 @@ interface Session {
   unit?: { index: number; deadline: number; appliedAtStart: number; metAtStart: number }
   /** Hashes, at the turn-budget pause, of every file the agent read or wrote; Continue refuses if any changed. */
   pauseFootprint?: FileStateFootprint[]
+  /** Files the user changed during the pause: overlapping patches need conflict-specific approval. */
+  userProtectedEdits?: Map<string, { hashAtPause: string; hashAtContinue: string }>
   /**
    * Task-scoped registry of successful read-only lookups (signature -> result). A repeat is answered from
    * here as ALREADY_OBSERVED instead of being refused. Cleared whenever the workspace changes.
@@ -487,12 +491,28 @@ export class AgentRunner {
     if (session.pauseFootprint) {
       const { divergedFiles } = await reconcileFootprint({ files: session.pauseFootprint })
       if (divergedFiles.length > 0) {
-        const names = divergedFiles.map((path) => relative(session.input.workspaceRoot, path) || path).join(", ")
-        session.failureReason = "INCOMPLETE"
-        session.finalAnswer = `Workspace files changed since the turn-budget pause: ${names}. The agent's earlier reads are stale, so this run was not continued and nothing was written. Start a new task to work from the current files.`
-        session.state = { ...session.state, status: "OBSERVING" }
-        this.#emit("task.failed", { message: `BLOCKED_DIVERGENCE: ${names} changed during the pause` })
-        return this.#result()
+        const protectedEdits = new Map<string, { hashAtPause: string; hashAtContinue: string }>()
+        for (const filePath of divergedFiles) {
+          const prior = session.pauseFootprint.find((entry) => entry.path === filePath)
+          const observed = await observeFilePath(filePath)
+          if (!observed.exists) {
+            const names = divergedFiles.map((path) => relative(session.input.workspaceRoot, path) || path).join(", ")
+            session.failureReason = "INCOMPLETE"
+            session.finalAnswer = `Workspace files changed since the turn-budget pause: ${names}. The agent's earlier reads are stale, so this run was not continued and nothing was written. Start a new task to work from the current files.`
+            session.state = { ...session.state, status: "OBSERVING" }
+            this.#emit("task.failed", { message: `BLOCKED_DIVERGENCE: ${names} changed during the pause` })
+            return this.#result()
+          }
+          protectedEdits.set(filePath, { hashAtPause: prior?.hash ?? "", hashAtContinue: observed.hash })
+        }
+        session.userProtectedEdits = protectedEdits
+        const names = [...protectedEdits.keys()].map((path) => relative(session.input.workspaceRoot, path) || path).join(", ")
+        session.observations.push(createToolObservation({
+          toolName: "continuation",
+          callId: `user-edit-${session.turns}`,
+          output: `USER_EDIT: ${names} changed during the pause. Those files are protected. A later patch that overlaps them is a conflict and needs explicit conflict approval. Unrelated files can still be edited.`,
+          maxContentBytes: this.#observationMaxBytes,
+        }))
       }
     }
     const nextBudget = session.input.maxTurns + additionalTurns
@@ -1867,6 +1887,38 @@ export class AgentRunner {
     return { stop: false, lines: [...new Set(lines)].slice(0, 8) }
   }
 
+  #absolutePayloadPath(payload: { readonly path?: unknown }): string | undefined {
+    const session = this.#session
+    const rel = typeof payload.path === "string" ? payload.path : ""
+    if (!session || !rel) return undefined
+    return isAbsolute(rel) ? rel : join(session.input.workspaceRoot, rel)
+  }
+
+  #protectedContinueHash(payload: { readonly path?: unknown }): string | undefined {
+    const session = this.#session
+    const target = this.#absolutePayloadPath(payload)
+    if (!session?.userProtectedEdits || !target) return undefined
+    for (const [filePath, record] of session.userProtectedEdits) {
+      if (pathsReferToSameFile(filePath, target) || pathsReferToSameFile(relative(session.input.workspaceRoot, filePath), String(payload.path ?? ""))) {
+        return record.hashAtContinue
+      }
+    }
+    return undefined
+  }
+
+  #userEditConflict(payload: { readonly path?: unknown }): string | undefined {
+    const session = this.#session
+    const target = this.#absolutePayloadPath(payload)
+    if (!session?.userProtectedEdits || !target) return undefined
+    for (const [filePath] of session.userProtectedEdits) {
+      const relativePath = relative(session.input.workspaceRoot, filePath) || filePath
+      if (pathsReferToSameFile(filePath, target) || pathsReferToSameFile(relativePath, String(payload.path ?? ""))) {
+        return `USER_EDIT_CONFLICT: ${relativePath} was modified during the pause. This is not a stale write; approving it can overwrite those user edits. Unrelated files are not blocked.`
+      }
+    }
+    return undefined
+  }
+
   async #persistTurnLimitCheckpoint(): Promise<void> {
     const session = this.#requiredSession()
     const observations = session.observations.slice(-8)
@@ -2143,7 +2195,10 @@ export class AgentRunner {
               this.#emit("tool.rejected", { callId: prepared.id, name: prepared.name, message })
               return false
             }
-            if (exportedTypeShapeChanged(proposedPath, before, proposedContent)) (session.typeShapePaths ??= new Set()).add(proposedPath)
+            if (exportedTypeShapeChanged(proposedPath, before, proposedContent)) {
+              session.exportedTypeChanged = true
+              ;(session.typeShapePaths ??= new Set()).add(proposedPath)
+            }
             const dangling = await danglingReferences(session.input.workspaceRoot, proposedPath, before, proposedContent).catch(() => [])
             const firstTime = dangling.filter((ref) => !(session.danglingWarned ??= new Set()).has(`${proposedPath}|${ref.value}`))
             if (firstTime.length > 0) {
@@ -2188,12 +2243,35 @@ export class AgentRunner {
             })
             return false
           }
-          session.pending = { prepared, signature, reviewable }
+          const conflict = this.#userEditConflict(reviewable.reviewPayload)
+          const expectedHash = conflict ? this.#protectedContinueHash(reviewable.reviewPayload) : undefined
+          const reviewed = conflict
+            ? {
+                ...reviewable,
+                reviewPayload: {
+                  ...reviewable.reviewPayload,
+                  conflict: "USER_EDIT",
+                  conflictNote: conflict,
+                },
+                apply: async (context: Parameters<typeof reviewable.apply>[0]) => {
+                  const target = this.#absolutePayloadPath(reviewable.reviewPayload)
+                  if (target && expectedHash) {
+                    const current = await observeFilePath(target)
+                    if (!current.exists || current.hash !== expectedHash) {
+                      throw new Error("USER_EDIT_CONFLICT: the protected file changed again since this conflict was prepared. Approval is invalid. Re-read the file and propose a fresh patch.")
+                    }
+                  }
+                  return reviewable.apply(context)
+                },
+              }
+            : reviewable
+          session.pending = { prepared, signature, reviewable: reviewed }
           this.#emit(isVerification ? "verification.confirmation_requested" : "mutation.confirmation_requested", {
             callId: prepared.id,
             name: prepared.name,
-            mutationId: reviewable.id,
-            ...(isVerification ? { executionId: reviewable.id } : {}),
+            mutationId: reviewed.id,
+            ...(isVerification ? { executionId: reviewed.id } : {}),
+            ...(conflict ? { conflict: "USER_EDIT" } : {}),
           })
           return true
         } catch (error) {
@@ -3604,6 +3682,7 @@ export class AgentRunner {
       userRejectedMutation: session.mutationRejectedByUser === true,
       scheduledVerification,
       additionalVerification: this.#additionalVerification(),
+      ...(session.exportedTypeChanged && !session.typecheckScript ? { unverifiedActions: ["TYPECHECK"] } : {}),
       ...(session.requirementGaps && session.requirementGaps.length > 0 ? { requirementGaps: session.requirementGaps } : {}),
     })
   }

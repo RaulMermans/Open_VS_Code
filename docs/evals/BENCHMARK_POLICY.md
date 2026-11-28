@@ -13,8 +13,9 @@ Using Open VS Code on real projects is a separate adoption decision that needs e
 ## Environment
 
 - Benchmark root: `~/ovsc-benchmarks` (override with `OPEN_VS_CODE_BENCHMARK_ROOT`), outside every active development directory.
-- Each fictional repository has its own git history, a reproducible baseline commit, and `.ovsc-benchmark.json` with `"fictional": true` at its root.
-- Each run gets a fresh clone under the system temp directory. The GUI benchmark driver (`apps/desktop/acceptance/src/dogfood.ts`) refuses a workspace without the marker or with a git origin outside the benchmark root (`assertBenchmarkWorkspace`).
+- Each fictional repository has its own git history, a reproducible baseline commit, and `.ovsc-benchmark.json` with `"fictional": true` and a `taskId` at its root.
+- The benchmark root carries a harness-controlled `.ovsc-benchmark-registry.json` listing approved task ids, canonical origins, and optional baseline/prompt/evaluator hashes. A marker alone is not enough.
+- Each run gets a fresh clone under the system temp directory. The GUI benchmark driver (`apps/desktop/acceptance/src/dogfood.ts`) refuses unregistered workspaces, missing origins, spoofed markers, and symlink workspaces (`assertBenchmarkWorkspace`).
 - The agent works inside the existing command sandbox (workspace-only filesystem, no network for verification commands) and the lab's approval policy (operations must resolve inside the workspace).
 - Hidden evaluators and reference implementations live under `~/ovsc-benchmarks/evaluators` (mode 0700), never inside a run workspace, and run as a separate step after the agent finishes.
 - Generated software is never deployed. It is launched only locally, for evaluation.

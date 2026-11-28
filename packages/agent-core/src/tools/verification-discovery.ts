@@ -20,6 +20,8 @@ export interface DiscoveredCommand {
   readonly requiresSandbox?: boolean
   /** Host directories the sandbox exposes read-only (the project's cached package manager). */
   readonly readOnlyBinds?: readonly string[]
+  /** npm, pnpm, or yarn — the manager that will run the script, not a guessed fallback. */
+  readonly packageManager?: "npm" | "pnpm" | "yarn"
 }
 
 /**
@@ -49,13 +51,56 @@ export function corepackHome(): string {
  * exactly that version cached outside the workspace, the directory to expose read-only.
  */
 export function cachedPackageManager(pkg: { packageManager?: unknown }, workspaceReal: string): { name: string; version: string; cacheDir?: string } | undefined {
-  const match = typeof pkg.packageManager === "string" ? /^(pnpm|yarn)@(\d+\.\d+\.\d+[\w.-]*)(?:\+.*)?$/.exec(pkg.packageManager) : null
+  const match = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@(\d+\.\d+\.\d+[\w.-]*)(?:\+.*)?$/.exec(pkg.packageManager) : null
   if (!match) return undefined
-  const [, name, version] = match as unknown as [string, string, string]
+  const [, name, version] = match as unknown as [string, "npm" | "pnpm" | "yarn", string]
+  if (name === "npm") return { name, version }
   const dir = path.join(corepackHome(), "v1", name, version)
   const real = existingRealpath(dir)
   const usable = real !== undefined && !isInside(workspaceReal, real) && existsSyncDir(real) && existsSyncFile(path.join(real, "package.json"))
   return usable ? { name, version, cacheDir: real } : { name, version }
+}
+
+export type PackageManagerName = "npm" | "pnpm" | "yarn"
+
+export interface PackageManagerResolution {
+  readonly name: PackageManagerName
+  readonly version?: string
+  readonly signals: readonly string[]
+  readonly conflicts: readonly string[]
+}
+
+/**
+ * Evidence-backed package manager for this workspace. Conflicting lockfiles are reported, not
+ * silently resolved to npm. Discovery never executes repository scripts.
+ */
+export function resolvePackageManager(workspaceReal: string, pkg: { packageManager?: unknown }): PackageManagerResolution {
+  const signals: string[] = []
+  const votes = new Map<PackageManagerName, string[]>()
+  const vote = (name: PackageManagerName, signal: string) => {
+    signals.push(signal)
+    votes.set(name, [...(votes.get(name) ?? []), signal])
+  }
+  const field = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@(\d+\.\d+\.\d+[\w.-]*)(?:\+.*)?$/.exec(pkg.packageManager) : null
+  if (field) vote(field[1] as PackageManagerName, `package.json packageManager ${pkg.packageManager}`)
+  if (existsSyncFile(path.join(workspaceReal, "pnpm-lock.yaml")) || existsSyncFile(path.join(workspaceReal, "pnpm-workspace.yaml"))) {
+    vote("pnpm", existsSyncFile(path.join(workspaceReal, "pnpm-lock.yaml")) ? "pnpm-lock.yaml" : "pnpm-workspace.yaml")
+  }
+  if (existsSyncFile(path.join(workspaceReal, "yarn.lock"))) vote("yarn", "yarn.lock")
+  if (existsSyncFile(path.join(workspaceReal, "package-lock.json")) || existsSyncFile(path.join(workspaceReal, "npm-shrinkwrap.json"))) {
+    vote("npm", existsSyncFile(path.join(workspaceReal, "package-lock.json")) ? "package-lock.json" : "npm-shrinkwrap.json")
+  }
+  const names = [...votes.keys()]
+  if (names.length > 1) {
+    const conflicts = names.flatMap((name) => (votes.get(name) ?? []).map((signal) => `${name}: ${signal}`))
+    return { name: names[0]!, version: field?.[2], signals, conflicts }
+  }
+  if (names.length === 1) return { name: names[0]!, version: field?.[2], signals, conflicts: [] }
+  return { name: "npm", signals: signals.length > 0 ? signals : ["default npm (no lockfile or packageManager field)"], conflicts: [] }
+}
+
+export function resolvePackageManagerBinary(name: PackageManagerName, workspaceRoot: string): string | undefined {
+  return findExecutable(name, { workspaceRoot })
 }
 
 function existsSyncDir(target: string): boolean {
@@ -127,7 +172,11 @@ export async function verificationWorkspace(workspaceRoot: string, instruction: 
   } catch {
     return workspaceRoot
   }
-  if (!/\bpnpm\b[^\n]*\s(?:-r|--recursive)\b/.test(rootScript)) return workspaceRoot
+  const recursive = /\b(?:pnpm|yarn|npm)\b[^\n]*\s(?:-r|--recursive|-w|--workspaces)\b/.test(rootScript)
+    || /\bturbo\b/.test(rootScript)
+    || existsSyncFile(path.join(workspaceRoot, "pnpm-workspace.yaml"))
+    || existsSyncFile(path.join(workspaceRoot, "turbo.json"))
+  if (!recursive) return workspaceRoot
   const packages = new Set<string>()
   for (const file of named) {
     let dir = path.resolve(workspaceRoot, path.dirname(file))
@@ -206,23 +255,40 @@ export async function discoverVerificationCommand(
     throw new Error(`Action ${action} requires a '${scriptName}' script in package.json`)
   }
   const scriptBody = String(pkg.scripts[scriptName])
+  const resolved = resolvePackageManager(workspaceReal, pkg)
+  if (resolved.conflicts.length > 0) {
+    throw new EnvironmentSetupRequiredError(
+      `conflicting package-manager signals (${resolved.conflicts.join("; ")}); refusing to run npm in place of a declared pnpm or Yarn workflow`,
+      "use one lockfile and packageManager field, then rerun verification",
+    )
+  }
   const manager = cachedPackageManager(pkg, workspaceReal)
-  if (manager && !manager.cacheDir && new RegExp(String.raw`\b${manager.name}\b`).test(scriptBody)) {
-    throw new EnvironmentSetupRequiredError(`the script calls ${manager.name}, and ${manager.name}@${manager.version} (the project's packageManager) is not in the Corepack cache; the sandbox has no network to download it`, `corepack install`)
+  const executable = resolvePackageManagerBinary(resolved.name, workspaceReal)
+  if (!executable) {
+    if (manager && manager.name !== "npm" && !manager.cacheDir) {
+      throw new EnvironmentSetupRequiredError(`the script calls ${manager.name}, and ${manager.name}@${manager.version} (the project's packageManager) is not in the Corepack cache; the sandbox has no network to download it`, `corepack install`)
+    }
+    throw new EnvironmentSetupRequiredError(
+      `the project uses ${resolved.name}${resolved.version ? `@${resolved.version}` : ""} (${resolved.signals.join(", ")}), but the ${resolved.name} executable is not on PATH`,
+      resolved.name === "npm" ? "install Node.js (includes npm)" : "corepack enable && corepack install",
+    )
   }
   const declared = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).length > 0
   if (declared && !existsSyncDir(path.join(workspaceReal, "node_modules"))) {
-    const install = manager ? `${manager.name} install --frozen-lockfile` : existsSyncFile(path.join(workspaceReal, "package-lock.json")) ? "npm ci" : "npm install"
+    const install = resolved.name === "npm"
+      ? existsSyncFile(path.join(workspaceReal, "package-lock.json")) ? "npm ci" : "npm install"
+      : `${resolved.name} install --frozen-lockfile`
     throw new EnvironmentSetupRequiredError("the project's dependencies are not installed (no node_modules)", install)
   }
 
   return {
-    executable: resolveNpmBinary(workspaceReal),
+    executable,
     args: ["run", scriptName],
     packageJsonPath,
     packageJsonHash,
     scriptName,
     scriptBody,
+    packageManager: resolved.name,
     // Always offline Corepack: a verification run never downloads a package manager.
     env: { ...COREPACK_OFFLINE_ENV, ...(manager?.cacheDir ? { COREPACK_HOME: corepackHome() } : {}) },
     ...(manager?.cacheDir ? { readOnlyBinds: [manager.cacheDir] } : {}),
@@ -331,10 +397,6 @@ export function resolveNodeBinary(options: NodeBinaryOptions = {}): string {
   const found = findExecutable(NODE_NAME, options)
   if (!found) throw new Error("Node.js executable was not found on PATH or in a supported nvm installation")
   return found
-}
-
-function resolveNpmBinary(workspaceRoot: string): string {
-  return findExecutable("npm", { workspaceRoot }) ?? "npm"
 }
 
 function findExecutable(name: string, options: NodeBinaryOptions): string | undefined {

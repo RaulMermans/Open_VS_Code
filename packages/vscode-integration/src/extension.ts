@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { createVsCodeCodeIntelligence } from './code-intelligence-provider.js';
 import { AgentSessionBridge, IdeHost, IdeContextSnapshot, WorkspaceRoot, EditorDocument, EditorSelection, EditorDiagnostic, EditorPosition, resolveWorkspaceRoot } from '@open-vs-code/ide-adapter';
-import { HaloProvider, capabilityForAgentMode, inspectHaloConnection, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, type AutocompleteGateway, type RoutingConfiguration, BrowserSessionManager, detectBrowserProvisioning } from '@open-vs-code/agent-core';
+import { HaloProvider, capabilityForAgentMode, inspectHaloConnection, createProductionAutocompleteGateway, SkillRegistry, openWorkspaceLearning, loadRoutingConfigSync, describeConfiguredRoute, TASK_DURATION_PROFILES, type AutocompleteGateway, type RoutingConfiguration, BrowserSessionManager, detectBrowserProvisioning, type TaskDurationProfile } from '@open-vs-code/agent-core';
 import { buildStarterRoutingConfig, fetchLocalModelCatalog, localProviderBaseUrl } from './local-model-selection.js';
 import { shouldShowModelConfiguration } from './model-config-open.js';
 import { connectionFromSnapshot } from './model-routing.js';
@@ -707,6 +707,8 @@ export function activate(context: vscode.ExtensionContext) {
       : createProductionAutocompleteGateway(emptyRouting());
     autocompleteController = new AutocompleteController({ gateway });
   }
+  const autocompleteEnabled = vscode.workspace.getConfiguration("open-vs-code").get<boolean>("autocomplete.enabled", false) === true;
+  autocompleteController.service.enabled = autocompleteEnabled;
   autocompleteController.register(context);
 
   chatController = new ChatController(host, diffReviewController, terminalReviewController, (options: { host: any, workspaceRoot: string, mode: 'ASK' | 'PLAN' | 'BUILD' | 'DEBUG' | 'REVIEW', mcpCatalog?: any }) => {
@@ -748,9 +750,14 @@ export function activate(context: vscode.ExtensionContext) {
         learning: { enabled: learningEnabled() },
         // Agent command sandbox (ADR-046); bubblewrap when available by default.
         commandSandbox: commandSandboxSetting(),
+        unitBudgetMs: resolveExecutionBudgetMs(options.mode),
       });
     }
     return activeBridge!;
+  });
+
+  chatController.onAgentRunning((running) => {
+    if (autocompleteController) autocompleteController.service.suspended = running;
   });
 
   const provider = new ChatViewProvider(context.extensionUri, chatController);
@@ -1256,6 +1263,13 @@ export const STARTER_MODELS_JSON = JSON.stringify({
 function commandSandboxSetting(): 'auto' | 'required' | 'off' {
   const value = vscode.workspace.getConfiguration('open-vs-code').get<string>('agent.commandSandbox', 'auto');
   return value === 'required' || value === 'off' ? value : 'auto';
+}
+
+function resolveExecutionBudgetMs(mode: string): number | undefined {
+  if (mode !== 'BUILD' && mode !== 'DEBUG') return undefined;
+  const profile = vscode.workspace.getConfiguration('open-vs-code').get<string>('agent.executionProfile', 'engineering');
+  const key = (profile ?? 'engineering').trim().toLowerCase() as TaskDurationProfile;
+  return TASK_DURATION_PROFILES[key] ?? TASK_DURATION_PROFILES.engineering;
 }
 
 /** Saves the chat model in extension storage. Workspace models.json is not written. */

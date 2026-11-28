@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { realpathSync, existsSync, readFileSync, statSync } from "node:fs"
+import { realpathSync, existsSync, lstatSync, readFileSync, statSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve, sep } from "node:path"
 
@@ -99,17 +99,43 @@ export function benchmarkRoot(): string {
  * "fictional": true, and a git origin, if any, must lie inside the benchmark root. A clone of a real project has
  * neither, so it is refused before the app starts.
  */
+export interface BenchmarkRegistryTask {
+  readonly id: string
+  readonly origin?: string
+  readonly baseline?: string
+  readonly promptSha256?: string
+  readonly evaluatorSha256?: string
+}
+
+export function benchmarkRegistryPath(root = benchmarkRoot()): string {
+  return join(root, ".ovsc-benchmark-registry.json")
+}
+
 export function assertBenchmarkWorkspace(workspace: string, root = benchmarkRoot()): void {
   const marker = join(workspace, BENCHMARK_MARKER)
   const refuse = (why: string) => new Error(`Benchmark workspace refused: ${why}. Benchmarks use fictional repositories only (AGENTS.md).`)
+  if (existsSync(workspace) && lstatSync(workspace).isSymbolicLink()) throw refuse("workspace is a symlink")
   if (!existsSync(marker)) throw refuse(`${BENCHMARK_MARKER} is missing`)
-  let meta: { fictional?: unknown }
+  let meta: { fictional?: unknown; taskId?: unknown }
   try { meta = JSON.parse(readFileSync(marker, "utf8")) } catch { throw refuse(`${BENCHMARK_MARKER} is not valid JSON`) }
   if (meta.fictional !== true) throw refuse(`${BENCHMARK_MARKER} does not declare "fictional": true`)
+  const registryFile = benchmarkRegistryPath(root)
+  if (!existsSync(registryFile)) throw refuse("benchmark registry is missing")
+  let registry: { tasks?: BenchmarkRegistryTask[] }
+  try { registry = JSON.parse(readFileSync(registryFile, "utf8")) } catch { throw refuse("benchmark registry is not valid JSON") }
+  const taskId = typeof meta.taskId === "string" ? meta.taskId : ""
+  const task = (registry.tasks ?? []).find((entry) => entry.id === taskId)
+  if (!task) throw refuse(`task ${taskId || "(missing taskId)"} is not in the registry`)
   const origin = spawnSync("git", ["-C", workspace, "remote", "get-url", "origin"], { encoding: "utf8" })
   if (origin.status === 0) {
     const url = origin.stdout.trim()
     const local = url.replace(/^file:\/\//, "")
     if (!existsSync(local) || !existsSync(root) || !isInside(realpathSync(local), realpathSync(root))) throw refuse(`git origin ${url} is outside ${root}`)
+    if (task.origin) {
+      const expected = task.origin.replace(/^file:\/\//, "")
+      if (realpathSync(local) !== realpathSync(expected) && url !== task.origin) throw refuse(`git origin ${url} does not match the registered origin`)
+    }
+  } else if (task.origin) {
+    throw refuse("registered origin is missing from the workspace")
   }
 }

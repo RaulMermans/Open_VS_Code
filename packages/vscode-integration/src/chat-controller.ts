@@ -88,6 +88,7 @@ export class ChatController {
   /** Kept after MAX_TURNS_EXCEEDED so Continue uses the same runner. */
   private _heldSessionBridge?: AgentSessionBridge;
   private _confirmationResolver?: (value: "APPROVE" | "REJECT") => void;
+  private _onAgentRunning?: (running: boolean) => void;
   private _confirmationInFlight = false;
   private _sendInFlight = false;
   private _connectionInput: ConnectionSnapshotInput = {};
@@ -201,6 +202,10 @@ export class ChatController {
       this.syncActiveModeFromManager();
       this.sendState();
     });
+  }
+
+  public onAgentRunning(listener: (running: boolean) => void): void {
+    this._onAgentRunning = listener;
   }
 
   public syncActiveModeFromManager(): void {
@@ -468,7 +473,7 @@ export class ChatController {
       type: payload?.action || payload?.operation || (isVerification ? 'run_known_test' : 'unknown'),
       summary: prompt,
       riskLabel: isWriteFile
-        ? 'High Risk Mutation'
+        ? (reviewData?.conflict === 'USER_EDIT' ? 'User-edit conflict' : 'High Risk Mutation')
         : isVerification
         ? 'Controlled Verification Terminal'
         : browserRiskLabel || 'Verification/External',
@@ -1553,6 +1558,10 @@ export class ChatController {
       const taskId = typeof task?.id === 'string' ? task.id : ev.taskId;
       this.recordRunId(taskId);
       if (task?.mode === 'PLAN') this._planEvidence = true;
+      this._onAgentRunning?.(true);
+    }
+    if (ev.type === 'task.completed' || ev.type === 'task.failed' || ev.type === 'task.cancelled') {
+      this._onAgentRunning?.(false);
     }
     this.pushActivity(ev);
     if (ev.type === 'tool.requested') {

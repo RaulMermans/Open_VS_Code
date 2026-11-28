@@ -83,6 +83,14 @@ test("verified files and tests come only from runtime facts", () => {
   assert.match(notRun.content, /Verification was not executed\./);
   assert.doesNotMatch(notRun.content, /Tests passed/);
 
+  const contradictory = formatTerminalTaskMessage({
+    status: "COMPLETED",
+    finalAnswer: "Tests passed. The edit is applied.",
+    appliedMutations: [{ path: "src/add.ts", status: "APPLIED" }],
+  });
+  assert.match(contradictory.content, /Verification was not executed\./);
+  assert.doesNotMatch(contradictory.content, /Tests passed/);
+
   const failed = formatTerminalTaskMessage({
     status: "FAILED",
     failureReason: "VERIFICATION_FAILED",

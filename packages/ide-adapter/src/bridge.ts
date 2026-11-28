@@ -546,11 +546,14 @@ export class AgentSessionBridge {
 /** Package manifests and lockfiles: an edit changes dependencies or scripts, which is never approved implicitly. */
 export const DEPENDENCY_MANIFEST = /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|Cargo\.toml|Cargo\.lock|go\.mod|go\.sum|Gemfile(\.lock)?)$/i;
 
-export function mutationPrompt(pm: { path?: unknown; operation?: unknown; files?: unknown; summary?: unknown }): string {
+export function mutationPrompt(pm: { path?: unknown; operation?: unknown; files?: unknown; summary?: unknown; conflict?: unknown; conflictNote?: unknown }): string {
   const files = Array.isArray(pm.files) ? pm.files.map((file: any) => String(file?.path ?? "")).filter(Boolean) : [];
   const touched = files.length > 0 ? files : [String(pm.path ?? "")];
   const warning = touched.some((path) => DEPENDENCY_MANIFEST.test(path)) ? "This changes project dependencies or scripts. " : "";
-  if (files.length === 0) return `${warning}Approve mutation on ${pm.path}? (${pm.operation})`;
+  const conflict = pm.conflict === "USER_EDIT"
+    ? `${typeof pm.conflictNote === "string" && pm.conflictNote ? pm.conflictNote : "USER_EDIT_CONFLICT: this file was modified during the pause."} `
+    : "";
+  if (files.length === 0) return `${conflict}${warning}Approve mutation on ${pm.path}? (${pm.operation})`;
   const summary = typeof pm.summary === "string" ? ` (${pm.summary})` : "";
-  return `${warning}Approve mutation on ${files.length} files${summary}: ${files.join(", ")}? (${pm.operation})`;
+  return `${conflict}${warning}Approve mutation on ${files.length} files${summary}: ${files.join(", ")}? (${pm.operation})`;
 }

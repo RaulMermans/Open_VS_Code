@@ -56,4 +56,22 @@ export interface VerificationResult {
   readonly totalTests?: number
   /** Compact failure summary, then any symbol diagnosis. Informational only; it does not change the verdict. */
   readonly diagnosis?: string
+  /** Canonical failure class derived from status and output, never from the model narrative. */
+  readonly failureClass?: VerificationFailureClass
 }
+
+export type VerificationFailureClass =
+  | "TEST_ASSERTION_FAILURE"
+  | "TYPECHECK_FAILURE"
+  | "BUILD_FAILURE"
+  | "LINT_FAILURE"
+  | "COMMAND_NOT_FOUND"
+  | "PACKAGE_MANAGER_MISMATCH"
+  | "MISSING_DEPENDENCY"
+  | "ENVIRONMENT_SETUP_REQUIRED"
+  | "SANDBOX_DENIED"
+  | "RESOURCE_LIMIT"
+  | "TIMEOUT"
+  | "CANCELLED"
+  | "PREEXISTING_BASELINE_FAILURE"
+  | "UNKNOWN_FAILURE"

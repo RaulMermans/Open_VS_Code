@@ -10,6 +10,7 @@ import type { ModelResponse } from "../../src/contracts/model.ts"
 import { CheckpointCoordinator } from "../../src/recovery/checkpoint-coordinator.ts"
 import { ScriptedModelProvider } from "../../src/testing/scripted-model.ts"
 import { MutationEngine } from "../../src/tools/mutation-engine.ts"
+import { createMutationToolRegistrations } from "../../src/tools/mutation-registry.ts"
 import { createReadOnlyToolRegistry } from "../../src/tools/read-only-registry.ts"
 
 // Sprint 33 P0: a pause before the agent's first write must still protect files it read.
@@ -41,14 +42,14 @@ async function pausedAfterRead(dir: string, after: ModelResponse[] = [], coordin
   return r
 }
 
-test("in-process Continue stops when a file the agent only read changed during the pause", async () => {
+test("in-process Continue records a user-edit conflict instead of aborting when a read file changed", async () => {
   const dir = await workspace()
   try {
-    const r = await pausedAfterRead(dir)
+    const r = await pausedAfterRead(dir, [response("Done."), response("Done.")])
     await writeFile(join(dir, "a.ts"), "export const a = 1\nexport const USER = true\n")
     const result = await r.continueFromLimit(2)
-    assert.equal(result.status, "FAILED")
-    assert.match(result.finalAnswer ?? "", /changed since.*a\.ts/s)
+    assert.equal(result.status, "COMPLETED")
+    assert.match(result.observations?.map((item) => item.content).join("\n") ?? "", /USER_EDIT/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -74,6 +75,39 @@ test("in-process Continue proceeds when only an unrelated file changed", async (
     await writeFile(join(dir, "b.ts"), "export const b = 3\n")
     const result = await r.continueFromLimit(2)
     assert.equal(result.status, "COMPLETED")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("a patch overlapping a pause-time user edit is a USER_EDIT conflict, unrelated files are not", async () => {
+  const dir = await workspace()
+  try {
+    const engine = new MutationEngine(dir)
+    const registry = createReadOnlyToolRegistry()
+    for (const registration of createMutationToolRegistrations({ engine })) registry.register(registration)
+    const provider = new ScriptedModelProvider([
+      readA(),
+      response("patch", [{ id: "p1", name: "apply_patch", arguments: { path: "a.ts", search: "export const a = 1\n", replace: "export const a = 1\nexport const AGENT = true\n" } }]),
+      response("Done."),
+    ])
+    const r = new AgentRunner({ provider, registry, eventFactory: { createId: () => "e", now: () => "2026-11-28T12:00:00.000Z" } })
+    const paused = await r.run({ task, workspaceRoot: dir, maxTurns: 1, contextBudget, projectInstructions: [] })
+    assert.equal(paused.failureReason, "MAX_TURNS_EXCEEDED")
+    await writeFile(join(dir, "a.ts"), "export const a = 1\nexport const USER = true\n")
+    await writeFile(join(dir, "b.ts"), "export const b = 3\n")
+    let result = await r.continueFromLimit(4)
+    for (let guard = 0; result.status === "PAUSED" && result.confirmation && guard < 6; guard += 1) {
+      const payload = result.confirmation.preparedMutation as { conflict?: string; path?: string } | undefined
+      if (payload?.path === "a.ts" || payload?.conflict === "USER_EDIT") {
+        assert.equal(payload?.conflict, "USER_EDIT")
+        result = await r.resume("REJECT")
+        break
+      }
+      result = await r.resume("APPROVE")
+    }
+    assert.match(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "a.ts"), "utf8")), /USER/)
+    assert.doesNotMatch(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "a.ts"), "utf8")), /AGENT/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

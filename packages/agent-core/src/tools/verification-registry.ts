@@ -7,7 +7,7 @@ import { RepositoryPathError, resolveRepositoryPath } from "./path-safety.ts"
 import { VerificationEngine } from "./verification-engine.ts"
 import { type CommandSandboxMode, describeSandbox, predictSandbox } from "./command-sandbox.ts"
 import { diagnoseUnresolvedSymbols } from "./symbol-diagnosis.ts"
-import { summarizeVerification } from "./verification-summary.ts"
+import { classifyVerificationFailure, summarizeVerification } from "./verification-summary.ts"
 import { VerificationAction, PreparedVerification, VerificationResult } from "./verification-contracts.ts"
 
 export const ACTION_TIMEOUTS: Record<VerificationAction, number> = {
@@ -88,12 +88,18 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
           const result = await engine.execute(prepared, applyContext.signal, applyContext.onOutput)
           const noted = (diagnosis?: string): string => [rebuiltNote, diagnosis].filter(Boolean).join("\n\n")
           const setup = result.status === "EXECUTION_ERROR" && result.stderr.startsWith("ENVIRONMENT_SETUP_REQUIRED:") ? result.stderr.slice("ENVIRONMENT_SETUP_REQUIRED: ".length).trim() : undefined
-          if (setup) return { ...result, diagnosis: noted(`ENVIRONMENT_SETUP_REQUIRED: ${setup} This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.`) }
-          if (result.status !== "FAIL") return rebuiltNote ? { ...result, diagnosis: noted() } : result
+          if (setup) return { ...result, failureClass: "ENVIRONMENT_SETUP_REQUIRED", diagnosis: noted(`ENVIRONMENT_SETUP_REQUIRED: ${setup} This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.`) }
+          if (result.status !== "FAIL") {
+            const failureClass = result.status === "PASS"
+              ? undefined
+              : classifyVerificationFailure({ action, status: result.status, stdout: result.stdout, stderr: result.stderr })
+            const classified = failureClass ? { ...result, failureClass } : result
+            return rebuiltNote ? { ...classified, diagnosis: noted() } : classified
+          }
           const blocked = environmentBlocker(`${result.stdout}\n${result.stderr}`)
           if (blocked) {
             // The command could not run here; that says nothing about the code, so it is not a test failure.
-            return { ...result, status: "EXECUTION_ERROR", diagnosis: `ENVIRONMENT_SETUP_REQUIRED: verification could not run in this workspace (${blocked}). This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.` }
+            return { ...result, status: "EXECUTION_ERROR", failureClass: "ENVIRONMENT_SETUP_REQUIRED", diagnosis: `ENVIRONMENT_SETUP_REQUIRED: verification could not run in this workspace (${blocked}). This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.` }
           }
           // Read-only. The summary is the reporter's own failures; symbol diagnosis is added when a name is unresolved.
           const output = `${result.stdout}\n${result.stderr}`
@@ -103,6 +109,7 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
           const total = summary.failed !== undefined ? summary.failed + (summary.passed ?? 0) + (summary.skipped ?? 0) : undefined
           return {
             ...result,
+            failureClass: classifyVerificationFailure({ action, status: result.status, stdout: result.stdout, stderr: result.stderr }),
             ...(summary.failed !== undefined ? { failedTests: summary.failed } : {}),
             ...(total !== undefined ? { totalTests: total } : {}),
             ...(diagnosis ? { diagnosis } : {}),
@@ -267,6 +274,9 @@ async function newestMtime(dir: string, depth: number): Promise<number> {
 }
 
 export function environmentBlocker(output: string): string | undefined {
+  if (/This project is configured to use (?:pnpm|yarn)|ERR_PNPM_UNSUPPORTED|This is not a yarn project/i.test(output)) {
+    return "the command used a different package manager than the project declares"
+  }
   if (/Corepack is about to download|corepack[^\n]*(?:fetch failed|ENOTFOUND|EAI_AGAIN)/i.test(output)) return "the package manager is not installed and the sandbox has no network to download it"
   if (/\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED)\b[^\n]*registry|getaddrinfo[^\n]*registry|ERR_PNPM_(?:FETCH|META_FETCH)|npm ERR! network/i.test(output)) return "it needs network access to a package registry, which the sandbox does not have"
   const missing = /(?:^|\n)(?:sh: \d+: |\/bin\/sh: \d+: |)(tsc|vitest|jest|mocha|eslint|vite|tsx|pnpm|yarn|pytest|ruff): (?:command )?not found/.exec(output)

@@ -51,7 +51,9 @@ import type { ModelProvider } from "../contracts/model.ts";
 import type { RoutingConfiguration } from "../contracts/routing.ts";
 import type { HealthChecker } from "../model/router.ts";
 import type { ConversationTurn } from "../contracts/context.ts";
-import { resolveAcceptanceMaxTurns } from "./acceptance-budget.ts";
+import { resolveAcceptanceMaxTurns, resolveTaskDurationMs } from "./acceptance-budget.ts";
+import { formatEngineeringProfile, loadRepositoryEngineeringProfile } from "../repository/engineering-profile.ts";
+import { deriveOutcomes, isSubstantial } from "./outcome-ledger.ts";
 
 export interface CreateAgentRuntimeOptions {
   workspaceRoot: string;
@@ -434,6 +436,16 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
       content: `[Mode Context Guidance: ${options.resolvedProfile.profileName}]\n${options.resolvedProfile.contextGuidance}`,
     });
   }
+  if ((options.mode === "BUILD" || options.mode === "DEBUG") && isSubstantial(deriveOutcomes(options.instruction))) {
+    const engineering = loadRepositoryEngineeringProfile(options.workspaceRoot);
+    if (engineering) {
+      modeProjectInstructions.push({
+        id: "repo-engineering-profile",
+        path: "package.json",
+        content: `[Repository engineering profile]\n${formatEngineeringProfile(engineering)}`,
+      });
+    }
+  }
 
   const runnerInput = {
     task: { id: `session-${Date.now()}`, mode: options.mode, instruction: options.instruction },
@@ -447,7 +459,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...(skillGuidance.length > 0 ? { skillGuidance } : {}),
     ...(learnedMemory.length > 0 ? { learnedMemory } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.unitBudgetMs ? { unitBudgetMs: options.unitBudgetMs } : {}),
+    ...(options.unitBudgetMs ?? resolveTaskDurationMs() ? { unitBudgetMs: options.unitBudgetMs ?? resolveTaskDurationMs() } : {}),
   };
 
   const progressMonitorEnabled = options.progressMonitor?.enabled === true;

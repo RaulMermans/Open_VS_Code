@@ -72,6 +72,32 @@ function counts(text: string): { passed?: number; failed?: number; skipped?: num
   return {}
 }
 
+export function classifyVerificationFailure(input: {
+  readonly action: string
+  readonly status: string
+  readonly stdout?: string
+  readonly stderr?: string
+  readonly preexisting?: boolean
+}): import("./verification-contracts.ts").VerificationFailureClass {
+  if (input.status === "TIMEOUT") return "TIMEOUT"
+  if (input.status === "CANCELLED") return "CANCELLED"
+  const text = `${input.stdout ?? ""}\n${input.stderr ?? ""}`
+  if (input.preexisting) return "PREEXISTING_BASELINE_FAILURE"
+  if (/ENVIRONMENT_SETUP_REQUIRED|bubblewrap \(bwrap\) is not installed|Command sandbox is required/i.test(text)) return "ENVIRONMENT_SETUP_REQUIRED"
+  if (/sandbox denied|bwrap:|operation not permitted|EPERM/i.test(text)) return "SANDBOX_DENIED"
+  if (/\b(?:ENOMEM|Killed|std::bad_alloc|Cannot allocate memory)\b/i.test(text)) return "RESOURCE_LIMIT"
+  if (/command not found|ENOENT|not found \(exit 127\)/i.test(text)) return "COMMAND_NOT_FOUND"
+  if (/conflicting package-manager|This project is configured to use|ERR_PNPM_UNSUPPORTED|This is not a yarn project|npm ERR! missing script/i.test(text) && /\b(?:pnpm|yarn)\b/i.test(text)) {
+    return "PACKAGE_MANAGER_MISMATCH"
+  }
+  if (/Cannot find module|MODULE_NOT_FOUND|node_modules missing|No module named/i.test(text)) return "MISSING_DEPENDENCY"
+  if (input.action === "TYPECHECK" || /error TS\d+/.test(text)) return "TYPECHECK_FAILURE"
+  if (input.action === "LINT") return "LINT_FAILURE"
+  if (input.action === "BUILD") return "BUILD_FAILURE"
+  if (input.status === "FAIL" || /AssertionError/.test(text)) return "TEST_ASSERTION_FAILURE"
+  return "UNKNOWN_FAILURE"
+}
+
 export function summarizeVerification(output: string): VerificationSummary {
   const text = output.replace(ANSI, "")
   const lines = text.split("\n")
