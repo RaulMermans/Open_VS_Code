@@ -1,3 +1,11 @@
+Benchmark isolation and fictional portfolio (2026-11-28)
+STATUS: IN_PROGRESS (harness validated on the rc.34 candidate; definitive runs wait for an installed release)
+  - Owner policy: benchmarks use fictional repositories only (`docs/evals/BENCHMARK_POLICY.md`, AGENTS.md). The GUI benchmark driver refuses a workspace without `.ovsc-benchmark.json` (`"fictional": true`) or with a git origin outside `~/ovsc-benchmarks`. The REEPROV pilot is withdrawn.
+  - Portfolio in `~/ovsc-benchmarks` (local, independent histories; hidden evaluators 0700). Frozen and validated: Track A Logsmith (reference 26/26, 8/8 mutants rejected), Track B Stockroom SR-14 (30/30, baseline 9/30, 10/10 mutants), Track C Taskflow sprint 1 (20/20, 7/7 mutants). Still to build: five Track A apps, five Track B repositories, Taskflow sprints 2–5.
+  - Runner: fresh /tmp clone, identity record (INSTALLED vs CANDIDATE), GUI agent with Continue within a 30/60/90/120-minute budget, evaluation on a copy with no network and 4 GiB memory.
+  - Harness defects fixed: the driver never recognised a long Markdown prompt (it waited out the budget); CI warms Chromium once (first-launch timeouts in 4 of 6 runs).
+  - Harness-validation run (CANDIDATE, not a result): Logsmith 2/26; the agent imported an uninstalled runtime dependency (`date-fns`) against the brief and reported the task not completed.
+
 Sprint 33B — Final runtime qualification and production deployment
 STATUS: BLOCKED (installation needs interactive sudo; candidate rc.34 built, CI green, not installed)
   - Installed is still `0.1.0-rc.30`. Candidate `0.1.0-rc.34` from clean `main` `7c8c205`, `.deb` SHA-256 `754efcc4…`, bundled `extension.js` `9c79d2be…`. rc.31–rc.33 were built and never installed. Rollback rc.30 `.deb` preserved and matches the installed files.
