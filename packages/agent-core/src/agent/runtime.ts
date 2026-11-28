@@ -447,6 +447,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     }
   }
 
+  const unitBudgetMs = options.unitBudgetMs ?? resolveTaskDurationMs()
   const runnerInput = {
     task: { id: `session-${Date.now()}`, mode: options.mode, instruction: options.instruction },
     workspaceRoot: options.workspaceRoot,
@@ -459,7 +460,7 @@ export async function createAgentRuntime(options: CreateAgentRuntimeOptions) {
     ...(skillGuidance.length > 0 ? { skillGuidance } : {}),
     ...(learnedMemory.length > 0 ? { learnedMemory } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.unitBudgetMs ?? resolveTaskDurationMs() ? { unitBudgetMs: options.unitBudgetMs ?? resolveTaskDurationMs() } : {}),
+    ...(unitBudgetMs !== undefined ? { unitBudgetMs } : {}),
   };
 
   const progressMonitorEnabled = options.progressMonitor?.enabled === true;

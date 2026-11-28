@@ -88,13 +88,23 @@ export function createVerificationToolRegistrations(workspaceRoot: string, optio
           const result = await engine.execute(prepared, applyContext.signal, applyContext.onOutput)
           const noted = (diagnosis?: string): string => [rebuiltNote, diagnosis].filter(Boolean).join("\n\n")
           const setup = result.status === "EXECUTION_ERROR" && result.stderr.startsWith("ENVIRONMENT_SETUP_REQUIRED:") ? result.stderr.slice("ENVIRONMENT_SETUP_REQUIRED: ".length).trim() : undefined
-          if (setup) return { ...result, failureClass: "ENVIRONMENT_SETUP_REQUIRED", diagnosis: noted(`ENVIRONMENT_SETUP_REQUIRED: ${setup} This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.`) }
+          if (setup) {
+            return {
+              ...result,
+              failureClass: "ENVIRONMENT_SETUP_REQUIRED",
+              diagnosis: noted(`ENVIRONMENT_SETUP_REQUIRED: ${setup} This is not a failure of the code and editing code will not fix it. Do not run it again. Continue with the requested change, and report verification as blocked with this reason.`),
+            } satisfies VerificationResult
+          }
           if (result.status !== "FAIL") {
             const failureClass = result.status === "PASS"
               ? undefined
               : classifyVerificationFailure({ action, status: result.status, stdout: result.stdout, stderr: result.stderr })
-            const classified = failureClass ? { ...result, failureClass } : result
-            return rebuiltNote ? { ...classified, diagnosis: noted() } : classified
+            const classified = {
+              ...result,
+              ...(failureClass ? { failureClass } : {}),
+              ...(rebuiltNote ? { diagnosis: noted() } : {}),
+            } satisfies VerificationResult
+            return classified
           }
           const blocked = environmentBlocker(`${result.stdout}\n${result.stderr}`)
           if (blocked) {

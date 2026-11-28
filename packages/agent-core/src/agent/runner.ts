@@ -2143,11 +2143,13 @@ export class AgentRunner {
             origin: "agent",
             instruction: session.input.task.instruction,
           })
+          if (!reviewable) throw new Error("Tool preparation produced no review payload")
+          const pendingReview = reviewable
           const isVerification = prepared.definition.action === "run_known_test"
           this.#emit(isVerification ? "verification.prepared" : "mutation.prepared", {
             callId: prepared.id,
             name: prepared.name,
-            mutationId: reviewable.id,
+            mutationId: pendingReview.id,
             ...(isVerification ? { executionId: reviewable.id } : {}),
             path: (prepared.arguments as any).path || (prepared.arguments as any).targetFile || (prepared.arguments as any).file,
           })
@@ -2247,24 +2249,24 @@ export class AgentRunner {
           const expectedHash = conflict ? this.#protectedContinueHash(reviewable.reviewPayload) : undefined
           const reviewed = conflict
             ? {
-                ...reviewable,
+                ...pendingReview,
                 reviewPayload: {
-                  ...reviewable.reviewPayload,
+                  ...pendingReview.reviewPayload,
                   conflict: "USER_EDIT",
                   conflictNote: conflict,
                 },
-                apply: async (context: Parameters<typeof reviewable.apply>[0]) => {
-                  const target = this.#absolutePayloadPath(reviewable.reviewPayload)
+                apply: async (context: Parameters<typeof pendingReview.apply>[0]) => {
+                  const target = this.#absolutePayloadPath(pendingReview.reviewPayload)
                   if (target && expectedHash) {
                     const current = await observeFilePath(target)
                     if (!current.exists || current.hash !== expectedHash) {
                       throw new Error("USER_EDIT_CONFLICT: the protected file changed again since this conflict was prepared. Approval is invalid. Re-read the file and propose a fresh patch.")
                     }
                   }
-                  return reviewable.apply(context)
+                  return pendingReview.apply(context)
                 },
               }
-            : reviewable
+            : pendingReview
           session.pending = { prepared, signature, reviewable: reviewed }
           this.#emit(isVerification ? "verification.confirmation_requested" : "mutation.confirmation_requested", {
             callId: prepared.id,

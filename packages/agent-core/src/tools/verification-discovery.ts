@@ -93,9 +93,9 @@ export function resolvePackageManager(workspaceReal: string, pkg: { packageManag
   const names = [...votes.keys()]
   if (names.length > 1) {
     const conflicts = names.flatMap((name) => (votes.get(name) ?? []).map((signal) => `${name}: ${signal}`))
-    return { name: names[0]!, version: field?.[2], signals, conflicts }
+    return { name: names[0]!, ...(field?.[2] ? { version: field[2] } : {}), signals, conflicts }
   }
-  if (names.length === 1) return { name: names[0]!, version: field?.[2], signals, conflicts: [] }
+  if (names.length === 1) return { name: names[0]!, ...(field?.[2] ? { version: field[2] } : {}), signals, conflicts: [] }
   return { name: "npm", signals: signals.length > 0 ? signals : ["default npm (no lockfile or packageManager field)"], conflicts: [] }
 }
 
