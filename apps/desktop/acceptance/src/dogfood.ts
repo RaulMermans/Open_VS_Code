@@ -1,5 +1,5 @@
 /**
- * Real-project dogfooding through the GUI (Sprint 23).
+ * Benchmark runs through the GUI on fictional repositories only (Sprint 23 driver; Sprint 33B isolation policy).
  *
  * Drives the installed (or OPEN_VS_CODE_ACCEPTANCE_BINARY / _EXTENSIONS_DIR) Open VS Code over CDP on a
  * disposable clone of a real repository: one natural instruction typed into the Agent composer, approvals
@@ -13,6 +13,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
 import { acceptanceExtensionsDir, captureWorkbench, launchCdpApp, runCdpTurn, trustWorkspace, writePng } from "./cdp-driver.ts"
+import { assertBenchmarkWorkspace } from "./safety.ts"
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "../../../..")
 
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
   const [workspaceArg, evidenceArg, taskId, promptFile] = process.argv.slice(2)
   if (!workspaceArg || !evidenceArg || !taskId || !promptFile) throw new Error("usage: dogfood.ts <workspace> <evidenceDir> <taskId> <promptFile>")
   const workspace = resolve(workspaceArg)
+  assertBenchmarkWorkspace(workspace)
   const evidence = resolve(evidenceArg)
   mkdirSync(evidence, { recursive: true })
   const prompt = readFileSync(promptFile, "utf8").trim()

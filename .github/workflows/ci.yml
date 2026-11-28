@@ -60,6 +60,24 @@ jobs:
         shell: bash
         run: npm ci
 
+      - name: Warm the browser once
+        shell: bash
+        working-directory: packages/agent-core
+        run: |
+          # The first Chromium start on a cold runner can exceed the product's 20 s launch timeout,
+          # which failed real-browser tests intermittently. Start it once with the sandbox on; the
+          # product timeout is unchanged.
+          node --import tsx --input-type=module -e "
+            const { detectBrowserProvisioning } = await import('./src/browser/browser-provisioning.ts');
+            const d = detectBrowserProvisioning();
+            if (d.status !== 'READY') { console.log('no browser to warm:', d.status); process.exit(0); }
+            const { chromium } = await import('playwright-core');
+            const t = Date.now();
+            const b = await chromium.launch({ executablePath: d.executable.path, chromiumSandbox: true, timeout: 120000 });
+            await b.close();
+            console.log('browser warm in', Date.now() - t, 'ms');
+          "
+
       - name: Typecheck
         shell: bash
         run: npm run typecheck

@@ -15,6 +15,10 @@ For every task:
 9. Update project state when a meaningful decision or status changes.
 10. After a sprint that changes production behaviour, validate the implementation, merge it to canonical `main`, package the next `0.1.0-rc.N` from a clean tree, keep the previous `.deb` for rollback, install the package on the target machine, and run the applicable live acceptance tests against the installed application. Source-level, mocked and development-host tests do not substitute for installed-production evidence. If installation or production validation is blocked, the sprint stays explicitly incomplete or blocked. Documentation-only changes do not need a new package.
 
+## Benchmark isolation (binding)
+
+All coding, sprint, recovery, stress and comparative benchmarks use fictional, purpose-built repositories under `~/ovsc-benchmarks` only. Never use, clone, copy, inspect for benchmark construction, or modify the owner's real projects (REEPROV, OpsTwin, AAO, HALO Control, IRIS OS, GEO/AEO Auditor, Open VS Code itself as a target, or any other active repository), not even through an isolated worktree. Open VS Code is the system under test, not the project being developed. Real-project use needs explicit owner authorization after qualification and never starts automatically. Details: `docs/evals/BENCHMARK_POLICY.md`. Only the owner can change this rule.
+
 ## Context discipline
 
 - Markdown files are the durable project brain; consult them before assuming behavior.
